@@ -95,7 +95,7 @@ message EnrollRequest {
 
 // Ответ регистрации.
 message EnrollResponse {
-  // Клиентский сертификат (PEM). Subject: CN=pc-<computer_id>, O=club-<club_id>;
+  // Клиентский сертификат (PEM). Subject: CN=computer:<computer_id>, O=club:<club_id>;
   // SAN URI: zafiro://club/<club_id>/computer/<computer_id>. ExtKeyUsage: clientAuth.
   string certificate_pem = 1;
   // Цепочка CA (промежуточный → корневой), PEM. Корень агент также держит встроенным

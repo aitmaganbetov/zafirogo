@@ -244,7 +244,7 @@ func (x *EnrollRequest) GetDevice() *DeviceInfo {
 // Ответ регистрации.
 type EnrollResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Клиентский сертификат (PEM). Subject: CN=pc-<computer_id>, O=club-<club_id>;
+	// Клиентский сертификат (PEM). Subject: CN=computer:<computer_id>, O=club:<club_id>;
 	// SAN URI: zafiro://club/<club_id>/computer/<computer_id>. ExtKeyUsage: clientAuth.
 	CertificatePem string `protobuf:"bytes,1,opt,name=certificate_pem,json=certificatePem,proto3" json:"certificate_pem,omitempty"`
 	// Цепочка CA (промежуточный → корневой), PEM. Корень агент также держит встроенным
