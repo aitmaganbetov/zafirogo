@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zafiro</title>
+    <!-- Как Zafiro resources/views/partials/fonts.blade.php -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- Как Zafiro resources/views/partials/pwa.blade.php (manifest пока не перенесён) -->
+    <meta name="theme-color" content="#101713" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Zafiro" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <!-- Тема до стилей, чтобы ночная тема не мигала (layouts/admin.blade.php).
+         Текст скрипта менять только вместе с его sha256 в CSP: server/internal/http/middleware.go -->
+    <script>try{if(localStorage.getItem('zafiro.theme')==='dark')document.documentElement.classList.add('dark')}catch(e){}</script>
+    <!-- Как layouts/admin.blade.php: Font Awesome 6.4.0 с cdnjs (в старом без integrity) -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
