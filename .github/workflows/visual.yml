@@ -1,0 +1,85 @@
+name: visual
+
+# Визуальное сравнение старого Laravel и нового сервера (tools/visual/README.md). Необязательный и долгий:
+# нужен Docker со старым проектом на PHP 8.4 (копия в кэше), поэтому — вручную или по метке PR «visual».
+on:
+  workflow_dispatch:
+    inputs:
+      pages:
+        description: "id страниц через запятую (pages.json); пусто — все"
+        required: false
+        default: ""
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: visual-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOOSE_VERSION: v3.29.0
+
+jobs:
+  visual:
+    name: старое ↔ новое
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'visual')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Старый проект (только чтение). Если репозиторий закрыт — секрет ZAFIRO_LEGACY_TOKEN с правом чтения.
+      - uses: actions/checkout@v7
+        with:
+          repository: aitmaganbetov/Zafiro
+          path: legacy/Zafiro
+          token: ${{ secrets.ZAFIRO_LEGACY_TOKEN || github.token }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            tools/visual/package-lock.json
+      - name: Кэш vendor/ старого проекта (по composer.lock)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/zafirogo-php-oracle
+          key: php-vendor-${{ hashFiles('legacy/Zafiro/composer.lock') }}
+      - name: Кэш фронта старого проекта и внешних шрифтов
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/zafirogo-visual/old-build-*
+            ~/.cache/zafirogo-visual/external
+          key: visual-old-${{ hashFiles('legacy/Zafiro/package-lock.json', 'legacy/Zafiro/resources/**') }}
+          restore-keys: visual-old-
+      - run: go install github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}
+      - run: npm ci --no-audit --no-fund
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: npm ci --no-audit --no-fund
+        working-directory: tools/visual
+      - name: Сравнение
+        env:
+          ZAFIRO_SRC: ${{ github.workspace }}/legacy/Zafiro
+          PAGES: ${{ inputs.pages }}
+        run: tools/visual/run.sh ${PAGES:+--page "$PAGES"}
+      - name: Отчёт
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-report
+          path: tools/visual/report/
+          if-no-files-found: warn
+          retention-days: 14

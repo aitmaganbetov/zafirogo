@@ -22,6 +22,18 @@ updates:
       npm-minor:
         update-types: [minor, patch]
 
+  - package-ecosystem: npm
+    directory: /tools/visual
+    schedule:
+      interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14
+    # Font Awesome и Chart.js повторяют версии CDN старого проекта (V-9, docs/open-questions/stage3-visual.md).
+    ignore:
+      - dependency-name: "@fortawesome/fontawesome-free"
+      - dependency-name: "chart.js"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

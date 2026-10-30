@@ -1,0 +1,83 @@
+{
+  "$comment": "Страницы визуального сравнения (tools/visual/README.md). Поля страницы: id, old, new (пути), role (кто входит: ключ demo.json login.roles или null — без входа), viewports, themes, mask (селекторы живых элементов, наборы @имя из maskSets; общие или {old, new}), waitFor (селектор, которого дождаться), fullPage (false — только окно), pixelThreshold (pixelmatch), maxDiffPercent (порог доли отличающихся пикселей, %), status (ported — экран перенесён, расхождение сверх порога — ошибка; pending — ещё не перенесён, результат только в отчёте), note.",
+  "defaults": {
+    "viewports": [
+      "desktop",
+      "mobile"
+    ],
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "role": "owner",
+    "pixelThreshold": 0.1,
+    "maxDiffPercent": 0.5,
+    "mask": [
+      "@clock"
+    ],
+    "status": "ported"
+  },
+  "viewports": {
+    "desktop": {
+      "width": 1440,
+      "height": 900
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "isMobile": true,
+      "hasTouch": true
+    }
+  },
+  "maskSets": {
+    "@clock": [
+      "[data-clock]",
+      ".admin-clock"
+    ],
+    "@relativeTime": [
+      "[data-relative-time]"
+    ],
+    "@badges": [
+      "[data-sidebar-badge]",
+      "[data-notifications-dot]"
+    ]
+  },
+  "pages": [
+    {
+      "id": "login",
+      "old": "/login",
+      "new": "/login",
+      "role": null,
+      "themes": [
+        "light"
+      ],
+      "mask": [],
+      "waitFor": "form",
+      "status": "pending",
+      "note": "Вход (auth/login.blade.php). F1 переносит экран; до этого новый сервер отдаёт заглушку SPA."
+    },
+    {
+      "id": "layout",
+      "old": "/dashboard",
+      "new": "/dashboard",
+      "role": "owner",
+      "fullPage": false,
+      "mask": [
+        "@clock",
+        ".admin-content"
+      ],
+      "waitFor": ".admin-topbar",
+      "status": "pending",
+      "note": "Каркас панели (layouts/admin.blade.php + partials/sidebar.blade.php): сайдбар и шапка в окне, контент закрыт маской. Сейчас в новом — AdminLayout с заглушкой сессии (STUB_ADMIN_SESSION): ожидаемо нет имени пользователя, бейджей чата/заказов и заголовок «Панель управления» вместо «Админпанель». Когда F1 подключит /api/auth/me и маршрут /dashboard — статус ported."
+    },
+    {
+      "id": "dashboard",
+      "old": "/dashboard",
+      "new": "/dashboard",
+      "role": "owner",
+      "waitFor": ".admin-topbar, header",
+      "status": "pending",
+      "note": "Админпанель (dashboard.blade.php) в layouts/admin.blade.php с сайдбаром. Пока в новом — каркас AdminLayout с заглушкой контента: ожидается совпадение сайдбара и шапки, расхождение в контенте."
+    }
+  ]
+}
