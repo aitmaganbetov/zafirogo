@@ -51,12 +51,12 @@ jobs:
             web/package-lock.json
             tools/visual/package-lock.json
       - name: Кэш vendor/ старого проекта (по composer.lock)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/zafirogo-php-oracle
           key: php-vendor-${{ hashFiles('legacy/Zafiro/composer.lock') }}
       - name: Кэш фронта старого проекта и внешних шрифтов
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/zafirogo-visual/old-build-*
