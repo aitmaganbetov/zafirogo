@@ -17,11 +17,64 @@ export interface paths {
          */
         get: operations["listTariffs"];
         put?: never;
+        /**
+         * Новый тариф
+         * @description Laravel: TariffController::store() (tariffs.store, tariffs.create), StoreTariffRequest. Журнал tariff.created,
+         *     аудит tariff.created. Цена — тиыны 0…999 999 999 999 (PQ-4).
+         */
+        post: operations["createTariff"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tariffs/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Экран «Зоны и тарифы»
+         * @description Laravel: TariffController::index()/page() (tariffs.index, tariffs.view): зоны с ПК (по имени), тарифы
+         *     (фильтр зоны — тарифы зоны и тарифы всех зон; по длительности и имени), продажи для лимита количества,
+         *     «сейчас не продаётся» (WeeklyPeriods), валюта клуба, can_delete (только владелец, как canDelete).
+         */
+        get: operations["getTariffsPage"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/tariffs/{tariffId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Удалить тариф
+         * @description Laravel: TariffController::destroy() (tariffs.destroy, tariffs.delete — по умолчанию никому; в интерфейсе —
+         *     только владелец). Мягкое удаление: история и купленные абонементы сохраняются. Журнал и аудит tariff.deleted.
+         */
+        delete: operations["deleteTariff"];
+        options?: never;
+        head?: never;
+        /**
+         * Изменить тариф
+         * @description Laravel: TariffController::update() (tariffs.update), UpdateTariffRequest. Изменения действуют на новые
+         *     покупки. Журнал и аудит tariff.updated. Удалённый или чужой тариф — 404.
+         */
+        patch: operations["updateTariff"];
         trace?: never;
     };
 }
@@ -63,11 +116,101 @@ export interface components {
             tariffs: components["schemas"]["Tariff"][];
             zones: components["schemas"]["Zone"][];
         };
+        WeeklyPeriod: {
+            start_day: string;
+            start_time: string;
+            end_day: string;
+            end_time: string;
+        };
+        PageTariff: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            description?: string | null;
+            /** Format: int64 */
+            duration_minutes: number;
+            /** Format: int64 */
+            price_tiyn: number;
+            currency: string;
+            is_active: boolean;
+            /** @enum {string} */
+            payment_method: "main_balance_only" | "main_or_bonus";
+            discount_enabled: boolean;
+            usage_limit_enabled: boolean;
+            /** Format: int64 */
+            usage_limit_minutes?: number | null;
+            quantity_limit_enabled: boolean;
+            /** Format: int64 */
+            quantity_limit?: number | null;
+            /**
+             * Format: int64
+             * @description Продано в агенте (лимит количества).
+             */
+            sold: number;
+            zone_ids: number[];
+            /** @description Имена зон тарифа (по имени), пусто — все зоны. */
+            zone_names?: string[];
+            /** @description Время продажи; пусто — всегда. */
+            sale_periods: components["schemas"]["WeeklyPeriod"][];
+            /** @description Период действия; пусто — всегда. */
+            validity_periods: components["schemas"]["WeeklyPeriod"][];
+            /** @description Tariff::onSale() сейчас (время продажи). */
+            on_sale: boolean;
+            /** @description Tariff::inValidityPeriod() сейчас. */
+            in_validity_period: boolean;
+        };
+        TariffsPage: {
+            /** @description Зоны, в которых есть ПК, по имени. */
+            zones: components["schemas"]["Zone"][];
+            /** Format: int64 */
+            zone_filter?: number | null;
+            tariffs: components["schemas"]["PageTariff"][];
+            currency: string;
+            can_delete: boolean;
+        };
+        TariffInput: {
+            name: string;
+            description?: string | null;
+            /** Format: int64 */
+            duration_value: number;
+            duration_unit: string;
+            /** Format: int64 */
+            price_tiyn: number;
+            payment_method: string;
+            discount_enabled: boolean;
+            zone_ids?: number[] | null;
+            usage_limit_enabled: boolean;
+            /** Format: int64 */
+            usage_limit_value?: number | null;
+            usage_limit_unit?: string | null;
+            quantity_limit_enabled: boolean;
+            /** Format: int64 */
+            quantity_limit?: number | null;
+            validity_periods: components["schemas"]["WeeklyPeriod"][];
+            sale_periods?: components["schemas"]["WeeklyPeriod"][] | null;
+            is_active: boolean;
+        };
+        TariffSaved: {
+            /** Format: int64 */
+            id?: number;
+            /** @description Текст flash (`status`) на языке клуба. */
+            message: string;
+        };
         Error: {
             /** @description Машинный код (unauthenticated, forbidden, read_only, not_found, too_many_requests, …). */
             error: string;
             /** @description Текст для пользователя (русский текст = ключ перевода). */
             message?: string;
+        };
+        ValidationError: {
+            /** @enum {string} */
+            error: "validation_failed";
+            /** @description Первая ошибка. */
+            message: string;
+            /** @description Поле формы → тексты ошибок (как Laravel withErrors). */
+            errors: {
+                [key: string]: string[];
+            };
         };
     };
     responses: {
@@ -89,8 +232,28 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description Ошибка в полях формы. */
+        ValidationFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ValidationError"];
+            };
+        };
+        /** @description Не найдено. */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
-    parameters: never;
+    parameters: {
+        TariffId: number;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -117,6 +280,112 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    createTariff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TariffInput"];
+            };
+        };
+        responses: {
+            /** @description Тариф создан. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TariffSaved"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getTariffsPage: {
+        parameters: {
+            query?: {
+                zone?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Данные экрана. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TariffsPage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    deleteTariff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tariffId: components["parameters"]["TariffId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Тариф удалён. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TariffSaved"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateTariff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tariffId: components["parameters"]["TariffId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TariffInput"];
+            };
+        };
+        responses: {
+            /** @description Тариф сохранён. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TariffSaved"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
 }

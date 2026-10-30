@@ -11,6 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/enroll"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/password"
@@ -18,6 +20,7 @@ import (
 	cashsvc "github.com/aitmaganbetov/zafirogo/server/internal/cash/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/wsticket"
+	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
 )
 
 // Checker — проверка зависимости для /readyz (например, пинг Postgres).
@@ -43,6 +46,11 @@ type Presence interface {
 	List(ctx context.Context, clubID int64) ([]presence.State, error)
 }
 
+// AgentCommands — отправка команды агенту ПК клуба (agent/commands.Sender.Send).
+type AgentCommands interface {
+	Send(ctx context.Context, clubID, computerID int64, cmd *agentv1.Command) (string, error)
+}
+
 // Deps — зависимости разделов REST. Поле, нужное новому разделу, добавляется сюда (одна строка) и
 // заполняется в httpserver.NewRouter из Options. nil-сервис — раздел отвечает 503 (ErrNotConfigured).
 type Deps struct {
@@ -63,6 +71,31 @@ type Deps struct {
 	Passwords *password.Hasher
 	// WSTickets — одноразовые билеты WebSocket (POST /api/ws-ticket, решение EV-3).
 	WSTickets *wsticket.Store
+	// AgentCommands — команды агентам ПК (*commands.Sender): питание, техрежим, сообщение. nil — 503.
+	AgentCommands AgentCommands
+	// Enroll — подключение ПК: коды регистрации, ключи образа, ожидающие ПК (*enroll.Service). nil — 503.
+	Enroll *enroll.Service
+	// I18n — каталог переводов: тексты ответов API на языке клуба (i18n.go, решение F1-5). nil — русский текст.
+	I18n *i18n.Catalog
+	// SignOutGuest — отозвать токены гостя на ПК клуба и прислать ПК SignOutGuest с причиной (сброс пароля клиента,
+	// UserController::resetPassword: $user->tokens()->delete()). nil — не отзываются.
+	SignOutGuest func(ctx context.Context, clubID, userID int64, reason string)
+	// ChatToGuest — ответ сотрудника в чате на ПК клуба, где вошёл гость (команда ChatMessageReceived; после
+	// коммита). nil — не доставляется (агент получит его списком при открытии чата).
+	ChatToGuest func(ctx context.Context, clubID, userID, messageID int64, author, body string, at time.Time)
+	// ClubConfigChanged — команда ConfigChanged агентам ПК клуба в сети (настройки клуба изменены; после коммита,
+	// не блокирует ответ). nil — агенты узнают изменения при следующем подключении.
+	ClubConfigChanged func(ctx context.Context, clubID int64)
+	// WebhookURLCheck — SSRF-проверка адреса вебхука (webhook.Guard.Check): "" — адрес годится, иначе причина
+	// (https_required, private_address, port_not_allowed, host_not_resolved, invalid_url). nil — 503.
+	WebhookURLCheck func(ctx context.Context, rawURL string) string
+	// WakeWebhooks — разбудить отправку вебхуков (повтор доставки). nil — доставку возьмёт очередной опрос.
+	WakeWebhooks func()
+	// ApproveQrLogin — подтверждение входа на ПК по QR с телефона (guestapi.Server.ApproveQrLogin; ошибки — статусы
+	// gRPC). nil — 503.
+	ApproveQrLogin func(ctx context.Context, clubID int64, code string, userID int64) error
+	// Superadmin — кабинет суперадмина: домен, секреты платформы, рассылка агентам (superadmin.go).
+	Superadmin SuperadminDeps
 	// Now — часы (nil — time.Now).
 	Now func() time.Time
 }

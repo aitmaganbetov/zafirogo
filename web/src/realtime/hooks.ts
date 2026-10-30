@@ -1,5 +1,6 @@
 import { useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
+import { session } from '../auth/session';
 import type { RealtimeMessage } from './client';
 import { useRealtimeClient } from './context';
 
@@ -17,7 +18,11 @@ export function useRealtime(): void {
   const queryClient = useQueryClient();
   useEffect(() => {
     client.start();
-    const off = client.onReconnect(() => void queryClient.invalidateQueries({ type: 'active' }));
+    const off = client.onReconnect(() => {
+      // После 4001 (staff.access_changed: роль/права изменились) — свежие права для меню и гардов (Me).
+      void session.reloadMe().catch(() => undefined);
+      void queryClient.invalidateQueries({ type: 'active' });
+    });
     return () => {
       off();
       client.stop();

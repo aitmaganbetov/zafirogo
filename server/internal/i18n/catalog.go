@@ -44,12 +44,17 @@ type Catalog struct {
 	mu      sync.Mutex
 	version string
 	packs   map[string]Pack
+	// raw — строки языка в формате Laravel (ключ «группа.ключ» для групп, кроме '*') для перевода на сервере
+	// (Translate: тексты ошибок API, F1-5).
+	raw     map[string]map[string]string
 	enabled []Language
+
+	clubs clubLocales
 }
 
 // NewCatalog — каталог поверх пула (таблицы платформенные, без RLS).
 func NewCatalog(pool db.Beginner) *Catalog {
-	return &Catalog{pool: pool, packs: map[string]Pack{}}
+	return &Catalog{pool: pool, packs: map[string]Pack{}, raw: map[string]map[string]string{}}
 }
 
 func (c *Catalog) refresh(ctx context.Context, q *store.Queries) error {
@@ -69,7 +74,7 @@ func (c *Catalog) refresh(ctx context.Context, q *store.Queries) error {
 	for _, r := range rows {
 		enabled = append(enabled, Language{Code: r.Code, Name: r.Name})
 	}
-	c.version, c.enabled, c.packs = version, enabled, map[string]Pack{}
+	c.version, c.enabled, c.packs, c.raw = version, enabled, map[string]Pack{}, map[string]map[string]string{}
 	return nil
 }
 
@@ -98,25 +103,14 @@ func (c *Catalog) Pack(ctx context.Context, locale string) (Pack, error) {
 			out = p
 			return nil
 		}
-		if !slices.ContainsFunc(c.enabled, func(l Language) bool { return l.Code == locale }) {
-			return ErrUnknownLocale
-		}
-		codes := []string{locale}
-		if locale != SourceLocale && locale != FallbackLocale {
-			codes = append(codes, FallbackLocale)
-		}
-		rows, err := q.I18nLines(ctx, store.I18nLinesParams{Codes: codes, Locale: locale})
+		raw, err := c.rawLocked(ctx, q, locale)
 		if err != nil {
 			return err
 		}
 		lines := map[string]string{}
-		for _, r := range rows { // запасной язык — первым, язык запроса перекрывает
-			key := r.Key
-			if r.Group != "*" { // __('pagination.next'): ключ «группа.ключ»
-				key = r.Group + "." + r.Key
-			}
-			for k, v := range Entries(locale, key, r.Value) {
-				lines[k] = v
+		for key, v := range raw {
+			for k, e := range Entries(locale, key, v) {
+				lines[k] = e
 			}
 		}
 		body, err := json.Marshal(lines)
@@ -129,6 +123,35 @@ func (c *Catalog) Pack(ctx context.Context, locale string) (Pack, error) {
 		return nil
 	})
 	return out, err
+}
+
+// rawLocked — строки языка locale поверх запасного en в формате Laravel (TranslationCatalog::buildPack()):
+// JSON-фразы ('*') — по ключу, группы pagination/validation — «группа.ключ». Вызывать под c.mu после refresh.
+func (c *Catalog) rawLocked(ctx context.Context, q *store.Queries, locale string) (map[string]string, error) {
+	if r, ok := c.raw[locale]; ok {
+		return r, nil
+	}
+	if !slices.ContainsFunc(c.enabled, func(l Language) bool { return l.Code == locale }) {
+		return nil, ErrUnknownLocale
+	}
+	codes := []string{locale}
+	if locale != SourceLocale && locale != FallbackLocale {
+		codes = append(codes, FallbackLocale)
+	}
+	rows, err := q.I18nLines(ctx, store.I18nLinesParams{Codes: codes, Locale: locale})
+	if err != nil {
+		return nil, err
+	}
+	lines := make(map[string]string, len(rows))
+	for _, r := range rows { // запасной язык — первым, язык запроса перекрывает
+		key := r.Key
+		if r.Group != "*" { // __('pagination.next'): ключ «группа.ключ»
+			key = r.Group + "." + r.Key
+		}
+		lines[key] = r.Value
+	}
+	c.raw[locale] = lines
+	return lines, nil
 }
 
 // DefaultLanguages — языки старого проекта (миграция 2026_10_13_181908_create_languages_and_translations_tables).

@@ -9,7 +9,7 @@ import { createAppRouter, createQueryClient } from './router';
 const ME = {
   user: { id: 1, name: 'Иван', phone: '+77011112233', is_superadmin: false },
   club: { id: 7, name: 'Клуб Звезда', timezone: 'Asia/Almaty', locale: 'ru' },
-  role: 'cashier',
+  role: 'manager', // кассира DashboardController уводит на кассу
   permissions: ['cash.view', 'chat.view', 'orders.view'],
   read_only: false,
   clubs: [],
@@ -51,6 +51,12 @@ describe('маршруты: гард входа, вход, панель клуб
           }
           case '/api/layout/badges':
             return json({ chat: 3, orders: 2 });
+          case '/api/dashboard':
+            return json({
+              today_income_tiyn: 0, today_expenses_tiyn: 0, today_transaction_count: 0, today_expense_count: 0, currency: 'KZT',
+              days: [], product_count: 0, low_stock_count: 0, zone_count: 0, computer_count: 0, online_computer_count: 0,
+              reserved_computer_count: 0, user_count: 0, recent_transactions: [],
+            });
           case '/api/ws-ticket':
             return json({ ticket: 'x'.repeat(43), expires_in: 30 });
           default:

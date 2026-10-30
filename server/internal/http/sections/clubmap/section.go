@@ -11,7 +11,19 @@ import (
 // access — права операций раздела: операция → маршрут Laravel (RequireClubArea::ROUTES → право).
 var access = httpx.Access{
 	Routes: map[string]string{
-		"GetClubMapState": "club-map.state",
+		"GetClubMap":           "club-map.index",
+		"GetClubMapState":      "club-map.state",
+		"CreateZone":           "club-map.store",
+		"UpdateZone":           "club-map.update",
+		"DeleteZone":           "club-map.destroy",
+		"UpdateZoneLayout":     "club-map.layout",
+		"AddZoneComputer":      "club-computers.store",
+		"UpdateComputer":       "club-computers.update",
+		"DeleteComputer":       "club-computers.destroy",
+		"UpdateComputerLayout": "club-computers.layout",
+		"ControlComputers":     "club-computers.control",
+		"EndComputerSessions":  "club-computers.end-sessions",
+		"NotifyComputers":      "club-computers.notify",
 	},
 }
 
@@ -30,6 +42,6 @@ func Section() httpx.Section {
 func mount(r chi.Router, d *httpx.Deps) {
 	si := clubmapapi.NewStrictHandlerWithOptions(&handlers{d: d},
 		httpx.Middlewares[clubmapapi.StrictMiddlewareFunc](access),
-		clubmapapi.StrictHTTPServerOptions{RequestErrorHandlerFunc: d.RequestError, ResponseErrorHandlerFunc: d.ResponseError()})
+		clubmapapi.StrictHTTPServerOptions{RequestErrorHandlerFunc: d.RequestError, ResponseErrorHandlerFunc: d.ResponseError(mapError)})
 	clubmapapi.HandlerWithOptions(si, clubmapapi.ChiServerOptions{BaseRouter: r, ErrorHandlerFunc: d.ParamError})
 }

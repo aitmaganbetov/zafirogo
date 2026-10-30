@@ -16,7 +16,7 @@
 
 Разделы сейчас: `system` (healthz/readyz), `auth` (вход, сессия, выбор клуба, суперадмин-просмотр, регистрация,
 приглашения, билет WebSocket), `i18n` (переводы), `cash`, `warehouse`, `customers`, `tariffs`, `sessions`
-(гостевая сессия, завершение), `clubmap` (состояние карты).
+(гостевая сессия, завершение), `clubmap` (состояние карты), `pclogin` (QR-вход на ПК с телефона), `billing` (экран «Подписка»), `public` (лендинг; `/offline`, манифест PWA, спецификация `/docs/api` — не JSON, в том же пакете). `superadmin` (кабинет суперадмина: только `RequireSuperadmin`, только на хосте `superadmin.domain`, если он задан).
 
 ## Имя раздела
 
@@ -78,6 +78,18 @@
   доменную ошибку, которую знает `httpx.MapError`. Свои доменные ошибки — маппер раздела:
   `d.ResponseError(myMapper)`. Тело 422 — `{error: "validation_failed", message, errors: {поле: [текст]}}`,
   тексты — русские строки старого кода (ключи перевода; фронт переводит `t(message)`).
+- **Язык текстов ответа (F1-5).** `message` и тексты `errors` ошибок переводятся на язык клуба (`me.club.locale`)
+  в `ResponseError` по каталогу переводов (`httpx.Deps.I18n`, таблица `translations`, ключ — русский текст в
+  формате Laravel). Текст **без** подстановок — просто ключ (`httpx.Validation(field, "Смена уже открыта.")`).
+  Текст **с** подстановками создавайте из ключа и параметров, иначе он не найдётся в каталоге:
+  `httpx.ValidationMsg(field, "Недостаточно товара: :product.", map[string]string{"product": name})`,
+  `httpx.ErrorMsg(status, code, ключ, params)`, `form.AddMsg(field, ключ, params)` (FormErrors). Доменные ошибки с
+  `Message`+`Params` (cash, billing, pricing) `MapError` уже переводит так. Тексты правил валидатора
+  (`RuleError`, `RuleMessage`) переводятся как валидатор Laravel: `validation.<правило>` + `validation.attributes.<поле>`.
+  Текст успешного ответа — `h.d.T(ctx, ключ, params)` (`__()`; при `params["count"]` и формах через «|» — как
+  `trans_choice`). Язык клуба — `h.d.Locale(ctx)` (кэш 30 с). Ошибку возвращайте как `error` (не готовым
+  `…422JSONResponse`) — иначе перевода не будет. Фронт по-прежнему делает `t(e.message)`: переведённый сервером
+  текст в каталоге не найдётся и покажется как есть.
 - Пагинация — keyset: `limit`/`cursor` из common, `httpx.PageSize`, `httpx.EncodeCursor/DecodeCursor`,
   ответ `{items, next_cursor}`.
 - Деньги — `int64` тиыны, поля `*_tiyn`. Ввод сумм с > 2 знаков — 422 (Q-002).

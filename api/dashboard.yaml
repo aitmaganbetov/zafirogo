@@ -1,0 +1,125 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — dashboard
+  version: 0.1.0
+  description: |
+    Админпанель (DashboardController). Конвенции — api/README.md. Деньги — целые тиыны (integer, int64).
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/dashboard:
+    get:
+      operationId: getDashboard
+      tags: [dashboard]
+      summary: Сводка за сегодня и график 7 дней
+      description: |
+        Laravel: DashboardController::__invoke() (dashboard; club-role:owner,admin,manager,cashier,operator — кассира и
+        оператора старый код уводил на кассу и список ПК, поэтому им 403). Суммы кассы — одним SQL по локальным дням
+        клуба (UTC-диапазоны); ПК онлайн — по присутствию агента; последние 6 операций кассы.
+      responses:
+        "200":
+          description: Сводка.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dashboard"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  schemas:
+    DashboardDay:
+      type: object
+      required: [label, income_tiyn, expenses_tiyn]
+      properties:
+        label:
+          type: string
+          description: День клуба «d.m».
+        income_tiyn:
+          type: integer
+          format: int64
+        expenses_tiyn:
+          type: integer
+          format: int64
+    DashboardTransaction:
+      type: object
+      required: [id, type, amount_tiyn, description, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        type:
+          type: string
+          enum: [income, expense]
+        amount_tiyn:
+          type: integer
+          format: int64
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+    Dashboard:
+      type: object
+      required: [today_income_tiyn, today_expenses_tiyn, today_transaction_count, today_expense_count, currency, days,
+                 product_count, low_stock_count, zone_count, computer_count, online_computer_count,
+                 reserved_computer_count, user_count, recent_transactions]
+      properties:
+        today_income_tiyn:
+          type: integer
+          format: int64
+        today_expenses_tiyn:
+          type: integer
+          format: int64
+        today_transaction_count:
+          type: integer
+          format: int64
+        today_expense_count:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        days:
+          type: array
+          description: 7 дней клуба, последний — сегодня.
+          items:
+            $ref: "#/components/schemas/DashboardDay"
+        product_count:
+          type: integer
+          format: int64
+        low_stock_count:
+          type: integer
+          format: int64
+        zone_count:
+          type: integer
+          format: int64
+        computer_count:
+          type: integer
+          format: int64
+        online_computer_count:
+          type: integer
+          format: int64
+        reserved_computer_count:
+          type: integer
+          format: int64
+        user_count:
+          type: integer
+          format: int64
+        recent_transactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardTransaction"

@@ -235,8 +235,6 @@ type CashShift struct {
 	CreatedAt      *time.Time `json:"created_at"`
 	UpdatedAt      *time.Time `json:"updated_at"`
 	ClubID         int64      `json:"club_id"`
-	// sha256 одноразового nonce последнего показа Z-отчёта (Q-015); сам nonce не хранится
-	ZReportNonceHash []byte `json:"z_report_nonce_hash"`
 	// Z-отчёт напечатан (afterprint + nonce): без этого веб-панель смену не закрывает (BR-056, Q-015)
 	ZReportPrintedAt *time.Time `json:"z_report_printed_at"`
 	ZReportPrintedBy *int64     `json:"z_report_printed_by"`
@@ -350,6 +348,15 @@ type ClubComputer struct {
 	StaffMessageAt       *time.Time `json:"staff_message_at"`
 	// Hello.boot_id последней загрузки Windows (новый — свежая загрузка ПК)
 	AgentBootID *string `json:"agent_boot_id"`
+}
+
+// Логотип клуба (kind logo, ≤ 1 МБ) и картинка экрана входа агента (kind signin, ≤ 3 МБ); путь — clubs.logo_path / signin_image_path
+type ClubImage struct {
+	ClubID      int64     `json:"club_id"`
+	Kind        string    `json:"kind"`
+	ContentType string    `json:"content_type"`
+	Data        []byte    `json:"data"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type ClubInvitation struct {
@@ -580,6 +587,15 @@ type News struct {
 	CreatedBy   *int64     `json:"created_by"`
 	CreatedAt   *time.Time `json:"created_at"`
 	UpdatedAt   *time.Time `json:"updated_at"`
+}
+
+// Картинка новости (PNG/JPEG ≤ 2 МБ); путь — news.image_path. club_id NULL — новость платформы
+type NewsImage struct {
+	NewsID      int64     `json:"news_id"`
+	ClubID      *int64    `json:"club_id"`
+	ContentType string    `json:"content_type"`
+	Data        []byte    `json:"data"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Outbox: события, записанные в транзакции действия; публикуются в NATS JetStream (zafiro-events)

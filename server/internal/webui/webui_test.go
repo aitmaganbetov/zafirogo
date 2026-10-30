@@ -76,3 +76,17 @@ func TestEmbeddedFSCompiles(t *testing.T) {
 		t.Fatalf("status %d", rec.Code)
 	}
 }
+
+func TestHandlerMarksSuperadminHost(t *testing.T) {
+	h := Handler(fstest.MapFS{"index.html": {Data: []byte("<!doctype html><html lang=\"ru\"><title>SPA</title>")}}, WithSuperadminDomain("admin.example.kz"))
+	req := httptest.NewRequest(http.MethodGet, "/clubs", nil)
+	req.Host = "Admin.Example.kz:8443"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), "<html data-superadmin-host lang") {
+		t.Fatalf("cabinet host: %q", rec.Body.String())
+	}
+	if body := get(t, h, "/clubs").Body.String(); strings.Contains(body, "data-superadmin-host") {
+		t.Fatalf("other host marked: %q", body)
+	}
+}

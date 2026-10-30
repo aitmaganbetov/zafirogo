@@ -18,6 +18,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -92,6 +94,7 @@ func run(ctx context.Context, fixturePath, dsn string) error {
 		{"операции кассы", s.operations},
 		{"прочее", s.rest},
 		{"последовательности", s.sequences},
+		{"присутствие агентов", s.presence},
 	}
 	for _, st := range steps {
 		if err := st.fn(ctx); err != nil {
@@ -525,6 +528,21 @@ func (s *seeder) rest(ctx context.Context) error {
 					club_computer_id, read_at, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
 					m.ID, m.ClubID, m.CustomerID, m.AuthorID, m.FromStaff, m.Body, m.ComputerID, read, s.created(m.CreatedAt)); err != nil {
 					return fmt.Errorf("сообщение %d: %w", m.ID, err)
+				}
+			}
+			for _, l := range s.f.QrLogins {
+				if l.ClubID != c.ID {
+					continue
+				}
+				expires, err := time.Parse(time.RFC3339, l.ExpiresAt)
+				if err != nil {
+					return fmt.Errorf("QR-вход %s: %w", l.ID, err)
+				}
+				sum := sha256.Sum256([]byte(l.Code)) // AgentQrLogin::hashCode(): hash('sha256', $code)
+				if _, err := tx.Exec(ctx, `INSERT INTO agent_qr_logins (id, club_id, club_computer_id, code_hash, expires_at,
+					created_at, updated_at) VALUES ($1::uuid, $2, $3, $4, $5, $6, $6)`,
+					l.ID, l.ClubID, l.ComputerID, hex.EncodeToString(sum[:]), expires, s.created(l.CreatedAt)); err != nil {
+					return fmt.Errorf("QR-вход %s: %w", l.ID, err)
 				}
 			}
 			for _, l := range s.f.ActivityLogs {

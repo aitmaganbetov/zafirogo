@@ -2,8 +2,9 @@ import { useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
-import { takeIntended } from '../../auth/intended';
+import { peekIntended, takeIntended } from '../../auth/intended';
 import { session } from '../../auth/session';
+import { isCabinetHost } from '../superadmin/host';
 import { PhoneLocalInput } from '../../components/PhoneLocalInput';
 import { AuthLayout } from '../../layouts/AuthLayout';
 import { useFlash } from '../../lib/flash';
@@ -14,6 +15,11 @@ import { NO_ERRORS, serverErrors, type FormServerErrors } from './serverErrors';
  * Вход — перенос resources/views/auth/login.blade.php. POST /api/auth/login (AuthController::login()).
  * После входа — redirect()->intended('/dashboard'); суперадмин без клуба — в кабинет (/superadmin).
  */
+
+/** Вход ради подтверждения входа на ПК по QR: клиентам разрешён (в старом — url.intended начинается с /pc-login/). */
+function isPcLogin(): boolean {
+  return (peekIntended() ?? '').startsWith('/pc-login/');
+}
 
 interface LoginForm {
   phone: string;
@@ -32,9 +38,10 @@ export function LoginPage() {
 
   const onSubmit = handleSubmit(async (v) => {
     try {
-      const me = await session.login({ phone: phoneDigits(v.phone).slice(0, 10), password: v.password, remember: v.remember, pc_login: false });
+      const me = await session.login({ phone: phoneDigits(v.phone).slice(0, 10), password: v.password, remember: v.remember, pc_login: isPcLogin() });
       setErrors(NO_ERRORS);
-      const fallback = me.club == null && me.user.is_superadmin ? '/superadmin' : '/dashboard';
+      // Хост кабинета (Q-069) и суперадмин без клуба — в кабинет.
+      const fallback = isCabinetHost() || (me.club == null && me.user.is_superadmin) ? '/superadmin' : '/dashboard';
       await navigate({ href: takeIntended(fallback) });
     } catch (e) {
       setErrors(serverErrors(e));

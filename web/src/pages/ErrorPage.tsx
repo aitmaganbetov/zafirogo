@@ -1,3 +1,4 @@
+import { useNavigate } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDocumentTitle } from '../lib/title';
@@ -50,8 +51,21 @@ export function ServerErrorPage() {
   return <Minimal code="500" message={t('Server Error')} />;
 }
 
-/** errorComponent маршрутов: 403 (ForbiddenError или ответ API 403), 404 (ответ API 404), иначе 500. */
+/**
+ * RequireActiveSubscription: подписка клуба не активна (API 402) — на страницу подписки
+ * (redirect()->route('billing.show')).
+ */
+function SubscriptionRedirect() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    void navigate({ href: '/billing', replace: true }); // маршрут — экран подписки (настройки клуба)
+  }, [navigate]);
+  return null;
+}
+
+/** errorComponent маршрутов: 402 — на /billing, 403 (ForbiddenError или ответ API 403), 404 (ответ API 404), иначе 500. */
 export function RouteErrorPage({ error }: { error: unknown }) {
+  if (isApiError(error) && error.status === 402) return <SubscriptionRedirect />;
   if (isForbidden(error)) return <ForbiddenPage message={error.message} />;
   if (isApiError(error) && error.kind === 'forbidden') return <ForbiddenPage message={error.message} />;
   if (isApiError(error) && error.kind === 'not_found') return <NotFoundPage />;

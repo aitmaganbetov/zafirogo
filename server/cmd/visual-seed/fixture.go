@@ -27,6 +27,7 @@ type Fixture struct {
 	TodoTasks         []TodoTask        `json:"todo_tasks"`
 	ChatMessages      []ChatMessage     `json:"chat_messages"`
 	ActivityLogs      []ActivityLog     `json:"activity_logs"`
+	QrLogins          []QrLogin         `json:"qr_logins"`
 }
 
 type SaasPlan struct {
@@ -265,4 +266,14 @@ type ActivityLog struct {
 	SubjectUserID *int64          `json:"subject_user_id"`
 	Details       json.RawMessage `json:"details"`
 	CreatedAt     string          `json:"created_at"`
+}
+
+// QrLogin — открытый QR-вход на ПК (страница /pc-login/{code}): код хранится хэшем sha256, как AgentQrLogin::hashCode().
+type QrLogin struct {
+	ID         string `json:"id"`
+	ClubID     int64  `json:"club_id"`
+	ComputerID int64  `json:"computer_id"`
+	Code       string `json:"code"`
+	ExpiresAt  string `json:"expires_at"`
+	CreatedAt  string `json:"created_at"`
 }

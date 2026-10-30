@@ -44,15 +44,28 @@ type productCursor struct {
 
 // ListProducts — товары склада по имени (keyset), поиск по имени и SKU.
 func (h *handlers) ListProducts(ctx context.Context, req warehouseapi.ListProductsRequestObject) (warehouseapi.ListProductsResponseObject, error) {
+	if req.Params.Page != nil && req.Params.Cursor == nil && httpx.LikePattern(req.Params.Q) == "" {
+		out, err := h.listProductsPage(ctx, req.Params.Page, req.Params.Limit)
+		if err != nil {
+			return nil, err
+		}
+		return warehouseapi.ListProducts200JSONResponse(out), nil
+	}
 	var cur productCursor
 	if err := httpx.DecodeCursor(req.Params.Cursor, &cur); err != nil {
 		return nil, err
 	}
 	size := httpx.PageSize(req.Params.Limit)
-	out := warehouseapi.ProductPage{Items: []warehouseapi.Product{}}
+	out := warehouseapi.ProductPage{Items: []warehouseapi.Product{}, PerPage: int(size)}
 	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
+		clubID, search := httpx.ClubID(ctx), httpx.LikePattern(req.Params.Q)
+		total, err := q.WarehouseCountProducts(ctx, store.WarehouseCountProductsParams{ClubID: clubID, Search: search})
+		if err != nil {
+			return err
+		}
+		out.Total = total
 		rows, err := q.AdminListProducts(ctx, store.AdminListProductsParams{
-			ClubID: httpx.ClubID(ctx), Search: httpx.LikePattern(req.Params.Q), AfterName: cur.Name, AfterID: cur.ID, PageSize: size,
+			ClubID: clubID, Search: search, AfterName: cur.Name, AfterID: cur.ID, PageSize: size,
 		})
 		if err != nil {
 			return err
@@ -248,11 +261,21 @@ func (h *handlers) CreateStockMovement(ctx context.Context, req warehouseapi.Cre
 	if b.Note != nil {
 		note = *b.Note
 	}
+	out, err := h.adjust(ctx, b.ProductId, typ, b.Quantity, 0, note)
+	if err != nil {
+		return nil, err
+	}
+	return warehouseapi.CreateStockMovement201JSONResponse(out), nil
+}
+
+// adjust — AdjustStockAction::handle() с журналом stock.received/stock.written_off и вебхуком stock.changed.
+// maxQty — верхняя граница формы (0 — без границы).
+func (h *handlers) adjust(ctx context.Context, productID int64, typ stock.MovementType, qty, maxQty int64, note string) (warehouseapi.StockMovementResult, error) {
 	var out warehouseapi.StockMovementResult
 	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		clubID, userID := httpx.ClubID(ctx), httpx.Principal(ctx).UserID
 		res, err := stock.AdjustStock(ctx, q, stock.AdjustParams{
-			ClubID: clubID, ProductID: b.ProductId, UserID: userID, Type: typ, Quantity: b.Quantity, Note: note, Now: h.d.NowFunc(),
+			ClubID: clubID, ProductID: productID, UserID: userID, Type: typ, Quantity: qty, MaxQuantity: maxQty, Note: note, Now: h.d.NowFunc(),
 		})
 		if errors.Is(err, stock.ErrProductNotFound) {
 			return httpx.RuleError("product_id", "exists") // Rule::exists формы
@@ -261,7 +284,6 @@ func (h *handlers) CreateStockMovement(ctx context.Context, req warehouseapi.Cre
 			return err
 		}
 		p := res.Product
-		qty := b.Quantity
 		e := activity.Entry{
 			ClubID: clubID, UserID: userID, SubjectType: billingsvc.SubjectProduct, SubjectID: p.ID,
 			Event: "stock.received", Description: "Оприходование: " + p.Name + ", " + strconv.FormatInt(qty, 10) + " шт.",
@@ -286,8 +308,5 @@ func (h *handlers) CreateStockMovement(ctx context.Context, req warehouseapi.Cre
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return warehouseapi.CreateStockMovement201JSONResponse(out), nil
+	return out, err
 }

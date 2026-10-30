@@ -31,7 +31,10 @@ func Section() httpx.Section {
 
 func mount(r chi.Router, d *httpx.Deps) {
 	h := &handlers{d: d}
-	if d.Pool != nil {
+	switch {
+	case d.I18n != nil:
+		h.catalog = d.I18n // общий каталог: тексты ответов API (httpx.Deps.T) и пакеты i18next
+	case d.Pool != nil:
 		h.catalog = i18n.NewCatalog(d.Pool)
 	}
 	si := i18napi.NewStrictHandlerWithOptions(h,

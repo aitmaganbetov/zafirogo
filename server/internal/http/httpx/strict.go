@@ -181,6 +181,9 @@ func (d *Deps) ResponseError(extra ...func(error) *APIError) func(w http.Respons
 			d.Log().ErrorContext(r.Context(), "handler error", slog.String("err", err.Error()))
 			ae = NewAPIError(http.StatusInternalServerError, "internal_error", "")
 		}
+		if d.I18n != nil && ClubID(r.Context()) > 0 {
+			ae = ae.localized(r.Context(), d.I18n, d.Locale(r.Context()))
+		}
 		ae.Write(w)
 	}
 }

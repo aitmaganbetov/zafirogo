@@ -238,7 +238,7 @@ func (h *handlers) IssueZReportNonce(ctx context.Context, req cashapi.IssueZRepo
 	var nonce string
 	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		var err error
-		nonce, err = h.cash().IssueZReportNonce(ctx, q, httpx.ClubID(ctx), req.ShiftId)
+		nonce, err = h.cash().IssueZReportNonce(ctx, q, httpx.ClubID(ctx), req.ShiftId, httpx.Principal(ctx).UserID)
 		return err
 	})
 	if err != nil {
@@ -293,7 +293,7 @@ func (h *handlers) CreateCashSale(ctx context.Context, req cashapi.CreateCashSal
 				return cashapi.CashOperationResult{}, err
 			}
 			tx, err := txView(res.Transaction)
-			return cashapi.CashOperationResult{Transaction: tx, Replayed: res.Replayed, Message: msgSaleDone}, err
+			return cashapi.CashOperationResult{Transaction: tx, Replayed: res.Replayed, Message: h.d.T(ctx, msgSaleDone, nil)}, err
 		})
 		return err
 	})
@@ -347,9 +347,9 @@ func (h *handlers) CreateBalanceTopUp(ctx context.Context, req cashapi.CreateBal
 			if err != nil {
 				return cashapi.TopUpResult{}, err
 			}
-			msg := msgTopUpDone
+			msg := h.d.T(ctx, msgTopUpDone, nil)
 			if res.Bonus > 0 {
-				msg = httpx.Substitute(msgTopUpBonusDone, map[string]string{"amount": httpx.NumberFormat(res.Bonus, ".")})
+				msg = h.d.T(ctx, msgTopUpBonusDone, map[string]string{"amount": httpx.NumberFormat(res.Bonus, ".")})
 			}
 			return cashapi.TopUpResult{
 				Transaction: tx, BonusTiyn: int64(res.Bonus), NewBalanceTiyn: mb.Balance, NewBonusBalanceTiyn: mb.BonusBalance,
@@ -393,7 +393,7 @@ func (h *handlers) CreateCashTransaction(ctx context.Context, req cashapi.Create
 				return cashapi.CashOperationResult{}, err
 			}
 			tx, err := txView(res.Transaction)
-			return cashapi.CashOperationResult{Transaction: tx, Replayed: res.Replayed, Message: msgTransactionDone}, err
+			return cashapi.CashOperationResult{Transaction: tx, Replayed: res.Replayed, Message: h.d.T(ctx, msgTransactionDone, nil)}, err
 		})
 		return err
 	})
@@ -403,14 +403,21 @@ func (h *handlers) CreateCashTransaction(ctx context.Context, req cashapi.Create
 	return cashapi.CreateCashTransaction201JSONResponse(out), nil
 }
 
+// opsPerPage — operations(): paginate(25).
+const opsPerPage = 25
+
 // ListCashOperations — CashRegisterController::operations(): приходы открытой смены с возвратом, новые сверху.
+// Страницы — keyset (before_id) или номер страницы (page, экран с ->links()).
 func (h *handlers) ListCashOperations(ctx context.Context, req cashapi.ListCashOperationsRequestObject) (cashapi.ListCashOperationsResponseObject, error) {
 	clubID, canRefund := httpx.ClubID(ctx), httpx.Principal(ctx).Can("cash.delete")
-	before := int64(math.MaxInt64)
-	if req.Params.BeforeId != nil {
-		before = *req.Params.BeforeId
-	}
 	size := httpx.PageSize(req.Params.Limit)
+	page := 0
+	if req.Params.Page != nil {
+		page = *req.Params.Page
+		if req.Params.Limit == nil {
+			size = opsPerPage
+		}
+	}
 	var out cashapi.CashOperationPage
 	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		shift, err := q.GetOpenCashShift(ctx, clubID)
@@ -420,13 +427,30 @@ func (h *handlers) ListCashOperations(ctx context.Context, req cashapi.ListCashO
 		if err != nil {
 			return err
 		}
-		rows, err := q.AdminListShiftIncomes(ctx, store.AdminListShiftIncomesParams{
-			ClubID: clubID, CashShiftID: shift.ID, BeforeID: before, PageSize: size,
-		})
+		total, err := q.CashCountShiftIncomes(ctx, store.CashCountShiftIncomesParams{ClubID: clubID, CashShiftID: shift.ID})
 		if err != nil {
 			return err
 		}
-		out = cashapi.CashOperationPage{ShiftId: shift.ID, Items: make([]cashapi.CashReceipt, 0, len(rows))}
+		var rows []store.CashListShiftIncomesPageRow
+		if page > 0 {
+			rows, err = q.CashListShiftIncomesPage(ctx, store.CashListShiftIncomesPageParams{
+				ClubID: clubID, CashShiftID: shift.ID, PageSize: size, PageOffset: int32(page-1) * size, // #nosec G115 -- page ≤ 100000 (схема), size ≤ 100
+			})
+		} else {
+			before := int64(math.MaxInt64)
+			if req.Params.BeforeId != nil {
+				before = *req.Params.BeforeId
+			}
+			var ks []store.AdminListShiftIncomesRow
+			ks, err = q.AdminListShiftIncomes(ctx, store.AdminListShiftIncomesParams{ClubID: clubID, CashShiftID: shift.ID, BeforeID: before, PageSize: size})
+			for _, r := range ks {
+				rows = append(rows, store.CashListShiftIncomesPageRow(r))
+			}
+		}
+		if err != nil {
+			return err
+		}
+		out = cashapi.CashOperationPage{ShiftId: shift.ID, Items: make([]cashapi.CashReceipt, 0, len(rows)), Total: total, PerPage: int(size)}
 		for _, r := range rows {
 			row := store.CashTransaction{
 				ID: r.ID, CashShiftID: r.CashShiftID, UserID: r.UserID, Type: r.Type, Amount: r.Amount,
@@ -437,6 +461,7 @@ func (h *handlers) ListCashOperations(ctx context.Context, req cashapi.ListCashO
 			if err != nil {
 				return err
 			}
+			rec.ShiftOpen = true // operations(): только открытая смена
 			if r.RefundID != nil {
 				ref := cashapi.CashRefundRef{Id: *r.RefundID}
 				if r.RefundedAt != nil {
@@ -446,7 +471,7 @@ func (h *handlers) ListCashOperations(ctx context.Context, req cashapi.ListCashO
 			}
 			out.Items = append(out.Items, rec)
 		}
-		if len(rows) == int(size) {
+		if page == 0 && len(rows) == int(size) {
 			out.NextBeforeId = httpx.Ptr(rows[len(rows)-1].ID)
 		}
 		return nil
@@ -484,6 +509,11 @@ func (h *handlers) GetCashReceipt(ctx context.Context, req cashapi.GetCashReceip
 		if out, err = receiptView(row, canRefund); err != nil {
 			return err
 		}
+		shift, err := q.GetCashShift(ctx, store.GetCashShiftParams{ClubID: clubID, ID: row.CashShiftID})
+		if err != nil {
+			return err
+		}
+		out.ShiftOpen = shift.Status == string(cash.StatusOpen)
 		ref, err := q.GetCashRefundOf(ctx, store.GetCashRefundOfParams{ClubID: clubID, RefundOfID: &row.ID})
 		switch {
 		case err == nil:
@@ -521,7 +551,7 @@ func (h *handlers) RefundCashReceipt(ctx context.Context, req cashapi.RefundCash
 				}
 				return cashapi.RefundResult{
 					Refund: tx, Kind: cashapi.RefundResultKind(res.Kind),
-					Message: httpx.Substitute(msgRefundDone, map[string]string{"amount": httpx.NumberFormat(money.Tiyn(res.Refund.Amount), ",")}),
+					Message: h.d.T(ctx, msgRefundDone, map[string]string{"amount": httpx.NumberFormat(money.Tiyn(res.Refund.Amount), ",")}),
 				}, nil
 			})
 		return err

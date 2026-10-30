@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	externalRef0 "github.com/aitmaganbetov/zafirogo/server/internal/http/api/common"
 	"github.com/go-chi/chi/v5"
@@ -18,20 +19,43 @@ import (
 
 // Defines values for StockMovementResultType.
 const (
-	Receipt  StockMovementResultType = "receipt"
-	WriteOff StockMovementResultType = "write_off"
+	StockMovementResultTypeReceipt  StockMovementResultType = "receipt"
+	StockMovementResultTypeWriteOff StockMovementResultType = "write_off"
 )
 
 // Valid indicates whether the value is a known member of the StockMovementResultType enum.
 func (e StockMovementResultType) Valid() bool {
 	switch e {
-	case Receipt:
+	case StockMovementResultTypeReceipt:
 		return true
-	case WriteOff:
+	case StockMovementResultTypeWriteOff:
 		return true
 	default:
 		return false
 	}
+}
+
+// Defines values for WarehouseMovementType.
+const (
+	WarehouseMovementTypeReceipt  WarehouseMovementType = "receipt"
+	WarehouseMovementTypeWriteOff WarehouseMovementType = "write_off"
+)
+
+// Valid indicates whether the value is a known member of the WarehouseMovementType enum.
+func (e WarehouseMovementType) Valid() bool {
+	switch e {
+	case WarehouseMovementTypeReceipt:
+		return true
+	case WarehouseMovementTypeWriteOff:
+		return true
+	default:
+		return false
+	}
+}
+
+// CreateProductCategoryRequest defines model for CreateProductCategoryRequest.
+type CreateProductCategoryRequest struct {
+	Name string `json:"name"`
 }
 
 // CreateProductRequest defines model for CreateProductRequest.
@@ -64,6 +88,15 @@ type ProductCategory struct {
 type ProductPage struct {
 	Items      []Product `json:"items"`
 	NextCursor *string   `json:"next_cursor"`
+	PerPage    int       `json:"per_page"`
+	Total      int64     `json:"total"`
+}
+
+// ReceiveStockRequest defines model for ReceiveStockRequest.
+type ReceiveStockRequest struct {
+	Note      *string `json:"note,omitempty"`
+	ProductId int64   `json:"product_id"`
+	Quantity  int64   `json:"quantity"`
 }
 
 // StockMovementRequest defines model for StockMovementRequest.
@@ -88,6 +121,24 @@ type StockMovementResult struct {
 // StockMovementResultType defines model for StockMovementResult.Type.
 type StockMovementResultType string
 
+// StockPage defines model for StockPage.
+type StockPage struct {
+	Items   []StockProduct `json:"items"`
+	PerPage int            `json:"per_page"`
+	Total   int64          `json:"total"`
+}
+
+// StockProduct defines model for StockProduct.
+type StockProduct struct {
+	Category  string `json:"category"`
+	Id        int64  `json:"id"`
+	ImageUrl  string `json:"image_url"`
+	Name      string `json:"name"`
+	PriceTiyn int64  `json:"price_tiyn"`
+	Quantity  int64  `json:"quantity"`
+	Sku       string `json:"sku"`
+}
+
 // UpdateProductRequest defines model for UpdateProductRequest.
 type UpdateProductRequest struct {
 	Name              *string `json:"name,omitempty"`
@@ -96,8 +147,51 @@ type UpdateProductRequest struct {
 	Sku               *string `json:"sku,omitempty"`
 }
 
+// WarehouseCategory defines model for WarehouseCategory.
+type WarehouseCategory struct {
+	Id            int64  `json:"id"`
+	Name          string `json:"name"`
+	ProductsCount int64  `json:"products_count"`
+}
+
+// WarehouseMovement defines model for WarehouseMovement.
+type WarehouseMovement struct {
+	BalanceAfter int64      `json:"balance_after"`
+	CreatedAt    *time.Time `json:"created_at"`
+	Id           int64      `json:"id"`
+
+	// Note Комментарий как записан (маркер «Продажа POS» не переводится).
+	Note        *string               `json:"note"`
+	ProductId   int64                 `json:"product_id"`
+	ProductName string                `json:"product_name"`
+	Quantity    int64                 `json:"quantity"`
+	Type        WarehouseMovementType `json:"type"`
+}
+
+// WarehouseMovementType defines model for WarehouseMovement.Type.
+type WarehouseMovementType string
+
+// WarehouseOverview defines model for WarehouseOverview.
+type WarehouseOverview struct {
+	Categories    []WarehouseCategory `json:"categories"`
+	Movements     []WarehouseMovement `json:"movements"`
+	ProductsTotal int64               `json:"products_total"`
+}
+
+// Page defines model for Page.
+type Page = int
+
 // ProductId defines model for ProductId.
 type ProductId = int64
+
+// ListStockParams defines parameters for ListStock.
+type ListStockParams struct {
+	// Q Поиск — подстрока без учёта регистра.
+	Q *externalRef0.Search `form:"q,omitempty" json:"q,omitempty"`
+
+	// Page Номер страницы (с 1), как ?page= Laravel.
+	Page *Page `form:"page,omitempty" json:"page,omitempty"`
+}
 
 // ListProductsParams defines parameters for ListProducts.
 type ListProductsParams struct {
@@ -107,9 +201,18 @@ type ListProductsParams struct {
 	// Cursor Непрозрачный курсор следующей страницы (next_cursor).
 	Cursor *externalRef0.Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 
+	// Page Номер страницы (с 1), как ?page= Laravel.
+	Page *Page `form:"page,omitempty" json:"page,omitempty"`
+
 	// Limit Размер страницы (по умолчанию 25, как paginate(25) старого кода).
 	Limit *externalRef0.Limit `form:"limit,omitempty" json:"limit,omitempty"`
 }
+
+// ReceiveStockJSONRequestBody defines body for ReceiveStock for application/json ContentType.
+type ReceiveStockJSONRequestBody = ReceiveStockRequest
+
+// CreateProductCategoryJSONRequestBody defines body for CreateProductCategory for application/json ContentType.
+type CreateProductCategoryJSONRequestBody = CreateProductCategoryRequest
 
 // CreateProductJSONRequestBody defines body for CreateProduct for application/json ContentType.
 type CreateProductJSONRequestBody = CreateProductRequest
@@ -122,15 +225,30 @@ type CreateStockMovementJSONRequestBody = StockMovementRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListStock Остатки товаров (для кассира и оператора)
+	// (GET /api/stock)
+	ListStock(w http.ResponseWriter, r *http.Request, params ListStockParams)
+	// ReceiveStock Оприходовать товар (кассир, оператор)
+	// (POST /api/stock/receive)
+	ReceiveStock(w http.ResponseWriter, r *http.Request)
 	// ListProductCategories Категории товаров
 	// (GET /api/warehouse/categories)
 	ListProductCategories(w http.ResponseWriter, r *http.Request)
+	// CreateProductCategory Новая категория
+	// (POST /api/warehouse/categories)
+	CreateProductCategory(w http.ResponseWriter, r *http.Request)
+	// GetWarehouseOverview Каталог склада — категории, число товаров, последние движения
+	// (GET /api/warehouse/overview)
+	GetWarehouseOverview(w http.ResponseWriter, r *http.Request)
 	// ListProducts Товары склада
 	// (GET /api/warehouse/products)
 	ListProducts(w http.ResponseWriter, r *http.Request, params ListProductsParams)
 	// CreateProduct Новый товар
 	// (POST /api/warehouse/products)
 	CreateProduct(w http.ResponseWriter, r *http.Request)
+	// DeleteProduct Удалить товар
+	// (DELETE /api/warehouse/products/{productId})
+	DeleteProduct(w http.ResponseWriter, r *http.Request, productId ProductId)
 	// UpdateProduct Изменить товар
 	// (PATCH /api/warehouse/products/{productId})
 	UpdateProduct(w http.ResponseWriter, r *http.Request, productId ProductId)
@@ -143,9 +261,33 @@ type ServerInterface interface {
 
 type Unimplemented struct{}
 
+// ListStock Остатки товаров (для кассира и оператора)
+// (GET /api/stock)
+func (_ Unimplemented) ListStock(w http.ResponseWriter, r *http.Request, params ListStockParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ReceiveStock Оприходовать товар (кассир, оператор)
+// (POST /api/stock/receive)
+func (_ Unimplemented) ReceiveStock(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ListProductCategories Категории товаров
 // (GET /api/warehouse/categories)
 func (_ Unimplemented) ListProductCategories(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateProductCategory Новая категория
+// (POST /api/warehouse/categories)
+func (_ Unimplemented) CreateProductCategory(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetWarehouseOverview Каталог склада — категории, число товаров, последние движения
+// (GET /api/warehouse/overview)
+func (_ Unimplemented) GetWarehouseOverview(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -158,6 +300,12 @@ func (_ Unimplemented) ListProducts(w http.ResponseWriter, r *http.Request, para
 // CreateProduct Новый товар
 // (POST /api/warehouse/products)
 func (_ Unimplemented) CreateProduct(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteProduct Удалить товар
+// (DELETE /api/warehouse/products/{productId})
+func (_ Unimplemented) DeleteProduct(w http.ResponseWriter, r *http.Request, productId ProductId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -182,11 +330,99 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
+// ListStock operation middleware
+func (siw *ServerInterfaceWrapper) ListStock(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListStockParams
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "page" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page", r.URL.Query(), &params.Page, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListStock(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReceiveStock operation middleware
+func (siw *ServerInterfaceWrapper) ReceiveStock(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReceiveStock(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProductCategories operation middleware
 func (siw *ServerInterfaceWrapper) ListProductCategories(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListProductCategories(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateProductCategory operation middleware
+func (siw *ServerInterfaceWrapper) CreateProductCategory(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateProductCategory(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetWarehouseOverview operation middleware
+func (siw *ServerInterfaceWrapper) GetWarehouseOverview(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetWarehouseOverview(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -231,6 +467,19 @@ func (siw *ServerInterfaceWrapper) ListProducts(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// ------------- Optional query parameter "page" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page", r.URL.Query(), &params.Page, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
+		}
+		return
+	}
+
 	// ------------- Optional query parameter "limit" -------------
 
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
@@ -260,6 +509,32 @@ func (siw *ServerInterfaceWrapper) CreateProduct(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateProduct(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteProduct operation middleware
+func (siw *ServerInterfaceWrapper) DeleteProduct(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "productId" -------------
+	var productId ProductId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "productId", chi.URLParam(r, "productId"), &productId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "productId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteProduct(w, r, productId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -429,6 +704,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/api/warehouse/products", wrapper.CreateProduct)
 	})
 	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/warehouse/products/{productId}", wrapper.DeleteProduct)
+	})
+	r.Group(func(r chi.Router) {
 		r.Patch(options.BaseURL+"/api/warehouse/products/{productId}", wrapper.UpdateProduct)
 	})
 	r.Group(func(r chi.Router) {
@@ -437,8 +715,144 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/warehouse/categories", wrapper.ListProductCategories)
 	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/warehouse/categories", wrapper.CreateProductCategory)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/warehouse/overview", wrapper.GetWarehouseOverview)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/stock", wrapper.ListStock)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/stock/receive", wrapper.ReceiveStock)
+	})
 
 	return r
+}
+
+type ListStockRequestObject struct {
+	Params ListStockParams
+}
+
+type ListStockResponseObject interface {
+	VisitListStockResponse(w http.ResponseWriter) error
+}
+
+type ListStock200JSONResponse StockPage
+
+func (response ListStock200JSONResponse) VisitListStockResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListStock401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response ListStock401JSONResponse) VisitListStockResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListStock403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response ListStock403JSONResponse) VisitListStockResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReceiveStockRequestObject struct {
+	Body *ReceiveStockJSONRequestBody
+}
+
+type ReceiveStockResponseObject interface {
+	VisitReceiveStockResponse(w http.ResponseWriter) error
+}
+
+type ReceiveStock201JSONResponse StockMovementResult
+
+func (response ReceiveStock201JSONResponse) VisitReceiveStockResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReceiveStock401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response ReceiveStock401JSONResponse) VisitReceiveStockResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReceiveStock403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response ReceiveStock403JSONResponse) VisitReceiveStockResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReceiveStock422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response ReceiveStock422JSONResponse) VisitReceiveStockResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type ListProductCategoriesRequestObject struct {
@@ -483,6 +897,129 @@ type ListProductCategories403JSONResponse struct {
 }
 
 func (response ListProductCategories403JSONResponse) VisitListProductCategoriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProductCategoryRequestObject struct {
+	Body *CreateProductCategoryJSONRequestBody
+}
+
+type CreateProductCategoryResponseObject interface {
+	VisitCreateProductCategoryResponse(w http.ResponseWriter) error
+}
+
+type CreateProductCategory201JSONResponse ProductCategory
+
+func (response CreateProductCategory201JSONResponse) VisitCreateProductCategoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProductCategory401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response CreateProductCategory401JSONResponse) VisitCreateProductCategoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProductCategory403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response CreateProductCategory403JSONResponse) VisitCreateProductCategoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProductCategory422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response CreateProductCategory422JSONResponse) VisitCreateProductCategoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWarehouseOverviewRequestObject struct {
+}
+
+type GetWarehouseOverviewResponseObject interface {
+	VisitGetWarehouseOverviewResponse(w http.ResponseWriter) error
+}
+
+type GetWarehouseOverview200JSONResponse WarehouseOverview
+
+func (response GetWarehouseOverview200JSONResponse) VisitGetWarehouseOverviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWarehouseOverview401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response GetWarehouseOverview401JSONResponse) VisitGetWarehouseOverviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWarehouseOverview403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response GetWarehouseOverview403JSONResponse) VisitGetWarehouseOverviewResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -630,6 +1167,76 @@ func (response CreateProduct422JSONResponse) VisitCreateProductResponse(w http.R
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteProductRequestObject struct {
+	ProductId ProductId `json:"productId"`
+}
+
+type DeleteProductResponseObject interface {
+	VisitDeleteProductResponse(w http.ResponseWriter) error
+}
+
+type DeleteProduct200JSONResponse Product
+
+func (response DeleteProduct200JSONResponse) VisitDeleteProductResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteProduct401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response DeleteProduct401JSONResponse) VisitDeleteProductResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteProduct403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response DeleteProduct403JSONResponse) VisitDeleteProductResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteProduct404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response DeleteProduct404JSONResponse) VisitDeleteProductResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -793,15 +1400,30 @@ func (response CreateStockMovement422JSONResponse) VisitCreateStockMovementRespo
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// ListStock Остатки товаров (для кассира и оператора)
+	// (GET /api/stock)
+	ListStock(ctx context.Context, request ListStockRequestObject) (ListStockResponseObject, error)
+	// ReceiveStock Оприходовать товар (кассир, оператор)
+	// (POST /api/stock/receive)
+	ReceiveStock(ctx context.Context, request ReceiveStockRequestObject) (ReceiveStockResponseObject, error)
 	// ListProductCategories Категории товаров
 	// (GET /api/warehouse/categories)
 	ListProductCategories(ctx context.Context, request ListProductCategoriesRequestObject) (ListProductCategoriesResponseObject, error)
+	// CreateProductCategory Новая категория
+	// (POST /api/warehouse/categories)
+	CreateProductCategory(ctx context.Context, request CreateProductCategoryRequestObject) (CreateProductCategoryResponseObject, error)
+	// GetWarehouseOverview Каталог склада — категории, число товаров, последние движения
+	// (GET /api/warehouse/overview)
+	GetWarehouseOverview(ctx context.Context, request GetWarehouseOverviewRequestObject) (GetWarehouseOverviewResponseObject, error)
 	// ListProducts Товары склада
 	// (GET /api/warehouse/products)
 	ListProducts(ctx context.Context, request ListProductsRequestObject) (ListProductsResponseObject, error)
 	// CreateProduct Новый товар
 	// (POST /api/warehouse/products)
 	CreateProduct(ctx context.Context, request CreateProductRequestObject) (CreateProductResponseObject, error)
+	// DeleteProduct Удалить товар
+	// (DELETE /api/warehouse/products/{productId})
+	DeleteProduct(ctx context.Context, request DeleteProductRequestObject) (DeleteProductResponseObject, error)
 	// UpdateProduct Изменить товар
 	// (PATCH /api/warehouse/products/{productId})
 	UpdateProduct(ctx context.Context, request UpdateProductRequestObject) (UpdateProductResponseObject, error)
@@ -849,6 +1471,63 @@ type strictHandler struct {
 	options     StrictHTTPServerOptions
 }
 
+// ListStock operation middleware
+func (sh *strictHandler) ListStock(w http.ResponseWriter, r *http.Request, params ListStockParams) {
+	var request ListStockRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListStock(ctx, request.(ListStockRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListStock")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListStockResponseObject); ok {
+		if err := validResponse.VisitListStockResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReceiveStock operation middleware
+func (sh *strictHandler) ReceiveStock(w http.ResponseWriter, r *http.Request) {
+	var request ReceiveStockRequestObject
+
+	var body ReceiveStockJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReceiveStock(ctx, request.(ReceiveStockRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReceiveStock")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReceiveStockResponseObject); ok {
+		if err := validResponse.VisitReceiveStockResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListProductCategories operation middleware
 func (sh *strictHandler) ListProductCategories(w http.ResponseWriter, r *http.Request) {
 	var request ListProductCategoriesRequestObject
@@ -866,6 +1545,61 @@ func (sh *strictHandler) ListProductCategories(w http.ResponseWriter, r *http.Re
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListProductCategoriesResponseObject); ok {
 		if err := validResponse.VisitListProductCategoriesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateProductCategory operation middleware
+func (sh *strictHandler) CreateProductCategory(w http.ResponseWriter, r *http.Request) {
+	var request CreateProductCategoryRequestObject
+
+	var body CreateProductCategoryJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateProductCategory(ctx, request.(CreateProductCategoryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateProductCategory")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateProductCategoryResponseObject); ok {
+		if err := validResponse.VisitCreateProductCategoryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetWarehouseOverview operation middleware
+func (sh *strictHandler) GetWarehouseOverview(w http.ResponseWriter, r *http.Request) {
+	var request GetWarehouseOverviewRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetWarehouseOverview(ctx, request.(GetWarehouseOverviewRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetWarehouseOverview")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetWarehouseOverviewResponseObject); ok {
+		if err := validResponse.VisitGetWarehouseOverviewResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -923,6 +1657,32 @@ func (sh *strictHandler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateProductResponseObject); ok {
 		if err := validResponse.VisitCreateProductResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteProduct operation middleware
+func (sh *strictHandler) DeleteProduct(w http.ResponseWriter, r *http.Request, productId ProductId) {
+	var request DeleteProductRequestObject
+
+	request.ProductId = productId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteProduct(ctx, request.(DeleteProductRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteProduct")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteProductResponseObject); ok {
+		if err := validResponse.VisitDeleteProductResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

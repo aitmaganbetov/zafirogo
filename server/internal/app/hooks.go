@@ -69,6 +69,8 @@ type authEvents struct {
 	app      *pgxpool.Pool
 	platform *pgxpool.Pool
 	log      *slog.Logger
+	// now — часы журнала платформы (dev.fixed_now в tools/visual); nil — time.Now.
+	now func() time.Time
 }
 
 var _ auth.Events = (*authEvents)(nil)
@@ -87,9 +89,9 @@ func (e *authEvents) record(ctx context.Context, clubID int64, entry activity.En
 // LoginSucceeded — auth.login «Вход в систему: :user».
 func (e *authEvents) LoginSucceeded(ctx context.Context, userID, clubID int64, userName string) {
 	if clubID == 0 {
-		// Суперадмин без клуба: в старом — PlatformLogger superadmin.login (platform_logs).
-		// TODO(platform_logs): запросов к platform_logs ещё нет (W-4) — пока только системный лог.
-		e.log.InfoContext(ctx, "superadmin login", "user_id", userID)
+		// Суперадмин без клуба: PlatformLogger superadmin.login (platform_logs, PD-15).
+		e.platformLog(ctx, activity.PlatformEntry{Event: "superadmin.login", Key: "Вход суперадмина: :user",
+			Params: map[string]string{"user": userName}, UserID: userID})
 		return
 	}
 	e.record(ctx, clubID, activity.Entry{
@@ -176,10 +178,37 @@ func (e *authEvents) ClubSwitched(ctx context.Context, userID, fromClubID, toClu
 	})
 }
 
-// ClubViewed — superadmin.club_viewed (журнал платформы).
-// TODO(platform_logs): запись в platform_logs, когда появятся её запросы (W-4).
+// ClubViewed — superadmin.club_viewed «Суперадмин открыл клуб :club на просмотр» (журнал платформы, PD-15;
+// Laravel: Superadmin\ClubController::view()).
 func (e *authEvents) ClubViewed(ctx context.Context, userID, clubID int64) {
-	e.log.InfoContext(ctx, "superadmin club viewed", "user_id", userID, "club_id", clubID)
+	if e.platform == nil {
+		return
+	}
+	var name string
+	_ = db.InPlatformTx(ctx, e.platform, func(q *store.Queries) error {
+		n, err := q.SuperadminClubExists(ctx, clubID)
+		name = n
+		return err
+	})
+	e.platformLog(ctx, activity.PlatformEntry{Event: "superadmin.club_viewed", Key: "Суперадмин открыл клуб :club на просмотр",
+		Params: map[string]string{"club": name}, UserID: userID, ClubID: clubID})
+}
+
+// platformLog — запись журнала платформы своей транзакцией; ошибка — только предупреждение (вход не ломается).
+func (e *authEvents) platformLog(ctx context.Context, entry activity.PlatformEntry) {
+	if e.platform == nil {
+		return
+	}
+	if e.now != nil {
+		entry.At = e.now()
+	}
+	err := db.InPlatformTx(ctx, e.platform, func(q *store.Queries) error {
+		_, err := activity.RecordPlatform(ctx, q, entry)
+		return err
+	})
+	if err != nil {
+		e.log.WarnContext(ctx, "platform log write failed", "event", entry.Event, "err", err)
+	}
 }
 
 func (e *authEvents) userName(ctx context.Context, userID int64) string {

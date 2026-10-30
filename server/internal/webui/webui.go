@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"embed"
 	"io/fs"
+	"net"
 	"net/http"
 	"path"
 	"strings"
@@ -41,19 +42,40 @@ const placeholder = `<!doctype html>
 <body><h1>Zafiro</h1><p>Фронтенд не собран. Выполните <code>task build</code>.</p></body></html>
 `
 
+// Option — настройка отдачи SPA.
+type Option func(*options)
+
+type options struct{ cabinetDomain string }
+
+// WithSuperadminDomain — на хосте кабинета суперадмина (SUPERADMIN_DOMAIN, Q-069) index.html отдаётся с атрибутом
+// <html data-superadmin-host>: SPA показывает кабинет с корня хоста (как Route::domain() старого кода).
+func WithSuperadminDomain(domain string) Option { return func(o *options) { o.cabinetDomain = domain } }
+
 // Handler возвращает http.Handler, отдающий SPA из fsys.
-func Handler(fsys fs.FS) http.Handler {
+func Handler(fsys fs.FS, opts ...Option) http.Handler {
+	var o options
+	for _, fn := range opts {
+		fn(&o)
+	}
 	index, err := fs.ReadFile(fsys, "index.html")
 	if err != nil {
 		index = []byte(placeholder)
 	}
+	cabinetIndex := bytes.Replace(index, []byte("<html"), []byte("<html data-superadmin-host"), 1)
 	fileServer := http.FileServerFS(fsys)
 	modTime := time.Now()
 
 	serveIndex := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		http.ServeContent(w, r, "index.html", modTime, bytes.NewReader(index))
+		body := index
+		if o.cabinetDomain != "" {
+			w.Header().Add("Vary", "Host")
+			if sameHost(r.Host, o.cabinetDomain) {
+				body = cabinetIndex
+			}
+		}
+		http.ServeContent(w, r, "index.html", modTime, bytes.NewReader(body))
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -91,4 +113,12 @@ func Handler(fsys fs.FS) http.Handler {
 		}
 		serveIndex(w, r)
 	})
+}
+
+// sameHost — имя хоста запроса (без порта) совпадает с domain без учёта регистра.
+func sameHost(host, domain string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.EqualFold(host, domain)
 }

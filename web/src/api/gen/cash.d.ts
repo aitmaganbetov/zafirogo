@@ -223,7 +223,8 @@ export interface paths {
         /**
          * Приходы открытой смены (для возвратов)
          * @description Laravel: CashRegisterController::operations() (cash-register.operations, cash.view): приходы открытой смены,
-         *     новые сверху, с возвратом. Нет открытой смены — 404. Пагинация keyset: before_id = next_before_id.
+         *     новые сверху, с возвратом. Нет открытой смены — 404. Пагинация keyset: before_id = next_before_id; или по
+         *     номеру страницы page (paginate(25), экран «Операции смены» с ->links()) — тогда total и per_page.
          */
         get: operations["listCashOperations"];
         put?: never;
@@ -276,10 +277,119 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cash/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Витрина кассы — категории и услуги
+         * @description Laravel: CashRegisterController::index() (cash-register.index, cash.view): число товаров в наличии (кнопка
+         *     «Все»), первые 5 категорий в порядке первого появления в списке по имени (с числом товаров), активные услуги.
+         *     Товары — страницами (GET /api/cash/products), решение Q-070.
+         */
+        get: operations["getCashCatalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/products": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Товары в наличии (витрина кассы)
+         * @description Laravel: CashRegisterController::index() — Product::where('quantity', '>', 0)->orderBy('name') (cash.view).
+         *     Keyset по (имя, id): cursor = next_cursor. category — только эта категория (пусто — все).
+         */
+        get: operations["listCashProducts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/customers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Поиск пользователя для пополнения баланса
+         * @description Laravel: CashRegisterController::index() — пользователи клуба с балансами по имени (cash.view); в старом —
+         *     все в HTML и фильтр в браузере, здесь — поиск по имени или телефону (решение Q-070), не больше limit.
+         */
+        get: operations["searchCashCustomers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        CashCatalogCategory: {
+            name: string;
+            /** Format: int64 */
+            count: number;
+        };
+        CashService: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            /** Format: int64 */
+            price_tiyn: number;
+            unit: string | null;
+        };
+        CashCatalog: {
+            /** Format: int64 */
+            products_total: number;
+            categories: components["schemas"]["CashCatalogCategory"][];
+            services: components["schemas"]["CashService"][];
+        };
+        CashProduct: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            category: string;
+            /** Format: int64 */
+            price_tiyn: number;
+            /** Format: int64 */
+            quantity: number;
+            /** @description Фото товара (ProductResource::imageUrl) — пока заглушка /images/product-placeholder.svg. */
+            image_url: string;
+        };
+        CashProductPage: {
+            items: components["schemas"]["CashProduct"][];
+            next_cursor: string | null;
+        };
+        CashCustomer: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            phone: string;
+            /** Format: int64 */
+            balance_tiyn: number;
+            /** Format: int64 */
+            bonus_balance_tiyn: number;
+        };
         CashShift: {
             /** Format: int64 */
             id: number;
@@ -389,6 +499,8 @@ export interface components {
             created_at: string;
         };
         CashReceipt: {
+            /** @description Смена операции открыта (кнопка «Возврат» — только в открытой смене, refund-button.blade.php). */
+            shift_open: boolean;
             transaction: components["schemas"]["CashTransaction"];
             refund: components["schemas"]["CashRefundRef"] | null;
             /** @description Операция такого вида возвращается (продажа или пополнение). */
@@ -402,6 +514,12 @@ export interface components {
             items: components["schemas"]["CashReceipt"][];
             /** Format: int64 */
             next_before_id: number | null;
+            /**
+             * Format: int64
+             * @description Всего приходов смены (->links()).
+             */
+            total: number;
+            per_page: number;
         };
         SaleItem: {
             /** Format: int64 */
@@ -576,8 +694,19 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description Неверный запрос (параметр, курсор, нет заголовка Idempotency-Key). */
+        BadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
     parameters: {
+        /** @description Номер страницы (с 1), как ?page= Laravel. */
+        Page: number;
         ShiftId: number;
         TransactionId: number;
         /**
@@ -587,6 +716,10 @@ export interface components {
         IdempotencyKey: string;
         /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
         Limit: number;
+        /** @description Непрозрачный курсор следующей страницы (next_cursor). */
+        Cursor: string;
+        /** @description Поиск — подстрока без учёта регистра. */
+        Search: string;
     };
     requestBodies: never;
     headers: never;
@@ -910,6 +1043,8 @@ export interface operations {
         parameters: {
             query?: {
                 before_id?: number;
+                /** @description Номер страницы (с 1), как ?page= Laravel. */
+                page?: components["parameters"]["Page"];
                 /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
                 limit?: components["parameters"]["Limit"];
             };
@@ -989,6 +1124,84 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getCashCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Категории и услуги. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashCatalog"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listCashProducts: {
+        parameters: {
+            query?: {
+                category?: string;
+                /** @description Непрозрачный курсор следующей страницы (next_cursor). */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Страница товаров. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashProductPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    searchCashCustomers: {
+        parameters: {
+            query?: {
+                /** @description Поиск — подстрока без учёта регистра. */
+                q?: components["parameters"]["Search"];
+                /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Пользователи. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashCustomer"][];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
         };
     };
 }

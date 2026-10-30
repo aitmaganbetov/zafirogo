@@ -18,6 +18,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/identity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
+	"github.com/aitmaganbetov/zafirogo/server/internal/chat"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
@@ -448,7 +449,11 @@ func (ss *socialService) SendChatMessage(ctx context.Context, req *agentv1.SendC
 				_, err = outbox.Add(ctx, q, outbox.Event{ClubID: id.ClubID, Type: "chat.message", Data: map[string]any{
 					"message_id": row.ID, "customer_id": g.UserID, "from_staff": false, "created_at": now.UTC().Format("2006-01-02T15:04:05Z07:00"),
 				}})
-				return err
+				if err != nil {
+					return err
+				}
+				// Живой бейдж «Чат» и колокольчик панели (chat.unread, notifications.changed — Q-063).
+				return chat.Unread(ctx, q, id.ClubID)
 			})
 			if err != nil {
 				return nil, s.fail(ctx, "SendChatMessage", err)

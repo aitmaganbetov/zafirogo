@@ -50,22 +50,17 @@ SET closed_by = sqlc.narg(closed_by), status = 'closed', open_marker = NULL,
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id) AND status = 'open'
 RETURNING *;
 
--- name: SetZReportNonce :exec
--- zReport(): новый nonce печати (хранится только его sha256), прежний перестаёт действовать.
-UPDATE cash_shifts
-SET z_report_nonce_hash = sqlc.arg(nonce_hash)
-WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);
-
--- name: LockZReportNonce :one
-SELECT status, z_report_nonce_hash
+-- name: LockCashShiftStatus :one
+-- markZReportPrinted(): статус смены под блокировкой (смена не open — 422). Nonce печати — в Valkey (Q-015).
+SELECT status
 FROM cash_shifts
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id)
 FOR UPDATE;
 
 -- name: MarkZReportPrinted :exec
--- markZReportPrinted(): nonce одноразовый (pull из сессии) — гасится; отметка печати смены.
+-- markZReportPrinted(): отметка печати смены (nonce уже погашен в Valkey).
 UPDATE cash_shifts
-SET z_report_nonce_hash = NULL, z_report_printed_at = sqlc.arg(now), z_report_printed_by = sqlc.narg(printed_by)
+SET z_report_printed_at = sqlc.arg(now), z_report_printed_by = sqlc.narg(printed_by)
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);
 
 -- name: CashShiftTotals :one

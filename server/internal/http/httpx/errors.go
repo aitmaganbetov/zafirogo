@@ -27,6 +27,8 @@ var ErrNotConfigured = errors.New("admin API is not configured")
 type APIError struct {
 	Status int
 	Body   any
+	// msgs — тексты тела с подстановками → ключ и параметры (перевод на язык клуба, i18n.go).
+	msgs map[string]Msg
 }
 
 func (e *APIError) Error() string { return http.StatusText(e.Status) }
@@ -67,6 +69,7 @@ func Validation(field, message string) *APIError {
 type FormErrors struct {
 	first  string
 	fields map[string][]string
+	msgs   map[string]Msg
 }
 
 // Add добавляет ошибку поля.
@@ -89,6 +92,12 @@ func (f *FormErrors) AddErr(err error) bool {
 					f.Add(k, m)
 				}
 			}
+			for text, m := range ae.msgs {
+				if f.msgs == nil {
+					f.msgs = map[string]Msg{}
+				}
+				f.msgs[text] = m
+			}
 			return true
 		}
 	}
@@ -102,7 +111,7 @@ func (f *FormErrors) Err() error {
 	}
 	return &APIError{Status: http.StatusUnprocessableEntity, Body: apicommon.ValidationError{
 		Error: apicommon.ValidationErrorErrorValidationFailed, Message: f.first, Errors: f.fields,
-	}}
+	}, msgs: f.msgs}
 }
 
 // RuleError — ошибка правила формы с текстом валидатора Laravel (RuleMessage).
@@ -133,20 +142,20 @@ func MapError(err error) *APIError {
 		if ce.Rule != "" {
 			return RuleError(ce.Field, ce.Rule)
 		}
-		return Validation(ce.Field, ce.Text())
+		return ValidationMsg(ce.Field, ce.Message, ce.Params)
 	case errors.As(err, &se):
 		if se.Rule != "" {
 			return RuleError(se.Field, se.Rule)
 		}
 		return Validation(se.Field, se.Message)
 	case errors.As(err, &be):
-		return Validation(be.Field, Substitute(be.Message, be.Params))
+		return ValidationMsg(be.Field, be.Message, be.Params)
 	case errors.As(err, &pe):
-		return Validation(pe.Field, Substitute(pe.Message, pe.Params))
+		return ValidationMsg(pe.Field, pe.Message, pe.Params)
 	case errors.As(err, &sse):
 		return Validation(sse.Field, sse.Message)
 	case errors.As(err, &bae):
-		return Validation(bae.Field, Substitute(bae.Message, bae.Params))
+		return ValidationMsg(bae.Field, bae.Message, bae.Params)
 	case errors.As(err, &fe):
 		return NewAPIError(http.StatusForbidden, permissions.CodeForbidden, fe.Message)
 	case errors.Is(err, cashsvc.ErrNotFound), errors.Is(err, billingsvc.ErrNotFound), errors.Is(err, stock.ErrProductNotFound),
@@ -248,9 +257,10 @@ func RuleMessage(field, rule, param string) string {
 	if param == "" {
 		param = ruleParams[base+"|"+rule]
 	}
+	key := rule // правило для перевода (validation.<key>)
 	if rule == cash.RuleMax {
 		if p, ok := ruleParams[base+"|max_string"]; ok && param == "" {
-			param, tpl = p, ruleTemplates["max_string"]
+			param, tpl, key = p, ruleTemplates["max_string"], "max_string"
 		}
 	}
 	msg := strings.ReplaceAll(tpl, ":attribute", strings.ReplaceAll(field, "_", " "))
@@ -258,5 +268,6 @@ func RuleMessage(field, rule, param string) string {
 	for _, k := range []string{":min", ":max", ":value"} {
 		msg = strings.ReplaceAll(msg, k, param)
 	}
+	rememberRule(msg, field, key, param)
 	return msg
 }

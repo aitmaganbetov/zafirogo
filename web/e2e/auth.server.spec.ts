@@ -35,9 +35,10 @@ test('регистрация владельца → панель → перез�
   await page.reload();
   await expect(page.locator('.sidebar')).toContainText('Владелец E2E');
 
-  // Выход (POST /api/auth/logout) — на /, затем гарды ведут на /login; /dashboard недоступен.
+  // Выход (POST /api/auth/logout) — на лендинг / (redirect('/')); /dashboard недоступен.
   await page.locator('.sidebar form[action="/logout"] button').click();
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('#features')).toBeVisible();
   await page.goto('/dashboard');
   await expect(page).toHaveURL(/\/login$/);
 

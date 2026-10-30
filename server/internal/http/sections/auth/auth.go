@@ -3,7 +3,9 @@ package auth
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
@@ -70,6 +72,9 @@ func (h *handlers) meResponse(ctx context.Context, me auth.Me) (authapi.Me, erro
 		if err := h.clubInfo(ctx, out.Club); err != nil {
 			return out, err
 		}
+		if err := h.integrationsAccess(ctx, me.Principal, out.Club); err != nil {
+			return out, err
+		}
 	}
 	return out, nil
 }
@@ -131,6 +136,8 @@ func (h *handlers) Login(ctx context.Context, req authapi.LoginRequestObject) (a
 	if req.Body.PcLogin != nil {
 		in.PCLogin = *req.Body.PcLogin
 	}
+	// Хост кабинета суперадмина (Q-069): здесь входят только суперадмины.
+	in.SuperadminOnly = r != nil && onSuperadminHost(r.Host, h.d.Superadmin.Domain)
 	res, err := h.d.Auth.Login(ctx, in)
 	var fe *auth.FieldError
 	if errors.As(err, &fe) {
@@ -360,4 +367,15 @@ func (h *handlers) SuperadminLeaveClub(ctx context.Context, _ authapi.Superadmin
 		return nil, err
 	}
 	return authapi.SuperadminLeaveClub200JSONResponse(out), nil
+}
+
+// onSuperadminHost — SuperadminHost::is(): имя хоста запроса без порта совпадает с SUPERADMIN_DOMAIN.
+func onSuperadminHost(host, domain string) bool {
+	if domain == "" {
+		return false
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.EqualFold(host, domain)
 }

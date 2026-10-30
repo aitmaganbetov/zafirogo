@@ -336,7 +336,7 @@ func TestGoldenShift(t *testing.T) {
 		var nonce string
 		e.must(e.tx(func(ctx context.Context, q *store.Queries) error {
 			var err error
-			nonce, err = svc.IssueZReportNonce(ctx, q, e.club, sh.ID)
+			nonce, err = svc.IssueZReportNonce(ctx, q, e.club, sh.ID, owner)
 			return err
 		}))
 		eq(t, "nonce length", len(nonce), 40)
@@ -354,7 +354,7 @@ func TestGoldenShift(t *testing.T) {
 		eq(t, "spent nonce", mark(nonce), false)
 		e.must(e.tx(func(ctx context.Context, q *store.Queries) error {
 			var err error
-			nonce, err = svc.IssueZReportNonce(ctx, q, e.club, sh.ID)
+			nonce, err = svc.IssueZReportNonce(ctx, q, e.club, sh.ID, owner)
 			return err
 		}))
 		eq(t, "printed", mark(nonce), true)

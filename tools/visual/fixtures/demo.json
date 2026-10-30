@@ -9,7 +9,8 @@
       "owner": 2,
       "admin": 3,
       "cashier": 4,
-      "operator": 5
+      "operator": 5,
+      "owner_expired": 14
     }
   },
   "saas_plans": [
@@ -29,6 +30,21 @@
         "started_at": "2026-09-01T10:00:00+05:00",
         "current_period_ends_at": "2026-11-01T10:00:00+05:00"
       }
+    },
+    {
+      "_comment": "Клуб с истёкшей подпиской (экран /billing «Истекла», G7): только владелец, без зала и данных.",
+      "id": 2,
+      "name": "Zafiro Lite",
+      "slug": "zafiro-lite",
+      "timezone": "Asia/Almaty",
+      "locale": "ru",
+      "created_at": "2026-08-01T10:00:00+05:00",
+      "subscription": {
+        "saas_plan_id": 1,
+        "status": "expired",
+        "started_at": "2026-08-01T10:00:00+05:00",
+        "current_period_ends_at": "2026-10-01T10:00:00+05:00"
+      }
     }
   ],
   "users": [
@@ -44,13 +60,14 @@
     { "id": 10, "name": "Даниил Ким", "phone": "+77011000010", "created_at": "2026-10-01T12:00:00+05:00" },
     { "id": 11, "name": "Жанна Омарова", "phone": "+77011000011", "created_at": "2026-10-05T19:15:00+05:00" },
     { "id": 12, "name": "Арман Бекетов", "phone": "+77011000012", "created_at": "2026-10-08T21:40:00+05:00" },
-    { "id": 13, "name": "Олжас Тулегенов", "phone": "+77011000013", "created_at": "2026-10-10T13:00:00+05:00", "blocked_at": "2026-10-14T22:00:00+05:00" }
+    { "id": 13, "name": "Олжас Тулегенов", "phone": "+77011000013", "created_at": "2026-10-10T13:00:00+05:00", "blocked_at": "2026-10-14T22:00:00+05:00" },
+    { "id": 14, "name": "Марат Оспанов", "phone": "+77010000014", "created_at": "2026-08-01T10:00:00+05:00" }
   ],
   "memberships": [
     { "club_id": 1, "user_id": 2, "role": "owner", "can_manage_integrations": true },
     { "club_id": 1, "user_id": 3, "role": "admin" },
     { "club_id": 1, "user_id": 4, "role": "cashier" },
-    { "club_id": 1, "user_id": 5, "role": "operator" },
+    { "club_id": 1, "user_id": 5, "role": "operator", "permissions": { "todos.delete": true } },
     { "club_id": 1, "user_id": 6, "role": "client", "balance": "3500.00", "bonus_balance": "250.00", "total_spent": "18400.00" },
     { "club_id": 1, "user_id": 7, "role": "client", "balance": "1200.00", "discount": "5.00", "total_spent": "5600.00" },
     { "club_id": 1, "user_id": 8, "role": "client", "bonus_balance": "1000.00" },
@@ -58,7 +75,8 @@
     { "club_id": 1, "user_id": 10, "role": "client", "balance": "80.00", "total_spent": "900.00" },
     { "club_id": 1, "user_id": 11, "role": "client" },
     { "club_id": 1, "user_id": 12, "role": "client", "balance": "6400.00", "bonus_balance": "150.00", "total_spent": "12000.00" },
-    { "club_id": 1, "user_id": 13, "role": "client", "balance": "500.00" }
+    { "club_id": 1, "user_id": 13, "role": "client", "balance": "500.00" },
+    { "club_id": 2, "user_id": 14, "role": "owner" }
   ],
   "zones": [
     { "id": 1, "club_id": 1, "name": "VIP-зал", "description": "Персональные игровые места", "capacity": 8, "icon": "crown", "theme": "green", "status": "available", "is_featured": true, "sort_order": 10, "position_x": 20, "position_y": 20, "width": 390, "height": 380, "price_per_hour": "1000.00" },
@@ -162,5 +180,8 @@
     { "club_id": 1, "event": "auth.login", "description": "Вход в систему: Айдар Сейтказы", "user_id": 2, "subject_user_id": 2, "created_at": "2026-10-15T08:45:00+05:00" },
     { "club_id": 1, "event": "auth.login", "description": "Вход в систему: Ержан Касымов", "user_id": 4, "subject_user_id": 4, "created_at": "2026-10-15T08:58:00+05:00" },
     { "club_id": 1, "event": "auth.login", "description": "Вход в систему: Дана Ермекова", "user_id": 5, "subject_user_id": 5, "created_at": "2026-10-15T09:05:00+05:00" }
+  ],
+  "qr_logins": [
+    { "_comment": "Открытый QR-вход на ПК VIP-01 (страница /pc-login/{code}, G7): код 40 символов, срок — через 4 минуты после «сейчас».", "id": "5f0c7d1e-3a8b-4c2d-9e6f-0a1b2c3d4e5f", "club_id": 1, "computer_id": 1, "code": "VisualDemoQrLoginCode0123456789abcdefABC", "expires_at": "2026-10-15T12:04:00+05:00", "created_at": "2026-10-15T11:59:00+05:00" }
   ]
 }

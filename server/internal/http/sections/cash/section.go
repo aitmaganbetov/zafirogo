@@ -26,6 +26,9 @@ var access = httpx.Access{
 		"ListCashOperations":    "cash-register.operations",
 		"GetCashReceipt":        "cash-register.receipt",
 		"RefundCashReceipt":     "cash-register.refund",
+		"GetCashCatalog":        "cash-register.index",
+		"ListCashProducts":      "cash-register.index",
+		"SearchCashCustomers":   "cash-register.index",
 	},
 	// CashRegisterController::refund() — abort_unless(canRefund(), 403, …).
 	Messages: map[string]string{"RefundCashReceipt": cash.MsgNoRefundRight},

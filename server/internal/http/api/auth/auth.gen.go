@@ -107,7 +107,10 @@ type Me struct {
 
 // MeClub defines model for MeClub.
 type MeClub struct {
-	Id int64 `json:"id"`
+	// CanManageIntegrations @can('manage-integrations'): владелец или сотрудник с club_memberships.can_manage_integrations
+	// (пункт «API и интеграции» меню настроек).
+	CanManageIntegrations *bool `json:"can_manage_integrations,omitempty"`
+	Id                    int64 `json:"id"`
 
 	// Locale Язык интерфейса клуба (clubs.locale ?? 'ru', LocaleResolver::forClub()).
 	Locale string `json:"locale"`

@@ -55,6 +55,9 @@ type Service struct {
 	Now func() time.Time
 	// Rand — источник случайности для nonce печати Z-отчёта. nil — crypto/rand.
 	Rand io.Reader
+	// ZNonces — одноразовые nonce печати Z-отчёта (Q-015: Valkey, NewValkeyZNonces). nil — в памяти процесса
+	// (тесты и один инстанс; на нескольких инстансах nonce, выданный одним, другой не узнает).
+	ZNonces ZNonceStore
 	// Notifier — уведомления агента о балансе клиента после коммита (через billingsvc.AfterCommit:
 	// вызывающий создаёт billingsvc.WithCommitHooks и выполняет их после COMMIT). nil — без уведомлений.
 	Notifier billingsvc.SessionNotifier

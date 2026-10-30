@@ -297,7 +297,8 @@ paths:
       summary: Приходы открытой смены (для возвратов)
       description: |
         Laravel: CashRegisterController::operations() (cash-register.operations, cash.view): приходы открытой смены,
-        новые сверху, с возвратом. Нет открытой смены — 404. Пагинация keyset: before_id = next_before_id.
+        новые сверху, с возвратом. Нет открытой смены — 404. Пагинация keyset: before_id = next_before_id; или по
+        номеру страницы page (paginate(25), экран «Операции смены» с ->links()) — тогда total и per_page.
       parameters:
         - name: before_id
           in: query
@@ -306,6 +307,7 @@ paths:
             type: integer
             format: int64
             minimum: 1
+        - $ref: "#/components/parameters/Page"
         - $ref: "common.yaml#/components/parameters/Limit"
       responses:
         "200":
@@ -371,6 +373,80 @@ paths:
           $ref: "common.yaml#/components/responses/Conflict"
         "422":
           $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/cash/catalog:
+    get:
+      operationId: getCashCatalog
+      tags: [cash]
+      summary: Витрина кассы — категории и услуги
+      description: |
+        Laravel: CashRegisterController::index() (cash-register.index, cash.view): число товаров в наличии (кнопка
+        «Все»), первые 5 категорий в порядке первого появления в списке по имени (с числом товаров), активные услуги.
+        Товары — страницами (GET /api/cash/products), решение Q-070.
+      responses:
+        "200":
+          description: Категории и услуги.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashCatalog"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/cash/products:
+    get:
+      operationId: listCashProducts
+      tags: [cash]
+      summary: Товары в наличии (витрина кассы)
+      description: |
+        Laravel: CashRegisterController::index() — Product::where('quantity', '>', 0)->orderBy('name') (cash.view).
+        Keyset по (имя, id): cursor = next_cursor. category — только эта категория (пусто — все).
+      parameters:
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+        - $ref: "common.yaml#/components/parameters/Cursor"
+        - $ref: "common.yaml#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Страница товаров.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashProductPage"
+        "400":
+          $ref: "common.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/cash/customers:
+    get:
+      operationId: searchCashCustomers
+      tags: [cash]
+      summary: Поиск пользователя для пополнения баланса
+      description: |
+        Laravel: CashRegisterController::index() — пользователи клуба с балансами по имени (cash.view); в старом —
+        все в HTML и фильтр в браузере, здесь — поиск по имени или телефону (решение Q-070), не больше limit.
+      parameters:
+        - $ref: "common.yaml#/components/parameters/Search"
+        - $ref: "common.yaml#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Пользователи.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CashCustomer"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
 components:
   securitySchemes:
     bearerAuth:
@@ -383,6 +459,15 @@ components:
       name: __Secure-zafiro_rt
       description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
   parameters:
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Номер страницы (с 1), как ?page= Laravel.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100000
     ShiftId:
       name: shiftId
       in: path
@@ -398,6 +483,93 @@ components:
         type: integer
         format: int64
   schemas:
+    CashCatalogCategory:
+      type: object
+      required: [name, count]
+      properties:
+        name:
+          type: string
+        count:
+          type: integer
+          format: int64
+    CashService:
+      type: object
+      required: [id, name, price_tiyn, unit]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        price_tiyn:
+          type: integer
+          format: int64
+        unit:
+          type: string
+          nullable: true
+    CashCatalog:
+      type: object
+      required: [products_total, categories, services]
+      properties:
+        products_total:
+          type: integer
+          format: int64
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/CashCatalogCategory"
+        services:
+          type: array
+          items:
+            $ref: "#/components/schemas/CashService"
+    CashProduct:
+      type: object
+      required: [id, name, category, price_tiyn, quantity, image_url]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        category:
+          type: string
+        price_tiyn:
+          type: integer
+          format: int64
+        quantity:
+          type: integer
+          format: int64
+        image_url:
+          type: string
+          description: Фото товара (ProductResource::imageUrl) — пока заглушка /images/product-placeholder.svg.
+    CashProductPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CashProduct"
+        next_cursor:
+          type: string
+          nullable: true
+    CashCustomer:
+      type: object
+      required: [id, name, phone, balance_tiyn, bonus_balance_tiyn]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        phone:
+          type: string
+        balance_tiyn:
+          type: integer
+          format: int64
+        bonus_balance_tiyn:
+          type: integer
+          format: int64
     CashShift:
       type: object
       required: [id, status, opening_balance_tiyn, opened_at, z_report_printed]
@@ -587,8 +759,11 @@ components:
           format: date-time
     CashReceipt:
       type: object
-      required: [transaction, refund, refundable, can_refund]
+      required: [transaction, refund, refundable, can_refund, shift_open]
       properties:
+        shift_open:
+          type: boolean
+          description: Смена операции открыта (кнопка «Возврат» — только в открытой смене, refund-button.blade.php).
         transaction:
           $ref: "#/components/schemas/CashTransaction"
         refund:
@@ -603,7 +778,7 @@ components:
           description: У сотрудника есть право cash.delete.
     CashOperationPage:
       type: object
-      required: [shift_id, items, next_before_id]
+      required: [shift_id, items, next_before_id, total, per_page]
       properties:
         shift_id:
           type: integer
@@ -616,6 +791,12 @@ components:
           type: integer
           format: int64
           nullable: true
+        total:
+          type: integer
+          format: int64
+          description: Всего приходов смены (->links()).
+        per_page:
+          type: integer
     SaleItem:
       type: object
       additionalProperties: false

@@ -249,6 +249,13 @@ DB::transaction(function () use ($data, $created): void {
             'read_at' => utc($m['read_at'] ?? null), 'created_at' => $created($m), 'updated_at' => $created($m),
         ]);
     }
+    foreach ($data['qr_logins'] ?? [] as $l) {
+        DB::table('agent_qr_logins')->insert([
+            'id' => $l['id'], 'club_id' => $l['club_id'], 'club_computer_id' => $l['computer_id'],
+            'code_hash' => \App\Models\AgentQrLogin::hashCode($l['code']), 'expires_at' => utc($l['expires_at']),
+            'created_at' => $created($l), 'updated_at' => $created($l),
+        ]);
+    }
     foreach ($data['activity_logs'] as $l) {
         DB::table('activity_logs')->insert([
             'club_id' => $l['club_id'], 'event' => $l['event'], 'description' => $l['description'], 'user_id' => $l['user_id'],

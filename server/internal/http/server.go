@@ -6,6 +6,7 @@
 package httpserver
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/valkey-io/valkey-go"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/enroll"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/password"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
@@ -27,6 +29,8 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/wsticket"
+	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
+	"github.com/aitmaganbetov/zafirogo/server/internal/monitoring"
 )
 
 // Checker — проверка зависимости для /readyz (например, пинг Postgres).
@@ -78,8 +82,31 @@ type Options struct {
 	Valkey valkey.Client
 	// Passwords — хешер паролей (регистрация и приглашения). nil — эти эндпоинты отвечают 503.
 	Passwords *password.Hasher
+	// AgentCommands — команды агентам ПК (карта клуба: питание, техрежим, уведомление). nil — 503.
+	AgentCommands httpx.AgentCommands
+	// Enroll — подключение ПК (коды, ключи образа, ожидающие ПК). nil — 503.
+	Enroll *enroll.Service
+	// SignOutGuest — отзыв токенов гостя на ПК (сброс пароля клиента в панели). nil — не отзываются.
+	SignOutGuest func(ctx context.Context, clubID, userID int64, reason string)
+	// ChatToGuest — ответ сотрудника в чате на ПК гостя (раздел chat). nil — не доставляется.
+	ChatToGuest func(ctx context.Context, clubID, userID, messageID int64, author, body string, at time.Time)
+	// ClubConfigChanged — ConfigChanged агентам ПК клуба (настройки клуба). nil — не рассылается.
+	ClubConfigChanged func(ctx context.Context, clubID int64)
+	// WebhookURLCheck — SSRF-проверка адреса вебхука (webhook.Guard). nil — создание вебхуков отвечает 503.
+	WebhookURLCheck func(ctx context.Context, rawURL string) string
+	// WakeWebhooks — разбудить отправку вебхуков. nil — очередной опрос.
+	WakeWebhooks func()
+	// ApproveQrLogin — подтверждение QR-входа на ПК (guestapi.Server.ApproveQrLogin). nil — 503.
+	ApproveQrLogin func(ctx context.Context, clubID int64, code string, userID int64) error
+	// RequireSubscription — middleware subscription (RequireActiveSubscription, subscription.go): разделы панели —
+	// при активной подписке клуба. Включает app (прод); в тестах разделов — по выбору (их клубы без подписки).
+	RequireSubscription bool
 	// Sections — разделы REST; nil — все зарегистрированные (Sections() в sections.go). Для тестов.
 	Sections []httpx.Section
+	// Superadmin — кабинет суперадмина (домен Q-069, секреты платформы, рассылка агентам).
+	Superadmin httpx.SuperadminDeps
+	// Metrics — счётчики запросов экрана «Сервер» (monitoring.Recorder). nil — не считаются.
+	Metrics *monitoring.Recorder
 }
 
 // limitRoutes применяет лимиты разделов ("МЕТОД /путь" → правило; сегмент {param} — любой непустой сегмент)
@@ -205,11 +232,20 @@ func NewRouter(o Options) http.Handler {
 		sections = Sections()
 	}
 	deps := &httpx.Deps{
-		Logger: o.Logger, Auth: o.Auth, Pool: o.Pool, PlatformPool: o.PlatformPool, Billing: o.Billing, Cash: o.Cash,
+		Superadmin: o.Superadmin,
+		Logger:     o.Logger, Auth: o.Auth, Pool: o.Pool, PlatformPool: o.PlatformPool, Billing: o.Billing, Cash: o.Cash,
 		Presence: o.Presence, Checkers: o.Checkers, CheckTimeout: o.CheckTimeout, Now: o.Now, Passwords: o.Passwords,
+		AgentCommands: o.AgentCommands, Enroll: o.Enroll,
+		SignOutGuest:      o.SignOutGuest,
+		ChatToGuest:       o.ChatToGuest,
+		ClubConfigChanged: o.ClubConfigChanged, WebhookURLCheck: o.WebhookURLCheck, WakeWebhooks: o.WakeWebhooks,
+		ApproveQrLogin: o.ApproveQrLogin,
 	}
 	if o.Valkey != nil && o.Auth != nil {
 		deps.WSTickets = wsticket.New(o.Valkey, "", 0)
+	}
+	if o.Pool != nil {
+		deps.I18n = i18n.NewCatalog(o.Pool) // переводы интерфейса и текстов ответов (F1-5)
 	}
 
 	r := chi.NewRouter()
@@ -225,7 +261,13 @@ func NewRouter(o Options) http.Handler {
 		// Principal из Authorization: Bearer — до лимитов (ключ «пользователь») и обработчиков.
 		r.Use(o.Auth.Middleware)
 	}
+	// После Principal: клуб запроса для счётчиков и режим просмотра для домена кабинета.
+	r.Use(o.Metrics.Middleware, superadminHost(o.Superadmin.Domain))
 	r.Use(limitRoutes(o.Limiter, sections))
+	if o.Pool != nil && o.RequireSubscription {
+		// RequireActiveSubscription: разделы панели клуба — при активной подписке (subscription.go).
+		r.Use(requireSubscription(poolSubscriptionLookup(o.Pool), o.Now, o.Logger))
+	}
 
 	for path, h := range o.Mounts {
 		if h == nil {

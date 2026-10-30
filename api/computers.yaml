@@ -1,0 +1,588 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — computers
+  version: 0.1.0
+  description: |
+    Список ПК (ClubComputerListController) и подключение ПК к клубу: одноразовые коды регистрации, ключи образа для
+    бездисковых ПК, ожидающие подтверждения ПК (решение Q-037; сервис server/internal/agent/enroll).
+    Конвенции — api/README.md.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/club-computers:
+    get:
+      operationId: listClubComputers
+      tags: [computers]
+      summary: Список ПК
+      description: |
+        Laravel: ClubComputerListController (club-computers.index, club_map.view): ПК по зоне и номеру, по 50 на странице
+        (paginate(50)); блок «Новая версия агента» (AgentUpdate::status()). Связь с агентом — из присутствия.
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Страница списка.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComputerList"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/agent-enrollment:
+    get:
+      operationId: getAgentEnrollment
+      tags: [computers]
+      summary: Подключение ПК — коды, ключи образа, ожидающие ПК
+      description: |
+        Коды регистрации и ожидающие ПК — роли owner, admin, manager, operator (ClubComputerPolicy::register); ключи
+        образа — owner, admin (как «Ключ установки клуба»). Режим просмотра суперадмина — только флаги, без списков.
+      responses:
+        "200":
+          description: Данные экрана.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Enrollment"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/agent-enrollment/codes:
+    post:
+      operationId: createEnrollmentCode
+      tags: [computers]
+      summary: Выдать одноразовый код «Подключить ПК» (15 минут)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CodeInput"
+      responses:
+        "201":
+          description: Код (показывается один раз).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedCode"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/agent-enrollment/codes/{codeId}:
+    delete:
+      operationId: cancelEnrollmentCode
+      tags: [computers]
+      summary: Отменить неиспользованный код
+      parameters:
+        - name: codeId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Отменён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Done"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/agent-enrollment/image-keys:
+    post:
+      operationId: createImageKey
+      tags: [computers]
+      summary: Создать ключ образа
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImageKeyInput"
+      responses:
+        "201":
+          description: Ключ (показывается один раз).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedImageKey"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/agent-enrollment/image-keys/{keyId}:
+    delete:
+      operationId: revokeImageKey
+      tags: [computers]
+      summary: Отозвать ключ образа
+      parameters:
+        - name: keyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Отозван.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Done"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/agent-enrollment/pending/{pendingId}/approve:
+    post:
+      operationId: approvePendingComputer
+      tags: [computers]
+      summary: Подтвердить ожидающий ПК
+      parameters:
+        - name: pendingId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CodeInput"
+      responses:
+        "200":
+          description: Подтверждён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Done"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/agent-enrollment/pending/{pendingId}/reject:
+    post:
+      operationId: rejectPendingComputer
+      tags: [computers]
+      summary: Отклонить ожидающий ПК
+      parameters:
+        - name: pendingId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Отклонён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Done"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/agent-enrollment/computers/{computerId}/reregister:
+    post:
+      operationId: reregisterComputer
+      tags: [computers]
+      summary: Перерегистрировать ПК
+      description: |
+        Отзывает сертификаты карточки ПК (агент получит CERTIFICATE_REVOKED) и выдаёт одноразовый код именно для этой
+        карточки (enroll.Service.Reregister): ПК подключается заново на то же место карты. Роли — как для кодов.
+      parameters:
+        - $ref: "#/components/parameters/ComputerId"
+      responses:
+        "201":
+          description: Код (показывается один раз).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedCode"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/agent-enrollment/computers/{computerId}/revoke:
+    post:
+      operationId: revokeComputer
+      tags: [computers]
+      summary: Отключить ПК
+      description: |
+        Отзывает все сертификаты карточки ПК (enroll.Service.RevokeComputer): агент отключается и не подключится без
+        нового кода. Карточка на карте остаётся. Роли — как для кодов.
+      parameters:
+        - $ref: "#/components/parameters/ComputerId"
+      responses:
+        "200":
+          description: Отключён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Done"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  parameters:
+    ComputerId:
+      name: computerId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    Done:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+    AgentUpdate:
+      type: object
+      required: [version, outdated, total]
+      properties:
+        version:
+          type: string
+        download_url:
+          type: string
+          nullable: true
+        outdated:
+          type: integer
+          format: int64
+        total:
+          type: integer
+          format: int64
+    ListedComputer:
+      type: object
+      required: [id, number, name, zone_id, connection, status, is_reserved, position_x, position_y, agent_outdated]
+      properties:
+        id:
+          type: integer
+          format: int64
+        number:
+          type: integer
+          format: int64
+        name:
+          type: string
+        zone_id:
+          type: integer
+          format: int64
+        zone_name:
+          type: string
+          nullable: true
+        connection:
+          type: string
+          enum: [online, offline]
+        status:
+          type: string
+          description: club_computers.status (как в старом списке — колонка, не currentStatus).
+        is_reserved:
+          type: boolean
+        position_x:
+          type: integer
+          format: int64
+        position_y:
+          type: integer
+          format: int64
+        agent_state:
+          type: string
+          nullable: true
+        mac_address:
+          type: string
+          nullable: true
+        local_ip:
+          type: string
+          nullable: true
+        remote_ip:
+          type: string
+          nullable: true
+        cpu_model:
+          type: string
+          nullable: true
+        cpu_cores:
+          type: integer
+          format: int64
+          nullable: true
+        ram_total_mb:
+          type: integer
+          format: int64
+          nullable: true
+        gpu_model:
+          type: string
+          nullable: true
+        os_version:
+          type: string
+          nullable: true
+        device_id:
+          type: string
+          nullable: true
+        current_session_id:
+          type: string
+          nullable: true
+        agent_version:
+          type: string
+          nullable: true
+        agent_outdated:
+          type: boolean
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+        hardware_reported_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+    ComputerList:
+      type: object
+      required: [items, page, per_page, total, agent_update]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListedComputer"
+        page:
+          type: integer
+          format: int64
+        per_page:
+          type: integer
+          format: int64
+        total:
+          type: integer
+          format: int64
+        agent_update:
+          allOf:
+            - $ref: "#/components/schemas/AgentUpdate"
+          nullable: true
+    EnrollmentZone:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+    EnrollmentComputer:
+      type: object
+      required: [id, name, zone_id]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          description: ClubComputer::displayName().
+        zone_id:
+          type: integer
+          format: int64
+    EnrollmentCode:
+      type: object
+      required: [id, created_at, expires_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        zone_id:
+          type: integer
+          format: int64
+          nullable: true
+        computer_id:
+          type: integer
+          format: int64
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    ImageKey:
+      type: object
+      required: [id, prefix, name, subnets, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        prefix:
+          type: string
+        name:
+          type: string
+        subnets:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+    PendingComputer:
+      type: object
+      required: [id, mac_address, created_at, last_seen_at, attempts]
+      properties:
+        id:
+          type: integer
+          format: int64
+        mac_address:
+          type: string
+        hostname:
+          type: string
+          nullable: true
+        ip:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        attempts:
+          type: integer
+          format: int64
+    Enrollment:
+      type: object
+      required: [can_register, can_manage_image_keys, zones, codes, image_keys, pending]
+      properties:
+        can_register:
+          type: boolean
+        can_manage_image_keys:
+          type: boolean
+        zones:
+          type: array
+          items:
+            $ref: "#/components/schemas/EnrollmentZone"
+        codes:
+          type: array
+          items:
+            $ref: "#/components/schemas/EnrollmentCode"
+        image_keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImageKey"
+        pending:
+          type: array
+          items:
+            $ref: "#/components/schemas/PendingComputer"
+        computers:
+          type: array
+          description: ПК клуба для перерегистрации и отключения (только при can_register).
+          items:
+            $ref: "#/components/schemas/EnrollmentComputer"
+    CodeInput:
+      type: object
+      properties:
+        zone_id:
+          type: integer
+          format: int64
+          nullable: true
+    IssuedCode:
+      type: object
+      required: [id, code, expires_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        code:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+    ImageKeyInput:
+      type: object
+      required: [name, subnets]
+      properties:
+        name:
+          type: string
+        subnets:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+    IssuedImageKey:
+      type: object
+      required: [id, key, prefix, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        key:
+          type: string
+        prefix:
+          type: string
+        name:
+          type: string

@@ -7,10 +7,104 @@ package store
 
 import (
 	"context"
+	"time"
 )
 
+const adminAccountsLocked = `-- name: AdminAccountsLocked :many
+SELECT u.id
+FROM users u
+WHERE u.id = ANY($1::bigint[])
+  AND (u.is_superadmin
+       OR EXISTS (SELECT 1 FROM club_memberships m
+                  WHERE m.user_id = u.id AND m.role IN ('owner', 'admin', 'manager', 'cashier', 'operator')))
+`
+
+// UserController::index() $staffElsewhere / isAccountLocked(): аккаунты, которые открывают панель какого-либо
+// клуба (сотрудник в любом клубе, withoutGlobalScope('club')) или суперадминку. Пул zafiro_platform (все клубы);
+// users — платформенная таблица.
+func (q *Queries) AdminAccountsLocked(ctx context.Context, userIds []int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, adminAccountsLocked, userIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminCountCustomers = `-- name: AdminCountCustomers :one
+SELECT count(*)::bigint
+FROM club_memberships m
+JOIN users u ON u.id = m.user_id
+WHERE m.club_id = $1
+  AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator')
+  AND ($2::text = '' OR u.name ILIKE $2::text OR u.phone ILIKE $2::text)
+`
+
+type AdminCountCustomersParams struct {
+	ClubID int64  `json:"club_id"`
+	Search string `json:"search"`
+}
+
+// «Всего: :count» ($users->total()): клиенты клуба (с тем же поиском).
+func (q *Queries) AdminCountCustomers(ctx context.Context, arg AdminCountCustomersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, adminCountCustomers, arg.ClubID, arg.Search)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const adminCreateCustomer = `-- name: AdminCreateCustomer :one
+WITH new_user AS (
+    INSERT INTO users (name, phone, email, password, created_at, updated_at)
+    VALUES ($4, $5, $6, $7, $3, $3)
+    RETURNING id
+)
+INSERT INTO club_memberships (club_id, user_id, role, discount, created_at, updated_at)
+SELECT $1::bigint, n.id, 'client', $2::text::numeric, $3, $3
+FROM new_user n
+RETURNING user_id
+`
+
+type AdminCreateCustomerParams struct {
+	ClubID       int64      `json:"club_id"`
+	Discount     string     `json:"discount"`
+	Now          *time.Time `json:"now"`
+	Name         string     `json:"name"`
+	Phone        string     `json:"phone"`
+	Email        *string    `json:"email"`
+	PasswordHash string     `json:"password_hash"`
+}
+
+// UserController::store(): User::create(name, phone, email, password) + ClubMembership::create(role client,
+// discount) в одном запросе (users — без club_id; членство — этого клуба). Пароль — уже хеш (Argon2id).
+func (q *Queries) AdminCreateCustomer(ctx context.Context, arg AdminCreateCustomerParams) (int64, error) {
+	row := q.db.QueryRow(ctx, adminCreateCustomer,
+		arg.ClubID,
+		arg.Discount,
+		arg.Now,
+		arg.Name,
+		arg.Phone,
+		arg.Email,
+		arg.PasswordHash,
+	)
+	var user_id int64
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const adminGetCustomer = `-- name: AdminGetCustomer :one
-SELECT m.user_id, u.name, u.phone, m.role, m.discount::text AS discount, m.total_spent,
+SELECT m.user_id, u.name, u.phone, u.email, m.role, m.discount::text AS discount, m.total_spent,
        COALESCE(b.balance, 0)::bigint AS balance, COALESCE(b.bonus_balance, 0)::bigint AS bonus_balance,
        (b.user_id IS NOT NULL)::boolean AS has_balance
 FROM club_memberships m
@@ -27,15 +121,16 @@ type AdminGetCustomerParams struct {
 }
 
 type AdminGetCustomerRow struct {
-	UserID       int64  `json:"user_id"`
-	Name         string `json:"name"`
-	Phone        string `json:"phone"`
-	Role         string `json:"role"`
-	Discount     string `json:"discount"`
-	TotalSpent   int64  `json:"total_spent"`
-	Balance      int64  `json:"balance"`
-	BonusBalance int64  `json:"bonus_balance"`
-	HasBalance   bool   `json:"has_balance"`
+	UserID       int64   `json:"user_id"`
+	Name         string  `json:"name"`
+	Phone        string  `json:"phone"`
+	Email        *string `json:"email"`
+	Role         string  `json:"role"`
+	Discount     string  `json:"discount"`
+	TotalSpent   int64   `json:"total_spent"`
+	Balance      int64   `json:"balance"`
+	BonusBalance int64   `json:"bonus_balance"`
+	HasBalance   bool    `json:"has_balance"`
 }
 
 // Клиент клуба (не сотрудник) с балансами; нет — 404.
@@ -46,6 +141,7 @@ func (q *Queries) AdminGetCustomer(ctx context.Context, arg AdminGetCustomerPara
 		&i.UserID,
 		&i.Name,
 		&i.Phone,
+		&i.Email,
 		&i.Role,
 		&i.Discount,
 		&i.TotalSpent,
@@ -58,7 +154,7 @@ func (q *Queries) AdminGetCustomer(ctx context.Context, arg AdminGetCustomerPara
 
 const adminListCustomers = `-- name: AdminListCustomers :many
 
-SELECT m.user_id, u.name, u.phone, m.role, m.discount::text AS discount, m.total_spent,
+SELECT m.user_id, u.name, u.phone, u.email, m.role, m.discount::text AS discount, m.total_spent,
        COALESCE(b.balance, 0)::bigint AS balance, COALESCE(b.bonus_balance, 0)::bigint AS bonus_balance,
        (b.user_id IS NOT NULL)::boolean AS has_balance
 FROM club_memberships m
@@ -80,15 +176,16 @@ type AdminListCustomersParams struct {
 }
 
 type AdminListCustomersRow struct {
-	UserID       int64  `json:"user_id"`
-	Name         string `json:"name"`
-	Phone        string `json:"phone"`
-	Role         string `json:"role"`
-	Discount     string `json:"discount"`
-	TotalSpent   int64  `json:"total_spent"`
-	Balance      int64  `json:"balance"`
-	BonusBalance int64  `json:"bonus_balance"`
-	HasBalance   bool   `json:"has_balance"`
+	UserID       int64   `json:"user_id"`
+	Name         string  `json:"name"`
+	Phone        string  `json:"phone"`
+	Email        *string `json:"email"`
+	Role         string  `json:"role"`
+	Discount     string  `json:"discount"`
+	TotalSpent   int64   `json:"total_spent"`
+	Balance      int64   `json:"balance"`
+	BonusBalance int64   `json:"bonus_balance"`
+	HasBalance   bool    `json:"has_balance"`
 }
 
 // Клиенты для REST админки (Этап 2, B1). Laravel: app/Http/Controllers/UserController.php index().
@@ -113,6 +210,7 @@ func (q *Queries) AdminListCustomers(ctx context.Context, arg AdminListCustomers
 			&i.UserID,
 			&i.Name,
 			&i.Phone,
+			&i.Email,
 			&i.Role,
 			&i.Discount,
 			&i.TotalSpent,
@@ -128,4 +226,193 @@ func (q *Queries) AdminListCustomers(ctx context.Context, arg AdminListCustomers
 		return nil, err
 	}
 	return items, nil
+}
+
+const adminListCustomersBefore = `-- name: AdminListCustomersBefore :many
+SELECT m.user_id, u.name, u.phone, u.email, m.role, m.discount::text AS discount, m.total_spent,
+       COALESCE(b.balance, 0)::bigint AS balance, COALESCE(b.bonus_balance, 0)::bigint AS bonus_balance,
+       (b.user_id IS NOT NULL)::boolean AS has_balance
+FROM club_memberships m
+JOIN users u ON u.id = m.user_id
+LEFT JOIN member_balances b ON b.club_id = m.club_id AND b.user_id = m.user_id
+WHERE m.club_id = $1
+  AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator')
+  AND m.user_id < $2
+  AND ($3::text = '' OR u.name ILIKE $3::text OR u.phone ILIKE $3::text)
+ORDER BY m.user_id DESC
+LIMIT $4
+`
+
+type AdminListCustomersBeforeParams struct {
+	ClubID       int64  `json:"club_id"`
+	BeforeUserID int64  `json:"before_user_id"`
+	Search       string `json:"search"`
+	PageSize     int32  `json:"page_size"`
+}
+
+type AdminListCustomersBeforeRow struct {
+	UserID       int64   `json:"user_id"`
+	Name         string  `json:"name"`
+	Phone        string  `json:"phone"`
+	Email        *string `json:"email"`
+	Role         string  `json:"role"`
+	Discount     string  `json:"discount"`
+	TotalSpent   int64   `json:"total_spent"`
+	Balance      int64   `json:"balance"`
+	BonusBalance int64   `json:"bonus_balance"`
+	HasBalance   bool    `json:"has_balance"`
+}
+
+// Предыдущая страница списка клиентов (keyset назад): user_id < before_user_id, по убыванию; вызывающий
+// переворачивает строки. Остальное — как AdminListCustomers.
+func (q *Queries) AdminListCustomersBefore(ctx context.Context, arg AdminListCustomersBeforeParams) ([]AdminListCustomersBeforeRow, error) {
+	rows, err := q.db.Query(ctx, adminListCustomersBefore,
+		arg.ClubID,
+		arg.BeforeUserID,
+		arg.Search,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminListCustomersBeforeRow
+	for rows.Next() {
+		var i AdminListCustomersBeforeRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Name,
+			&i.Phone,
+			&i.Email,
+			&i.Role,
+			&i.Discount,
+			&i.TotalSpent,
+			&i.Balance,
+			&i.BonusBalance,
+			&i.HasBalance,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminSetCustomerPassword = `-- name: AdminSetCustomerPassword :execrows
+UPDATE users
+SET password = $1, updated_at = $2
+WHERE users.id = $3
+  AND EXISTS (SELECT 1 FROM club_memberships m
+              WHERE m.club_id = $4 AND m.user_id = users.id
+                AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator'))
+`
+
+type AdminSetCustomerPasswordParams struct {
+	PasswordHash string     `json:"password_hash"`
+	Now          *time.Time `json:"now"`
+	UserID       int64      `json:"user_id"`
+	ClubID       int64      `json:"club_id"`
+}
+
+// UserController::resetPassword(): $user->forceFill(['password' => …])->save() — только клиенту этого клуба.
+func (q *Queries) AdminSetCustomerPassword(ctx context.Context, arg AdminSetCustomerPasswordParams) (int64, error) {
+	result, err := q.db.Exec(ctx, adminSetCustomerPassword,
+		arg.PasswordHash,
+		arg.Now,
+		arg.UserID,
+		arg.ClubID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const adminUpdateCustomerAccount = `-- name: AdminUpdateCustomerAccount :execrows
+UPDATE users
+SET name = $1, email = $2, updated_at = $3
+WHERE users.id = $4
+  AND EXISTS (SELECT 1 FROM club_memberships m
+              WHERE m.club_id = $5 AND m.user_id = users.id
+                AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator'))
+`
+
+type AdminUpdateCustomerAccountParams struct {
+	Name   string     `json:"name"`
+	Email  *string    `json:"email"`
+	Now    *time.Time `json:"now"`
+	UserID int64      `json:"user_id"`
+	ClubID int64      `json:"club_id"`
+}
+
+// UserController::update(): $user->fill(['name', 'email'])->save() — только клиенту этого клуба.
+func (q *Queries) AdminUpdateCustomerAccount(ctx context.Context, arg AdminUpdateCustomerAccountParams) (int64, error) {
+	result, err := q.db.Exec(ctx, adminUpdateCustomerAccount,
+		arg.Name,
+		arg.Email,
+		arg.Now,
+		arg.UserID,
+		arg.ClubID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const adminUpdateCustomerDiscount = `-- name: AdminUpdateCustomerDiscount :one
+UPDATE club_memberships
+SET discount = $1::text::numeric, updated_at = $2
+WHERE club_id = $3 AND user_id = $4
+  AND role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator')
+RETURNING discount::text
+`
+
+type AdminUpdateCustomerDiscountParams struct {
+	Discount string     `json:"discount"`
+	Now      *time.Time `json:"now"`
+	ClubID   int64      `json:"club_id"`
+	UserID   int64      `json:"user_id"`
+}
+
+// UserController::update(): $membership->update(['discount' => …]) (numeric(5,2) округляет, как decimal MySQL).
+func (q *Queries) AdminUpdateCustomerDiscount(ctx context.Context, arg AdminUpdateCustomerDiscountParams) (string, error) {
+	row := q.db.QueryRow(ctx, adminUpdateCustomerDiscount,
+		arg.Discount,
+		arg.Now,
+		arg.ClubID,
+		arg.UserID,
+	)
+	var discount string
+	err := row.Scan(&discount)
+	return discount, err
+}
+
+const adminUserConflicts = `-- name: AdminUserConflicts :one
+SELECT EXISTS (SELECT 1 FROM users p WHERE $1::text <> '' AND p.phone = $1::text)::boolean AS phone_taken,
+       EXISTS (SELECT 1 FROM users e WHERE $2::text <> '' AND e.email = $2::text
+                                       AND e.id <> $3::bigint)::boolean AS email_taken
+`
+
+type AdminUserConflictsParams struct {
+	Phone        string `json:"phone"`
+	Email        string `json:"email"`
+	ExceptUserID int64  `json:"except_user_id"`
+}
+
+type AdminUserConflictsRow struct {
+	PhoneTaken bool `json:"phone_taken"`
+	EmailTaken bool `json:"email_taken"`
+}
+
+// StoreUserRequest / UserController::update(): Rule::unique('users', 'phone') и Rule::unique('users', 'email')
+// (->ignore(user)). users — платформенная таблица (без club_id и RLS). Пустой phone/email — не проверяется.
+func (q *Queries) AdminUserConflicts(ctx context.Context, arg AdminUserConflictsParams) (AdminUserConflictsRow, error) {
+	row := q.db.QueryRow(ctx, adminUserConflicts, arg.Phone, arg.Email, arg.ExceptUserID)
+	var i AdminUserConflictsRow
+	err := row.Scan(&i.PhoneTaken, &i.EmailTaken)
+	return i, err
 }

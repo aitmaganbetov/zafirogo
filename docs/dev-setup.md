@@ -70,6 +70,7 @@ NATS и gRPC. Нужен для смоук-теста собранного би�
 | `ZAFIRO_HTTP_READ_HEADER_TIMEOUT` | `5s` | также `_READ_TIMEOUT` 30s, `_WRITE_TIMEOUT` 60s, `_IDLE_TIMEOUT` 120s |
 | `ZAFIRO_HTTP_REQUEST_TIMEOUT` | `30s` | дедлайн контекста обработчика (кроме `/ws`) |
 | `ZAFIRO_HTTP_TRUSTED_PROXIES` | пусто | IP/CIDR через запятую; только от них принимается `X-Forwarded-For` |
+| `ZAFIRO_HTTP_WIKI_HOST` | пусто | хост wiki (`WIKI_DOMAIN` старого, Q-069): wiki на его корне, `/wiki` сайта — 301 туда; пусто — wiki на `/wiki` |
 | `ZAFIRO_DATABASE_URL` \* | пусто | DSN логина ∈ `zafiro_app`; пусто — режим без зависимостей |
 | `ZAFIRO_DATABASE_PLATFORM_URL` \* | пусто | DSN логина ∈ `zafiro_platform`; обязателен вместе с `DATABASE_URL` |
 | `ZAFIRO_VALKEY_ADDR`, `ZAFIRO_VALKEY_PASSWORD` \* | `localhost:6379` | Valkey: сессии, лимиты, присутствие ПК |
@@ -150,3 +151,10 @@ task build    # web build → server/internal/webui/dist → CGO_ENABLED=0 go bu
 task db:down
 docker compose -f docker-compose.dev.yml --env-file .env down -v   # удалить и данные
 ```
+
+## Кабинет суперадмина на своём домене (Q-069)
+
+Без `ZAFIRO_SUPERADMIN_DOMAIN` кабинет открывается по `/superadmin` (как старый проект без `SUPERADMIN_DOMAIN`).
+Проверить отдельный домен локально: собрать бинарник (`task build`) и запустить с
+`ZAFIRO_SUPERADMIN_DOMAIN=admin.localhost`, кабинет — `http://admin.localhost:<порт>/` (поддомены `localhost` браузер
+ведёт на 127.0.0.1). В `vite dev` хост кабинета не определяется (атрибут `data-superadmin-host` ставит сервер в `index.html`).

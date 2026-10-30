@@ -197,7 +197,7 @@ func TestLoadNestedEnvKeys(t *testing.T) {
 		cfg.Auth.SigningKeys[1].Secret.Reveal() != "fedcba9876543210fedcba9876543210" {
 		t.Errorf("auth.signing_keys = %v", cfg.Auth.SigningKeys)
 	}
-	if len(cfg.Generated) != 1 || cfg.Generated[0] != "agent.enroll.code_pepper" {
+	if len(cfg.Generated) != 2 || cfg.Generated[0] != "agent.enroll.code_pepper" || cfg.Generated[1] != "superadmin.secret_key" {
 		t.Errorf("generated = %v", cfg.Generated)
 	}
 }

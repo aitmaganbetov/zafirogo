@@ -2,6 +2,7 @@ import { redirect } from '@tanstack/react-router';
 import { can, isStaff, type SessionStore, type Me } from './session';
 import { rememberIntended } from './intended';
 import { ForbiddenError } from '../pages/errors';
+import { isCabinetHost } from '../features/superadmin/host';
 
 /*
  * Гарды маршрутов (beforeLoad) — аналоги middleware Laravel:
@@ -42,7 +43,17 @@ export async function requireAuth({ context, location }: BeforeLoadArgs): Promis
 /** Вход + выбранный клуб (SetCurrentClub: без клуба — 403 «У аккаунта нет доступа ни к одному клубу.»). */
 export async function requireClub(args: BeforeLoadArgs): Promise<Me> {
   const me = await requireAuth(args);
+  // SetCurrentClub: суперадмин без клубов уходит в кабинет; RestrictSuperadminHost: на хосте кабинета панель клуба —
+  // только в режиме просмотра клуба (Q-069).
+  if (me.user.is_superadmin && (me.club == null || (isCabinetHost() && !me.read_only))) throw redirect({ href: '/superadmin' });
   if (me.club == null) throw new ForbiddenError(MSG_NO_CLUBS);
+  return me;
+}
+
+/** Кабинет суперадмина (`auth` + `superadmin` = RequireSuperadmin): не суперадмину — 403. */
+export async function requireSuperadmin(args: BeforeLoadArgs): Promise<Me> {
+  const me = await requireAuth(args);
+  if (!me.user.is_superadmin) throw new ForbiddenError();
   return me;
 }
 

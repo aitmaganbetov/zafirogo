@@ -10,7 +10,7 @@
 //   - журнал (shop.purchased), события клуба (stock.changed, shop_order.created, balance.changed) — в той же
 //     транзакции (activity / outbox).
 //
-// Выдача и отмена заказа сотрудником (BR-076, BR-077) — панель/приложение сотрудника, не этот пакет.
+// Выдача и отмена заказа сотрудником (BR-076, BR-077) — orders.go (HandOver, Cancel) в транзакции вызывающего.
 package shop
 
 import (

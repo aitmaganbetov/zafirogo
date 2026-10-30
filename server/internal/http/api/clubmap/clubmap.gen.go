@@ -7,12 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	externalRef0 "github.com/aitmaganbetov/zafirogo/server/internal/http/api/common"
 	"github.com/go-chi/chi/v5"
+	"github.com/oapi-codegen/runtime"
 )
 
 // Defines values for ComputerStateConnection.
@@ -33,33 +35,103 @@ func (e ComputerStateConnection) Valid() bool {
 	}
 }
 
+// ClubMapPage defines model for ClubMapPage.
+type ClubMapPage struct {
+	// BookingStart Начало брони по умолчанию — следующий час клуба (Y-m-d\TH:i).
+	BookingStart string         `json:"booking_start"`
+	Computers    []ComputerCard `json:"computers"`
+
+	// GuestMode GuestFeatures::guestModeEnabled().
+	GuestMode bool            `json:"guest_mode"`
+	States    []ComputerState `json:"states"`
+	Tariffs   []MapTariff     `json:"tariffs"`
+	Zones     []Zone          `json:"zones"`
+}
+
 // ClubMapState defines model for ClubMapState.
 type ClubMapState struct {
 	Computers []ComputerState `json:"computers"`
 }
 
+// ComputerAdded defines model for ComputerAdded.
+type ComputerAdded struct {
+	Added   bool   `json:"added"`
+	Id      *int64 `json:"id,omitempty"`
+	Message string `json:"message"`
+}
+
+// ComputerCard Карточка ПК на карте (то, что не меняется событиями состояния).
+type ComputerCard struct {
+	// Details «MAC … · LAN … · WAN … · CPU · N cores · N MB RAM · GPU · ОС» (как $computerDetails шаблона).
+	Details     string  `json:"details"`
+	DisplayName *string `json:"display_name,omitempty"`
+	Id          int64   `json:"id"`
+	MacAddress  *string `json:"mac_address,omitempty"`
+
+	// Name ClubComputer::displayName().
+	Name      string `json:"name"`
+	Number    int64  `json:"number"`
+	PositionX int64  `json:"position_x"`
+	PositionY int64  `json:"position_y"`
+	ZoneId    int64  `json:"zone_id"`
+}
+
+// ComputerDeleted defines model for ComputerDeleted.
+type ComputerDeleted struct {
+	Message string `json:"message"`
+}
+
+// ComputerIds defines model for ComputerIds.
+type ComputerIds struct {
+	ComputerIds []int64 `json:"computer_ids"`
+}
+
+// ComputerInput defines model for ComputerInput.
+type ComputerInput struct {
+	ClubZoneId  int64   `json:"club_zone_id"`
+	DisplayName *string `json:"display_name,omitempty"`
+	MacAddress  *string `json:"mac_address,omitempty"`
+	Number      int64   `json:"number"`
+}
+
+// ComputerLayout defines model for ComputerLayout.
+type ComputerLayout struct {
+	PositionX int64 `json:"position_x"`
+	PositionY int64 `json:"position_y"`
+}
+
 // ComputerState defines model for ComputerState.
 type ComputerState struct {
+	AgentOutdated bool                    `json:"agent_outdated"`
 	AgentState    string                  `json:"agent_state"`
 	AgentVersion  string                  `json:"agent_version"`
 	Connection    ComputerStateConnection `json:"connection"`
 	HasSession    bool                    `json:"has_session"`
 	Id            int64                   `json:"id"`
-	IsReserved    bool                    `json:"is_reserved"`
-	LastSeen      *time.Time              `json:"last_seen,omitempty"`
-	Name          string                  `json:"name"`
-	Number        int64                   `json:"number"`
-	SessionEndsAt *time.Time              `json:"session_ends_at,omitempty"`
-	SessionGuest  bool                    `json:"session_guest"`
-	SessionId     *string                 `json:"session_id,omitempty"`
 
-	// SessionUser «Имя · телефон» клиента; гость — «Гость без аккаунта».
-	SessionUser   *string    `json:"session_user,omitempty"`
+	// IsReserved Ручной флаг брони без времени (club_computers.is_reserved).
+	IsReserved bool       `json:"is_reserved"`
+	LastSeen   *time.Time `json:"last_seen,omitempty"`
+
+	// Light Подсветка — pc-staff | pc-guest | pc-account | pc-free | "" (computerStates).
+	Light         string     `json:"light"`
+	Name          string     `json:"name"`
+	Number        int64      `json:"number"`
+	SessionEndsAt *time.Time `json:"session_ends_at,omitempty"`
+	SessionGuest  bool       `json:"session_guest"`
+	SessionId     *string    `json:"session_id,omitempty"`
+
+	// SessionTariff Что куплено в сессии (тарифы, «Поминутно N мин.»); гость без покупок — «Оплачено на кассе».
+	SessionTariff string `json:"session_tariff"`
+
+	// SessionUser «Имя · телефон» клиента; гость — «Гость без аккаунта» (на языке клуба); без сессии — "".
+	SessionUser   string     `json:"session_user"`
 	SessionUserId *int64     `json:"session_user_id,omitempty"`
+	StaffKind     string     `json:"staff_kind"`
 	StaffName     *string    `json:"staff_name,omitempty"`
 	StaffUntil    *time.Time `json:"staff_until,omitempty"`
 
-	// Status online | offline | maintenance (как ClubComputer::currentStatus()).
+	// Status ClubComputer::currentStatus() — reserved | offline | online | available | restarting.
 	Status string `json:"status"`
 	ZoneId int64  `json:"zone_id"`
 }
@@ -67,20 +139,275 @@ type ComputerState struct {
 // ComputerStateConnection defines model for ComputerState.Connection.
 type ComputerStateConnection string
 
+// ControlInput defines model for ControlInput.
+type ControlInput struct {
+	// Action power_on | restart | power_off | reserve | service
+	Action      string  `json:"action"`
+	ComputerIds []int64 `json:"computer_ids"`
+}
+
+// ControlResult defines model for ControlResult.
+type ControlResult struct {
+	// Message Текст для уведомления на карте (на языке клуба).
+	Message *string `json:"message,omitempty"`
+
+	// Reserved Только для reserve — новый флаг брони.
+	Reserved *bool `json:"reserved,omitempty"`
+
+	// Status Новый статус ПК (restarting, offline) или null.
+	Status  *string `json:"status,omitempty"`
+	Updated int64   `json:"updated"`
+}
+
+// EndSessionsResult defines model for EndSessionsResult.
+type EndSessionsResult struct {
+	Ended   int64  `json:"ended"`
+	Message string `json:"message"`
+}
+
+// MapTariff defines model for MapTariff.
+type MapTariff struct {
+	Currency        string `json:"currency"`
+	DurationMinutes int64  `json:"duration_minutes"`
+
+	// GuestSellable is_active && onSale() && inValidityPeriod() — показывается в «Подключить тариф».
+	GuestSellable bool   `json:"guest_sellable"`
+	Id            int64  `json:"id"`
+	IsActive      bool   `json:"is_active"`
+	Name          string `json:"name"`
+	PriceTiyn     int64  `json:"price_tiyn"`
+}
+
+// NotifyInput defines model for NotifyInput.
+type NotifyInput struct {
+	ComputerIds []int64 `json:"computer_ids"`
+	Message     string  `json:"message"`
+}
+
+// NotifyResult defines model for NotifyResult.
+type NotifyResult struct {
+	Message string `json:"message"`
+	Sent    int64  `json:"sent"`
+}
+
+// Saved defines model for Saved.
+type Saved struct {
+	Id int64 `json:"id"`
+
+	// Message Текст для блока статуса (session('status') старого кода), на языке клуба.
+	Message string `json:"message"`
+}
+
+// Zone defines model for Zone.
+type Zone struct {
+	Capacity         *int64  `json:"capacity,omitempty"`
+	Description      *string `json:"description,omitempty"`
+	Height           int64   `json:"height"`
+	Icon             string  `json:"icon"`
+	Id               int64   `json:"id"`
+	IsFeatured       bool    `json:"is_featured"`
+	Name             string  `json:"name"`
+	PositionX        int64   `json:"position_x"`
+	PositionY        int64   `json:"position_y"`
+	PricePerHourTiyn *int64  `json:"price_per_hour_tiyn,omitempty"`
+	Rotation         int64   `json:"rotation"`
+	SortOrder        int64   `json:"sort_order"`
+	Status           string  `json:"status"`
+	TariffIds        []int64 `json:"tariff_ids"`
+	Theme            string  `json:"theme"`
+	Width            int64   `json:"width"`
+}
+
+// ZoneDeleted defines model for ZoneDeleted.
+type ZoneDeleted struct {
+	// DisabledTariffs Тарифы, выключенные потому, что у них не осталось зон (Q-018).
+	DisabledTariffs []string `json:"disabled_tariffs"`
+	Message         string   `json:"message"`
+}
+
+// ZoneInput defines model for ZoneInput.
+type ZoneInput struct {
+	Capacity    *int64  `json:"capacity,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Icon        string  `json:"icon"`
+	IsFeatured  bool    `json:"is_featured"`
+	Name        string  `json:"name"`
+
+	// PricePerHourTiyn Цена часа (поминутная продажа), тиыны 1…100 000 000; null — не продаётся поминутно.
+	PricePerHourTiyn *int64   `json:"price_per_hour_tiyn,omitempty"`
+	SortOrder        int64    `json:"sort_order"`
+	Status           string   `json:"status"`
+	TariffIds        *[]int64 `json:"tariff_ids,omitempty"`
+	Theme            string   `json:"theme"`
+}
+
+// ZoneLayout defines model for ZoneLayout.
+type ZoneLayout struct {
+	Height    int64  `json:"height"`
+	PositionX int64  `json:"position_x"`
+	PositionY int64  `json:"position_y"`
+	Rotation  *int64 `json:"rotation,omitempty"`
+	Width     int64  `json:"width"`
+}
+
+// ComputerId defines model for ComputerId.
+type ComputerId = int64
+
+// ZoneId defines model for ZoneId.
+type ZoneId = int64
+
+// GetClubMapStateParams defines parameters for GetClubMapState.
+type GetClubMapStateParams struct {
+	// Ids id ПК через запятую (не больше 500).
+	Ids *string `form:"ids,omitempty" json:"ids,omitempty"`
+}
+
+// ControlComputersJSONRequestBody defines body for ControlComputers for application/json ContentType.
+type ControlComputersJSONRequestBody = ControlInput
+
+// EndComputerSessionsJSONRequestBody defines body for EndComputerSessions for application/json ContentType.
+type EndComputerSessionsJSONRequestBody = ComputerIds
+
+// NotifyComputersJSONRequestBody defines body for NotifyComputers for application/json ContentType.
+type NotifyComputersJSONRequestBody = NotifyInput
+
+// UpdateComputerJSONRequestBody defines body for UpdateComputer for application/json ContentType.
+type UpdateComputerJSONRequestBody = ComputerInput
+
+// UpdateComputerLayoutJSONRequestBody defines body for UpdateComputerLayout for application/json ContentType.
+type UpdateComputerLayoutJSONRequestBody = ComputerLayout
+
+// CreateZoneJSONRequestBody defines body for CreateZone for application/json ContentType.
+type CreateZoneJSONRequestBody = ZoneInput
+
+// UpdateZoneJSONRequestBody defines body for UpdateZone for application/json ContentType.
+type UpdateZoneJSONRequestBody = ZoneInput
+
+// UpdateZoneLayoutJSONRequestBody defines body for UpdateZoneLayout for application/json ContentType.
+type UpdateZoneLayoutJSONRequestBody = ZoneLayout
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ControlComputers Управление выбранными ПК
+	// (POST /api/club-computers/control)
+	ControlComputers(w http.ResponseWriter, r *http.Request)
+	// EndComputerSessions Завершить сессии выбранных ПК
+	// (POST /api/club-computers/end-sessions)
+	EndComputerSessions(w http.ResponseWriter, r *http.Request)
+	// NotifyComputers Уведомление на выбранные ПК
+	// (POST /api/club-computers/notify)
+	NotifyComputers(w http.ResponseWriter, r *http.Request)
+	// DeleteComputer Удалить ПК с карты
+	// (DELETE /api/club-computers/{computerId})
+	DeleteComputer(w http.ResponseWriter, r *http.Request, computerId ComputerId)
+	// UpdateComputer Изменить карточку ПК
+	// (PATCH /api/club-computers/{computerId})
+	UpdateComputer(w http.ResponseWriter, r *http.Request, computerId ComputerId)
+	// UpdateComputerLayout Место ПК в зоне
+	// (PATCH /api/club-computers/{computerId}/layout)
+	UpdateComputerLayout(w http.ResponseWriter, r *http.Request, computerId ComputerId)
+	// GetClubMap Экран «Карта клуба»
+	// (GET /api/club-map)
+	GetClubMap(w http.ResponseWriter, r *http.Request)
+	// CreateZone Новая зона
+	// (POST /api/club-map)
+	CreateZone(w http.ResponseWriter, r *http.Request)
 	// GetClubMapState Состояние ПК на карте клуба
 	// (GET /api/club-map/state)
-	GetClubMapState(w http.ResponseWriter, r *http.Request)
+	GetClubMapState(w http.ResponseWriter, r *http.Request, params GetClubMapStateParams)
+	// DeleteZone Удалить зону
+	// (DELETE /api/club-map/{zoneId})
+	DeleteZone(w http.ResponseWriter, r *http.Request, zoneId ZoneId)
+	// UpdateZone Изменить зону
+	// (PUT /api/club-map/{zoneId})
+	UpdateZone(w http.ResponseWriter, r *http.Request, zoneId ZoneId)
+	// AddZoneComputer Добавить ПК в зону
+	// (POST /api/club-map/{zoneId}/computers)
+	AddZoneComputer(w http.ResponseWriter, r *http.Request, zoneId ZoneId)
+	// UpdateZoneLayout Расположение и размер зоны
+	// (PATCH /api/club-map/{zoneId}/layout)
+	UpdateZoneLayout(w http.ResponseWriter, r *http.Request, zoneId ZoneId)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
 
+// ControlComputers Управление выбранными ПК
+// (POST /api/club-computers/control)
+func (_ Unimplemented) ControlComputers(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// EndComputerSessions Завершить сессии выбранных ПК
+// (POST /api/club-computers/end-sessions)
+func (_ Unimplemented) EndComputerSessions(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// NotifyComputers Уведомление на выбранные ПК
+// (POST /api/club-computers/notify)
+func (_ Unimplemented) NotifyComputers(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteComputer Удалить ПК с карты
+// (DELETE /api/club-computers/{computerId})
+func (_ Unimplemented) DeleteComputer(w http.ResponseWriter, r *http.Request, computerId ComputerId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateComputer Изменить карточку ПК
+// (PATCH /api/club-computers/{computerId})
+func (_ Unimplemented) UpdateComputer(w http.ResponseWriter, r *http.Request, computerId ComputerId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateComputerLayout Место ПК в зоне
+// (PATCH /api/club-computers/{computerId}/layout)
+func (_ Unimplemented) UpdateComputerLayout(w http.ResponseWriter, r *http.Request, computerId ComputerId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetClubMap Экран «Карта клуба»
+// (GET /api/club-map)
+func (_ Unimplemented) GetClubMap(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateZone Новая зона
+// (POST /api/club-map)
+func (_ Unimplemented) CreateZone(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetClubMapState Состояние ПК на карте клуба
 // (GET /api/club-map/state)
-func (_ Unimplemented) GetClubMapState(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) GetClubMapState(w http.ResponseWriter, r *http.Request, params GetClubMapStateParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteZone Удалить зону
+// (DELETE /api/club-map/{zoneId})
+func (_ Unimplemented) DeleteZone(w http.ResponseWriter, r *http.Request, zoneId ZoneId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateZone Изменить зону
+// (PUT /api/club-map/{zoneId})
+func (_ Unimplemented) UpdateZone(w http.ResponseWriter, r *http.Request, zoneId ZoneId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AddZoneComputer Добавить ПК в зону
+// (POST /api/club-map/{zoneId}/computers)
+func (_ Unimplemented) AddZoneComputer(w http.ResponseWriter, r *http.Request, zoneId ZoneId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateZoneLayout Расположение и размер зоны
+// (PATCH /api/club-map/{zoneId}/layout)
+func (_ Unimplemented) UpdateZoneLayout(w http.ResponseWriter, r *http.Request, zoneId ZoneId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -93,11 +420,282 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
+// ControlComputers operation middleware
+func (siw *ServerInterfaceWrapper) ControlComputers(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ControlComputers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EndComputerSessions operation middleware
+func (siw *ServerInterfaceWrapper) EndComputerSessions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EndComputerSessions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// NotifyComputers operation middleware
+func (siw *ServerInterfaceWrapper) NotifyComputers(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.NotifyComputers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteComputer operation middleware
+func (siw *ServerInterfaceWrapper) DeleteComputer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "computerId" -------------
+	var computerId ComputerId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "computerId", chi.URLParam(r, "computerId"), &computerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "computerId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteComputer(w, r, computerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateComputer operation middleware
+func (siw *ServerInterfaceWrapper) UpdateComputer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "computerId" -------------
+	var computerId ComputerId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "computerId", chi.URLParam(r, "computerId"), &computerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "computerId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateComputer(w, r, computerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateComputerLayout operation middleware
+func (siw *ServerInterfaceWrapper) UpdateComputerLayout(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "computerId" -------------
+	var computerId ComputerId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "computerId", chi.URLParam(r, "computerId"), &computerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "computerId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateComputerLayout(w, r, computerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetClubMap operation middleware
+func (siw *ServerInterfaceWrapper) GetClubMap(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetClubMap(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateZone operation middleware
+func (siw *ServerInterfaceWrapper) CreateZone(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateZone(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetClubMapState operation middleware
 func (siw *ServerInterfaceWrapper) GetClubMapState(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetClubMapStateParams
+
+	// ------------- Optional query parameter "ids" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "ids", r.URL.Query(), &params.Ids, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ids"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ids", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetClubMapState(w, r)
+		siw.Handler.GetClubMapState(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteZone operation middleware
+func (siw *ServerInterfaceWrapper) DeleteZone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId ZoneId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteZone(w, r, zoneId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateZone operation middleware
+func (siw *ServerInterfaceWrapper) UpdateZone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId ZoneId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateZone(w, r, zoneId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddZoneComputer operation middleware
+func (siw *ServerInterfaceWrapper) AddZoneComputer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId ZoneId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddZoneComputer(w, r, zoneId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateZoneLayout operation middleware
+func (siw *ServerInterfaceWrapper) UpdateZoneLayout(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zoneId" -------------
+	var zoneId ZoneId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zoneId", chi.URLParam(r, "zoneId"), &zoneId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zoneId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateZoneLayout(w, r, zoneId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -221,13 +819,659 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	}
 
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/club-map", wrapper.GetClubMap)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/club-map", wrapper.CreateZone)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/club-map/state", wrapper.GetClubMapState)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/club-map/{zoneId}", wrapper.DeleteZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/club-map/{zoneId}", wrapper.UpdateZone)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/club-map/{zoneId}/layout", wrapper.UpdateZoneLayout)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/club-map/{zoneId}/computers", wrapper.AddZoneComputer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/club-computers/control", wrapper.ControlComputers)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/club-computers/end-sessions", wrapper.EndComputerSessions)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/club-computers/notify", wrapper.NotifyComputers)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/club-computers/{computerId}", wrapper.DeleteComputer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/club-computers/{computerId}", wrapper.UpdateComputer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/club-computers/{computerId}/layout", wrapper.UpdateComputerLayout)
 	})
 
 	return r
 }
 
+type ControlComputersRequestObject struct {
+	Body *ControlComputersJSONRequestBody
+}
+
+type ControlComputersResponseObject interface {
+	VisitControlComputersResponse(w http.ResponseWriter) error
+}
+
+type ControlComputers200JSONResponse ControlResult
+
+func (response ControlComputers200JSONResponse) VisitControlComputersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ControlComputers401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response ControlComputers401JSONResponse) VisitControlComputersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ControlComputers403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response ControlComputers403JSONResponse) VisitControlComputersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ControlComputers422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response ControlComputers422JSONResponse) VisitControlComputersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndComputerSessionsRequestObject struct {
+	Body *EndComputerSessionsJSONRequestBody
+}
+
+type EndComputerSessionsResponseObject interface {
+	VisitEndComputerSessionsResponse(w http.ResponseWriter) error
+}
+
+type EndComputerSessions200JSONResponse EndSessionsResult
+
+func (response EndComputerSessions200JSONResponse) VisitEndComputerSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndComputerSessions401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response EndComputerSessions401JSONResponse) VisitEndComputerSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndComputerSessions403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response EndComputerSessions403JSONResponse) VisitEndComputerSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndComputerSessions422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response EndComputerSessions422JSONResponse) VisitEndComputerSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type NotifyComputersRequestObject struct {
+	Body *NotifyComputersJSONRequestBody
+}
+
+type NotifyComputersResponseObject interface {
+	VisitNotifyComputersResponse(w http.ResponseWriter) error
+}
+
+type NotifyComputers200JSONResponse NotifyResult
+
+func (response NotifyComputers200JSONResponse) VisitNotifyComputersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type NotifyComputers401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response NotifyComputers401JSONResponse) VisitNotifyComputersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type NotifyComputers403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response NotifyComputers403JSONResponse) VisitNotifyComputersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type NotifyComputers422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response NotifyComputers422JSONResponse) VisitNotifyComputersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteComputerRequestObject struct {
+	ComputerId ComputerId `json:"computerId"`
+}
+
+type DeleteComputerResponseObject interface {
+	VisitDeleteComputerResponse(w http.ResponseWriter) error
+}
+
+type DeleteComputer200JSONResponse ComputerDeleted
+
+func (response DeleteComputer200JSONResponse) VisitDeleteComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteComputer401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response DeleteComputer401JSONResponse) VisitDeleteComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteComputer403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response DeleteComputer403JSONResponse) VisitDeleteComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteComputer404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response DeleteComputer404JSONResponse) VisitDeleteComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteComputer422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response DeleteComputer422JSONResponse) VisitDeleteComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateComputerRequestObject struct {
+	ComputerId ComputerId `json:"computerId"`
+	Body       *UpdateComputerJSONRequestBody
+}
+
+type UpdateComputerResponseObject interface {
+	VisitUpdateComputerResponse(w http.ResponseWriter) error
+}
+
+type UpdateComputer200JSONResponse Saved
+
+func (response UpdateComputer200JSONResponse) VisitUpdateComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateComputer401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response UpdateComputer401JSONResponse) VisitUpdateComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateComputer403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response UpdateComputer403JSONResponse) VisitUpdateComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateComputer404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response UpdateComputer404JSONResponse) VisitUpdateComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateComputer422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response UpdateComputer422JSONResponse) VisitUpdateComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateComputerLayoutRequestObject struct {
+	ComputerId ComputerId `json:"computerId"`
+	Body       *UpdateComputerLayoutJSONRequestBody
+}
+
+type UpdateComputerLayoutResponseObject interface {
+	VisitUpdateComputerLayoutResponse(w http.ResponseWriter) error
+}
+
+type UpdateComputerLayout200JSONResponse Saved
+
+func (response UpdateComputerLayout200JSONResponse) VisitUpdateComputerLayoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateComputerLayout401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response UpdateComputerLayout401JSONResponse) VisitUpdateComputerLayoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateComputerLayout403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response UpdateComputerLayout403JSONResponse) VisitUpdateComputerLayoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateComputerLayout404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response UpdateComputerLayout404JSONResponse) VisitUpdateComputerLayoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateComputerLayout409JSONResponse struct {
+	externalRef0.ConflictJSONResponse
+}
+
+func (response UpdateComputerLayout409JSONResponse) VisitUpdateComputerLayoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateComputerLayout422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response UpdateComputerLayout422JSONResponse) VisitUpdateComputerLayoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClubMapRequestObject struct {
+}
+
+type GetClubMapResponseObject interface {
+	VisitGetClubMapResponse(w http.ResponseWriter) error
+}
+
+type GetClubMap200JSONResponse ClubMapPage
+
+func (response GetClubMap200JSONResponse) VisitGetClubMapResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClubMap401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response GetClubMap401JSONResponse) VisitGetClubMapResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClubMap403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response GetClubMap403JSONResponse) VisitGetClubMapResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZoneRequestObject struct {
+	Body *CreateZoneJSONRequestBody
+}
+
+type CreateZoneResponseObject interface {
+	VisitCreateZoneResponse(w http.ResponseWriter) error
+}
+
+type CreateZone201JSONResponse Saved
+
+func (response CreateZone201JSONResponse) VisitCreateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZone401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response CreateZone401JSONResponse) VisitCreateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZone403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response CreateZone403JSONResponse) VisitCreateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateZone422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response CreateZone422JSONResponse) VisitCreateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetClubMapStateRequestObject struct {
+	Params GetClubMapStateParams
 }
 
 type GetClubMapStateResponseObject interface {
@@ -280,11 +1524,393 @@ func (response GetClubMapState403JSONResponse) VisitGetClubMapStateResponse(w ht
 	return err
 }
 
+type DeleteZoneRequestObject struct {
+	ZoneId ZoneId `json:"zoneId"`
+}
+
+type DeleteZoneResponseObject interface {
+	VisitDeleteZoneResponse(w http.ResponseWriter) error
+}
+
+type DeleteZone200JSONResponse ZoneDeleted
+
+func (response DeleteZone200JSONResponse) VisitDeleteZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteZone401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response DeleteZone401JSONResponse) VisitDeleteZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteZone403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response DeleteZone403JSONResponse) VisitDeleteZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteZone404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response DeleteZone404JSONResponse) VisitDeleteZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteZone422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response DeleteZone422JSONResponse) VisitDeleteZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneRequestObject struct {
+	ZoneId ZoneId `json:"zoneId"`
+	Body   *UpdateZoneJSONRequestBody
+}
+
+type UpdateZoneResponseObject interface {
+	VisitUpdateZoneResponse(w http.ResponseWriter) error
+}
+
+type UpdateZone200JSONResponse Saved
+
+func (response UpdateZone200JSONResponse) VisitUpdateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZone401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response UpdateZone401JSONResponse) VisitUpdateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZone403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response UpdateZone403JSONResponse) VisitUpdateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZone404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response UpdateZone404JSONResponse) VisitUpdateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZone422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response UpdateZone422JSONResponse) VisitUpdateZoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddZoneComputerRequestObject struct {
+	ZoneId ZoneId `json:"zoneId"`
+}
+
+type AddZoneComputerResponseObject interface {
+	VisitAddZoneComputerResponse(w http.ResponseWriter) error
+}
+
+type AddZoneComputer200JSONResponse ComputerAdded
+
+func (response AddZoneComputer200JSONResponse) VisitAddZoneComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddZoneComputer401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response AddZoneComputer401JSONResponse) VisitAddZoneComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddZoneComputer403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response AddZoneComputer403JSONResponse) VisitAddZoneComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddZoneComputer404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response AddZoneComputer404JSONResponse) VisitAddZoneComputerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneLayoutRequestObject struct {
+	ZoneId ZoneId `json:"zoneId"`
+	Body   *UpdateZoneLayoutJSONRequestBody
+}
+
+type UpdateZoneLayoutResponseObject interface {
+	VisitUpdateZoneLayoutResponse(w http.ResponseWriter) error
+}
+
+type UpdateZoneLayout200JSONResponse Saved
+
+func (response UpdateZoneLayout200JSONResponse) VisitUpdateZoneLayoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneLayout401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response UpdateZoneLayout401JSONResponse) VisitUpdateZoneLayoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneLayout403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response UpdateZoneLayout403JSONResponse) VisitUpdateZoneLayoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneLayout404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response UpdateZoneLayout404JSONResponse) VisitUpdateZoneLayoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneLayout409JSONResponse struct {
+	externalRef0.ConflictJSONResponse
+}
+
+func (response UpdateZoneLayout409JSONResponse) VisitUpdateZoneLayoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateZoneLayout422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response UpdateZoneLayout422JSONResponse) VisitUpdateZoneLayoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// ControlComputers Управление выбранными ПК
+	// (POST /api/club-computers/control)
+	ControlComputers(ctx context.Context, request ControlComputersRequestObject) (ControlComputersResponseObject, error)
+	// EndComputerSessions Завершить сессии выбранных ПК
+	// (POST /api/club-computers/end-sessions)
+	EndComputerSessions(ctx context.Context, request EndComputerSessionsRequestObject) (EndComputerSessionsResponseObject, error)
+	// NotifyComputers Уведомление на выбранные ПК
+	// (POST /api/club-computers/notify)
+	NotifyComputers(ctx context.Context, request NotifyComputersRequestObject) (NotifyComputersResponseObject, error)
+	// DeleteComputer Удалить ПК с карты
+	// (DELETE /api/club-computers/{computerId})
+	DeleteComputer(ctx context.Context, request DeleteComputerRequestObject) (DeleteComputerResponseObject, error)
+	// UpdateComputer Изменить карточку ПК
+	// (PATCH /api/club-computers/{computerId})
+	UpdateComputer(ctx context.Context, request UpdateComputerRequestObject) (UpdateComputerResponseObject, error)
+	// UpdateComputerLayout Место ПК в зоне
+	// (PATCH /api/club-computers/{computerId}/layout)
+	UpdateComputerLayout(ctx context.Context, request UpdateComputerLayoutRequestObject) (UpdateComputerLayoutResponseObject, error)
+	// GetClubMap Экран «Карта клуба»
+	// (GET /api/club-map)
+	GetClubMap(ctx context.Context, request GetClubMapRequestObject) (GetClubMapResponseObject, error)
+	// CreateZone Новая зона
+	// (POST /api/club-map)
+	CreateZone(ctx context.Context, request CreateZoneRequestObject) (CreateZoneResponseObject, error)
 	// GetClubMapState Состояние ПК на карте клуба
 	// (GET /api/club-map/state)
 	GetClubMapState(ctx context.Context, request GetClubMapStateRequestObject) (GetClubMapStateResponseObject, error)
+	// DeleteZone Удалить зону
+	// (DELETE /api/club-map/{zoneId})
+	DeleteZone(ctx context.Context, request DeleteZoneRequestObject) (DeleteZoneResponseObject, error)
+	// UpdateZone Изменить зону
+	// (PUT /api/club-map/{zoneId})
+	UpdateZone(ctx context.Context, request UpdateZoneRequestObject) (UpdateZoneResponseObject, error)
+	// AddZoneComputer Добавить ПК в зону
+	// (POST /api/club-map/{zoneId}/computers)
+	AddZoneComputer(ctx context.Context, request AddZoneComputerRequestObject) (AddZoneComputerResponseObject, error)
+	// UpdateZoneLayout Расположение и размер зоны
+	// (PATCH /api/club-map/{zoneId}/layout)
+	UpdateZoneLayout(ctx context.Context, request UpdateZoneLayoutRequestObject) (UpdateZoneLayoutResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -326,9 +1952,251 @@ type strictHandler struct {
 	options     StrictHTTPServerOptions
 }
 
+// ControlComputers operation middleware
+func (sh *strictHandler) ControlComputers(w http.ResponseWriter, r *http.Request) {
+	var request ControlComputersRequestObject
+
+	var body ControlComputersJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ControlComputers(ctx, request.(ControlComputersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ControlComputers")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ControlComputersResponseObject); ok {
+		if err := validResponse.VisitControlComputersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// EndComputerSessions operation middleware
+func (sh *strictHandler) EndComputerSessions(w http.ResponseWriter, r *http.Request) {
+	var request EndComputerSessionsRequestObject
+
+	var body EndComputerSessionsJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.EndComputerSessions(ctx, request.(EndComputerSessionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "EndComputerSessions")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(EndComputerSessionsResponseObject); ok {
+		if err := validResponse.VisitEndComputerSessionsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// NotifyComputers operation middleware
+func (sh *strictHandler) NotifyComputers(w http.ResponseWriter, r *http.Request) {
+	var request NotifyComputersRequestObject
+
+	var body NotifyComputersJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.NotifyComputers(ctx, request.(NotifyComputersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "NotifyComputers")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(NotifyComputersResponseObject); ok {
+		if err := validResponse.VisitNotifyComputersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteComputer operation middleware
+func (sh *strictHandler) DeleteComputer(w http.ResponseWriter, r *http.Request, computerId ComputerId) {
+	var request DeleteComputerRequestObject
+
+	request.ComputerId = computerId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteComputer(ctx, request.(DeleteComputerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteComputer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteComputerResponseObject); ok {
+		if err := validResponse.VisitDeleteComputerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateComputer operation middleware
+func (sh *strictHandler) UpdateComputer(w http.ResponseWriter, r *http.Request, computerId ComputerId) {
+	var request UpdateComputerRequestObject
+
+	request.ComputerId = computerId
+
+	var body UpdateComputerJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateComputer(ctx, request.(UpdateComputerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateComputer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateComputerResponseObject); ok {
+		if err := validResponse.VisitUpdateComputerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateComputerLayout operation middleware
+func (sh *strictHandler) UpdateComputerLayout(w http.ResponseWriter, r *http.Request, computerId ComputerId) {
+	var request UpdateComputerLayoutRequestObject
+
+	request.ComputerId = computerId
+
+	var body UpdateComputerLayoutJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateComputerLayout(ctx, request.(UpdateComputerLayoutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateComputerLayout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateComputerLayoutResponseObject); ok {
+		if err := validResponse.VisitUpdateComputerLayoutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetClubMap operation middleware
+func (sh *strictHandler) GetClubMap(w http.ResponseWriter, r *http.Request) {
+	var request GetClubMapRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetClubMap(ctx, request.(GetClubMapRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetClubMap")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetClubMapResponseObject); ok {
+		if err := validResponse.VisitGetClubMapResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateZone operation middleware
+func (sh *strictHandler) CreateZone(w http.ResponseWriter, r *http.Request) {
+	var request CreateZoneRequestObject
+
+	var body CreateZoneJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateZone(ctx, request.(CreateZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateZoneResponseObject); ok {
+		if err := validResponse.VisitCreateZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetClubMapState operation middleware
-func (sh *strictHandler) GetClubMapState(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) GetClubMapState(w http.ResponseWriter, r *http.Request, params GetClubMapStateParams) {
 	var request GetClubMapStateRequestObject
+
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.GetClubMapState(ctx, request.(GetClubMapStateRequestObject))
@@ -343,6 +2211,124 @@ func (sh *strictHandler) GetClubMapState(w http.ResponseWriter, r *http.Request)
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetClubMapStateResponseObject); ok {
 		if err := validResponse.VisitGetClubMapStateResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteZone operation middleware
+func (sh *strictHandler) DeleteZone(w http.ResponseWriter, r *http.Request, zoneId ZoneId) {
+	var request DeleteZoneRequestObject
+
+	request.ZoneId = zoneId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteZone(ctx, request.(DeleteZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteZoneResponseObject); ok {
+		if err := validResponse.VisitDeleteZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateZone operation middleware
+func (sh *strictHandler) UpdateZone(w http.ResponseWriter, r *http.Request, zoneId ZoneId) {
+	var request UpdateZoneRequestObject
+
+	request.ZoneId = zoneId
+
+	var body UpdateZoneJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateZone(ctx, request.(UpdateZoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateZone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateZoneResponseObject); ok {
+		if err := validResponse.VisitUpdateZoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AddZoneComputer operation middleware
+func (sh *strictHandler) AddZoneComputer(w http.ResponseWriter, r *http.Request, zoneId ZoneId) {
+	var request AddZoneComputerRequestObject
+
+	request.ZoneId = zoneId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AddZoneComputer(ctx, request.(AddZoneComputerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AddZoneComputer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AddZoneComputerResponseObject); ok {
+		if err := validResponse.VisitAddZoneComputerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateZoneLayout operation middleware
+func (sh *strictHandler) UpdateZoneLayout(w http.ResponseWriter, r *http.Request, zoneId ZoneId) {
+	var request UpdateZoneLayoutRequestObject
+
+	request.ZoneId = zoneId
+
+	var body UpdateZoneLayoutJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateZoneLayout(ctx, request.(UpdateZoneLayoutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateZoneLayout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateZoneLayoutResponseObject); ok {
+		if err := validResponse.VisitUpdateZoneLayoutResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

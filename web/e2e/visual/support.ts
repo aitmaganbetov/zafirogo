@@ -30,10 +30,14 @@ export interface PageSpec {
   waitFor?: string;
   /** false — только окно (каркас страницы), без растягивания под содержимое. По умолчанию true. */
   fullPage?: boolean;
+  /** 'print' — снимок печатной версии (@media print: чек, X/Z-отчёт). */
+  media?: 'print';
   maxDiffPercent?: number;
   pixelThreshold?: number;
   status?: 'ported' | 'pending';
   note?: string;
+  /** Хост вместо localhost в адресах обоих приложений (домен кабинета суперадмина, SUPERADMIN_DOMAIN — Q-069). */
+  host?: string;
 }
 
 export type Theme = 'light' | 'dark';
@@ -64,6 +68,14 @@ export const baseURL: Record<AppName, string> = {
   old: process.env.VISUAL_OLD_URL ?? 'http://localhost:8001',
   new: process.env.VISUAL_NEW_URL ?? 'http://localhost:8091',
 };
+
+/** Базовый адрес приложения для страницы: с хостом страницы (домен кабинета) или как есть. */
+export function baseFor(app: AppName, spec: Pick<PageSpec, 'host'>): string {
+  if (!spec.host) return baseURL[app];
+  const u = new URL(baseURL[app]);
+  u.hostname = spec.host;
+  return u.origin;
+}
 
 /** Страницы прогона: VISUAL_PAGES=id1,id2 (task visual -- --page id) или все. */
 export function selectedPages(): PageSpec[] {
@@ -174,7 +186,8 @@ async function serveExternal(route: Route, log: NetworkLog, userAgent: string): 
 
 /** Внешние запросы контекста: CDN → npm, Google Fonts → кэш, прочее — блок. */
 export async function routeExternal(context: BrowserContext, log: NetworkLog, userAgent: string): Promise<void> {
-  await context.route(/^https?:\/\/(?!localhost[:/]|127\.0\.0\.1[:/])/, (route) => serveExternal(route, log, userAgent));
+  // localhost и его поддомены (домен кабинета admin.localhost) — свои приложения.
+  await context.route(/^https?:\/\/(?!(?:[a-z0-9-]+\.)*localhost[:/]|127\.0\.0\.1[:/])/, (route) => serveExternal(route, log, userAgent));
 }
 
 // ---------------------------------------------------------------------------
@@ -185,9 +198,9 @@ export async function routeExternal(context: BrowserContext, log: NetworkLog, us
  * Вход пользователем роли. Старый — форма /login (телефон без +7 и пароль). Новый — та же форма, если она уже
  * перенесена (#phone на /login), иначе POST /api/auth/login (refresh-cookie в контексте; SPA восстановит сессию).
  */
-export async function login(page: Page, app: AppName, role: string): Promise<'form' | 'api'> {
+export async function login(page: Page, app: AppName, role: string, base: string = baseURL[app]): Promise<'form' | 'api'> {
   const { phone, password } = credentials(role);
-  await page.goto(`${baseURL[app]}/login`);
+  await page.goto(`${base}/login`);
   const phoneInput = page.locator('input#phone');
   const hasForm = await phoneInput
     .waitFor({ state: 'visible', timeout: app === 'old' ? 15_000 : 3_000 })
@@ -203,7 +216,7 @@ export async function login(page: Page, app: AppName, role: string): Promise<'fo
     return 'form';
   }
   if (app === 'old') throw new Error('старый /login: нет формы входа');
-  const res = await page.request.post(`${baseURL.new}/api/auth/login`, { data: { phone, password } });
+  const res = await page.request.post(`${base}/api/auth/login`, { data: { phone, password } });
   if (!res.ok()) throw new Error(`новый /api/auth/login: ${res.status()} ${await res.text()}`);
   return 'api';
 }

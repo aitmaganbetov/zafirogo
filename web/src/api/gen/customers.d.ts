@@ -14,11 +14,20 @@ export interface paths {
         /**
          * Клиенты клуба
          * @description Laravel: UserController::index() (users.index, customers.view): членства не из ClubRoles::STAFF с балансами,
-         *     по user_id. Поиск — подстрока имени или телефона. Пагинация keyset: after_id = next_after_id.
+         *     по user_id. Поиск — подстрока имени или телефона. Пагинация keyset: after_id = next_after_id (вперёд),
+         *     before_id = prev_before_id (назад); total — «Всего: :count». Лояльность и признак «сотрудник другого клуба»
+         *     ($staffElsewhere) — в каждой строке.
          */
         get: operations["listCustomers"];
         put?: never;
-        post?: never;
+        /**
+         * Новый клиент
+         * @description Laravel: UserController::store() + StoreUserRequest (users.store, customers.create). Телефон — PhoneNumber::normalize()
+         *     (Q-033). Скидку и начальный баланс задаёт право customer_money.update (иначе ненулевые значения — 403
+         *     «Скидку и баланс клиента задаёт менеджер; пополнение — через кассу.»). Начальный баланс — ledger
+         *     (billing.SetInitialBalance, RQ-13) в той же транзакции.
+         */
+        post: operations["createCustomer"];
         delete?: never;
         options?: never;
         head?: never;
@@ -39,6 +48,34 @@ export interface paths {
         get: operations["getCustomer"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить клиента (и пополнить/списать баланс без кассы)
+         * @description Laravel: UserController::update() (users.update, customers.update): имя и email (у сотрудника другого клуба —
+         *     нельзя), скидка (customer_money.update), пополнение/списание без кассы (только владелец) — одна транзакция.
+         *     Idempotency-Key обязателен, если есть top_up_amount_tiyn.
+         */
+        patch: operations["updateCustomer"];
+        trace?: never;
+    };
+    "/api/customers/{userId}/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Сбросить пароль клиента
+         * @description Laravel: UserController::resetPassword() (users.password, customers.update; throttle 20/мин): новый пароль из
+         *     8 букв и цифр показывается один раз (ответ не кэшируется), клиент выходит на всех ПК. Сотрудник другого клуба
+         *     или суперадмин — 403 «Это сотрудник другого клуба: пароль он восстанавливает сам («Забыли пароль?»).».
+         */
+        post: operations["resetCustomerPassword"];
         delete?: never;
         options?: never;
         head?: never;
@@ -118,7 +155,17 @@ export interface components {
             user_id: number;
             name: string;
             phone: string;
+            email: string | null;
             role: string;
+            /** @description Скидка в списке: number_format(max(discount, накопительная), 2, '.', ' ') (LoyaltyProgram::percentFor). */
+            discount_effective: string;
+            /** @description Накопительная скидка больше персональной (подпись «накопительная»). */
+            discount_cumulative: boolean;
+            /**
+             * @description Сотрудник любого клуба или суперадмин ($staffElsewhere): имя, email и пароль меняет он сам.
+             *     Только для списка и карточки; в ответах изменения баланса — false.
+             */
+            account_locked: boolean;
             /** @description Персональная скидка, % (decimal(5,2) строкой, «12.50»). */
             discount: string;
             /** Format: int64 */
@@ -132,6 +179,50 @@ export interface components {
             items: components["schemas"]["Customer"][];
             /** Format: int64 */
             next_after_id: number | null;
+            /** Format: int64 */
+            prev_before_id: number | null;
+            /** Format: int64 */
+            total: number;
+        };
+        CustomerCreateRequest: {
+            name: string;
+            phone: string;
+            email?: string | null;
+            password: string;
+            password_confirmation: string;
+            /** @description Персональная скидка, % (numeric 0..100, как поле формы). */
+            discount?: string | null;
+            /** Format: int64 */
+            balance_tiyn?: number;
+            /** Format: int64 */
+            bonus_balance_tiyn?: number;
+        };
+        CustomerUpdateRequest: {
+            name: string;
+            email?: string | null;
+            /** @description Есть в запросе — только с правом customer_money.update (иначе 422 «Скидку клиента задаёт менеджер.»). */
+            discount?: string | null;
+            /**
+             * Format: int64
+             * @description Сумма без кассы (только владелец).
+             */
+            top_up_amount_tiyn?: number | null;
+            /** @description balance | bonus_balance */
+            top_up_balance?: string | null;
+            /** @description top_up | write_off */
+            balance_action?: string | null;
+        };
+        CustomerSaved: {
+            customer: components["schemas"]["Customer"];
+            /** @description Текст flash-сообщения (уже на языке клуба). */
+            message: string;
+        };
+        CustomerPasswordReset: {
+            /** Format: int64 */
+            user_id: number;
+            name: string;
+            /** @description Новый пароль — показать один раз, нигде не сохранять. */
+            password: string;
         };
         LedgerEntry: {
             /** Format: int64 */
@@ -207,15 +298,6 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description Не найдено. */
-        NotFound: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["Error"];
-            };
-        };
         /** @description Неверный запрос (параметр, курсор, нет заголовка Idempotency-Key). */
         BadRequest: {
             headers: {
@@ -243,6 +325,25 @@ export interface components {
                 "application/json": components["schemas"]["ValidationError"];
             };
         };
+        /** @description Не найдено. */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Превышен лимит (throttle). Заголовки Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset. */
+        TooManyRequests: {
+            headers: {
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
     parameters: {
         UserId: number;
@@ -250,13 +351,13 @@ export interface components {
         Search: string;
         /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
         Limit: number;
-        /** @description Непрозрачный курсор следующей страницы (next_cursor). */
-        Cursor: string;
         /**
          * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
          *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
          */
         IdempotencyKey: string;
+        /** @description Непрозрачный курсор следующей страницы (next_cursor). */
+        Cursor: string;
     };
     requestBodies: never;
     headers: never;
@@ -270,6 +371,8 @@ export interface operations {
                 /** @description Поиск — подстрока без учёта регистра. */
                 q?: components["parameters"]["Search"];
                 after_id?: number;
+                /** @description Предыдущая страница (prev_before_id); вместе с after_id не передаётся. */
+                before_id?: number;
                 /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
                 limit?: components["parameters"]["Limit"];
             };
@@ -290,6 +393,41 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    createCustomer: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+                 *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomerCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Клиент создан. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomerSaved"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
     getCustomer: {
@@ -315,6 +453,67 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    updateCustomer: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomerUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Клиент сохранён. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomerSaved"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    resetCustomerPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Новый пароль. */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomerPasswordReset"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     listCustomerLedger: {

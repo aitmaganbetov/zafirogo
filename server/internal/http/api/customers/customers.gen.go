@@ -53,22 +53,82 @@ type BalanceAdjustmentResult struct {
 
 // Customer defines model for Customer.
 type Customer struct {
+	// AccountLocked Сотрудник любого клуба или суперадмин ($staffElsewhere): имя, email и пароль меняет он сам.
+	// Только для списка и карточки; в ответах изменения баланса — false.
+	AccountLocked    bool  `json:"account_locked"`
 	BalanceTiyn      int64 `json:"balance_tiyn"`
 	BonusBalanceTiyn int64 `json:"bonus_balance_tiyn"`
 
 	// Discount Персональная скидка, % (decimal(5,2) строкой, «12.50»).
-	Discount       string `json:"discount"`
-	Name           string `json:"name"`
-	Phone          string `json:"phone"`
-	Role           string `json:"role"`
-	TotalSpentTiyn int64  `json:"total_spent_tiyn"`
-	UserId         int64  `json:"user_id"`
+	Discount string `json:"discount"`
+
+	// DiscountCumulative Накопительная скидка больше персональной (подпись «накопительная»).
+	DiscountCumulative bool `json:"discount_cumulative"`
+
+	// DiscountEffective Скидка в списке: number_format(max(discount, накопительная), 2, '.', ' ') (LoyaltyProgram::percentFor).
+	DiscountEffective string  `json:"discount_effective"`
+	Email             *string `json:"email"`
+	Name              string  `json:"name"`
+	Phone             string  `json:"phone"`
+	Role              string  `json:"role"`
+	TotalSpentTiyn    int64   `json:"total_spent_tiyn"`
+	UserId            int64   `json:"user_id"`
+}
+
+// CustomerCreateRequest defines model for CustomerCreateRequest.
+type CustomerCreateRequest struct {
+	BalanceTiyn      *int64 `json:"balance_tiyn,omitempty"`
+	BonusBalanceTiyn *int64 `json:"bonus_balance_tiyn,omitempty"`
+
+	// Discount Персональная скидка, % (numeric 0..100, как поле формы).
+	Discount             *string `json:"discount,omitempty"`
+	Email                *string `json:"email,omitempty"`
+	Name                 string  `json:"name"`
+	Password             string  `json:"password"`
+	PasswordConfirmation string  `json:"password_confirmation"`
+	Phone                string  `json:"phone"`
 }
 
 // CustomerPage defines model for CustomerPage.
 type CustomerPage struct {
-	Items       []Customer `json:"items"`
-	NextAfterId *int64     `json:"next_after_id"`
+	Items        []Customer `json:"items"`
+	NextAfterId  *int64     `json:"next_after_id"`
+	PrevBeforeId *int64     `json:"prev_before_id"`
+	Total        int64      `json:"total"`
+}
+
+// CustomerPasswordReset defines model for CustomerPasswordReset.
+type CustomerPasswordReset struct {
+	Name string `json:"name"`
+
+	// Password Новый пароль — показать один раз, нигде не сохранять.
+	Password string `json:"password"`
+	UserId   int64  `json:"user_id"`
+}
+
+// CustomerSaved defines model for CustomerSaved.
+type CustomerSaved struct {
+	Customer Customer `json:"customer"`
+
+	// Message Текст flash-сообщения (уже на языке клуба).
+	Message string `json:"message"`
+}
+
+// CustomerUpdateRequest defines model for CustomerUpdateRequest.
+type CustomerUpdateRequest struct {
+	// BalanceAction top_up | write_off
+	BalanceAction *string `json:"balance_action,omitempty"`
+
+	// Discount Есть в запросе — только с правом customer_money.update (иначе 422 «Скидку клиента задаёт менеджер.»).
+	Discount *string `json:"discount,omitempty"`
+	Email    *string `json:"email,omitempty"`
+	Name     string  `json:"name"`
+
+	// TopUpAmountTiyn Сумма без кассы (только владелец).
+	TopUpAmountTiyn *int64 `json:"top_up_amount_tiyn,omitempty"`
+
+	// TopUpBalance balance | bonus_balance
+	TopUpBalance *string `json:"top_up_balance,omitempty"`
 }
 
 // InitialBalanceRequest defines model for InitialBalanceRequest.
@@ -108,8 +168,23 @@ type ListCustomersParams struct {
 	Q       *externalRef0.Search `form:"q,omitempty" json:"q,omitempty"`
 	AfterId *int64               `form:"after_id,omitempty" json:"after_id,omitempty"`
 
+	// BeforeId Предыдущая страница (prev_before_id); вместе с after_id не передаётся.
+	BeforeId *int64 `form:"before_id,omitempty" json:"before_id,omitempty"`
+
 	// Limit Размер страницы (по умолчанию 25, как paginate(25) старого кода).
 	Limit *externalRef0.Limit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// CreateCustomerParams defines parameters for CreateCustomer.
+type CreateCustomerParams struct {
+	// IdempotencyKey Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+	// Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+	IdempotencyKey externalRef0.IdempotencyKey `json:"Idempotency-Key"`
+}
+
+// UpdateCustomerParams defines parameters for UpdateCustomer.
+type UpdateCustomerParams struct {
+	IdempotencyKey *string `json:"Idempotency-Key,omitempty"`
 }
 
 // AdjustCustomerBalanceParams defines parameters for AdjustCustomerBalance.
@@ -135,6 +210,12 @@ type ListCustomerLedgerParams struct {
 	Limit *externalRef0.Limit `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// CreateCustomerJSONRequestBody defines body for CreateCustomer for application/json ContentType.
+type CreateCustomerJSONRequestBody = CustomerCreateRequest
+
+// UpdateCustomerJSONRequestBody defines body for UpdateCustomer for application/json ContentType.
+type UpdateCustomerJSONRequestBody = CustomerUpdateRequest
+
 // AdjustCustomerBalanceJSONRequestBody defines body for AdjustCustomerBalance for application/json ContentType.
 type AdjustCustomerBalanceJSONRequestBody = BalanceAdjustmentRequest
 
@@ -146,9 +227,15 @@ type ServerInterface interface {
 	// ListCustomers Клиенты клуба
 	// (GET /api/customers)
 	ListCustomers(w http.ResponseWriter, r *http.Request, params ListCustomersParams)
+	// CreateCustomer Новый клиент
+	// (POST /api/customers)
+	CreateCustomer(w http.ResponseWriter, r *http.Request, params CreateCustomerParams)
 	// GetCustomer Клиент и его балансы
 	// (GET /api/customers/{userId})
 	GetCustomer(w http.ResponseWriter, r *http.Request, userId UserId)
+	// UpdateCustomer Изменить клиента (и пополнить/списать баланс без кассы)
+	// (PATCH /api/customers/{userId})
+	UpdateCustomer(w http.ResponseWriter, r *http.Request, userId UserId, params UpdateCustomerParams)
 	// AdjustCustomerBalance Пополнение или списание баланса владельцем без кассы
 	// (POST /api/customers/{userId}/balance-adjustments)
 	AdjustCustomerBalance(w http.ResponseWriter, r *http.Request, userId UserId, params AdjustCustomerBalanceParams)
@@ -158,6 +245,9 @@ type ServerInterface interface {
 	// ListCustomerLedger История баланса клиента (журнал операций)
 	// (GET /api/customers/{userId}/ledger)
 	ListCustomerLedger(w http.ResponseWriter, r *http.Request, userId UserId, params ListCustomerLedgerParams)
+	// ResetCustomerPassword Сбросить пароль клиента
+	// (POST /api/customers/{userId}/password)
+	ResetCustomerPassword(w http.ResponseWriter, r *http.Request, userId UserId)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -170,9 +260,21 @@ func (_ Unimplemented) ListCustomers(w http.ResponseWriter, r *http.Request, par
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// CreateCustomer Новый клиент
+// (POST /api/customers)
+func (_ Unimplemented) CreateCustomer(w http.ResponseWriter, r *http.Request, params CreateCustomerParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // GetCustomer Клиент и его балансы
 // (GET /api/customers/{userId})
 func (_ Unimplemented) GetCustomer(w http.ResponseWriter, r *http.Request, userId UserId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UpdateCustomer Изменить клиента (и пополнить/списать баланс без кассы)
+// (PATCH /api/customers/{userId})
+func (_ Unimplemented) UpdateCustomer(w http.ResponseWriter, r *http.Request, userId UserId, params UpdateCustomerParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -191,6 +293,12 @@ func (_ Unimplemented) SetCustomerInitialBalance(w http.ResponseWriter, r *http.
 // ListCustomerLedger История баланса клиента (журнал операций)
 // (GET /api/customers/{userId}/ledger)
 func (_ Unimplemented) ListCustomerLedger(w http.ResponseWriter, r *http.Request, userId UserId, params ListCustomerLedgerParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ResetCustomerPassword Сбросить пароль клиента
+// (POST /api/customers/{userId}/password)
+func (_ Unimplemented) ResetCustomerPassword(w http.ResponseWriter, r *http.Request, userId UserId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -238,6 +346,19 @@ func (siw *ServerInterfaceWrapper) ListCustomers(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// ------------- Optional query parameter "before_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "before_id", r.URL.Query(), &params.BeforeId, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "before_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "before_id", Err: err})
+		}
+		return
+	}
+
 	// ------------- Optional query parameter "limit" -------------
 
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
@@ -253,6 +374,51 @@ func (siw *ServerInterfaceWrapper) ListCustomers(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListCustomers(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateCustomer operation middleware
+func (siw *ServerInterfaceWrapper) CreateCustomer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateCustomerParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey externalRef0.IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateCustomer(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -279,6 +445,56 @@ func (siw *ServerInterfaceWrapper) GetCustomer(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCustomer(w, r, userId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateCustomer operation middleware
+func (siw *ServerInterfaceWrapper) UpdateCustomer(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "userId" -------------
+	var userId UserId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "userId", chi.URLParam(r, "userId"), &userId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "userId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UpdateCustomerParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = &IdempotencyKey
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateCustomer(w, r, userId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -451,6 +667,32 @@ func (siw *ServerInterfaceWrapper) ListCustomerLedger(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// ResetCustomerPassword operation middleware
+func (siw *ServerInterfaceWrapper) ResetCustomerPassword(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "userId" -------------
+	var userId UserId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "userId", chi.URLParam(r, "userId"), &userId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "userId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResetCustomerPassword(w, r, userId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -568,7 +810,16 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/api/customers", wrapper.ListCustomers)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/customers", wrapper.CreateCustomer)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/customers/{userId}", wrapper.GetCustomer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/customers/{userId}", wrapper.UpdateCustomer)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/customers/{userId}/password", wrapper.ResetCustomerPassword)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/customers/{userId}/ledger", wrapper.ListCustomerLedger)
@@ -633,6 +884,109 @@ func (response ListCustomers403JSONResponse) VisitListCustomersResponse(w http.R
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCustomerRequestObject struct {
+	Params CreateCustomerParams
+	Body   *CreateCustomerJSONRequestBody
+}
+
+type CreateCustomerResponseObject interface {
+	VisitCreateCustomerResponse(w http.ResponseWriter) error
+}
+
+type CreateCustomer201JSONResponse CustomerSaved
+
+func (response CreateCustomer201JSONResponse) VisitCreateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCustomer400JSONResponse struct {
+	externalRef0.BadRequestJSONResponse
+}
+
+func (response CreateCustomer400JSONResponse) VisitCreateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCustomer401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response CreateCustomer401JSONResponse) VisitCreateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCustomer403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response CreateCustomer403JSONResponse) VisitCreateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCustomer409JSONResponse struct {
+	externalRef0.ConflictJSONResponse
+}
+
+func (response CreateCustomer409JSONResponse) VisitCreateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCustomer422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response CreateCustomer422JSONResponse) VisitCreateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -703,6 +1057,126 @@ func (response GetCustomer404JSONResponse) VisitGetCustomerResponse(w http.Respo
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCustomerRequestObject struct {
+	UserId UserId `json:"userId"`
+	Params UpdateCustomerParams
+	Body   *UpdateCustomerJSONRequestBody
+}
+
+type UpdateCustomerResponseObject interface {
+	VisitUpdateCustomerResponse(w http.ResponseWriter) error
+}
+
+type UpdateCustomer200JSONResponse CustomerSaved
+
+func (response UpdateCustomer200JSONResponse) VisitUpdateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCustomer400JSONResponse struct {
+	externalRef0.BadRequestJSONResponse
+}
+
+func (response UpdateCustomer400JSONResponse) VisitUpdateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCustomer401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response UpdateCustomer401JSONResponse) VisitUpdateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCustomer403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response UpdateCustomer403JSONResponse) VisitUpdateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCustomer404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response UpdateCustomer404JSONResponse) VisitUpdateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCustomer409JSONResponse struct {
+	externalRef0.ConflictJSONResponse
+}
+
+func (response UpdateCustomer409JSONResponse) VisitUpdateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCustomer422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response UpdateCustomer422JSONResponse) VisitUpdateCustomerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -1002,14 +1476,119 @@ func (response ListCustomerLedger404JSONResponse) VisitListCustomerLedgerRespons
 	return err
 }
 
+type ResetCustomerPasswordRequestObject struct {
+	UserId UserId `json:"userId"`
+}
+
+type ResetCustomerPasswordResponseObject interface {
+	VisitResetCustomerPasswordResponse(w http.ResponseWriter) error
+}
+
+type ResetCustomerPassword200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type ResetCustomerPassword200JSONResponse struct {
+	Body    CustomerPasswordReset
+	Headers ResetCustomerPassword200ResponseHeaders
+}
+
+func (response ResetCustomerPassword200JSONResponse) VisitResetCustomerPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResetCustomerPassword401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response ResetCustomerPassword401JSONResponse) VisitResetCustomerPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResetCustomerPassword403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response ResetCustomerPassword403JSONResponse) VisitResetCustomerPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResetCustomerPassword404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response ResetCustomerPassword404JSONResponse) VisitResetCustomerPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResetCustomerPassword429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response ResetCustomerPassword429JSONResponse) VisitResetCustomerPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// ListCustomers Клиенты клуба
 	// (GET /api/customers)
 	ListCustomers(ctx context.Context, request ListCustomersRequestObject) (ListCustomersResponseObject, error)
+	// CreateCustomer Новый клиент
+	// (POST /api/customers)
+	CreateCustomer(ctx context.Context, request CreateCustomerRequestObject) (CreateCustomerResponseObject, error)
 	// GetCustomer Клиент и его балансы
 	// (GET /api/customers/{userId})
 	GetCustomer(ctx context.Context, request GetCustomerRequestObject) (GetCustomerResponseObject, error)
+	// UpdateCustomer Изменить клиента (и пополнить/списать баланс без кассы)
+	// (PATCH /api/customers/{userId})
+	UpdateCustomer(ctx context.Context, request UpdateCustomerRequestObject) (UpdateCustomerResponseObject, error)
 	// AdjustCustomerBalance Пополнение или списание баланса владельцем без кассы
 	// (POST /api/customers/{userId}/balance-adjustments)
 	AdjustCustomerBalance(ctx context.Context, request AdjustCustomerBalanceRequestObject) (AdjustCustomerBalanceResponseObject, error)
@@ -1019,6 +1598,9 @@ type StrictServerInterface interface {
 	// ListCustomerLedger История баланса клиента (журнал операций)
 	// (GET /api/customers/{userId}/ledger)
 	ListCustomerLedger(ctx context.Context, request ListCustomerLedgerRequestObject) (ListCustomerLedgerResponseObject, error)
+	// ResetCustomerPassword Сбросить пароль клиента
+	// (POST /api/customers/{userId}/password)
+	ResetCustomerPassword(ctx context.Context, request ResetCustomerPasswordRequestObject) (ResetCustomerPasswordResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -1086,6 +1668,39 @@ func (sh *strictHandler) ListCustomers(w http.ResponseWriter, r *http.Request, p
 	}
 }
 
+// CreateCustomer operation middleware
+func (sh *strictHandler) CreateCustomer(w http.ResponseWriter, r *http.Request, params CreateCustomerParams) {
+	var request CreateCustomerRequestObject
+
+	request.Params = params
+
+	var body CreateCustomerJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateCustomer(ctx, request.(CreateCustomerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateCustomer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateCustomerResponseObject); ok {
+		if err := validResponse.VisitCreateCustomerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetCustomer operation middleware
 func (sh *strictHandler) GetCustomer(w http.ResponseWriter, r *http.Request, userId UserId) {
 	var request GetCustomerRequestObject
@@ -1105,6 +1720,40 @@ func (sh *strictHandler) GetCustomer(w http.ResponseWriter, r *http.Request, use
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetCustomerResponseObject); ok {
 		if err := validResponse.VisitGetCustomerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateCustomer operation middleware
+func (sh *strictHandler) UpdateCustomer(w http.ResponseWriter, r *http.Request, userId UserId, params UpdateCustomerParams) {
+	var request UpdateCustomerRequestObject
+
+	request.UserId = userId
+	request.Params = params
+
+	var body UpdateCustomerJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateCustomer(ctx, request.(UpdateCustomerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateCustomer")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateCustomerResponseObject); ok {
+		if err := validResponse.VisitUpdateCustomerResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1200,6 +1849,32 @@ func (sh *strictHandler) ListCustomerLedger(w http.ResponseWriter, r *http.Reque
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListCustomerLedgerResponseObject); ok {
 		if err := validResponse.VisitListCustomerLedgerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ResetCustomerPassword operation middleware
+func (sh *strictHandler) ResetCustomerPassword(w http.ResponseWriter, r *http.Request, userId UserId) {
+	var request ResetCustomerPasswordRequestObject
+
+	request.UserId = userId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ResetCustomerPassword(ctx, request.(ResetCustomerPasswordRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ResetCustomerPassword")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ResetCustomerPasswordResponseObject); ok {
+		if err := validResponse.VisitResetCustomerPasswordResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

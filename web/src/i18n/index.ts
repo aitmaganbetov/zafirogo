@@ -1,5 +1,6 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
+import { makeMissingKeyHandler } from './missing';
 
 /*
  * i18next: ключ — русский текст, как __('Текст') в Laravel (решение Q-065). Переводы загружаются с сервера
@@ -25,6 +26,10 @@ void i18n.use(initReactI18next).init({
   returnEmptyString: false,
   interpolation: { escapeValue: false },
   react: { useSuspense: false },
+  // Нет перевода: форма trans_choice по числу (а не все формы через «|») и подстановки в ключ (CM-11, missing.ts).
+  parseMissingKeyHandler: makeMissingKeyHandler((text, params) =>
+    i18n.services.interpolator.interpolate(text, params, i18n.language, {}),
+  ),
 });
 
 export default i18n;

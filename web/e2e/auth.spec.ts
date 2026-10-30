@@ -62,7 +62,8 @@ test('вход: маска телефона, ошибка под полем, з�
 
   await page.locator('#password').fill('secret');
   await page.locator('.auth-submit').click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  // Кассира с /dashboard уводит на кассу (DashboardController ~стр. 20, routes/_admin/dashboard.tsx).
+  await expect(page).toHaveURL(/\/cash-register$/);
   await expect(page.locator('.admin-app')).toBeVisible();
   await expect(page.locator('.sidebar')).toContainText('Иван Петров');
   // Кассир: «Касса» есть, «Админпанель» скрыта (@unless($frontDesk)), «Склад» нет права.

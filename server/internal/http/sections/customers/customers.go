@@ -36,13 +36,6 @@ const (
 
 var balanceLabel = map[billing.BalanceField]string{billing.FieldMain: "основной баланс", billing.FieldBonus: "бонусный баланс"}
 
-func customerView(r store.AdminGetCustomerRow) customersapi.Customer {
-	return customersapi.Customer{
-		UserId: r.UserID, Name: r.Name, Phone: r.Phone, Role: r.Role, Discount: r.Discount, TotalSpentTiyn: r.TotalSpent,
-		BalanceTiyn: r.Balance, BonusBalanceTiyn: r.BonusBalance,
-	}
-}
-
 // customer — клиент клуба (не сотрудник); нет — 404 (findOrFail членства в старом).
 func customer(ctx context.Context, q *store.Queries, clubID, userID int64) (store.AdminGetCustomerRow, error) {
 	row, err := q.AdminGetCustomer(ctx, store.AdminGetCustomerParams{ClubID: clubID, UserID: userID})
@@ -52,26 +45,81 @@ func customer(ctx context.Context, q *store.Queries, clubID, userID int64) (stor
 	return row, err
 }
 
-// ListCustomers — UserController::index(): клиенты (не сотрудники) по user_id, с поиском.
+// ListCustomers — UserController::index(): клиенты (не сотрудники) по user_id, с поиском; keyset вперёд (after_id)
+// и назад (before_id), всего — «Всего: :count».
 func (h *handlers) ListCustomers(ctx context.Context, req customersapi.ListCustomersRequestObject) (customersapi.ListCustomersResponseObject, error) {
-	var after int64
+	var after, before int64
 	if req.Params.AfterId != nil {
 		after = *req.Params.AfterId
 	}
+	if req.Params.BeforeId != nil {
+		before = *req.Params.BeforeId
+	}
+	if after > 0 && before > 0 {
+		return nil, httpx.NewAPIError(http.StatusBadRequest, "bad_request", "")
+	}
 	size := httpx.PageSize(req.Params.Limit)
+	search := httpx.LikePattern(req.Params.Q)
 	out := customersapi.CustomerPage{Items: []customersapi.Customer{}}
 	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
-		rows, err := q.AdminListCustomers(ctx, store.AdminListCustomersParams{
-			ClubID: httpx.ClubID(ctx), AfterUserID: after, Search: httpx.LikePattern(req.Params.Q), PageSize: size,
-		})
+		clubID := httpx.ClubID(ctx)
+		var rows []customerRow
+		if before > 0 {
+			list, err := q.AdminListCustomersBefore(ctx, store.AdminListCustomersBeforeParams{
+				ClubID: clubID, BeforeUserID: before, Search: search, PageSize: size + 1,
+			})
+			if err != nil {
+				return err
+			}
+			more := len(list) > int(size)
+			if more {
+				list = list[:size]
+			}
+			for i := len(list) - 1; i >= 0; i-- {
+				rows = append(rows, fromListBefore(list[i]))
+			}
+			if more {
+				out.PrevBeforeId = httpx.Ptr(rows[0].UserID)
+			}
+			if len(rows) > 0 {
+				out.NextAfterId = httpx.Ptr(rows[len(rows)-1].UserID)
+			}
+		} else {
+			list, err := q.AdminListCustomers(ctx, store.AdminListCustomersParams{
+				ClubID: clubID, AfterUserID: after, Search: search, PageSize: size + 1,
+			})
+			if err != nil {
+				return err
+			}
+			more := len(list) > int(size)
+			if more {
+				list = list[:size]
+			}
+			for _, r := range list {
+				rows = append(rows, fromList(r))
+			}
+			if more {
+				out.NextAfterId = httpx.Ptr(rows[len(rows)-1].UserID)
+			}
+			if after > 0 && len(rows) > 0 {
+				out.PrevBeforeId = httpx.Ptr(rows[0].UserID)
+			}
+		}
+		total, err := q.AdminCountCustomers(ctx, store.AdminCountCustomersParams{ClubID: clubID, Search: search})
+		if err != nil {
+			return err
+		}
+		out.Total = total
+		ids := make([]int64, 0, len(rows))
+		for _, r := range rows {
+			ids = append(ids, r.UserID)
+		}
+		v, err := h.loadView(ctx, q, clubID, ids)
 		if err != nil {
 			return err
 		}
 		for _, r := range rows {
-			out.Items = append(out.Items, customerView(store.AdminGetCustomerRow(r)))
-		}
-		if len(rows) == int(size) {
-			out.NextAfterId = httpx.Ptr(rows[len(rows)-1].UserID)
+			out.Items = append(out.Items, v.customer(r))
 		}
 		return nil
 	})
@@ -81,12 +129,25 @@ func (h *handlers) ListCustomers(ctx context.Context, req customersapi.ListCusto
 	return customersapi.ListCustomers200JSONResponse(out), nil
 }
 
+// view — клиент с лояльностью и признаком «сотрудник другого клуба».
+func (h *handlers) view(ctx context.Context, q *store.Queries, clubID int64, row store.AdminGetCustomerRow) (customersapi.Customer, error) {
+	v, err := h.loadView(ctx, q, clubID, []int64{row.UserID})
+	if err != nil {
+		return customersapi.Customer{}, err
+	}
+	return v.customer(fromGet(row)), nil
+}
+
 // GetCustomer — карточка клиента.
 func (h *handlers) GetCustomer(ctx context.Context, req customersapi.GetCustomerRequestObject) (customersapi.GetCustomerResponseObject, error) {
 	var out customersapi.Customer
 	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
-		row, err := customer(ctx, q, httpx.ClubID(ctx), req.UserId)
-		out = customerView(row)
+		clubID := httpx.ClubID(ctx)
+		row, err := customer(ctx, q, clubID, req.UserId)
+		if err != nil {
+			return err
+		}
+		out, err = h.view(ctx, q, clubID, row)
 		return err
 	})
 	if err != nil {
@@ -164,6 +225,72 @@ func (h *handlers) notifyBalance(ctx context.Context, q *store.Queries, clubID, 
 	return row, nil
 }
 
+// ownerAdjustment — проверенные поля пополнения/списания без кассы (top_up_amount, top_up_balance, balance_action).
+type ownerAdjustment struct {
+	field    billing.BalanceField
+	writeOff bool
+	amount   money.Tiyn
+}
+
+// parseOwnerAdjustment — правила UserController::update() для top_up_amount (numeric|min:0.01|max:10000000),
+// top_up_balance (in:balance,bonus_balance), balance_action (in:top_up,write_off). Право (owner) — у вызывающего.
+func parseOwnerAdjustment(f *httpx.FormErrors, amountTiyn int64, balanceType, action string) ownerAdjustment {
+	out := ownerAdjustment{field: billing.BalanceField(balanceType), writeOff: action == "write_off"}
+	amount, err := billing.ParseOwnerAdjustmentAmount(money.Tiyn(amountTiyn).Tenge())
+	switch {
+	case errors.Is(err, billing.ErrBalanceAmountDecimals): // Решение Q-002 (docs/DECISIONS.md)
+		f.AddErr(httpx.RuleError("top_up_amount", cash.RuleDecimal))
+	case err != nil && amountTiyn < 1:
+		f.AddErr(httpx.RuleError("top_up_amount", cash.RuleMin))
+	case err != nil:
+		f.AddErr(httpx.RuleError("top_up_amount", cash.RuleMax))
+	}
+	out.amount = amount
+	if !out.field.Valid() {
+		f.AddErr(httpx.RuleError("top_up_balance", cash.RuleIn))
+	}
+	if action != "top_up" && action != "write_off" {
+		f.AddErr(httpx.RuleError("balance_action", cash.RuleIn))
+	}
+	return out
+}
+
+// ownerAdjust — пополнение/списание без кассы в транзакции q (ledger + журнал user.balance_topped_up /
+// user.balance_written_off). Возвращает ключ сообщения. Laravel: UserController::update() (стр. 135–157).
+func (h *handlers) ownerAdjust(ctx context.Context, q *store.Queries, clubID int64, c store.AdminGetCustomerRow, a ownerAdjustment, key string) (string, error) {
+	actor := httpx.Actor(ctx)
+	res, err := billing.OwnerAdjust(ctx, q, billing.OwnerAdjustParams{
+		ClubID: clubID, UserID: c.UserID, Field: a.field, WriteOff: a.writeOff, Amount: a.amount,
+		IdempotencyKey: key, Actor: actor,
+	})
+	if err != nil {
+		return "", err
+	}
+	label := h.d.T(ctx, balanceLabel[a.field], nil)
+	params := map[string]string{"balance": label, "user": c.Name}
+	e := activity.Entry{
+		ClubID: clubID, UserID: actor.UserID, SubjectType: billingsvc.SubjectUser, SubjectID: c.UserID,
+		Event: "user.balance_topped_up", Description: h.d.T(ctx, "Пополнение :balance без кассы: :user", params),
+		Details: map[string]any{
+			"amount": billingsvc.PHPFloat(a.amount), "balance_type": label, "payment_method": h.d.T(ctx, msgOwnerPaymentLabel, nil),
+			"new_balance": billingsvc.PHPFloat(res.NewBalance), "without_cash": true,
+		},
+	}
+	msg := msgSavedToppedUp
+	if a.writeOff {
+		e.Event, e.Description = "user.balance_written_off", h.d.T(ctx, "Списание :balance без кассы: :user", params)
+		e.Details = map[string]any{
+			"amount": billingsvc.PHPFloat(a.amount), "balance_field": string(a.field), "balance_type": label,
+			"new_balance": billingsvc.PHPFloat(res.NewBalance), "without_cash": true,
+		}
+		msg = msgSavedWrittenOff
+	}
+	if err := billingsvc.RecordActivity(ctx, q, e); err != nil {
+		return "", err
+	}
+	return msg, nil
+}
+
 // AdjustCustomerBalance — UserController::update(): top_up_amount / top_up_balance / balance_action (только владелец).
 func (h *handlers) AdjustCustomerBalance(ctx context.Context, req customersapi.AdjustCustomerBalanceRequestObject) (customersapi.AdjustCustomerBalanceResponseObject, error) {
 	b := req.Body
@@ -171,27 +298,14 @@ func (h *handlers) AdjustCustomerBalance(ctx context.Context, req customersapi.A
 		// 'top_up_amount' => prohibited (canTopUpWithoutCash() — только роль owner).
 		return nil, httpx.Validation("top_up_amount", msgOwnerOnlyBalance)
 	}
-	field := billing.BalanceField(b.BalanceType)
-	if !field.Valid() {
-		return nil, httpx.RuleError("top_up_balance", cash.RuleIn)
+	var form httpx.FormErrors
+	adj := parseOwnerAdjustment(&form, b.AmountTiyn, b.BalanceType, b.Action)
+	if err := form.Err(); err != nil {
+		return nil, err
 	}
-	if b.Action != "top_up" && b.Action != "write_off" {
-		return nil, httpx.RuleError("balance_action", cash.RuleIn)
-	}
-	amount, err := billing.ParseOwnerAdjustmentAmount(money.Tiyn(b.AmountTiyn).Tenge())
-	if err != nil {
-		if errors.Is(err, billing.ErrBalanceAmountDecimals) { // Решение Q-002 (docs/DECISIONS.md)
-			return nil, httpx.RuleError("top_up_amount", cash.RuleDecimal)
-		}
-		if b.AmountTiyn < 1 {
-			return nil, httpx.RuleError("top_up_amount", cash.RuleMin)
-		}
-		return nil, httpx.RuleError("top_up_amount", cash.RuleMax)
-	}
-	writeOff := b.Action == "write_off"
 	clubID, key := httpx.ClubID(ctx), req.Params.IdempotencyKey
 	var out customersapi.BalanceAdjustmentResult
-	err = h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
+	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		var err error
 		out, err = httpx.Idempotent(ctx, q, clubID, key, "owner_adjust", map[string]any{"user_id": req.UserId, "body": b}, h.d.NowFunc(),
 			func() (customersapi.BalanceAdjustmentResult, error) {
@@ -199,42 +313,20 @@ func (h *handlers) AdjustCustomerBalance(ctx context.Context, req customersapi.A
 				if err != nil {
 					return customersapi.BalanceAdjustmentResult{}, err
 				}
-				actor := httpx.Actor(ctx)
-				res, err := billing.OwnerAdjust(ctx, q, billing.OwnerAdjustParams{
-					ClubID: clubID, UserID: req.UserId, Field: field, WriteOff: writeOff, Amount: amount,
-					IdempotencyKey: key, Actor: actor,
-				})
+				msg, err := h.ownerAdjust(ctx, q, clubID, c, adj, key)
 				if err != nil {
-					return customersapi.BalanceAdjustmentResult{}, err
-				}
-				// Laravel: UserController::update() (стр. 135–157) — журнал user.balance_written_off / user.balance_topped_up.
-				label := balanceLabel[field]
-				e := activity.Entry{
-					ClubID: clubID, UserID: actor.UserID, SubjectType: billingsvc.SubjectUser, SubjectID: req.UserId,
-					Event: "user.balance_topped_up", Description: "Пополнение " + label + " без кассы: " + c.Name,
-					Details: map[string]any{
-						"amount": billingsvc.PHPFloat(amount), "balance_type": label, "payment_method": msgOwnerPaymentLabel,
-						"new_balance": billingsvc.PHPFloat(res.NewBalance), "without_cash": true,
-					},
-				}
-				msg := msgSavedToppedUp
-				if writeOff {
-					e.Event, e.Description = "user.balance_written_off", "Списание "+label+" без кассы: "+c.Name
-					e.Details = map[string]any{
-						"amount": billingsvc.PHPFloat(amount), "balance_field": string(field), "balance_type": label,
-						"new_balance": billingsvc.PHPFloat(res.NewBalance), "without_cash": true,
-					}
-					msg = msgSavedWrittenOff
-				}
-				if err := billingsvc.RecordActivity(ctx, q, e); err != nil {
 					return customersapi.BalanceAdjustmentResult{}, err
 				}
 				row, err := h.notifyBalance(ctx, q, clubID, req.UserId)
 				if err != nil {
 					return customersapi.BalanceAdjustmentResult{}, err
 				}
+				view, err := h.view(ctx, q, clubID, row)
+				if err != nil {
+					return customersapi.BalanceAdjustmentResult{}, err
+				}
 				return customersapi.BalanceAdjustmentResult{
-					Customer: customerView(row), Message: httpx.Substitute(msg, map[string]string{"amount": httpx.NumberFormat(amount, ".")}),
+					Customer: view, Message: h.d.T(ctx, msg, map[string]string{"amount": httpx.NumberFormat(adj.amount, ".")}),
 				}, nil
 			})
 		return err
@@ -245,22 +337,26 @@ func (h *handlers) AdjustCustomerBalance(ctx context.Context, req customersapi.A
 	return customersapi.AdjustCustomerBalance200JSONResponse(out), nil
 }
 
+// checkInitialBalance — StoreUserRequest: balance / bonus_balance nullable|numeric|min:0|max:9999999999.99.
+func checkInitialBalance(f *httpx.FormErrors, field string, v int64) {
+	if v < 0 {
+		f.AddErr(httpx.RuleError(field, cash.RuleMin))
+	} else if money.Tiyn(v) > maxInitialBalance {
+		f.AddErr(httpx.RuleError(field, cash.RuleMax))
+	}
+}
+
 // SetCustomerInitialBalance — UserController::store(): начальные balance / bonus_balance (право customer_money.update).
 func (h *handlers) SetCustomerInitialBalance(ctx context.Context, req customersapi.SetCustomerInitialBalanceRequestObject) (customersapi.SetCustomerInitialBalanceResponseObject, error) {
 	b := req.Body
 	if !httpx.Principal(ctx).Can("customer_money.update") && (b.BalanceTiyn != 0 || b.BonusBalanceTiyn != 0) {
 		return nil, httpx.NewAPIError(http.StatusForbidden, permissions.CodeForbidden, msgMoneyByManager)
 	}
-	for _, f := range []struct {
-		name string
-		v    int64
-	}{{"balance", b.BalanceTiyn}, {"bonus_balance", b.BonusBalanceTiyn}} {
-		if f.v < 0 {
-			return nil, httpx.RuleError(f.name, cash.RuleMin)
-		}
-		if money.Tiyn(f.v) > maxInitialBalance {
-			return nil, httpx.RuleError(f.name, cash.RuleMax)
-		}
+	var form httpx.FormErrors
+	checkInitialBalance(&form, "balance", b.BalanceTiyn)
+	checkInitialBalance(&form, "bonus_balance", b.BonusBalanceTiyn)
+	if err := form.Err(); err != nil {
+		return nil, err
 	}
 	clubID, key := httpx.ClubID(ctx), req.Params.IdempotencyKey
 	var out customersapi.Customer
@@ -278,7 +374,10 @@ func (h *handlers) SetCustomerInitialBalance(ctx context.Context, req customersa
 					return customersapi.Customer{}, err
 				}
 				row, err := h.notifyBalance(ctx, q, clubID, req.UserId)
-				return customerView(row), err
+				if err != nil {
+					return customersapi.Customer{}, err
+				}
+				return h.view(ctx, q, clubID, row)
 			})
 		return err
 	})

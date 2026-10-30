@@ -37,6 +37,8 @@ const (
 	MsgStaffOnly   = "Панель клуба — только для сотрудников. Клиенты входят на ПК клуба в агенте."
 	MsgShiftFull   = "На смене уже максимум сотрудников с вашей ролью. Войти можно, когда коллега выйдет из панели."
 	MsgClubMissing = "Нет доступа к выбранному клубу."
+	// MsgSuperadminOnly — вход на хосте кабинета не суперадмином (AuthController::login()).
+	MsgSuperadminOnly = "Здесь входят только суперадмины Zafiro."
 )
 
 // Причины неудачного входа для журнала (ActivityLogger::recordFailedLogin('auth.login_failed', phone, reason)).
@@ -45,6 +47,7 @@ const (
 	ReasonBlocked            = "blocked"
 	ReasonNoClubAccess       = "no_club_access"
 	ReasonShiftFull          = "shift_full"
+	ReasonNotSuperadmin      = "not_superadmin"
 )
 
 // FieldError — ошибка входа, привязанная к полю формы (Laravel: back()->withErrors([поле => текст])).
@@ -176,6 +179,10 @@ type LoginInput struct {
 	// PCLogin — вход для подтверждения входа на ПК по QR (/pc-login/{code}): клиентам разрешён
 	// (в старом — url.intended начинается с /pc-login/).
 	PCLogin bool
+	// SuperadminOnly — вход на хосте кабинета суперадмина (SUPERADMIN_DOMAIN, Q-069): только суперадмины, сразу в
+	// кабинет (сессия без клуба, журнал платформы superadmin.login). Laravel: AuthController::login(),
+	// SuperadminHost::is($request).
+	SuperadminOnly bool
 }
 
 // LoginResult — итог входа.
@@ -233,6 +240,12 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginResult, error)
 	if user.BlockedAt != nil {
 		return fail(ReasonBlocked, MsgBlocked)
 	}
+	if in.SuperadminOnly {
+		if !user.IsSuperadmin {
+			return fail(ReasonNotSuperadmin, MsgSuperadminOnly)
+		}
+		return s.startSession(ctx, user.ID, 0, user.Name, in.Remember, true)
+	}
 
 	// A staff membership first: a cashier who is also a customer of another club works.
 	var memberships []store.ListUserMembershipsRow
@@ -266,16 +279,21 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginResult, error)
 		clubID = m.ClubID
 	}
 
-	tokens, err := s.sessions.Create(ctx, user.ID, clubID, in.Remember)
+	return s.startSession(ctx, user.ID, clubID, user.Name, in.Remember, user.IsSuperadmin)
+}
+
+// startSession — сессия после проверки пароля и событие входа (clubID 0 — кабинет суперадмина).
+func (s *Service) startSession(ctx context.Context, userID, clubID int64, name string, remember, superadmin bool) (LoginResult, error) {
+	tokens, err := s.sessions.Create(ctx, userID, clubID, remember)
 	if err != nil {
 		return LoginResult{}, err
 	}
-	p, err := s.principalFor(ctx, session.Session{ID: tokens.SessionID, UserID: user.ID, ClubID: clubID}, user.IsSuperadmin)
+	p, err := s.principalFor(ctx, session.Session{ID: tokens.SessionID, UserID: userID, ClubID: clubID}, superadmin)
 	if err != nil {
 		return LoginResult{}, err
 	}
-	s.events.LoginSucceeded(ctx, user.ID, clubID, user.Name)
-	return LoginResult{Tokens: tokens, UserID: user.ID, ClubID: clubID, Principal: p}, nil
+	s.events.LoginSucceeded(ctx, userID, clubID, name)
+	return LoginResult{Tokens: tokens, UserID: userID, ClubID: clubID, Principal: p}, nil
 }
 
 // rehash заменяет хэш на Argon2id. Ошибка не мешает входу (пароль уже проверен) — только в лог.

@@ -327,6 +327,11 @@ export interface components {
             timezone: string;
             /** @description Язык интерфейса клуба (clubs.locale ?? 'ru', LocaleResolver::forClub()). */
             locale: string;
+            /**
+             * @description @can('manage-integrations'): владелец или сотрудник с club_memberships.can_manage_integrations
+             *     (пункт «API и интеграции» меню настроек).
+             */
+            can_manage_integrations?: boolean;
         };
         MembershipItem: {
             /** Format: int64 */

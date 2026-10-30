@@ -67,6 +67,7 @@ type Config struct {
 	Webhooks        Webhooks      `koanf:"webhooks"`
 	Realtime        Realtime      `koanf:"realtime"`
 	Workers         Workers       `koanf:"workers"`
+	Superadmin      Superadmin    `koanf:"superadmin"`
 	Dev             Dev           `koanf:"dev"`
 
 	// Generated — ключи, для которых в dev/test сгенерирован случайный секрет (не заданы явно).
@@ -88,6 +89,9 @@ type HTTP struct {
 	// X-Forwarded-For / X-Real-IP. Пусто — заголовкам не доверяем вообще.
 	// В env — через запятую: ZAFIRO_HTTP_TRUSTED_PROXIES=10.0.0.0/8,127.0.0.1
 	TrustedProxies []string `koanf:"trusted_proxies"`
+	// WikiHost — хост wiki (WIKI_DOMAIN старого, config app.wiki_domain; решение Q-069), например wiki.zafiro.kz.
+	// Пусто — wiki на /wiki этого сайта. ZAFIRO_HTTP_WIKI_HOST.
+	WikiHost string `koanf:"wiki_host"`
 }
 
 // Database — подключения к PostgreSQL. Два логина (db/migrations/0004_rls.sql):
@@ -334,6 +338,21 @@ func (c *Config) Now() func() time.Time {
 	return time.Now
 }
 
+// Superadmin — кабинет суперадмина (Этап 3, группа 6).
+type Superadmin struct {
+	// Domain — отдельный хост кабинета (SUPERADMIN_DOMAIN старого проекта, решение Q-069): маршруты кабинета
+	// отвечают только на нём (с корня), на нём же — вход только для суперадминов. Пусто — кабинет по /superadmin.
+	// В dev — поддомен localhost (например admin.localhost).
+	Domain string `koanf:"domain"`
+	// SecretKey — ключ шифрования секретов платформы в базе (токены Telegram, как Crypt::encryptString старого
+	// кода). ≥ 32 байт; в dev/test без значения — случайный (после перезапуска сохранённые токены не читаются).
+	SecretKey Secret `koanf:"secret_key"`
+	// BackupPath — каталог бэкапов (BACKUP_PATH): экран показывает время самого нового файла.
+	BackupPath string `koanf:"backup_path"`
+	// SSLHosts — домены для проверки сертификатов (MONITORING_SSL_HOSTS); проверка — Этап 4.
+	SSLHosts []string `koanf:"ssl_hosts"`
+}
+
 // Workers — периодические задачи.
 type Workers struct {
 	ExpireSessions ExpireSessions `koanf:"expire_sessions"`
@@ -366,6 +385,7 @@ func Defaults() map[string]any {
 		"http.request_timeout":     "30s",
 		"http.max_header_bytes":    1 << 20,
 		"http.trusted_proxies":     []string{},
+		"http.wiki_host":           "",
 		"database.url":             "",
 		"database.platform_url":    "",
 		"valkey.addr":              "localhost:6379",
@@ -452,6 +472,11 @@ func Defaults() map[string]any {
 		"workers.expire_sessions.interval": "1m",
 		"workers.partitions.interval":      "24h",
 		"workers.partitions.months":        3,
+
+		"superadmin.domain":      "",
+		"superadmin.secret_key":  "",
+		"superadmin.backup_path": "",
+		"superadmin.ssl_hosts":   []string{},
 
 		"dev.fixed_now": "",
 	}
@@ -569,6 +594,10 @@ func (c *Config) applyDerived() {
 	if c.Agent.Enroll.CodePepper.IsZero() {
 		c.Agent.Enroll.CodePepper = randomSecret(32)
 		c.Generated = append(c.Generated, "agent.enroll.code_pepper")
+	}
+	if c.Superadmin.SecretKey.IsZero() {
+		c.Superadmin.SecretKey = randomSecret(32)
+		c.Generated = append(c.Generated, "superadmin.secret_key")
 	}
 }
 
@@ -804,6 +833,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Agent.Enroll.DisklessCertLifetime > 0 && c.Agent.Cert.Lifetime > 0 && c.Agent.Enroll.DisklessCertLifetime > c.Agent.Cert.Lifetime {
 		add("agent.enroll.diskless_cert_lifetime: должен быть ≤ agent.cert.lifetime")
+	}
+	if k := c.Superadmin.SecretKey; !k.IsZero() && len(k.Reveal()) < 32 {
+		add("superadmin.secret_key: нужно не меньше 32 байт")
+	}
+	if d := c.Superadmin.Domain; d != "" && (strings.ContainsAny(d, "/:@ ") || strings.HasPrefix(d, ".")) {
+		add("superadmin.domain: ожидается имя хоста без схемы и порта, получено %q", d)
 	}
 	if _, err := c.Agent.Update.UpdatePublicKeys(); err != nil {
 		errs = append(errs, err)

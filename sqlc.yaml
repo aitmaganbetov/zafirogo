@@ -45,7 +45,14 @@ rules:
   # GetUserByPhone, GetUserAuth, UpdateUserPasswordHash — платформенная таблица users (без club_id и RLS), вход.
   # Register*, InvitationUserEmail, ClubLocaleTimezone — users/clubs/saas_plans при регистрации и входе (Этап 3, F1).
   # I18n* — платформенные languages/translations (общие для всех клубов).
+  # ClubMapSettings, AgentReleaseSetting — clubs (настройки клуба из сессии) и platform_settings (релиз агента), Этап 3 G1.
+  # AdminAccountsLocked, AdminUserConflicts — users (платформенная) и роли во всех клубах (пул zafiro_platform), клиенты (Этап 3, G3).
+  # SettingsLanguages — платформенные languages; SettingsClub, SettingsLockClub, SettingsSave, SettingsSet* — строка clubs
+  # клуба из сессии (WHERE id = club_id), экран настроек клуба (Этап 3, G5).
+  # Superadmin*, Monitoring* — суперадминка и сбор метрик (Этап 3, G6): кабинет платформы по всем клубам, пул
+  # zafiro_platform (db/queries/superadmin.sql, monitoring.sql); только эти разделы вызывают запросы с этими префиксами.
+  # PublicLanding — saas_plans и platform_settings для лендинга (Этап 3, G7).
   - name: tenant-filter
     message: "запрос должен фильтровать по club_id (или быть в списке платформенных исключений в sqlc.yaml)"
     rule: |
-      !query.sql.contains("club_id") && !(query.name in ["GetClub", "GetClubBySlug", "ExpireDueSessions", "ListExpiredTimePackages", "GetUserByPhone", "GetUserAuth", "UpdateUserPasswordHash", "RegisterCreateUser", "RegisterPhoneTaken", "RegisterCreateClub", "RegisterTrialPlan", "InvitationUserEmail", "ClubLocaleTimezone", "I18nEnabledLanguages", "I18nVersion", "I18nLines", "I18nEnsureLanguage", "I18nLanguageID", "I18nInsertMissing"])
+      !query.sql.contains("club_id") && !query.name.startsWith("Superadmin") && !query.name.startsWith("Monitoring") && !(query.name in ["GetClub", "GetClubBySlug", "ExpireDueSessions", "ListExpiredTimePackages", "GetUserByPhone", "GetUserAuth", "UpdateUserPasswordHash", "RegisterCreateUser", "RegisterPhoneTaken", "RegisterCreateClub", "RegisterTrialPlan", "InvitationUserEmail", "ClubLocaleTimezone", "I18nEnabledLanguages", "I18nVersion", "I18nLines", "I18nEnsureLanguage", "I18nLanguageID", "I18nInsertMissing", "AdminAccountsLocked", "AdminUserConflicts", "ClubMapSettings", "AgentReleaseSetting", "SettingsLanguages", "SettingsClub", "SettingsLockClub", "SettingsSave", "SettingsSetTimezone", "SettingsSetLocale", "SettingsSetAgentPin", "SettingsSetStaffMinutes", "SettingsSetLogoPath", "SettingsSetSigninImagePath", "PublicLanding"])

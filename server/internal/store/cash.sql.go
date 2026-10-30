@@ -193,7 +193,7 @@ SET closed_by = $1, status = 'closed', open_marker = NULL,
     drawer_snapshot_entry_id = $4::bigint,
     drawer_snapshot_balance = $5::bigint, drawer_snapshot_at = now()
 WHERE club_id = $6 AND id = $7 AND status = 'open'
-RETURNING id, opened_by, closed_by, status, open_marker, opening_balance, closing_balance, opened_at, closed_at, created_at, updated_at, club_id, z_report_nonce_hash, z_report_printed_at, z_report_printed_by, drawer_snapshot_entry_id, drawer_snapshot_balance, drawer_snapshot_at
+RETURNING id, opened_by, closed_by, status, open_marker, opening_balance, closing_balance, opened_at, closed_at, created_at, updated_at, club_id, z_report_printed_at, z_report_printed_by, drawer_snapshot_entry_id, drawer_snapshot_balance, drawer_snapshot_at
 `
 
 type CloseCashShiftParams struct {
@@ -232,7 +232,6 @@ func (q *Queries) CloseCashShift(ctx context.Context, arg CloseCashShiftParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClubID,
-		&i.ZReportNonceHash,
 		&i.ZReportPrintedAt,
 		&i.ZReportPrintedBy,
 		&i.DrawerSnapshotEntryID,
@@ -277,7 +276,7 @@ func (q *Queries) GetCashRefundOf(ctx context.Context, arg GetCashRefundOfParams
 }
 
 const getCashShift = `-- name: GetCashShift :one
-SELECT id, opened_by, closed_by, status, open_marker, opening_balance, closing_balance, opened_at, closed_at, created_at, updated_at, club_id, z_report_nonce_hash, z_report_printed_at, z_report_printed_by, drawer_snapshot_entry_id, drawer_snapshot_balance, drawer_snapshot_at
+SELECT id, opened_by, closed_by, status, open_marker, opening_balance, closing_balance, opened_at, closed_at, created_at, updated_at, club_id, z_report_printed_at, z_report_printed_by, drawer_snapshot_entry_id, drawer_snapshot_balance, drawer_snapshot_at
 FROM cash_shifts
 WHERE club_id = $1 AND id = $2
 `
@@ -303,7 +302,6 @@ func (q *Queries) GetCashShift(ctx context.Context, arg GetCashShiftParams) (Cas
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClubID,
-		&i.ZReportNonceHash,
 		&i.ZReportPrintedAt,
 		&i.ZReportPrintedBy,
 		&i.DrawerSnapshotEntryID,
@@ -396,7 +394,7 @@ func (q *Queries) GetClubSettingsForCash(ctx context.Context, clubID int64) (jso
 }
 
 const getOpenCashShift = `-- name: GetOpenCashShift :one
-SELECT id, opened_by, closed_by, status, open_marker, opening_balance, closing_balance, opened_at, closed_at, created_at, updated_at, club_id, z_report_nonce_hash, z_report_printed_at, z_report_printed_by, drawer_snapshot_entry_id, drawer_snapshot_balance, drawer_snapshot_at
+SELECT id, opened_by, closed_by, status, open_marker, opening_balance, closing_balance, opened_at, closed_at, created_at, updated_at, club_id, z_report_printed_at, z_report_printed_by, drawer_snapshot_entry_id, drawer_snapshot_balance, drawer_snapshot_at
 FROM cash_shifts
 WHERE club_id = $1 AND status = 'open'
 ORDER BY id
@@ -420,7 +418,6 @@ func (q *Queries) GetOpenCashShift(ctx context.Context, clubID int64) (CashShift
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClubID,
-		&i.ZReportNonceHash,
 		&i.ZReportPrintedAt,
 		&i.ZReportPrintedBy,
 		&i.DrawerSnapshotEntryID,
@@ -434,7 +431,7 @@ const insertCashShift = `-- name: InsertCashShift :one
 INSERT INTO cash_shifts (club_id, opened_by, status, open_marker, opening_balance, opened_at, created_at, updated_at)
 VALUES ($1, $2, 'open', true, $3,
         $4, $4, $4)
-RETURNING id, opened_by, closed_by, status, open_marker, opening_balance, closing_balance, opened_at, closed_at, created_at, updated_at, club_id, z_report_nonce_hash, z_report_printed_at, z_report_printed_by, drawer_snapshot_entry_id, drawer_snapshot_balance, drawer_snapshot_at
+RETURNING id, opened_by, closed_by, status, open_marker, opening_balance, closing_balance, opened_at, closed_at, created_at, updated_at, club_id, z_report_printed_at, z_report_printed_by, drawer_snapshot_entry_id, drawer_snapshot_balance, drawer_snapshot_at
 `
 
 type InsertCashShiftParams struct {
@@ -466,7 +463,6 @@ func (q *Queries) InsertCashShift(ctx context.Context, arg InsertCashShiftParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClubID,
-		&i.ZReportNonceHash,
 		&i.ZReportPrintedAt,
 		&i.ZReportPrintedBy,
 		&i.DrawerSnapshotEntryID,
@@ -737,7 +733,7 @@ func (q *Queries) ListProductQuantities(ctx context.Context, arg ListProductQuan
 }
 
 const lockCashShift = `-- name: LockCashShift :one
-SELECT id, opened_by, closed_by, status, open_marker, opening_balance, closing_balance, opened_at, closed_at, created_at, updated_at, club_id, z_report_nonce_hash, z_report_printed_at, z_report_printed_by, drawer_snapshot_entry_id, drawer_snapshot_balance, drawer_snapshot_at
+SELECT id, opened_by, closed_by, status, open_marker, opening_balance, closing_balance, opened_at, closed_at, created_at, updated_at, club_id, z_report_printed_at, z_report_printed_by, drawer_snapshot_entry_id, drawer_snapshot_balance, drawer_snapshot_at
 FROM cash_shifts
 WHERE club_id = $1 AND id = $2
 FOR UPDATE
@@ -765,7 +761,6 @@ func (q *Queries) LockCashShift(ctx context.Context, arg LockCashShiftParams) (C
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClubID,
-		&i.ZReportNonceHash,
 		&i.ZReportPrintedAt,
 		&i.ZReportPrintedBy,
 		&i.DrawerSnapshotEntryID,
@@ -773,6 +768,26 @@ func (q *Queries) LockCashShift(ctx context.Context, arg LockCashShiftParams) (C
 		&i.DrawerSnapshotAt,
 	)
 	return i, err
+}
+
+const lockCashShiftStatus = `-- name: LockCashShiftStatus :one
+SELECT status
+FROM cash_shifts
+WHERE club_id = $1 AND id = $2
+FOR UPDATE
+`
+
+type LockCashShiftStatusParams struct {
+	ClubID int64 `json:"club_id"`
+	ID     int64 `json:"id"`
+}
+
+// markZReportPrinted(): статус смены под блокировкой (смена не open — 422). Nonce печати — в Valkey (Q-015).
+func (q *Queries) LockCashShiftStatus(ctx context.Context, arg LockCashShiftStatusParams) (string, error) {
+	row := q.db.QueryRow(ctx, lockCashShiftStatus, arg.ClubID, arg.ID)
+	var status string
+	err := row.Scan(&status)
+	return status, err
 }
 
 const lockCashTransaction = `-- name: LockCashTransaction :one
@@ -812,7 +827,7 @@ func (q *Queries) LockCashTransaction(ctx context.Context, arg LockCashTransacti
 
 const lockOpenCashShift = `-- name: LockOpenCashShift :one
 
-SELECT id, opened_by, closed_by, status, open_marker, opening_balance, closing_balance, opened_at, closed_at, created_at, updated_at, club_id, z_report_nonce_hash, z_report_printed_at, z_report_printed_by, drawer_snapshot_entry_id, drawer_snapshot_balance, drawer_snapshot_at
+SELECT id, opened_by, closed_by, status, open_marker, opening_balance, closing_balance, opened_at, closed_at, created_at, updated_at, club_id, z_report_printed_at, z_report_printed_by, drawer_snapshot_entry_id, drawer_snapshot_balance, drawer_snapshot_at
 FROM cash_shifts
 WHERE club_id = $1 AND status = 'open'
 ORDER BY id
@@ -841,7 +856,6 @@ func (q *Queries) LockOpenCashShift(ctx context.Context, clubID int64) (CashShif
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClubID,
-		&i.ZReportNonceHash,
 		&i.ZReportPrintedAt,
 		&i.ZReportPrintedBy,
 		&i.DrawerSnapshotEntryID,
@@ -851,33 +865,9 @@ func (q *Queries) LockOpenCashShift(ctx context.Context, clubID int64) (CashShif
 	return i, err
 }
 
-const lockZReportNonce = `-- name: LockZReportNonce :one
-SELECT status, z_report_nonce_hash
-FROM cash_shifts
-WHERE club_id = $1 AND id = $2
-FOR UPDATE
-`
-
-type LockZReportNonceParams struct {
-	ClubID int64 `json:"club_id"`
-	ID     int64 `json:"id"`
-}
-
-type LockZReportNonceRow struct {
-	Status           string `json:"status"`
-	ZReportNonceHash []byte `json:"z_report_nonce_hash"`
-}
-
-func (q *Queries) LockZReportNonce(ctx context.Context, arg LockZReportNonceParams) (LockZReportNonceRow, error) {
-	row := q.db.QueryRow(ctx, lockZReportNonce, arg.ClubID, arg.ID)
-	var i LockZReportNonceRow
-	err := row.Scan(&i.Status, &i.ZReportNonceHash)
-	return i, err
-}
-
 const markZReportPrinted = `-- name: MarkZReportPrinted :exec
 UPDATE cash_shifts
-SET z_report_nonce_hash = NULL, z_report_printed_at = $1, z_report_printed_by = $2
+SET z_report_printed_at = $1, z_report_printed_by = $2
 WHERE club_id = $3 AND id = $4
 `
 
@@ -888,7 +878,7 @@ type MarkZReportPrintedParams struct {
 	ID        int64      `json:"id"`
 }
 
-// markZReportPrinted(): nonce одноразовый (pull из сессии) — гасится; отметка печати смены.
+// markZReportPrinted(): отметка печати смены (nonce уже погашен в Valkey).
 func (q *Queries) MarkZReportPrinted(ctx context.Context, arg MarkZReportPrintedParams) error {
 	_, err := q.db.Exec(ctx, markZReportPrinted,
 		arg.Now,
@@ -896,23 +886,5 @@ func (q *Queries) MarkZReportPrinted(ctx context.Context, arg MarkZReportPrinted
 		arg.ClubID,
 		arg.ID,
 	)
-	return err
-}
-
-const setZReportNonce = `-- name: SetZReportNonce :exec
-UPDATE cash_shifts
-SET z_report_nonce_hash = $1
-WHERE club_id = $2 AND id = $3
-`
-
-type SetZReportNonceParams struct {
-	NonceHash []byte `json:"nonce_hash"`
-	ClubID    int64  `json:"club_id"`
-	ID        int64  `json:"id"`
-}
-
-// zReport(): новый nonce печати (хранится только его sha256), прежний перестаёт действовать.
-func (q *Queries) SetZReportNonce(ctx context.Context, arg SetZReportNonceParams) error {
-	_, err := q.db.Exec(ctx, setZReportNonce, arg.NonceHash, arg.ClubID, arg.ID)
 	return err
 }

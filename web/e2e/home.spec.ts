@@ -1,12 +1,13 @@
 import { expect, test } from '@playwright/test';
 
-test('главная без входа ведёт на страницу входа, без нарушений CSP', async ({ page }) => {
+test('панель без входа ведёт на страницу входа, без нарушений CSP', async ({ page }) => {
   const cspViolations: string[] = [];
   page.on('console', (msg) => {
     if (msg.text().includes('Content Security Policy')) cspViolations.push(msg.text());
   });
 
-  await page.goto('/');
+  // «/» — лендинг (G7, e2e/stage3-g7.spec.ts); гард auth — на страницах панели.
+  await page.goto('/dashboard');
   await expect(page).toHaveURL(/\/login$/);
   await expect(page).toHaveTitle(/· Zafiro$/);
   await expect(page.locator('.auth-shell')).toBeVisible();

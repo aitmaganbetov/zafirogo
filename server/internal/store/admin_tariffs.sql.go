@@ -7,7 +7,99 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"time"
 )
+
+const adminAddTariffZones = `-- name: AdminAddTariffZones :exec
+INSERT INTO club_zone_tariff (club_id, club_zone_id, tariff_id)
+SELECT $1, z, $2 FROM unnest($3::bigint[]) AS z
+ON CONFLICT DO NOTHING
+`
+
+type AdminAddTariffZonesParams struct {
+	ClubID   int64   `json:"club_id"`
+	TariffID int64   `json:"tariff_id"`
+	ZoneIds  []int64 `json:"zone_ids"`
+}
+
+// syncWithPivotValues(): добавить недостающие зоны.
+func (q *Queries) AdminAddTariffZones(ctx context.Context, arg AdminAddTariffZonesParams) error {
+	_, err := q.db.Exec(ctx, adminAddTariffZones, arg.ClubID, arg.TariffID, arg.ZoneIds)
+	return err
+}
+
+const adminDeleteTariffZones = `-- name: AdminDeleteTariffZones :exec
+DELETE FROM club_zone_tariff
+WHERE club_id = $1 AND tariff_id = $2
+  AND NOT (club_zone_id = ANY($3::bigint[]))
+`
+
+type AdminDeleteTariffZonesParams struct {
+	ClubID      int64   `json:"club_id"`
+	TariffID    int64   `json:"tariff_id"`
+	KeepZoneIds []int64 `json:"keep_zone_ids"`
+}
+
+// syncWithPivotValues(): сначала убрать зоны, которых нет в новом списке.
+func (q *Queries) AdminDeleteTariffZones(ctx context.Context, arg AdminDeleteTariffZonesParams) error {
+	_, err := q.db.Exec(ctx, adminDeleteTariffZones, arg.ClubID, arg.TariffID, arg.KeepZoneIds)
+	return err
+}
+
+const adminInsertTariff = `-- name: AdminInsertTariff :one
+INSERT INTO tariffs (club_id, name, description, duration_minutes, price, is_active, payment_method, currency,
+                     discount_enabled, usage_limit_enabled, usage_limit_minutes, quantity_limit_enabled, quantity_limit,
+                     validity_periods, sale_periods, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5,
+        $6, $7, $8, $9,
+        $10, $11, $12,
+        $13, $14, $15, $16, $16)
+RETURNING id
+`
+
+type AdminInsertTariffParams struct {
+	ClubID               int64           `json:"club_id"`
+	Name                 string          `json:"name"`
+	Description          *string         `json:"description"`
+	DurationMinutes      int64           `json:"duration_minutes"`
+	Price                int64           `json:"price"`
+	IsActive             bool            `json:"is_active"`
+	PaymentMethod        string          `json:"payment_method"`
+	Currency             string          `json:"currency"`
+	DiscountEnabled      bool            `json:"discount_enabled"`
+	UsageLimitEnabled    bool            `json:"usage_limit_enabled"`
+	UsageLimitMinutes    *int64          `json:"usage_limit_minutes"`
+	QuantityLimitEnabled bool            `json:"quantity_limit_enabled"`
+	QuantityLimit        *int64          `json:"quantity_limit"`
+	ValidityPeriods      json.RawMessage `json:"validity_periods"`
+	SalePeriods          json.RawMessage `json:"sale_periods"`
+	Now                  *time.Time      `json:"now"`
+}
+
+func (q *Queries) AdminInsertTariff(ctx context.Context, arg AdminInsertTariffParams) (int64, error) {
+	row := q.db.QueryRow(ctx, adminInsertTariff,
+		arg.ClubID,
+		arg.Name,
+		arg.Description,
+		arg.DurationMinutes,
+		arg.Price,
+		arg.IsActive,
+		arg.PaymentMethod,
+		arg.Currency,
+		arg.DiscountEnabled,
+		arg.UsageLimitEnabled,
+		arg.UsageLimitMinutes,
+		arg.QuantityLimitEnabled,
+		arg.QuantityLimit,
+		arg.ValidityPeriods,
+		arg.SalePeriods,
+		arg.Now,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
 
 const adminListTariffs = `-- name: AdminListTariffs :many
 
@@ -68,6 +160,294 @@ func (q *Queries) AdminListTariffs(ctx context.Context, clubID int64) ([]AdminLi
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminLockTariff = `-- name: AdminLockTariff :one
+SELECT t.id, t.name, t.duration_minutes, t.price, t.is_active, t.currency,
+       COALESCE((SELECT array_agg(z.club_zone_id ORDER BY z.club_zone_id)
+                 FROM club_zone_tariff z
+                 WHERE z.club_id = t.club_id AND z.tariff_id = t.id), '{}')::bigint[] AS zone_ids
+FROM tariffs t
+WHERE t.club_id = $1 AND t.id = $2 AND t.deleted_at IS NULL
+FOR UPDATE OF t
+`
+
+type AdminLockTariffParams struct {
+	ClubID int64 `json:"club_id"`
+	ID     int64 `json:"id"`
+}
+
+type AdminLockTariffRow struct {
+	ID              int64   `json:"id"`
+	Name            string  `json:"name"`
+	DurationMinutes int64   `json:"duration_minutes"`
+	Price           int64   `json:"price"`
+	IsActive        bool    `json:"is_active"`
+	Currency        string  `json:"currency"`
+	ZoneIds         []int64 `json:"zone_ids"`
+}
+
+// Тариф для изменения/удаления (route model binding: удалённый — 404), строка блокируется.
+func (q *Queries) AdminLockTariff(ctx context.Context, arg AdminLockTariffParams) (AdminLockTariffRow, error) {
+	row := q.db.QueryRow(ctx, adminLockTariff, arg.ClubID, arg.ID)
+	var i AdminLockTariffRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.DurationMinutes,
+		&i.Price,
+		&i.IsActive,
+		&i.Currency,
+		&i.ZoneIds,
+	)
+	return i, err
+}
+
+const adminSoftDeleteTariff = `-- name: AdminSoftDeleteTariff :exec
+UPDATE tariffs SET deleted_at = $1, updated_at = $1
+WHERE club_id = $2 AND id = $3 AND deleted_at IS NULL
+`
+
+type AdminSoftDeleteTariffParams struct {
+	Now    *time.Time `json:"now"`
+	ClubID int64      `json:"club_id"`
+	ID     int64      `json:"id"`
+}
+
+// $tariff->delete() (SoftDeletes): связи с зонами и история остаются.
+func (q *Queries) AdminSoftDeleteTariff(ctx context.Context, arg AdminSoftDeleteTariffParams) error {
+	_, err := q.db.Exec(ctx, adminSoftDeleteTariff, arg.Now, arg.ClubID, arg.ID)
+	return err
+}
+
+const adminTariffNameTaken = `-- name: AdminTariffNameTaken :one
+SELECT EXISTS (SELECT 1 FROM tariffs
+               WHERE club_id = $1 AND deleted_at IS NULL
+                 AND lower(name) = lower($2::text) AND id <> $3::bigint)::boolean
+`
+
+type AdminTariffNameTakenParams struct {
+	ClubID   int64  `json:"club_id"`
+	Name     string `json:"name"`
+	ExceptID int64  `json:"except_id"`
+}
+
+// Rule::unique('tariffs', 'name')->where('club_id')->whereNull('deleted_at')->ignore(id): без учёта регистра
+// (utf8mb4_unicode_ci, Q-025/Q-031).
+func (q *Queries) AdminTariffNameTaken(ctx context.Context, arg AdminTariffNameTakenParams) (bool, error) {
+	row := q.db.QueryRow(ctx, adminTariffNameTaken, arg.ClubID, arg.Name, arg.ExceptID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const adminTariffPage = `-- name: AdminTariffPage :many
+SELECT t.id, t.name, t.description, t.duration_minutes, t.price, t.currency, t.is_active, t.payment_method,
+       t.discount_enabled, t.usage_limit_enabled, t.usage_limit_minutes, t.quantity_limit_enabled, t.quantity_limit,
+       t.sale_periods, t.validity_periods,
+       COALESCE((SELECT array_agg(z.club_zone_id ORDER BY z.club_zone_id)
+                 FROM club_zone_tariff z
+                 WHERE z.club_id = t.club_id AND z.tariff_id = t.id), '{}')::bigint[] AS zone_ids,
+       COALESCE((SELECT s.sold FROM tariff_sales s WHERE s.club_id = t.club_id AND s.tariff_id = t.id), 0)::bigint AS sold
+FROM tariffs t
+WHERE t.club_id = $1 AND t.deleted_at IS NULL
+  AND ($2::bigint = 0
+       OR EXISTS (SELECT 1 FROM club_zone_tariff z
+                  WHERE z.club_id = t.club_id AND z.tariff_id = t.id AND z.club_zone_id = $2::bigint)
+       OR NOT EXISTS (SELECT 1 FROM club_zone_tariff z WHERE z.club_id = t.club_id AND z.tariff_id = t.id))
+ORDER BY t.duration_minutes, t.name, t.id
+`
+
+type AdminTariffPageParams struct {
+	ClubID int64 `json:"club_id"`
+	ZoneID int64 `json:"zone_id"`
+}
+
+type AdminTariffPageRow struct {
+	ID                   int64           `json:"id"`
+	Name                 string          `json:"name"`
+	Description          *string         `json:"description"`
+	DurationMinutes      int64           `json:"duration_minutes"`
+	Price                int64           `json:"price"`
+	Currency             string          `json:"currency"`
+	IsActive             bool            `json:"is_active"`
+	PaymentMethod        string          `json:"payment_method"`
+	DiscountEnabled      bool            `json:"discount_enabled"`
+	UsageLimitEnabled    bool            `json:"usage_limit_enabled"`
+	UsageLimitMinutes    *int64          `json:"usage_limit_minutes"`
+	QuantityLimitEnabled bool            `json:"quantity_limit_enabled"`
+	QuantityLimit        *int64          `json:"quantity_limit"`
+	SalePeriods          json.RawMessage `json:"sale_periods"`
+	ValidityPeriods      json.RawMessage `json:"validity_periods"`
+	ZoneIds              []int64         `json:"zone_ids"`
+	Sold                 int64           `json:"sold"`
+}
+
+// Tariff::query()->with('zones')->when(zone, …)->orderBy('duration_minutes')->orderBy('name'): тарифы клуба
+// без удалённых; фильтр зоны (0 — нет) — тарифы этой зоны и тарифы всех зон (без зон). sold — продажи в агенте
+// (tariff_sales, Q-007; в старом — COUNT журнала tariff.purchased).
+func (q *Queries) AdminTariffPage(ctx context.Context, arg AdminTariffPageParams) ([]AdminTariffPageRow, error) {
+	rows, err := q.db.Query(ctx, adminTariffPage, arg.ClubID, arg.ZoneID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminTariffPageRow
+	for rows.Next() {
+		var i AdminTariffPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.DurationMinutes,
+			&i.Price,
+			&i.Currency,
+			&i.IsActive,
+			&i.PaymentMethod,
+			&i.DiscountEnabled,
+			&i.UsageLimitEnabled,
+			&i.UsageLimitMinutes,
+			&i.QuantityLimitEnabled,
+			&i.QuantityLimit,
+			&i.SalePeriods,
+			&i.ValidityPeriods,
+			&i.ZoneIds,
+			&i.Sold,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminTariffPageZones = `-- name: AdminTariffPageZones :many
+
+SELECT z.id, z.name, z.price_per_hour
+FROM club_zones z
+WHERE z.club_id = $1
+  AND EXISTS (SELECT 1 FROM club_computers c WHERE c.club_id = z.club_id AND c.club_zone_id = z.id)
+ORDER BY z.name, z.id
+`
+
+type AdminTariffPageZonesRow struct {
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	PricePerHour *int64 `json:"price_per_hour"`
+}
+
+// ---------------------------------------------------------------------------
+// Экран «Зоны и тарифы» (Этап 3, группа 4). Laravel: app/Http/Controllers/TariffController.php page(), store(),
+// update(), destroy(); app/Http/Requests/StoreTariffRequest.php.
+// ---------------------------------------------------------------------------
+// ClubZone::query()->whereHas('computers')->orderBy('name'): зоны, в которых есть ПК.
+func (q *Queries) AdminTariffPageZones(ctx context.Context, clubID int64) ([]AdminTariffPageZonesRow, error) {
+	rows, err := q.db.Query(ctx, adminTariffPageZones, clubID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminTariffPageZonesRow
+	for rows.Next() {
+		var i AdminTariffPageZonesRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.PricePerHour); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminUpdateTariff = `-- name: AdminUpdateTariff :exec
+UPDATE tariffs
+SET name = $1, description = $2, duration_minutes = $3,
+    price = $4, is_active = $5, payment_method = $6,
+    discount_enabled = $7, usage_limit_enabled = $8,
+    usage_limit_minutes = $9, quantity_limit_enabled = $10,
+    quantity_limit = $11, validity_periods = $12,
+    sale_periods = $13, updated_at = $14
+WHERE club_id = $15 AND id = $16 AND deleted_at IS NULL
+`
+
+type AdminUpdateTariffParams struct {
+	Name                 string          `json:"name"`
+	Description          *string         `json:"description"`
+	DurationMinutes      int64           `json:"duration_minutes"`
+	Price                int64           `json:"price"`
+	IsActive             bool            `json:"is_active"`
+	PaymentMethod        string          `json:"payment_method"`
+	DiscountEnabled      bool            `json:"discount_enabled"`
+	UsageLimitEnabled    bool            `json:"usage_limit_enabled"`
+	UsageLimitMinutes    *int64          `json:"usage_limit_minutes"`
+	QuantityLimitEnabled bool            `json:"quantity_limit_enabled"`
+	QuantityLimit        *int64          `json:"quantity_limit"`
+	ValidityPeriods      json.RawMessage `json:"validity_periods"`
+	SalePeriods          json.RawMessage `json:"sale_periods"`
+	Now                  *time.Time      `json:"now"`
+	ClubID               int64           `json:"club_id"`
+	ID                   int64           `json:"id"`
+}
+
+// $tariff->update($data): поля формы (валюта и user_roles не меняются — PD-11).
+func (q *Queries) AdminUpdateTariff(ctx context.Context, arg AdminUpdateTariffParams) error {
+	_, err := q.db.Exec(ctx, adminUpdateTariff,
+		arg.Name,
+		arg.Description,
+		arg.DurationMinutes,
+		arg.Price,
+		arg.IsActive,
+		arg.PaymentMethod,
+		arg.DiscountEnabled,
+		arg.UsageLimitEnabled,
+		arg.UsageLimitMinutes,
+		arg.QuantityLimitEnabled,
+		arg.QuantityLimit,
+		arg.ValidityPeriods,
+		arg.SalePeriods,
+		arg.Now,
+		arg.ClubID,
+		arg.ID,
+	)
+	return err
+}
+
+const adminZonesWithComputersIn = `-- name: AdminZonesWithComputersIn :many
+SELECT z.id
+FROM club_zones z
+WHERE z.club_id = $1 AND z.id = ANY($2::bigint[])
+  AND EXISTS (SELECT 1 FROM club_computers c WHERE c.club_id = z.club_id AND c.club_zone_id = z.id)
+`
+
+type AdminZonesWithComputersInParams struct {
+	ClubID int64   `json:"club_id"`
+	Ids    []int64 `json:"ids"`
+}
+
+// Rule::in(ClubZone::whereHas('computers')->pluck('id')): какие из выбранных зон допустимы.
+func (q *Queries) AdminZonesWithComputersIn(ctx context.Context, arg AdminZonesWithComputersInParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, adminZonesWithComputersIn, arg.ClubID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

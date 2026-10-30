@@ -115,10 +115,14 @@ start() {
   command -v docker >/dev/null || { log "нужен Docker"; exit 2; }
   stop
   prepare
+  # Кабинет суперадмина — на своём домене (Q-069), как в проде: страницы pages.json с "host" (и для копии из кэша).
+  sed -i '/^SUPERADMIN_DOMAIN=/d' "$APP/.env"
+  printf 'SUPERADMIN_DOMAIN=%s\n' "${VISUAL_SUPERADMIN_HOST:-admin.localhost}" >> "$APP/.env"
   seed
   # php artisan serve внутри контейнера: PHP_CLI_SERVER_WORKERS из .env копии (параллельные запросы Playwright).
-  docker run -d --name "$CONTAINER" -p "127.0.0.1:$PORT:$PORT" -v "$APP":/app -w /app "$PHP_IMAGE" \
-    php artisan serve --host=0.0.0.0 --port="$PORT" --no-reload >/dev/null
+  # Сеть хоста: старый видит клиента как 127.0.0.1, как новый (IP в журналах — одинаковой ширины на снимке).
+  docker run -d --name "$CONTAINER" --network host -v "$APP":/app -w /app "$PHP_IMAGE" \
+    php artisan serve --host=127.0.0.1 --port="$PORT" --no-reload >/dev/null
   for _ in $(seq 1 60); do
     if curl -fsS -o /dev/null "http://localhost:$PORT/login" 2>/dev/null; then
       log "старый Zafiro: http://localhost:$PORT"

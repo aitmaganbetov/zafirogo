@@ -17,10 +17,12 @@ paths:
       summary: Товары склада
       description: |
         Laravel: WarehouseController (warehouse, warehouse.view). По имени; поиск — подстрока имени или SKU.
-        Пагинация keyset: cursor = next_cursor предыдущей страницы.
+        Пагинация keyset: cursor = next_cursor предыдущей страницы; или номер страницы page (таблица «Склад»,
+        paginate(50) с ->links(); без поиска). total — всего товаров (с поиском — найденных).
       parameters:
         - $ref: "common.yaml#/components/parameters/Search"
         - $ref: "common.yaml#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Page"
         - $ref: "common.yaml#/components/parameters/Limit"
       responses:
         "200":
@@ -62,6 +64,29 @@ paths:
         "422":
           $ref: "common.yaml#/components/responses/ValidationFailed"
   /api/warehouse/products/{productId}:
+    delete:
+      operationId: deleteProduct
+      tags: [warehouse]
+      summary: Удалить товар
+      description: |
+        Laravel: ProductDeleteController (warehouse.products.destroy, warehouse.delete — по умолчанию только владелец):
+        SKU освобождается ('<sku>~deleted-<id>'), товар скрывается (SoftDelete); история движений и чеки остаются.
+        Журнал product.deleted {sku, quantity}.
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: Удалённый товар (до удаления).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
     patch:
       operationId: updateProduct
       tags: [warehouse]
@@ -138,6 +163,101 @@ paths:
           $ref: "common.yaml#/components/responses/Unauthenticated"
         "403":
           $ref: "common.yaml#/components/responses/Forbidden"
+    post:
+      operationId: createProductCategory
+      tags: [warehouse]
+      summary: Новая категория
+      description: |
+        Laravel: ProductCategoryController (warehouse.categories.store, warehouse.create): name required|max:100,
+        уникально в клубе. Журнал warehouse.category_created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductCategoryRequest"
+      responses:
+        "201":
+          description: Категория создана.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductCategory"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/warehouse/overview:
+    get:
+      operationId: getWarehouseOverview
+      tags: [warehouse]
+      summary: Каталог склада — категории, число товаров, последние движения
+      description: |
+        Laravel: WarehouseController (warehouse, warehouse.view): категории с числом товаров (withCount), число товаров,
+        последние 10 движений (latest()->limit(10)).
+      responses:
+        "200":
+          description: Сводка склада.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseOverview"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/stock:
+    get:
+      operationId: listStock
+      tags: [warehouse]
+      summary: Остатки товаров (для кассира и оператора)
+      description: |
+        Laravel: StockController::index() (stock.index, stock.view): поиск — подстрока имени или SKU (search max:100),
+        по категории и имени, paginate(50).
+      parameters:
+        - $ref: "common.yaml#/components/parameters/Search"
+        - $ref: "#/components/parameters/Page"
+      responses:
+        "200":
+          description: Страница остатков.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockPage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/stock/receive:
+    post:
+      operationId: receiveStock
+      tags: [warehouse]
+      summary: Оприходовать товар (кассир, оператор)
+      description: |
+        Laravel: StockController::receive() (stock.receive, stock.create): product_id (товар клуба), quantity
+        integer|min:1|max:100000, note nullable|max:255 → AdjustStockAction (receipt). Журнал stock.received,
+        вебхук stock.changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReceiveStockRequest"
+      responses:
+        "201":
+          description: Движение записано.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockMovementResult"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
 components:
   securitySchemes:
     bearerAuth:
@@ -150,6 +270,15 @@ components:
       name: __Secure-zafiro_rt
       description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
   parameters:
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Номер страницы (с 1), как ?page= Laravel.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100000
     ProductId:
       name: productId
       in: path
@@ -183,13 +312,129 @@ components:
           format: int64
     ProductPage:
       type: object
-      required: [items, next_cursor]
+      required: [items, next_cursor, total, per_page]
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/Product"
         next_cursor:
+          type: string
+          nullable: true
+        total:
+          type: integer
+          format: int64
+        per_page:
+          type: integer
+    WarehouseCategory:
+      type: object
+      required: [id, name, products_count]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        products_count:
+          type: integer
+          format: int64
+    WarehouseMovement:
+      type: object
+      required: [id, product_id, product_name, type, quantity, balance_after, note, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        product_id:
+          type: integer
+          format: int64
+        product_name:
+          type: string
+        type:
+          type: string
+          enum: [receipt, write_off]
+        quantity:
+          type: integer
+          format: int64
+        balance_after:
+          type: integer
+          format: int64
+        note:
+          type: string
+          nullable: true
+          description: Комментарий как записан (маркер «Продажа POS» не переводится).
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+    WarehouseOverview:
+      type: object
+      required: [categories, products_total, movements]
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/WarehouseCategory"
+        products_total:
+          type: integer
+          format: int64
+        movements:
+          type: array
+          items:
+            $ref: "#/components/schemas/WarehouseMovement"
+    CreateProductCategoryRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+    StockProduct:
+      type: object
+      required: [id, sku, name, category, price_tiyn, quantity, image_url]
+      properties:
+        id:
+          type: integer
+          format: int64
+        sku:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        price_tiyn:
+          type: integer
+          format: int64
+        quantity:
+          type: integer
+          format: int64
+        image_url:
+          type: string
+    StockPage:
+      type: object
+      required: [items, total, per_page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/StockProduct"
+        total:
+          type: integer
+          format: int64
+        per_page:
+          type: integer
+    ReceiveStockRequest:
+      type: object
+      additionalProperties: false
+      required: [product_id, quantity]
+      properties:
+        product_id:
+          type: integer
+          format: int64
+        quantity:
+          type: integer
+          format: int64
+        note:
           type: string
           nullable: true
     ProductCategory:

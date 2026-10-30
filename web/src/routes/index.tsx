@@ -1,8 +1,9 @@
-import { createFileRoute, redirect } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
+import { landingQuery } from '../features/public/api';
+import { LandingPage } from '../features/public/LandingPage';
 
-// GET / — лендинг (welcome.blade.php) переносит группа 7; пока — в панель (гостя гард отправит на /login).
+// GET / home → LandingController (routes/web.php:120): публичный, и для гостя, и для вошедшего.
 export const Route = createFileRoute('/')({
-  beforeLoad: () => {
-    throw redirect({ to: '/dashboard' });
-  },
+  loader: ({ context }) => context.queryClient.ensureQueryData(landingQuery()),
+  component: LandingPage,
 });

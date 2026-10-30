@@ -16,6 +16,11 @@ var access = httpx.Access{
 		"CreateProduct":         "warehouse.products.store",
 		"UpdateProduct":         "warehouse.products.update",
 		"CreateStockMovement":   "warehouse.stock-movements.store",
+		"GetWarehouseOverview":  "warehouse",
+		"CreateProductCategory": "warehouse.categories.store",
+		"DeleteProduct":         "warehouse.products.destroy",
+		"ListStock":             "stock.index",
+		"ReceiveStock":          "stock.receive",
 	},
 }
 

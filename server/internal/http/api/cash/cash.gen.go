@@ -146,11 +146,37 @@ func (e RefundResultKind) Valid() bool {
 	}
 }
 
+// CashCatalog defines model for CashCatalog.
+type CashCatalog struct {
+	Categories    []CashCatalogCategory `json:"categories"`
+	ProductsTotal int64                 `json:"products_total"`
+	Services      []CashService         `json:"services"`
+}
+
+// CashCatalogCategory defines model for CashCatalogCategory.
+type CashCatalogCategory struct {
+	Count int64  `json:"count"`
+	Name  string `json:"name"`
+}
+
+// CashCustomer defines model for CashCustomer.
+type CashCustomer struct {
+	BalanceTiyn      int64  `json:"balance_tiyn"`
+	BonusBalanceTiyn int64  `json:"bonus_balance_tiyn"`
+	Id               int64  `json:"id"`
+	Name             string `json:"name"`
+	Phone            string `json:"phone"`
+}
+
 // CashOperationPage defines model for CashOperationPage.
 type CashOperationPage struct {
 	Items        []CashReceipt `json:"items"`
 	NextBeforeId *int64        `json:"next_before_id"`
+	PerPage      int           `json:"per_page"`
 	ShiftId      int64         `json:"shift_id"`
+
+	// Total Всего приходов смены (->links()).
+	Total int64 `json:"total"`
 }
 
 // CashOperationResult defines model for CashOperationResult.
@@ -163,6 +189,24 @@ type CashOperationResult struct {
 	Transaction CashTransaction `json:"transaction"`
 }
 
+// CashProduct defines model for CashProduct.
+type CashProduct struct {
+	Category string `json:"category"`
+	Id       int64  `json:"id"`
+
+	// ImageUrl Фото товара (ProductResource::imageUrl) — пока заглушка /images/product-placeholder.svg.
+	ImageUrl  string `json:"image_url"`
+	Name      string `json:"name"`
+	PriceTiyn int64  `json:"price_tiyn"`
+	Quantity  int64  `json:"quantity"`
+}
+
+// CashProductPage defines model for CashProductPage.
+type CashProductPage struct {
+	Items      []CashProduct `json:"items"`
+	NextCursor *string       `json:"next_cursor"`
+}
+
 // CashReceipt defines model for CashReceipt.
 type CashReceipt struct {
 	// CanRefund У сотрудника есть право cash.delete.
@@ -170,7 +214,10 @@ type CashReceipt struct {
 	Refund    *CashRefundRef `json:"refund"`
 
 	// Refundable Операция такого вида возвращается (продажа или пополнение).
-	Refundable  bool            `json:"refundable"`
+	Refundable bool `json:"refundable"`
+
+	// ShiftOpen Смена операции открыта (кнопка «Возврат» — только в открытой смене, refund-button.blade.php).
+	ShiftOpen   bool            `json:"shift_open"`
 	Transaction CashTransaction `json:"transaction"`
 }
 
@@ -228,6 +275,14 @@ type CashReportStaff struct {
 	IncomeTiyn  int64  `json:"income_tiyn"`
 	Name        string `json:"name"`
 	UserId      int64  `json:"user_id"`
+}
+
+// CashService defines model for CashService.
+type CashService struct {
+	Id        int64   `json:"id"`
+	Name      string  `json:"name"`
+	PriceTiyn int64   `json:"price_tiyn"`
+	Unit      *string `json:"unit"`
 }
 
 // CashShift defines model for CashShift.
@@ -394,6 +449,9 @@ type ZReportPrintedRequest struct {
 	Nonce string `json:"nonce"`
 }
 
+// Page defines model for Page.
+type Page = int
+
 // ShiftId defines model for ShiftId.
 type ShiftId = int64
 
@@ -407,9 +465,32 @@ type CreateBalanceTopUpParams struct {
 	IdempotencyKey externalRef0.IdempotencyKey `json:"Idempotency-Key"`
 }
 
+// SearchCashCustomersParams defines parameters for SearchCashCustomers.
+type SearchCashCustomersParams struct {
+	// Q Поиск — подстрока без учёта регистра.
+	Q *externalRef0.Search `form:"q,omitempty" json:"q,omitempty"`
+
+	// Limit Размер страницы (по умолчанию 25, как paginate(25) старого кода).
+	Limit *externalRef0.Limit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // ListCashOperationsParams defines parameters for ListCashOperations.
 type ListCashOperationsParams struct {
 	BeforeId *int64 `form:"before_id,omitempty" json:"before_id,omitempty"`
+
+	// Page Номер страницы (с 1), как ?page= Laravel.
+	Page *Page `form:"page,omitempty" json:"page,omitempty"`
+
+	// Limit Размер страницы (по умолчанию 25, как paginate(25) старого кода).
+	Limit *externalRef0.Limit `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListCashProductsParams defines parameters for ListCashProducts.
+type ListCashProductsParams struct {
+	Category *string `form:"category,omitempty" json:"category,omitempty"`
+
+	// Cursor Непрозрачный курсор следующей страницы (next_cursor).
+	Cursor *externalRef0.Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 
 	// Limit Размер страницы (по умолчанию 25, как paginate(25) старого кода).
 	Limit *externalRef0.Limit `form:"limit,omitempty" json:"limit,omitempty"`
@@ -470,9 +551,18 @@ type ServerInterface interface {
 	// CreateBalanceTopUp Пополнение баланса клиента на кассе
 	// (POST /api/cash/balance-top-ups)
 	CreateBalanceTopUp(w http.ResponseWriter, r *http.Request, params CreateBalanceTopUpParams)
+	// GetCashCatalog Витрина кассы — категории и услуги
+	// (GET /api/cash/catalog)
+	GetCashCatalog(w http.ResponseWriter, r *http.Request)
+	// SearchCashCustomers Поиск пользователя для пополнения баланса
+	// (GET /api/cash/customers)
+	SearchCashCustomers(w http.ResponseWriter, r *http.Request, params SearchCashCustomersParams)
 	// ListCashOperations Приходы открытой смены (для возвратов)
 	// (GET /api/cash/operations)
 	ListCashOperations(w http.ResponseWriter, r *http.Request, params ListCashOperationsParams)
+	// ListCashProducts Товары в наличии (витрина кассы)
+	// (GET /api/cash/products)
+	ListCashProducts(w http.ResponseWriter, r *http.Request, params ListCashProductsParams)
 	// GetCashReceipt Чек прихода
 	// (GET /api/cash/receipts/{transactionId})
 	GetCashReceipt(w http.ResponseWriter, r *http.Request, transactionId TransactionId)
@@ -518,9 +608,27 @@ func (_ Unimplemented) CreateBalanceTopUp(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// GetCashCatalog Витрина кассы — категории и услуги
+// (GET /api/cash/catalog)
+func (_ Unimplemented) GetCashCatalog(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SearchCashCustomers Поиск пользователя для пополнения баланса
+// (GET /api/cash/customers)
+func (_ Unimplemented) SearchCashCustomers(w http.ResponseWriter, r *http.Request, params SearchCashCustomersParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ListCashOperations Приходы открытой смены (для возвратов)
 // (GET /api/cash/operations)
 func (_ Unimplemented) ListCashOperations(w http.ResponseWriter, r *http.Request, params ListCashOperationsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ListCashProducts Товары в наличии (витрина кассы)
+// (GET /api/cash/products)
+func (_ Unimplemented) ListCashProducts(w http.ResponseWriter, r *http.Request, params ListCashProductsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -644,6 +752,66 @@ func (siw *ServerInterfaceWrapper) CreateBalanceTopUp(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// GetCashCatalog operation middleware
+func (siw *ServerInterfaceWrapper) GetCashCatalog(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCashCatalog(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SearchCashCustomers operation middleware
+func (siw *ServerInterfaceWrapper) SearchCashCustomers(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SearchCashCustomersParams
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SearchCashCustomers(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListCashOperations operation middleware
 func (siw *ServerInterfaceWrapper) ListCashOperations(w http.ResponseWriter, r *http.Request) {
 
@@ -666,6 +834,19 @@ func (siw *ServerInterfaceWrapper) ListCashOperations(w http.ResponseWriter, r *
 		return
 	}
 
+	// ------------- Optional query parameter "page" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page", r.URL.Query(), &params.Page, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
+		}
+		return
+	}
+
 	// ------------- Optional query parameter "limit" -------------
 
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
@@ -681,6 +862,65 @@ func (siw *ServerInterfaceWrapper) ListCashOperations(w http.ResponseWriter, r *
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListCashOperations(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCashProducts operation middleware
+func (siw *ServerInterfaceWrapper) ListCashProducts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListCashProductsParams
+
+	// ------------- Optional query parameter "category" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "category", r.URL.Query(), &params.Category, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "category"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "category", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCashProducts(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1217,6 +1457,15 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/cash/receipts/{transactionId}/refund", wrapper.RefundCashReceipt)
 	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/cash/catalog", wrapper.GetCashCatalog)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/cash/products", wrapper.ListCashProducts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/cash/customers", wrapper.SearchCashCustomers)
+	})
 
 	return r
 }
@@ -1324,6 +1573,113 @@ func (response CreateBalanceTopUp422JSONResponse) VisitCreateBalanceTopUpRespons
 	return err
 }
 
+type GetCashCatalogRequestObject struct {
+}
+
+type GetCashCatalogResponseObject interface {
+	VisitGetCashCatalogResponse(w http.ResponseWriter) error
+}
+
+type GetCashCatalog200JSONResponse CashCatalog
+
+func (response GetCashCatalog200JSONResponse) VisitGetCashCatalogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCashCatalog401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response GetCashCatalog401JSONResponse) VisitGetCashCatalogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCashCatalog403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response GetCashCatalog403JSONResponse) VisitGetCashCatalogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SearchCashCustomersRequestObject struct {
+	Params SearchCashCustomersParams
+}
+
+type SearchCashCustomersResponseObject interface {
+	VisitSearchCashCustomersResponse(w http.ResponseWriter) error
+}
+
+type SearchCashCustomers200JSONResponse []CashCustomer
+
+func (response SearchCashCustomers200JSONResponse) VisitSearchCashCustomersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SearchCashCustomers401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SearchCashCustomers401JSONResponse) VisitSearchCashCustomersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SearchCashCustomers403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SearchCashCustomers403JSONResponse) VisitSearchCashCustomersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListCashOperationsRequestObject struct {
 	Params ListCashOperationsParams
 }
@@ -1390,6 +1746,76 @@ func (response ListCashOperations404JSONResponse) VisitListCashOperationsRespons
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCashProductsRequestObject struct {
+	Params ListCashProductsParams
+}
+
+type ListCashProductsResponseObject interface {
+	VisitListCashProductsResponse(w http.ResponseWriter) error
+}
+
+type ListCashProducts200JSONResponse CashProductPage
+
+func (response ListCashProducts200JSONResponse) VisitListCashProductsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCashProducts400JSONResponse struct {
+	externalRef0.BadRequestJSONResponse
+}
+
+func (response ListCashProducts400JSONResponse) VisitListCashProductsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCashProducts401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response ListCashProducts401JSONResponse) VisitListCashProductsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCashProducts403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response ListCashProducts403JSONResponse) VisitListCashProductsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -2297,9 +2723,18 @@ type StrictServerInterface interface {
 	// CreateBalanceTopUp Пополнение баланса клиента на кассе
 	// (POST /api/cash/balance-top-ups)
 	CreateBalanceTopUp(ctx context.Context, request CreateBalanceTopUpRequestObject) (CreateBalanceTopUpResponseObject, error)
+	// GetCashCatalog Витрина кассы — категории и услуги
+	// (GET /api/cash/catalog)
+	GetCashCatalog(ctx context.Context, request GetCashCatalogRequestObject) (GetCashCatalogResponseObject, error)
+	// SearchCashCustomers Поиск пользователя для пополнения баланса
+	// (GET /api/cash/customers)
+	SearchCashCustomers(ctx context.Context, request SearchCashCustomersRequestObject) (SearchCashCustomersResponseObject, error)
 	// ListCashOperations Приходы открытой смены (для возвратов)
 	// (GET /api/cash/operations)
 	ListCashOperations(ctx context.Context, request ListCashOperationsRequestObject) (ListCashOperationsResponseObject, error)
+	// ListCashProducts Товары в наличии (витрина кассы)
+	// (GET /api/cash/products)
+	ListCashProducts(ctx context.Context, request ListCashProductsRequestObject) (ListCashProductsResponseObject, error)
 	// GetCashReceipt Чек прихода
 	// (GET /api/cash/receipts/{transactionId})
 	GetCashReceipt(ctx context.Context, request GetCashReceiptRequestObject) (GetCashReceiptResponseObject, error)
@@ -2407,6 +2842,56 @@ func (sh *strictHandler) CreateBalanceTopUp(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+// GetCashCatalog operation middleware
+func (sh *strictHandler) GetCashCatalog(w http.ResponseWriter, r *http.Request) {
+	var request GetCashCatalogRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCashCatalog(ctx, request.(GetCashCatalogRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCashCatalog")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCashCatalogResponseObject); ok {
+		if err := validResponse.VisitGetCashCatalogResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SearchCashCustomers operation middleware
+func (sh *strictHandler) SearchCashCustomers(w http.ResponseWriter, r *http.Request, params SearchCashCustomersParams) {
+	var request SearchCashCustomersRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SearchCashCustomers(ctx, request.(SearchCashCustomersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SearchCashCustomers")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SearchCashCustomersResponseObject); ok {
+		if err := validResponse.VisitSearchCashCustomersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListCashOperations operation middleware
 func (sh *strictHandler) ListCashOperations(w http.ResponseWriter, r *http.Request, params ListCashOperationsParams) {
 	var request ListCashOperationsRequestObject
@@ -2426,6 +2911,32 @@ func (sh *strictHandler) ListCashOperations(w http.ResponseWriter, r *http.Reque
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListCashOperationsResponseObject); ok {
 		if err := validResponse.VisitListCashOperationsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListCashProducts operation middleware
+func (sh *strictHandler) ListCashProducts(w http.ResponseWriter, r *http.Request, params ListCashProductsParams) {
+	var request ListCashProductsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCashProducts(ctx, request.(ListCashProductsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCashProducts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListCashProductsResponseObject); ok {
+		if err := validResponse.VisitListCashProductsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

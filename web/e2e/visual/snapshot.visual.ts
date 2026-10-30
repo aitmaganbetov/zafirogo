@@ -5,7 +5,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test, type Browser } from '@playwright/test';
 import {
-  baseURL,
+  baseFor,
   growViewportToContent,
   login,
   masksFor,
@@ -60,13 +60,16 @@ async function shoot(browser: Browser, spec: PageSpec, app: AppName, viewport: s
   });
   page.on('requestfailed', (r) => network.failed.push(`${r.url()} ${r.failure()?.errorText ?? ''}`));
 
-  const url = baseURL[app] + p[app];
+  const base = baseFor(app, spec);
+  const url = base + p[app];
   const masks = masksFor(spec, app);
   const meta: ShotMeta = { app, url, finalUrl: '', status: null, login: null, consoleErrors, network, masks };
   const file = path.join(shotDir(spec.id, viewport, theme), `${app}.png`);
   try {
     await prepareContext(page, theme);
-    if (p.role) meta.login = await login(page, app, p.role);
+    if (p.role) meta.login = await login(page, app, p.role, base);
+    // Печатная версия — после входа (форма входа под @media print может быть скрыта).
+    if (spec.media) await page.emulateMedia({ media: spec.media });
     const res = await page.goto(url);
     meta.status = res?.status() ?? null;
     await settle(page, spec.waitFor);

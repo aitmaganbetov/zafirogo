@@ -12,6 +12,7 @@ import '@fortawesome/fontawesome-free/css/all.min.css';
 import './i18n';
 import './styles/app.css';
 import { createAppRouter, createQueryClient } from './router';
+import { registerServiceWorker } from './pwa/register';
 
 const queryClient = createQueryClient();
 const router = createAppRouter(queryClient);
@@ -19,7 +20,8 @@ const router = createAppRouter(queryClient);
 const root = document.getElementById('root');
 if (!root) throw new Error('#root not found');
 
-// Service worker (public/sw.js) — группа 7 (PWA, решение Q-068).
+// Service worker (public/sw.js, решение Q-068) — только в prod-сборке (в dev Vite отдаёт исходники, кэш мешал бы).
+registerServiceWorker(import.meta.env.PROD);
 
 createRoot(root).render(
   <StrictMode>

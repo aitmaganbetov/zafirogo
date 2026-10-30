@@ -1,0 +1,224 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — shoporders
+  version: 0.1.0
+  description: |
+    Заказы из магазина клуба в агенте ПК (ShopOrderController, AgentShop::handOver()/cancel()).
+    Конвенции — api/README.md. Деньги — целые тиыны (integer, int64), никогда number.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/shop-orders:
+    get:
+      operationId: listShopOrders
+      tags: [shoporders]
+      summary: Заказы из агента
+      description: |
+        Laravel: ShopOrderController::index() (shop-orders.index, orders.view): status new (по умолчанию) / done /
+        cancelled / all, новые сверху, paginate(30); new_count и latest — как state().
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [new, done, cancelled, all]
+        - $ref: "#/components/parameters/Page"
+      responses:
+        "200":
+          description: Страница заказов.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShopOrderPage"
+        "400":
+          $ref: "common.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/shop-orders/state:
+    get:
+      operationId: getShopOrdersState
+      tags: [shoporders]
+      summary: Число новых заказов и последний id
+      description: |
+        Laravel: ShopOrderController::state() (shop-orders.state, orders.view). Экран обновляется по событиям
+        shop_order.created/updated (WebSocket, Q-062) — опрос не нужен; эндпоинт — для совместимости и проверок.
+      responses:
+        "200":
+          description: Состояние.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShopOrdersState"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/shop-orders/{orderId}/done:
+    post:
+      operationId: markShopOrderDone
+      tags: [shoporders]
+      summary: Заказ выдан
+      description: |
+        Laravel: ShopOrderController::done(), AgentShop::handOver() (shop-orders.done, orders.update): только новый
+        заказ (иначе 422 «Заказ уже обработан.» на поле order); журнал shop.order_done; событие shop_order.updated.
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: Заказ после выдачи.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShopOrder"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/shop-orders/{orderId}/cancel:
+    post:
+      operationId: cancelShopOrder
+      tags: [shoporders]
+      summary: Отменить заказ (деньги — на счёт клиента, товар — на склад)
+      description: |
+        Laravel: ShopOrderController::cancel(), AgentShop::cancel() (shop-orders.cancel, orders.delete; BR-077):
+        только новый заказ; товары (не удалённые) возвращаются на склад (receipt «Отмена заказа из агента»),
+        сумма — на основной баланс (ledger shop_order_cancel, ключ по заказу), траты лояльности уменьшаются.
+        Повтор с тем же Idempotency-Key — тот же ответ.
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+        - $ref: "common.yaml#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Заказ после отмены.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShopOrder"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+  parameters:
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Номер страницы (с 1), как ?page= Laravel.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100000
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    ShopOrderLine:
+      type: object
+      required: [name, quantity, total_tiyn]
+      properties:
+        product_id:
+          type: integer
+          format: int64
+          nullable: true
+        name:
+          type: string
+        quantity:
+          type: integer
+          format: int64
+        price_tiyn:
+          type: integer
+          format: int64
+        total_tiyn:
+          type: integer
+          format: int64
+    ShopOrder:
+      type: object
+      required: [id, status, computer_name, customer_name, items, amount_tiyn, created_at, handler_name, handled_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [new, done, cancelled]
+        computer_name:
+          type: string
+          nullable: true
+        customer_name:
+          type: string
+          nullable: true
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShopOrderLine"
+        amount_tiyn:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        handler_name:
+          type: string
+          nullable: true
+        handled_at:
+          type: string
+          format: date-time
+          nullable: true
+    ShopOrdersState:
+      type: object
+      required: [new, latest]
+      properties:
+        new:
+          type: integer
+          format: int64
+        latest:
+          type: integer
+          format: int64
+    ShopOrderPage:
+      type: object
+      required: [items, total, per_page, status, new_count, latest]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShopOrder"
+        total:
+          type: integer
+          format: int64
+        per_page:
+          type: integer
+        status:
+          type: string
+          enum: [new, done, cancelled, all]
+        new_count:
+          type: integer
+          format: int64
+        latest:
+          type: integer
+          format: int64

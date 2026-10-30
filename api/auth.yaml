@@ -481,6 +481,11 @@ components:
         locale:
           type: string
           description: Язык интерфейса клуба (clubs.locale ?? 'ru', LocaleResolver::forClub()).
+        can_manage_integrations:
+          type: boolean
+          description: |
+            @can('manage-integrations'): владелец или сотрудник с club_memberships.can_manage_integrations
+            (пункт «API и интеграции» меню настроек).
     MembershipItem:
       type: object
       required: [club_id, club_name, role]

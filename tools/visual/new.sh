@@ -63,7 +63,11 @@ seed() {
   docker exec -i zafirogo-visual-postgres-1 psql -q -v ON_ERROR_STOP=1 -U zafiro -d zafiro_visual -c 'SET client_min_messages = warning' \
     -c 'DROP SCHEMA public CASCADE' -c 'CREATE SCHEMA public' -c 'GRANT USAGE ON SCHEMA public TO PUBLIC' >/dev/null
   GOOSE_DRIVER=postgres GOOSE_DBSTRING="$OWNER_DSN" "$(goose_bin)" -dir "$REPO/db/migrations" up >/dev/null 2>&1
-  (cd "$REPO/server" && go run ./cmd/visual-seed -fixture "$FIXTURE" -db "$OWNER_DSN") >&2
+  # Присутствие агентов (карта клуба, список ПК, дашборд): ПК «в сети» — в Valkey, как у подключённого агента.
+  (cd "$REPO/server" && VISUAL_VALKEY_ADDR="127.0.0.1:$VISUAL_VALKEY_PORT" VISUAL_VALKEY_PASSWORD="$VISUAL_VALKEY_PASSWORD" \
+    go run ./cmd/visual-seed -fixture "$FIXTURE" -db "$OWNER_DSN") >&2
+  # Переводы интерфейса (формы trans_choice — «7 операций сегодня» — берутся только из каталога), как в старом.
+  (cd "$REPO/server" && go run ./cmd/import-translations -dir "${ZAFIRO_SRC:-$REPO/../Zafiro}/database/translations" -dsn "$OWNER_DSN") >/dev/null
   log "демо-данные загружены"
 }
 
@@ -97,6 +101,7 @@ start() {
     ZAFIRO_AGENT_GRPC_LISTEN="127.0.0.1:0" ZAFIRO_AGENT_PKI_DEV_DIR="$WORK/pki" \
     ZAFIRO_AGENT_SWEEPER_RECONCILE_EVERY=24h ZAFIRO_RATELIMIT_DISABLE=web-login \
     ZAFIRO_DEV_FIXED_NOW="$now" ZAFIRO_LOG_LEVEL=warn ZAFIRO_LOG_FORMAT=text \
+    ZAFIRO_SUPERADMIN_DOMAIN="${VISUAL_SUPERADMIN_HOST:-admin.localhost}" \
     nohup "$BIN" > "$WORK/zafiro.log" 2>&1 &
   echo $! > "$WORK/zafiro.pid"
   for _ in $(seq 1 60); do

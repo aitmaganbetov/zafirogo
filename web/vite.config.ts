@@ -29,6 +29,11 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: false,
     assetsDir: 'assets',
+    // Три страницы: SPA, справка API (docs/api — Swagger UI без стилей SPA; сервер отдаёт её на /docs/api) и wiki (resources/wiki/index.html старого проекта — статичная страница, Q-069; сервер отдаёт
+    // dist/wiki/index.html на /wiki или на корне хоста wiki — server/internal/webui/wiki.go).
+    rollupOptions: {
+      input: { main: 'index.html', wiki: 'wiki/index.html', apidocs: 'docs/api/index.html' },
+    },
   },
   test: {
     environment: 'jsdom',

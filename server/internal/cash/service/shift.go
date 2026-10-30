@@ -170,10 +170,10 @@ func (s *Service) CloseShift(ctx context.Context, q *store.Queries, p CloseShift
 		map[string]any{"closing_balance": int64(closing), "income": int64(totals.Income), "expense": int64(totals.Expense)})
 }
 
-// IssueZReportNonce — одноразовый nonce печати Z-отчёта смены (Str::random(40)); прежний перестаёт действовать.
-// В БД — только его sha256 (Q-015).
+// IssueZReportNonce — одноразовый nonce печати Z-отчёта смены (Str::random(40)) для сотрудника userID; прежний nonce
+// этого сотрудника перестаёт действовать. Хранится только его sha256 в ZNonceStore (Valkey, Q-015).
 // Laravel: CashRegisterController::zReport() — session()->put("z_report_nonce.{id}", Str::random(40)).
-func (s *Service) IssueZReportNonce(ctx context.Context, q *store.Queries, clubID, shiftID int64) (string, error) {
+func (s *Service) IssueZReportNonce(ctx context.Context, q *store.Queries, clubID, shiftID, userID int64) (string, error) {
 	if _, err := q.GetCashShift(ctx, store.GetCashShiftParams{ClubID: clubID, ID: shiftID}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound
@@ -185,37 +185,35 @@ func (s *Service) IssueZReportNonce(ctx context.Context, q *store.Queries, clubI
 		return "", err
 	}
 	sum := sha256.Sum256([]byte(nonce))
-	if err := q.SetZReportNonce(ctx, store.SetZReportNonceParams{ClubID: clubID, ID: shiftID, NonceHash: sum[:]}); err != nil {
-		return "", fmt.Errorf("cash: z nonce: %w", err)
+	if err := s.zNonces().Put(ctx, ZNonceKey{ClubID: clubID, ShiftID: shiftID, UserID: userID}, sum[:]); err != nil {
+		return "", err
 	}
 	return nonce, nil
 }
 
 // MarkZReportPrinted — отметка «Z-отчёт напечатан» (afterprint в браузере). Возвращает false, если nonce неверный или
-// уже использован (419 в старом коде); nonce при этом гасится, поэтому транзакцию надо закоммитить и при false.
+// уже использован (419 в старом коде); выданный nonce при этом гасится (Take из ZNonceStore — одноразово).
 //
 // Laravel: CashRegisterController::markZReportPrinted() (~стр. 178–190): смена не open → abort 422 (ErrShiftNotOpen, nonce
 // не тратится); $expected = session()->pull(nonce) — одноразовый; hash_equals; флаг печати; журнал cash.z_report_printed.
 // Отличие: флаг печати хранится у смены, а не в сессии сотрудника (закрыть может любой с правом) — CSQ-3.
 func (s *Service) MarkZReportPrinted(ctx context.Context, q *store.Queries, clubID, shiftID int64, nonce string, actor Actor) (bool, error) {
-	row, err := q.LockZReportNonce(ctx, store.LockZReportNonceParams{ClubID: clubID, ID: shiftID})
+	status, err := q.LockCashShiftStatus(ctx, store.LockCashShiftStatusParams{ClubID: clubID, ID: shiftID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrNotFound
 	}
 	if err != nil {
 		return false, fmt.Errorf("cash: z nonce: %w", err)
 	}
-	if row.Status != string(cash.StatusOpen) {
+	if status != string(cash.StatusOpen) {
 		return false, ErrShiftNotOpen
 	}
+	expected, err := s.zNonces().Take(ctx, ZNonceKey{ClubID: clubID, ShiftID: shiftID, UserID: actor.UserID})
+	if err != nil {
+		return false, err
+	}
 	sum := sha256.Sum256([]byte(nonce))
-	ok := len(row.ZReportNonceHash) == sha256.Size && nonce != "" && subtle.ConstantTimeCompare(row.ZReportNonceHash, sum[:]) == 1
-	if !ok {
-		if row.ZReportNonceHash != nil {
-			if err := q.SetZReportNonce(ctx, store.SetZReportNonceParams{ClubID: clubID, ID: shiftID, NonceHash: nil}); err != nil {
-				return false, fmt.Errorf("cash: z nonce: %w", err)
-			}
-		}
+	if len(expected) != sha256.Size || nonce == "" || subtle.ConstantTimeCompare(expected, sum[:]) != 1 {
 		return false, nil
 	}
 	now := s.now()

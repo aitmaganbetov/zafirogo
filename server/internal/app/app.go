@@ -39,13 +39,17 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/session"
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	cashsvc "github.com/aitmaganbetov/zafirogo/server/internal/cash/service"
+	"github.com/aitmaganbetov/zafirogo/server/internal/clubmap"
 	"github.com/aitmaganbetov/zafirogo/server/internal/config"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	grpcserver "github.com/aitmaganbetov/zafirogo/server/internal/grpc"
 	httpserver "github.com/aitmaganbetov/zafirogo/server/internal/http"
+	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
+	"github.com/aitmaganbetov/zafirogo/server/internal/monitoring"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/pki"
 	"github.com/aitmaganbetov/zafirogo/server/internal/realtime"
+	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/webhook"
 	"github.com/aitmaganbetov/zafirogo/server/internal/webui"
 	"github.com/aitmaganbetov/zafirogo/server/internal/worker"
@@ -129,7 +133,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (a *App, e
 		Logger:         log,
 		RequestTimeout: cfg.HTTP.RequestTimeout,
 		TrustedProxies: trusted,
-		Frontend:       webui.Handler(webui.FS()),
+		Frontend:       webui.Handler(webui.FS(), webui.WithSuperadminDomain(cfg.Superadmin.Domain)),
 		Checkers:       []httpserver.Checker{httpserver.CheckFunc{CheckName: "shutdown", Fn: a.checkNotDraining}},
 	}
 
@@ -144,7 +148,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (a *App, e
 
 	a.httpSrv = &http.Server{
 		Addr:              cfg.HTTP.Addr,
-		Handler:           httpserver.NewRouter(routerOpts),
+		Handler:           webui.Wiki(webui.FS(), cfg.HTTP.WikiHost, httpserver.NewRouter(routerOpts)),
 		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 		ReadTimeout:       cfg.HTTP.ReadTimeout,
 		WriteTimeout:      cfg.HTTP.WriteTimeout,
@@ -249,7 +253,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	}
 	if a.Auth, err = auth.NewService(auth.Options{
 		Pool: a.AppPool, Hasher: hasher, Sessions: sessions, Logger: log,
-		Events: &authEvents{app: a.AppPool, platform: a.PlatformPool, log: log},
+		Events: &authEvents{app: a.AppPool, platform: a.PlatformPool, log: log, now: cfg.Now()},
 	}); err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
@@ -270,7 +274,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		clock = billingsvc.ClockFunc(now)
 		ro.Now = now
 	}
-	a.Cash = &cashsvc.Service{Now: ro.Now}
+	a.Cash = &cashsvc.Service{Now: ro.Now, ZNonces: cashsvc.NewValkeyZNonces(a.Valkey, "", 0)}
 	a.Billing = billingsvc.New(a.AppPool, clock, a.Cash)
 
 	// --- Агенты: PKI, кэш сертификатов, регистрация, поток ---
@@ -315,6 +319,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	if err != nil {
 		return fmt.Errorf("agent update keys: %w", err)
 	}
+	presenceEvents := &clubmap.PresenceEvents{Pool: a.AppPool, Log: log}
 	a.Stream, err = stream.New(stream.Options{
 		Instance: cfg.Agent.InstanceID, Pool: a.AppPool, Valkey: a.Valkey, NATS: a.NATS,
 		KeyPrefix: cfg.Agent.Stream.KeyPrefix, SubjectPrefix: cfg.Agent.Stream.SubjectPrefix,
@@ -322,7 +327,9 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		HelloTimeout: cfg.Agent.Stream.HelloTimeout, StatusInterval: cfg.Agent.Stream.StatusInterval,
 		StateDebounce: cfg.Agent.Stream.StateDebounce, AckTimeout: cfg.Agent.Stream.AckTimeout,
 		Events: hooks, Welcome: hooks, UpdateKeys: updateKeys,
-		// TODO(B2): Results (stream.ResultHandler) и Presence (PresenceListener → outbox/WebSocket карты клуба) —
+		// Присутствие → событие computer.state для карты клуба (вместо опроса /club-map/state, Этап 3).
+		Presence: presenceEvents,
+		// TODO(B2): Results (stream.ResultHandler) —
 		// реализаций пока нет (docs/open-questions/stage2-wiring.md W-1).
 		Log: log,
 	})
@@ -356,14 +363,18 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	}
 
 	var guestErr error
+	var guestSrv *guestapi.Server
+	// Счётчики запросов экрана «Сервер» суперадминки (RequestRecorder): HTTP, unary gRPC и сообщения стрима агента.
+	metrics := monitoring.NewRecorder(nil)
 	if a.grpcSrv, err = grpcserver.NewServer(grpcserver.Options{
+		ExtraUnary: []grpc.UnaryServerInterceptor{metrics.UnaryInterceptor()}, ExtraStream: []grpc.StreamServerInterceptor{metrics.StreamInterceptor()},
 		ServerCertificate: serverCert, ClientCAs: a.CA.ClientCAs(), Certs: a.CertCache,
 		Enrollment: enroll.NewGRPC(a.Enroll), Logger: log,
 	}, func(s *grpc.Server) {
 		// AgentService (Connect из a.Stream + GetTranslations, VerifyStaffPin) и сервисы гостя.
 		o := guestOpts
 		o.Stream = a.Stream
-		_, guestErr = guestapi.Register(s, o)
+		guestSrv, guestErr = guestapi.Register(s, o)
 	}); err != nil {
 		return fmt.Errorf("grpc: %w", err)
 	}
@@ -406,10 +417,10 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	sweeper.Interval = cfg.Agent.Sweeper.Interval
 	sweeper.ReconcileEvery = cfg.Agent.Sweeper.ReconcileEvery
 	sweeper.CommandRetention = cfg.Agent.Sweeper.CommandRetention
-	// TODO(B2): OnOffline → событие для карты клуба (outbox/WebSocket), когда появится его тип (W-1).
+	sweeper.OnOffline = presenceEvents.Offline // computer.state: ПК записан офлайн
 
 	expire := &worker.ExpireSessions{
-		Pool: a.PlatformPool, Interval: cfg.Workers.ExpireSessions.Interval, Log: log,
+		Pool: a.PlatformPool, Interval: cfg.Workers.ExpireSessions.Interval, Log: log, Now: ro.Now, // dev.fixed_now — те же часы
 		OnExpired: notifyExpired(a.Stream, log),
 	}
 	// Решение Q-011 (docs/DECISIONS.md): суточное сгорание просроченных пакетов времени (ledger + журнал).
@@ -418,7 +429,15 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		pool: a.PlatformPool, interval: cfg.Workers.Partitions.Interval, months: cfg.Workers.Partitions.Months, log: log,
 	}
 
+	// Мониторинг (CollectServerMetrics, SnapshotClubLoad, PruneMonitoringData) и истечение подписок (PD-10, Q-036).
+	monitor := &monitoring.Workers{Platform: a.PlatformPool, Recorder: metrics, Online: a.Stream.Presence(), Log: log}
+	expireSubs := &worker.ExpireSubscriptions{Platform: a.PlatformPool, Now: ro.Now, Log: log}
 	a.workers = []namedWorker{
+		{"monitoring-flush", monitor.RunFlush},
+		{"monitoring-collect", monitor.RunCollect},
+		{"monitoring-clubs", monitor.RunClubs},
+		{"monitoring-prune", monitor.RunPrune},
+		{"expire-subscriptions", expireSubs.Run},
 		{"agent-cert-cache", a.CertCache.Run},
 		{"agent-presence-sweeper", sweeper.Run},
 		{"outbox-publisher", publisher.Run},
@@ -436,10 +455,36 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	ro.PlatformPool = a.PlatformPool
 	ro.Valkey = a.Valkey
 	ro.Passwords = hasher
+	ro.SignOutGuest = guestSignOut(a.Valkey, cfg.Agent.Guest.TokenTTL, a.Stream.Commands(), log)
+	ro.ChatToGuest = chatToGuest(a.Stream.Commands(), a.Stream.Presence(), log)
+	ro.ClubConfigChanged = clubConfigChanged(hooks, a.Stream.Commands(), a.Stream.Presence(), log)
+	webhookGuard := webhook.Guard{RequireHTTPS: cfg.Webhooks.RequireHTTPS, AllowPrivate: cfg.Webhooks.AllowPrivateHosts}
+	ro.WebhookURLCheck = func(ctx context.Context, rawURL string) string {
+		_, reason := webhookGuard.Check(ctx, rawURL)
+		return reason
+	}
+	ro.WakeWebhooks = deliverer.Wake
 	ro.Billing = a.Billing
 	ro.Cash = a.Cash
 	ro.Presence = a.Stream.Presence()
+	ro.AgentCommands = a.Stream.Commands()
+	ro.Enroll = a.Enroll
+	ro.RequireSubscription = true
+	if guestSrv != nil {
+		ro.ApproveQrLogin = guestSrv.ApproveQrLogin // страница /pc-login/{code} (тот же Server, что будит WatchQrLogin)
+	}
 	ro.Mounts = map[string]http.Handler{"/ws": a.Realtime}
+	ro.Metrics = metrics
+	box, err := secretbox.New(cfg.Superadmin.SecretKey.Reveal())
+	if err != nil {
+		log.Warn("superadmin.secret_key is not set: Telegram tokens cannot be saved", "err", err)
+		box = nil
+	}
+	ro.Superadmin = httpx.SuperadminDeps{
+		Domain: cfg.Superadmin.Domain, BackupPath: cfg.Superadmin.BackupPath, SSLHosts: cfg.Superadmin.SSLHosts,
+		Secrets: box, UpdateKeys: updateKeys,
+		BroadcastOnline: broadcastOnline(a.Stream.Commands(), a.Stream.Presence(), log),
+	}
 	ro.Checkers = append(ro.Checkers,
 		httpserver.CheckFunc{CheckName: "postgres", Fn: a.AppPool.Ping},
 		httpserver.CheckFunc{CheckName: "postgres_platform", Fn: a.PlatformPool.Ping},

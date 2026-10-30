@@ -14,7 +14,8 @@ export interface paths {
         /**
          * Товары склада
          * @description Laravel: WarehouseController (warehouse, warehouse.view). По имени; поиск — подстрока имени или SKU.
-         *     Пагинация keyset: cursor = next_cursor предыдущей страницы.
+         *     Пагинация keyset: cursor = next_cursor предыдущей страницы; или номер страницы page (таблица «Склад»,
+         *     paginate(50) с ->links(); без поиска). total — всего товаров (с поиском — найденных).
          */
         get: operations["listProducts"];
         put?: never;
@@ -40,7 +41,13 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Удалить товар
+         * @description Laravel: ProductDeleteController (warehouse.products.destroy, warehouse.delete — по умолчанию только владелец):
+         *     SKU освобождается ('<sku>~deleted-<id>'), товар скрывается (SoftDelete); история движений и чеки остаются.
+         *     Журнал product.deleted {sku, quantity}.
+         */
+        delete: operations["deleteProduct"];
         options?: never;
         head?: never;
         /**
@@ -84,7 +91,76 @@ export interface paths {
          */
         get: operations["listProductCategories"];
         put?: never;
+        /**
+         * Новая категория
+         * @description Laravel: ProductCategoryController (warehouse.categories.store, warehouse.create): name required|max:100,
+         *     уникально в клубе. Журнал warehouse.category_created.
+         */
+        post: operations["createProductCategory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/warehouse/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Каталог склада — категории, число товаров, последние движения
+         * @description Laravel: WarehouseController (warehouse, warehouse.view): категории с числом товаров (withCount), число товаров,
+         *     последние 10 движений (latest()->limit(10)).
+         */
+        get: operations["getWarehouseOverview"];
+        put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Остатки товаров (для кассира и оператора)
+         * @description Laravel: StockController::index() (stock.index, stock.view): поиск — подстрока имени или SKU (search max:100),
+         *     по категории и имени, paginate(50).
+         */
+        get: operations["listStock"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stock/receive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Оприходовать товар (кассир, оператор)
+         * @description Laravel: StockController::receive() (stock.receive, stock.create): product_id (товар клуба), quantity
+         *     integer|min:1|max:100000, note nullable|max:255 → AdjustStockAction (receipt). Журнал stock.received,
+         *     вебхук stock.changed.
+         */
+        post: operations["receiveStock"];
         delete?: never;
         options?: never;
         head?: never;
@@ -111,6 +187,67 @@ export interface components {
         ProductPage: {
             items: components["schemas"]["Product"][];
             next_cursor: string | null;
+            /** Format: int64 */
+            total: number;
+            per_page: number;
+        };
+        WarehouseCategory: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            /** Format: int64 */
+            products_count: number;
+        };
+        WarehouseMovement: {
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            product_id: number;
+            product_name: string;
+            /** @enum {string} */
+            type: "receipt" | "write_off";
+            /** Format: int64 */
+            quantity: number;
+            /** Format: int64 */
+            balance_after: number;
+            /** @description Комментарий как записан (маркер «Продажа POS» не переводится). */
+            note: string | null;
+            /** Format: date-time */
+            created_at: string | null;
+        };
+        WarehouseOverview: {
+            categories: components["schemas"]["WarehouseCategory"][];
+            /** Format: int64 */
+            products_total: number;
+            movements: components["schemas"]["WarehouseMovement"][];
+        };
+        CreateProductCategoryRequest: {
+            name: string;
+        };
+        StockProduct: {
+            /** Format: int64 */
+            id: number;
+            sku: string;
+            name: string;
+            category: string;
+            /** Format: int64 */
+            price_tiyn: number;
+            /** Format: int64 */
+            quantity: number;
+            image_url: string;
+        };
+        StockPage: {
+            items: components["schemas"]["StockProduct"][];
+            /** Format: int64 */
+            total: number;
+            per_page: number;
+        };
+        ReceiveStockRequest: {
+            /** Format: int64 */
+            product_id: number;
+            /** Format: int64 */
+            quantity: number;
+            note?: string | null;
         };
         ProductCategory: {
             /** Format: int64 */
@@ -220,6 +357,8 @@ export interface components {
         };
     };
     parameters: {
+        /** @description Номер страницы (с 1), как ?page= Laravel. */
+        Page: number;
         ProductId: number;
         /** @description Поиск — подстрока без учёта регистра. */
         Search: string;
@@ -241,6 +380,8 @@ export interface operations {
                 q?: components["parameters"]["Search"];
                 /** @description Непрозрачный курсор следующей страницы (next_cursor). */
                 cursor?: components["parameters"]["Cursor"];
+                /** @description Номер страницы (с 1), как ?page= Laravel. */
+                page?: components["parameters"]["Page"];
                 /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
                 limit?: components["parameters"]["Limit"];
             };
@@ -289,6 +430,31 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    deleteProduct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: components["parameters"]["ProductId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Удалённый товар (до удаления). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Product"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     updateProduct: {
@@ -368,6 +534,109 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    createProductCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProductCategoryRequest"];
+            };
+        };
+        responses: {
+            /** @description Категория создана. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductCategory"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getWarehouseOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Сводка склада. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarehouseOverview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listStock: {
+        parameters: {
+            query?: {
+                /** @description Поиск — подстрока без учёта регистра. */
+                q?: components["parameters"]["Search"];
+                /** @description Номер страницы (с 1), как ?page= Laravel. */
+                page?: components["parameters"]["Page"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Страница остатков. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockPage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    receiveStock: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReceiveStockRequest"];
+            };
+        };
+        responses: {
+            /** @description Движение записано. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockMovementResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
 }

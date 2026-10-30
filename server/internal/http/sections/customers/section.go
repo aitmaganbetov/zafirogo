@@ -16,7 +16,15 @@ var access = httpx.Access{
 		"ListCustomerLedger":        "users.index",
 		"AdjustCustomerBalance":     "users.update",
 		"SetCustomerInitialBalance": "users.store",
+		"CreateCustomer":            "users.store",
+		"UpdateCustomer":            "users.update",
+		"ResetCustomerPassword":     "users.password",
 	},
+}
+
+// limits — routes/web.php: users.password — throttle:20,1,users.password.
+var limits = map[string]string{
+	"POST /api/customers/{userId}/password": "users.password",
 }
 
 // handlers реализует customersapi.StrictServerInterface.
@@ -28,7 +36,7 @@ var _ customersapi.StrictServerInterface = (*handlers)(nil)
 
 // Section — клиенты клуба (api/customers.yaml). Регистрация — server/internal/http/sections.go.
 func Section() httpx.Section {
-	return httpx.Section{Name: "customers", Mount: mount}
+	return httpx.Section{Name: "customers", Mount: mount, Limits: limits}
 }
 
 func mount(r chi.Router, d *httpx.Deps) {
