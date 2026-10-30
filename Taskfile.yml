@@ -1,0 +1,222 @@
+# go-task v3 — https://taskfile.dev
+# Установка task: go install github.com/go-task/task/v3/cmd/task@v3.54.0
+# Список задач: task --list
+version: "3"
+
+dotenv: [".env"]
+
+vars:
+  # Закреплённые версии инструментов (обновлять осознанно, синхронно с CI).
+  TASK_VERSION: v3.54.0
+  SQLC_VERSION: v1.31.1
+  GOOSE_VERSION: v3.29.0
+  OAPI_CODEGEN_VERSION: v2.8.1
+  BUF_VERSION: v1.75.0
+  PROTOC_GEN_GO_VERSION: v1.36.12
+  PROTOC_GEN_GO_GRPC_VERSION: v1.6.2
+  GOLANGCI_LINT_VERSION: v2.15.0
+  GOVULNCHECK_VERSION: v1.9.0
+  GOSEC_VERSION: v2.30.0
+
+  COMPOSE: docker compose -f docker-compose.dev.yml --env-file .env
+  WEBUI_DIST: server/internal/webui/dist
+  BIN: bin/zafiro
+
+tasks:
+  default:
+    cmds:
+      - task --list
+    silent: true
+
+  tools:
+    desc: Установить закреплённые версии генераторов и линтеров в $(go env GOPATH)/bin
+    cmds:
+      - go install github.com/go-task/task/v3/cmd/task@{{.TASK_VERSION}}
+      - go install github.com/sqlc-dev/sqlc/cmd/sqlc@{{.SQLC_VERSION}}
+      - go install github.com/pressly/goose/v3/cmd/goose@{{.GOOSE_VERSION}}
+      - go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@{{.OAPI_CODEGEN_VERSION}}
+      - go install github.com/bufbuild/buf/cmd/buf@{{.BUF_VERSION}}
+      - go install google.golang.org/protobuf/cmd/protoc-gen-go@{{.PROTOC_GEN_GO_VERSION}}
+      - go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@{{.PROTOC_GEN_GO_GRPC_VERSION}}
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}}
+      - go install golang.org/x/vuln/cmd/govulncheck@{{.GOVULNCHECK_VERSION}}
+      - go install github.com/securego/gosec/v2/cmd/gosec@{{.GOSEC_VERSION}}
+
+  # ---------- окружение ----------
+
+  env:
+    desc: Создать .env из .env.example, если его нет
+    status:
+      - test -f .env
+    cmds:
+      - cp .env.example .env
+
+  db:up:
+    desc: Поднять Postgres, Valkey, NATS (docker-compose.dev.yml) и дождаться healthcheck
+    deps: [env]
+    cmds:
+      - "{{.COMPOSE}} up -d --wait"
+
+  db:down:
+    desc: Остановить окружение (данные в volume сохраняются)
+    cmds:
+      - "{{.COMPOSE}} down"
+
+  db:migrate:
+    desc: Применить миграции goose (db/migrations) к GOOSE_DBSTRING из .env
+    env:
+      GOOSE_DRIVER: postgres
+    cmds:
+      - goose -dir db/migrations up
+
+  db:status:
+    desc: Статус миграций goose
+    env:
+      GOOSE_DRIVER: postgres
+    cmds:
+      - goose -dir db/migrations status
+
+  # ---------- разработка ----------
+
+  dev:
+    desc: Окружение (compose) + сервер Go (:8080) + Vite (:5173) параллельно
+    deps: [db:up, web:install]
+    cmds:
+      - task: dev:run
+
+  dev:run:
+    internal: true
+    deps: [dev:server, dev:web]
+
+  dev:server:
+    desc: Только сервер Go (go run)
+    dir: server
+    cmds:
+      - go run ./cmd/zafiro
+
+  dev:web:
+    desc: Только Vite dev server (прокси /api, /healthz → :8080)
+    dir: web
+    cmds:
+      - npm run dev
+
+  web:install:
+    desc: npm ci, если node_modules устарели
+    dir: web
+    sources: [package.json, package-lock.json]
+    generates: [node_modules/.package-lock.json]
+    cmds:
+      - npm ci --no-audit --no-fund
+
+  # ---------- тесты ----------
+
+  test:
+    desc: Юнит-тесты Go и web (без Docker)
+    cmds:
+      - task: test:go
+      - task: test:web
+
+  test:go:
+    dir: server
+    cmds:
+      - go test -race ./...
+
+  test:integration:
+    desc: Интеграционные тесты Go (testcontainers, нужен Docker; или ZAFIRO_TEST_DATABASE_URL)
+    dir: server
+    cmds:
+      - go test -race -tags=integration ./...
+
+  test:web:
+    dir: web
+    deps: [web:install]
+    cmds:
+      - npm test
+
+  test:e2e:
+    desc: Playwright e2e против vite preview (нужен web build)
+    dir: web
+    deps: [web:build]
+    cmds:
+      - npm run test:e2e
+
+  # ---------- линтеры ----------
+
+  lint:
+    desc: go vet, golangci-lint, govulncheck, gosec, eslint, tsc
+    cmds:
+      - task: lint:go
+      - task: lint:web
+
+  lint:go:
+    dir: server
+    cmds:
+      - go vet ./...
+      - go vet -tags=integration ./...
+      - golangci-lint run ./...
+      - govulncheck ./...
+      - gosec -quiet -exclude-generated -exclude-dir=gen -exclude-dir=store ./...
+
+  lint:web:
+    dir: web
+    deps: [web:install]
+    cmds:
+      - npm run lint
+      - npm run typecheck
+
+  # ---------- генерация (результат коммитится) ----------
+
+  gen:
+    desc: sqlc, oapi-codegen, buf (Go), openapi-typescript
+    cmds:
+      - task: gen:sqlc
+      - task: gen:api
+      - task: gen:proto
+      - task: gen:web
+
+  gen:sqlc:
+    cmds:
+      - sqlc generate
+
+  gen:api:
+    cmds:
+      - oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
+
+  gen:proto:
+    cmds:
+      - buf generate
+
+  gen:web:
+    dir: web
+    deps: [web:install]
+    cmds:
+      - npm run gen:api
+
+  # ---------- сборка ----------
+
+  web:build:
+    dir: web
+    deps: [web:install]
+    cmds:
+      - npm run build
+
+  webui:copy:
+    desc: Скопировать web/dist в server/internal/webui/dist (для embed.FS)
+    deps: [web:build]
+    cmds:
+      - find {{.WEBUI_DIST}} -mindepth 1 ! -name .gitkeep -exec rm -rf {} +
+      - cp -R web/dist/. {{.WEBUI_DIST}}/
+
+  build:
+    desc: Один бинарник bin/zafiro со вшитым фронтом
+    deps: [webui:copy]
+    cmds:
+      - mkdir -p bin
+      - cd server && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../{{.BIN}} ./cmd/zafiro
+      - echo "собрано {{.BIN}}"
+
+  clean:
+    desc: Удалить артефакты сборки
+    cmds:
+      - rm -rf bin web/dist
+      - find {{.WEBUI_DIST}} -mindepth 1 ! -name .gitkeep -exec rm -rf {} +
