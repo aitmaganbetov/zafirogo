@@ -23,7 +23,7 @@
 - PostgreSQL + pgx + sqlc (никаких ORM), миграции goose (`db/migrations`), запросы `db/queries`.
 - Valkey (кэш, сессии, rate limit), NATS JetStream (события между инстансами, фоновые задачи).
 - Фоновые задачи — воркеры в Go (`internal/worker`), не cron. Не запускать дважды на нескольких инстансах
-  (лидер или JetStream-консьюмер).
+  (механизм — см. `docs/OPEN_QUESTIONS.md` Q-086).
 - Один бинарник: фронт вшит через `embed.FS` (`server/internal/webui`).
 - Фронт `web/`: React 19 + TypeScript + Vite, TanStack Router/Query/Table/Virtual, Tailwind 4
   (shadcn/ui только там, где не ломает текущий дизайн), react-hook-form + zod, i18next (ru/kk/en),

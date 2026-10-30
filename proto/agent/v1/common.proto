@@ -191,7 +191,7 @@ enum BalanceSource {
   BALANCE_SOURCE_BONUS = 2;
 }
 
-// Балансы гостя в клубе. Старые поля balance / bonus_balance (members_balances).
+// Балансы гостя в клубе. Старые поля balance / bonus_balance (member_balances).
 message Balance {
   // Основной баланс, тиыны.
   int64 main_tiyn = 1;

@@ -66,7 +66,7 @@ service GuestAuthService {
 service GuestService {
   // Профиль и балансы гостя. Заменяет GET /api/me (AuthController::summary) и
   // GET /api/auth/me. Дальше балансы приходят командой BalanceChanged в стриме.
-  // Лимит: 60/мин на токен.
+  // Лимит: 60/мин на токен (новый: у GET /api/me в Laravel throttle не было, routes/api.php стр. 33–35).
   rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
 
   // Смена имени. Заменяет POST /api/guest/profile/name (10/мин).

@@ -408,7 +408,7 @@ func (BalanceSource) EnumDescriptor() ([]byte, []int) {
 	return file_agent_v1_common_proto_rawDescGZIP(), []int{2}
 }
 
-// Балансы гостя в клубе. Старые поля balance / bonus_balance (members_balances).
+// Балансы гостя в клубе. Старые поля balance / bonus_balance (member_balances).
 type Balance struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Основной баланс, тиыны.

@@ -448,7 +448,7 @@ const (
 type GuestServiceClient interface {
 	// Профиль и балансы гостя. Заменяет GET /api/me (AuthController::summary) и
 	// GET /api/auth/me. Дальше балансы приходят командой BalanceChanged в стриме.
-	// Лимит: 60/мин на токен.
+	// Лимит: 60/мин на токен (новый: у GET /api/me в Laravel throttle не было, routes/api.php стр. 33–35).
 	GetProfile(ctx context.Context, in *GetProfileRequest, opts ...grpc.CallOption) (*GetProfileResponse, error)
 	// Смена имени. Заменяет POST /api/guest/profile/name (10/мин).
 	UpdateName(ctx context.Context, in *UpdateNameRequest, opts ...grpc.CallOption) (*UpdateNameResponse, error)
@@ -652,7 +652,7 @@ func (c *guestServiceClient) ListNews(ctx context.Context, in *ListNewsRequest, 
 type GuestServiceServer interface {
 	// Профиль и балансы гостя. Заменяет GET /api/me (AuthController::summary) и
 	// GET /api/auth/me. Дальше балансы приходят командой BalanceChanged в стриме.
-	// Лимит: 60/мин на токен.
+	// Лимит: 60/мин на токен (новый: у GET /api/me в Laravel throttle не было, routes/api.php стр. 33–35).
 	GetProfile(context.Context, *GetProfileRequest) (*GetProfileResponse, error)
 	// Смена имени. Заменяет POST /api/guest/profile/name (10/мин).
 	UpdateName(context.Context, *UpdateNameRequest) (*UpdateNameResponse, error)

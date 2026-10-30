@@ -1598,7 +1598,7 @@ given: club_memberships.permissions[right] если bool, иначе null (ка�
 **Код:** `app/Support/ClubRoles.php`.
 - Сотрудники: `owner, admin, manager, cashier, operator`; смена (лимит): `cashier, operator`; новый клиент — `client`
   (старые не-сотруднические роли тоже считаются клиентами). Назначаемые: admin, manager, cashier, operator.
-- `ClubComputerSessions::STAFF_ROLES = owner, admin, manager, operator` (кассир не «сотрудник ПК»); `ChatMessage::ANSWERING_ROLES = cashier, operator`.
+- `ClubComputerSessions::STAFF_ROLES = owner, admin, manager, operator` (кассир не «сотрудник ПК»); `ChatMessage::ANSWERING_ROLES = cashier, operator` (константа; ответ в чат фактически проверяется правом `chat.create`, `ChatController::answers()`).
 - [ ] Перенести.
 
 <a id="br-142"></a>
@@ -1669,7 +1669,8 @@ quantity_limit       = quantity_limit_enabled ? (1…1 000 000) : null
 price 0…9 999 999 999.99; payment_method ∈ {main_balance_only, main_or_bonus}; discount_enabled; is_active
 validity_periods — обязательны, 1…50; sale_periods — 0…50; зоны — только зоны с ПК, до 100
 currency = finances.currency на момент создания (при изменении не меняется)
-имя уникально в клубе среди не удалённых
+имя уникально в клубе среди не удалённых (валидация `StoreTariffRequest`/`UpdateTariffRequest`: `Rule::unique(...)->whereNull(deleted_at)`),
+  но индекс БД `UNIQUE (club_id, name)` (`2026_10_13_040140`, стр. 33–35) учитывает и удалённые → имя удалённого тарифа даёт ошибку БД (500), см. OPEN_QUESTIONS
 ```
 - Изменение действует на новые покупки; проданное время и пакеты не меняются. Журнал `tariff.created/updated` (цена, длительность, изменённые поля).
 - В форме длительность показывается крупнейшей целой единицей (`splitMinutes`).
