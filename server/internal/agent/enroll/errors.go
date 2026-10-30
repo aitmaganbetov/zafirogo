@@ -33,6 +33,8 @@ const (
 	KindNotFound
 	KindPrecondition
 	KindRateLimited
+	// KindPending — «подождите и повторите» (PENDING_APPROVAL): FAILED_PRECONDITION + RetryInfo.
+	KindPending
 )
 
 func (e *Error) Error() string { return e.Code.String() + ": " + e.Message }
@@ -73,10 +75,35 @@ var (
 		Message: "Зона не найдена.", Field: "zone_id"}
 	ErrCertificateRevoked = newErr(KindUnauthenticated, agentv1.ErrorCode_ERROR_CODE_CERTIFICATE_REVOKED,
 		"Сертификат ПК отозван.")
-	ErrNoIdentity = newErr(KindUnauthenticated, agentv1.ErrorCode_ERROR_CODE_CERTIFICATE_EXPIRED,
+	ErrNoIdentity = newErr(KindUnauthenticated, agentv1.ErrorCode_ERROR_CODE_CERTIFICATE_REQUIRED,
 		"ПК не подключён к клубу.")
 	ErrCodeNotFound = newErr(KindNotFound, agentv1.ErrorCode_ERROR_CODE_VALIDATION_FAILED,
 		"Код подключения ПК не найден.")
+)
+
+// Ошибки ключа образа (решение Q-037, docs/DECISIONS.md). В старом коде таких не было — тексты новые.
+var (
+	ErrImageKeyInvalid = newErr(KindUnauthenticated, agentv1.ErrorCode_ERROR_CODE_ENROLLMENT_CODE_INVALID,
+		"Ключ образа недействителен.")
+	ErrImageKeyExpired = newErr(KindUnauthenticated, agentv1.ErrorCode_ERROR_CODE_ENROLLMENT_CODE_EXPIRED,
+		"Ключ образа отозван или истёк.")
+	ErrImageKeyNetwork = newErr(KindUnauthenticated, agentv1.ErrorCode_ERROR_CODE_ENROLLMENT_CODE_INVALID,
+		"Ключ образа не действует из этой сети.")
+	ErrPendingApproval = &Error{Kind: KindPending, Code: agentv1.ErrorCode_ERROR_CODE_PENDING_APPROVAL,
+		Message: "ПК ожидает подтверждения в панели клуба.", RetryAfter: PendingRetryAfter}
+	ErrComputerRejected = newErr(KindForbidden, agentv1.ErrorCode_ERROR_CODE_ENROLLMENT_CODE_INVALID,
+		"Подключение этого ПК отклонено в панели клуба.")
+	ErrTooManyPending = &Error{Kind: KindRateLimited, Code: agentv1.ErrorCode_ERROR_CODE_RATE_LIMITED,
+		Message: "Слишком много ПК ожидают подтверждения.", RetryAfter: PendingRetryAfter}
+	ErrMACRequired = validation("device.mac_address", "MAC-адрес обязателен для подключения по ключу образа.")
+	ErrTwoSecrets  = validation("image_key", "Укажите либо код подключения, либо ключ образа.")
+	// Панель: ключи образа — как «Ключ установки клуба» в старом (settings/club.blade.php: owner, admin).
+	ErrImageKeyForbidden = newErr(KindForbidden, agentv1.ErrorCode_ERROR_CODE_VALIDATION_FAILED,
+		"Недостаточно прав для управления ключами образа.")
+	ErrImageKeyNotFound = newErr(KindNotFound, agentv1.ErrorCode_ERROR_CODE_VALIDATION_FAILED,
+		"Ключ образа не найден.")
+	ErrPendingNotFound = newErr(KindNotFound, agentv1.ErrorCode_ERROR_CODE_VALIDATION_FAILED,
+		"ПК, ожидающий подтверждения, не найден.")
 )
 
 func validation(field, msg string) *Error {
@@ -97,6 +124,8 @@ func ToGRPC(err error) error {
 	switch e.Kind {
 	case KindRateLimited:
 		return grpcserver.RateLimited(e.RetryAfter, e.Message)
+	case KindPending:
+		return grpcserver.ErrorWithRetry(codes.FailedPrecondition, e.Code, e.Message, e.RetryAfter)
 	case KindInvalid:
 		if e.Code == agentv1.ErrorCode_ERROR_CODE_VALIDATION_FAILED {
 			return grpcserver.Validation(e.Field, e.Message)

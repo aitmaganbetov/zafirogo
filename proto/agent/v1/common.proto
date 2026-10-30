@@ -82,6 +82,14 @@ enum ErrorCode {
   // Подписка клуба неактивна (FAILED_PRECONDITION). Старый аналог: HTTP 402
   // (app/Http/Middleware/RequireActiveSubscription.php, AuthenticateAgentDevice).
   ERROR_CODE_SUBSCRIPTION_INACTIVE = 28;
+  // Бездисковый ПК с новым MAC зарегистрирован по ключу образа и ждёт подтверждения сотрудником
+  // в панели клуба (FAILED_PRECONDITION) + google.rpc.RetryInfo. Агент повторяет Enroll через
+  // retry_delay (решение Q-037).
+  ERROR_CODE_PENDING_APPROVAL = 29;
+  // Защищённый метод вызван без клиентского сертификата (UNAUTHENTICATED): ПК не зарегистрирован —
+  // агент идёт в Enroll. В отличие от CERTIFICATE_REVOKED ключ не удаляется
+  // (docs/open-questions/stage2-agent-enroll.md §4).
+  ERROR_CODE_CERTIFICATE_REQUIRED = 30;
 
   // --- Вход гостя ---
 

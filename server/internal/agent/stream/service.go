@@ -56,6 +56,8 @@ type Options struct {
 	KeyPrefix string
 	// SubjectPrefix — префикс subject NATS (пусто — commands.DefaultSubjectPrefix).
 	SubjectPrefix string
+	// UpdateKeys — открытые ключи Ed25519 подписи обновлений агента (commands.SenderOptions.UpdateKeys).
+	UpdateKeys commands.UpdateKeys
 
 	PresenceTTL    time.Duration
 	OfflineGrace   time.Duration
@@ -135,7 +137,8 @@ func New(o Options) (*Service, error) {
 		store: st,
 		rec:   presence.NewRecorder(o.Pool, o.StateDebounce, o.Now, o.Log),
 		sender: commands.NewSender(commands.SenderOptions{
-			Pool: o.Pool, Presence: st, NATS: o.NATS, SubjectPrefix: o.SubjectPrefix, Now: o.Now, Log: o.Log,
+			Pool: o.Pool, Presence: st, NATS: o.NATS, SubjectPrefix: o.SubjectPrefix, UpdateKeys: o.UpdateKeys,
+			Now: o.Now, Log: o.Log,
 		}),
 		conns: map[int64]*conn{},
 		stop:  make(chan struct{}),

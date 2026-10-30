@@ -3,11 +3,13 @@
 package webhook_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -147,7 +149,10 @@ func TestWebhookEndToEndWithRetry(t *testing.T) {
 	}
 	go func() { _ = cons.Run(ctx) }()
 
-	eventID := addEvent(t, d, club, "sale.completed", map[string]any{"sale_id": 42, "total": "1500.00"})
+	// Данные как у кассы (cash/service/sale.go): price/total строк чека — float PHP (PHPFloat).
+	eventID := addEvent(t, d, club, "sale.completed", map[string]any{"sale_id": 42, "amount": "1500.00", "amount_tiyn": 150000,
+		"items": []map[string]any{{"name": "Кола", "quantity": 2, "price": json.Number("750.0"), "price_tiyn": 75000,
+			"total": json.Number("1500.0"), "total_tiyn": 150000, "product_id": 7}}})
 	addEvent(t, d, club, "computer.state", map[string]any{"computer_id": 1}) // не тип вебхука
 
 	waitFor(t, "delivery delivered", func() bool {
@@ -197,8 +202,25 @@ func TestWebhookEndToEndWithRetry(t *testing.T) {
 		if err := json.Unmarshal(g.body, &body); err != nil {
 			t.Fatal(err)
 		}
-		if body.ID != r.eventID || body.Event != "sale.completed" || body.ClubID != club || body.Data["total"] != "1500.00" {
+		if body.ID != r.eventID || body.Event != "sale.completed" || body.ClubID != club || body.Data["amount"] != "1500.00" {
 			t.Fatalf("body: %s", g.body)
+		}
+		// Решение RQ-3 (docs/DECISIONS.md): суммы строкой с двумя знаками + *_tiyn, JSON-чисел с дробной частью нет.
+		items, _ := body.Data["items"].([]any)
+		item, _ := items[0].(map[string]any)
+		if len(items) != 1 || item["price"] != "750.00" || item["total"] != "1500.00" || item["price_tiyn"] != float64(75000) {
+			t.Fatalf("items: %s", g.body)
+		}
+		dec := json.NewDecoder(bytes.NewReader(g.body))
+		dec.UseNumber()
+		for {
+			tok, err := dec.Token()
+			if err != nil {
+				break
+			}
+			if n, ok := tok.(json.Number); ok && strings.ContainsAny(n.String(), ".eE") {
+				t.Fatalf("float %s in webhook body %s", n, g.body)
+			}
 		}
 		if _, err := time.Parse("2006-01-02T15:04:05-07:00", body.CreatedAt); err != nil || body.CreatedAt[len(body.CreatedAt)-6:] != "+00:00" {
 			t.Fatalf("created_at %q", body.CreatedAt)

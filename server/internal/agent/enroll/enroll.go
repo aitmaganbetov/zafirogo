@@ -24,9 +24,11 @@ import (
 
 // EnrollInput — запрос регистрации ПК.
 type EnrollInput struct {
-	Code   string
-	CSRPEM string
-	Device *agentv1.DeviceInfo
+	Code string
+	// ImageKey — ключ образа бездискового ПК (вместо Code), решение Q-037.
+	ImageKey string
+	CSRPEM   string
+	Device   *agentv1.DeviceInfo
 	// IP — адрес ПК (лимиты, аудит, club_computers.remote_ip).
 	IP netip.Addr
 }
@@ -76,6 +78,13 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (*agentv1.EnrollRe
 		return nil, rateLimited(retry)
 	}
 
+	if in.ImageKey != "" {
+		if in.Code != "" {
+			return nil, ErrTwoSecrets
+		}
+		return s.enrollByImageKey(ctx, in, dev, failKey)
+	}
+
 	code := NormalizeCode(in.Code)
 	if code == "" {
 		return nil, s.codeFailure(ctx, failKey, ErrCodeInvalid)
@@ -92,7 +101,7 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (*agentv1.EnrollRe
 		pc      card
 		revoked []string
 	)
-	err = s.enrollTx(ctx, hashCode(s.opts.CodePepper, code), func(q *store.Queries, codeID, club int64) error {
+	err = s.lookupTx(ctx, hashCode(s.opts.CodePepper, code), lookupCode, func(q *store.Queries, codeID, club int64) error {
 		clubID = club
 		consumed, err := q.ConsumeEnrollmentCode(ctx, store.ConsumeEnrollmentCodeParams{
 			UsedIp: addrPtr(in.IP), ClubID: club, ID: codeID})
@@ -178,10 +187,21 @@ func (s *Service) codeFailure(ctx context.Context, failKey string, err error) er
 	return err
 }
 
-// enrollTx — транзакция Enroll: сначала код ищется через политику enroll_code_lookup
+// lookupFunc ищет секрет (код или ключ образа) по хешу до того, как известен клуб.
+type lookupFunc func(ctx context.Context, q *store.Queries, hash []byte) (id, clubID int64, err error)
+
+func lookupCode(ctx context.Context, q *store.Queries, hash []byte) (int64, int64, error) {
+	code, err := q.LookupEnrollmentCode(ctx, hash)
+	if err != nil {
+		return 0, 0, notFound(err, ErrCodeInvalid)
+	}
+	return code.ID, code.ClubID, nil
+}
+
+// lookupTx — транзакция Enroll: сначала секрет ищется через политику enroll_code_lookup / image_key_lookup
 // (app.enroll_code_hash), затем ставится app.club_id найденного клуба — дальше обычная тенантная
 // транзакция. Повтор при deadlock/serialization failure — как db.InTenantTx.
-func (s *Service) enrollTx(ctx context.Context, codeHash []byte, fn func(q *store.Queries, codeID, clubID int64) error) error {
+func (s *Service) lookupTx(ctx context.Context, codeHash []byte, lookup lookupFunc, fn func(q *store.Queries, codeID, clubID int64) error) error {
 	var err error
 	for attempt := 1; attempt <= db.MaxAttempts; attempt++ {
 		err = pgx.BeginTxFunc(ctx, s.opts.Pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
@@ -190,15 +210,15 @@ func (s *Service) enrollTx(ctx context.Context, codeHash []byte, fn func(q *stor
 				return fmt.Errorf("enroll: set code hash: %w", err)
 			}
 			q := store.New(tx)
-			code, err := q.LookupEnrollmentCode(ctx, codeHash)
+			id, clubID, err := lookup(ctx, q, codeHash)
 			if err != nil {
-				return notFound(err, ErrCodeInvalid)
+				return err
 			}
 			if _, err := tx.Exec(ctx, "SELECT set_config('app.club_id', $1, true), set_config('app.enroll_code_hash', '', true)",
-				strconv.FormatInt(code.ClubID, 10)); err != nil {
+				strconv.FormatInt(clubID, 10)); err != nil {
 				return fmt.Errorf("enroll: set tenant: %w", err)
 			}
-			return fn(q, code.ID, code.ClubID)
+			return fn(q, id, clubID)
 		})
 		if err == nil || !db.Retryable(err) {
 			return err
@@ -474,6 +494,15 @@ func (s *Service) RenewCertificate(ctx context.Context, id identity.Identity, in
 			return ErrCertificateRevoked
 		}
 		prevAfter = cur.NotAfter
+		// Решение Q-037 (docs/DECISIONS.md): сертификат бездискового ПК продлевается тоже на 24 часа и только
+		// пока ключ образа, по которому он выдан, действует (отзыв ключа = ПК клуба теряют связь за ≤ 24 ч).
+		lifetime := s.opts.CertLifetime
+		if cur.Diskless {
+			lifetime = s.opts.DisklessCertLifetime
+			if err := s.checkImageKey(ctx, q, id.ClubID, cur.ImageKeyID, in.IP); err != nil {
+				return err
+			}
+		}
 		pc, err := q.GetComputerForEnroll(ctx, store.GetComputerForEnrollParams{ClubID: id.ClubID, ID: id.ComputerID})
 		if err != nil {
 			return notFound(err, ErrComputerNotFound)
@@ -487,18 +516,19 @@ func (s *Service) RenewCertificate(ctx context.Context, id identity.Identity, in
 			return err
 		}
 		if issued, err = s.opts.CA.Issue(pki.IssueRequest{CSR: csr, ClubID: id.ClubID, ComputerID: id.ComputerID,
-			Lifetime: s.opts.CertLifetime}); err != nil {
+			Lifetime: lifetime}); err != nil {
 			return err
 		}
 		if err := q.InsertAgentCertificate(ctx, store.InsertAgentCertificateParams{
 			Serial: issued.Serial, ClubID: id.ClubID, ClubComputerID: id.ComputerID, SpkiSha256: issued.SPKISHA256,
 			NotBefore: issued.NotBefore, NotAfter: issued.NotAfter, IssuedVia: "renew", ReplacesSerial: &id.CertSerial,
-			MacAddress: ptr(dev.mac), HardwareUuid: ptr(dev.uuid),
+			MacAddress: ptr(dev.mac), HardwareUuid: ptr(dev.uuid), Diskless: cur.Diskless, ImageKeyID: cur.ImageKeyID,
 		}); err != nil {
 			return err
 		}
 		return s.audit(ctx, q, id.ClubID, nil, "agent", "agent.certificate.renewed", &id.ComputerID, in.IP, map[string]any{
 			"serial": issued.Serial, "replaces": id.CertSerial, "not_after": issued.NotAfter, "superseded": superseded,
+			"diskless": cur.Diskless,
 		})
 	})
 	if err != nil {

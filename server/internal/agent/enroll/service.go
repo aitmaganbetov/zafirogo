@@ -74,6 +74,8 @@ type Options struct {
 	CodeTTL time.Duration
 	// CertLifetime — срок клиентского сертификата (30 дней).
 	CertLifetime time.Duration
+	// DisklessCertLifetime — срок сертификата по ключу образа и его продлений (24 часа, решение Q-037).
+	DisklessCertLifetime time.Duration
 	// AgentEndpoint — адрес AgentService для ответа Enroll ("agent.zafiro.kz:443").
 	AgentEndpoint string
 	// Limiter — по умолчанию в памяти (NewMemoryLimiter).
@@ -104,6 +106,9 @@ func New(opts Options) (*Service, error) {
 	}
 	if opts.CertLifetime <= 0 {
 		opts.CertLifetime = pki.DefaultLifetime
+	}
+	if opts.DisklessCertLifetime <= 0 {
+		opts.DisklessCertLifetime = DefaultDisklessCertLifetime
 	}
 	if opts.Limiter == nil {
 		opts.Limiter = NewMemoryLimiter()

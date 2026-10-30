@@ -3,9 +3,17 @@
 Реализация — `docs/agent-protocol.md` §12. Код: `server/internal/pki`, `server/internal/agent/enroll`,
 `server/internal/grpc`, `db/migrations/0009_agent_enrollment.sql`.
 
-## 1. Бездисковые ПК (Q-037) — нужен выбор владельца
+## 1. Бездисковые ПК (Q-037) — решено
 
 - [x] **Как бездисковый ПК получает сертификат после каждой перезагрузки?**
+  - Решение (30.10.2026, docs/DECISIONS.md Q-037): вариант (а) — «ключ образа» клуба. Многоразовый ключ (хранится
+    хэш, отзываемый, с ограничением подсети); ПК с известным MAC получает сертификат автоматически, новый MAC
+    попадает в «ожидающие» и требует подтверждения сотрудником; сертификат таких ПК — 24 ч.
+  - Сделано (Q-037): миграция `0013_agent_image_keys.sql` (ключи образа, ожидающие ПК, `agent_certificates.diskless`),
+    `server/internal/agent/enroll/image_key.go`, поле `EnrollRequest.image_key` и `ERROR_CODE_PENDING_APPROVAL`
+    в proto, протокол — `docs/agent-protocol.md` §12.8. Ключи создают и отзывают owner/admin (как ключ установки
+    клуба в старом), подтверждают ПК — роли кодов регистрации. REST панели и экран — при переносе экрана ПК.
+    Вариант (б) (TPM) не делается. Пункт «Сделано: только базовый путь» ниже — история до решения.
   - Контекст: сейчас служба бездискового ПК после загрузки сама получает токен по многоразовому ключу установки
     клуба + UUID + MAC, неизвестные ПК добавляются в «Не назначена» (`app/Http/Controllers/Api/AgentEnrollController.php`,
     `WindowsAgent/ZafiroAgent/Service/VaultServer.cs` `EnrollAsync`). В новом протоколе ключ и сертификат живут на ПК;
@@ -62,6 +70,7 @@
     стирать ключ).
   - Вариант: добавить в конец enum `ERROR_CODE_CERTIFICATE_REQUIRED`. Рекомендация: добавить при следующем изменении proto.
   - Решение (30.10.2026): принята рекомендация: `ERROR_CODE_CERTIFICATE_REQUIRED` в конец enum при следующем изменении proto.
+    Сделано: `ERROR_CODE_CERTIFICATE_REQUIRED = 30` (common.proto) — перехватчик mTLS, `enroll.ErrNoIdentity`, гость.
 - [x] **Права сотрудника в ответах панели** (`ErrForbidden`) пока используют `ERROR_CODE_VALIDATION_FAILED` как
   заглушку: это ошибки REST-панели, а не агента; REST-слой (волна B) отобразит `enroll.Error.Kind` в HTTP 403.
   - Решение (30.10.2026): принято: REST-слой отображает `enroll.Error.Kind` в HTTP 403.

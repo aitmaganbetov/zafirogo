@@ -164,15 +164,16 @@ WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);
 -- ---------------------------------------------------------------------------
 
 -- name: InsertAgentCertificate :exec
+-- diskless/image_key_id — сертификат по ключу образа (0013, решение Q-037): короткий, продлевается тоже коротким.
 INSERT INTO agent_certificates (serial, club_id, club_computer_id, spki_sha256, not_before, not_after, issued_via,
-                                enrollment_code_id, replaces_serial, mac_address, hardware_uuid)
+                                enrollment_code_id, replaces_serial, mac_address, hardware_uuid, diskless, image_key_id)
 VALUES (sqlc.arg(serial), sqlc.arg(club_id), sqlc.arg(club_computer_id), sqlc.arg(spki_sha256), sqlc.arg(not_before),
         sqlc.arg(not_after), sqlc.arg(issued_via), sqlc.narg(enrollment_code_id), sqlc.narg(replaces_serial),
-        sqlc.narg(mac_address), sqlc.narg(hardware_uuid));
+        sqlc.narg(mac_address), sqlc.narg(hardware_uuid), sqlc.arg(diskless), sqlc.narg(image_key_id));
 
 -- name: GetAgentCertificate :one
 SELECT serial, club_id, club_computer_id, spki_sha256, not_before, not_after, replaces_serial, first_used_at,
-       revoked_at, revoke_reason
+       revoked_at, revoke_reason, diskless, image_key_id
 FROM agent_certificates
 WHERE club_id = sqlc.arg(club_id) AND serial = sqlc.arg(serial);
 

@@ -67,7 +67,7 @@ type Options struct {
 	Client valkey.Client
 	// Rules — правила; nil — DefaultRules().
 	Rules []Rule
-	// Enable — включить правила, выключенные по умолчанию (web-login, web-register).
+	// Enable — включить правила, выключенные по умолчанию (Rule.Disabled).
 	Enable []string
 	// Disable — выключить правила (например, в тестах нагрузки).
 	Disable []string

@@ -282,7 +282,7 @@ func (a *authenticator) authenticate(ctx context.Context, method string) (contex
 	}
 	leaf, err := VerifiedPeerCertificate(ctx)
 	if err != nil {
-		return nil, Error(codes.Unauthenticated, agentv1.ErrorCode_ERROR_CODE_CERTIFICATE_EXPIRED,
+		return nil, Error(codes.Unauthenticated, agentv1.ErrorCode_ERROR_CODE_CERTIFICATE_REQUIRED,
 			"ПК не подключён к клубу.", map[string]string{"cause": "no_client_certificate"})
 	}
 	now := a.now()

@@ -158,7 +158,7 @@ func TestMTLS(t *testing.T) {
 	})
 	t.Run("защищённый метод без сертификата", func(t *testing.T) {
 		_, err := agentv1.NewAgentServiceClient(e.dial(t, nil)).GetTranslations(ctx, &agentv1.GetTranslationsRequest{})
-		if status.Code(err) != codes.Unauthenticated || ReasonOf(err) != "ERROR_CODE_CERTIFICATE_EXPIRED" {
+		if status.Code(err) != codes.Unauthenticated || ReasonOf(err) != "ERROR_CODE_CERTIFICATE_REQUIRED" {
 			t.Fatalf("err = %v (%s)", err, ReasonOf(err))
 		}
 	})

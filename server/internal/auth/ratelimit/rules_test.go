@@ -63,8 +63,11 @@ func TestNamedRuleValues(t *testing.T) {
 			}
 		}
 	}
-	if !rules[WebLogin].Disabled || !rules[WebRegister].Disabled || rules[CustomerLogin].Disabled {
-		t.Error("only web-login/web-register are disabled by default")
+	// Решение Q-052 (docs/DECISIONS.md): лимиты веб-входа и регистрации включены по умолчанию — выключенных нет.
+	for name, r := range rules {
+		if r.Disabled {
+			t.Errorf("%s is disabled by default", name)
+		}
 	}
 }
 

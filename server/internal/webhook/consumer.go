@@ -114,6 +114,11 @@ func (c *Consumer) handle(ctx context.Context, msg jetstream.Msg) {
 		return
 	}
 	n, err := c.Enqueue(ctx, env)
+	if errors.Is(err, errBadPayload) {
+		c.o.Log.Error("webhook: event data cannot be sent, dropped", "event", env.Type, "event_id", env.ID, "err", err)
+		_ = msg.Term()
+		return
+	}
 	if err != nil {
 		c.o.Log.Warn("webhook: enqueue failed, will retry", "event", env.Type, "event_id", env.ID, "err", err)
 		_ = msg.NakWithDelay(c.o.RetryDelay)
@@ -143,8 +148,13 @@ const iso8601 = "2006-01-02T15:04:05-07:00"
 // Enqueue создаёт доставки события для всех активных endpoint'ов клуба, подписанных на его тип, и
 // возвращает число новых доставок.
 func (c *Consumer) Enqueue(ctx context.Context, env outbox.Envelope) (int, error) {
+	// Решение RQ-3 (docs/DECISIONS.md): суммы — строки "N.NN" + *_tiyn, без float.
+	data, err := normalizeMoney(env.Data)
+	if err != nil {
+		return 0, err
+	}
 	created := 0
-	err := db.InTenantTx(ctx, c.o.App, env.ClubID, func(q *store.Queries) error {
+	err = db.InTenantTx(ctx, c.o.App, env.ClubID, func(q *store.Queries) error {
 		created = 0
 		endpoints, err := q.ListWebhookListeners(ctx, store.ListWebhookListenersParams{ClubID: env.ClubID, Event: env.Type})
 		if err != nil {
@@ -155,7 +165,7 @@ func (c *Consumer) Enqueue(ctx context.Context, env outbox.Envelope) (int, error
 			id := DeliveryID(env.ID, endpointID)
 			body, err := json.Marshal(payload{
 				ID: id.String(), Event: env.Type, CreatedAt: env.CreatedAt.UTC().Format(iso8601),
-				ClubID: env.ClubID, Data: env.Data,
+				ClubID: env.ClubID, Data: data,
 			})
 			if err != nil {
 				return err

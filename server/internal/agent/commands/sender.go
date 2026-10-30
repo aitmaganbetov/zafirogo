@@ -78,6 +78,7 @@ type Sender struct {
 	prefix   string
 	now      func() time.Time
 	log      *slog.Logger
+	updates  UpdateKeys
 }
 
 // SenderOptions — зависимости отправителя.
@@ -88,13 +89,17 @@ type SenderOptions struct {
 	NATS     *nats.Conn
 	// SubjectPrefix — префикс subject (пусто — DefaultSubjectPrefix).
 	SubjectPrefix string
-	Now           func() time.Time
-	Log           *slog.Logger
+	// UpdateKeys — открытые ключи подписи обновлений агента (agent.update.public_keys). Пусто — UpdateAvailable
+	// не отправляется (подпись проверить нечем).
+	UpdateKeys UpdateKeys
+	Now        func() time.Time
+	Log        *slog.Logger
 }
 
 // NewSender создаёт отправителя.
 func NewSender(o SenderOptions) *Sender {
-	s := &Sender{queue: NewQueue(o.Pool), presence: o.Presence, nc: o.NATS, prefix: o.SubjectPrefix, now: o.Now, log: o.Log}
+	s := &Sender{queue: NewQueue(o.Pool), presence: o.Presence, nc: o.NATS, prefix: o.SubjectPrefix, now: o.Now, log: o.Log,
+		updates: o.UpdateKeys}
 	if s.prefix == "" {
 		s.prefix = DefaultSubjectPrefix
 	}
@@ -128,6 +133,9 @@ func Validate(cmd *agentv1.Command) error {
 		if k.StartSession.GetSession().GetSessionId() == "" {
 			return fmt.Errorf("%w: start_session.session.session_id is required", ErrInvalidCommand)
 		}
+	case *agentv1.Command_UpdateAvailable:
+		// Решение «Обновления агента» (docs/DECISIONS.md): подпись Ed25519 обязательна.
+		return validateUpdate(k.UpdateAvailable)
 	}
 	return nil
 }
@@ -145,6 +153,11 @@ func (s *Sender) coalesceKey(computerID int64, k Kind) string {
 func (s *Sender) Send(ctx context.Context, clubID, computerID int64, cmd *agentv1.Command) (string, error) {
 	if err := Validate(cmd); err != nil {
 		return "", err
+	}
+	if u := cmd.GetUpdateAvailable(); u != nil {
+		if err := VerifyUpdate(u, s.updates); err != nil {
+			return "", err
+		}
 	}
 	if clubID <= 0 || computerID <= 0 {
 		return "", fmt.Errorf("%w: club and computer are required", ErrInvalidCommand)

@@ -61,8 +61,7 @@ type DeviceInfo struct {
 	// Локальный IPv4/IPv6 адрес активного адаптера.
 	LocalIp string `protobuf:"bytes,10,opt,name=local_ip,json=localIp,proto3" json:"local_ip,omitempty"`
 	// true — ПК бездисковый (загружается по сети, локальное хранилище не переживает перезагрузку).
-	// Сервер может выдать сертификат короче и разрешить повторную регистрацию по коду образа
-	// (см. open-questions/api.md, «Бездисковые ПК»).
+	// Справочно: срок сертификата определяет способ регистрации (по ключу образа — 24 часа), а не этот флаг.
 	Diskless      bool `protobuf:"varint,11,opt,name=diskless,proto3" json:"diskless,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -179,13 +178,24 @@ func (x *DeviceInfo) GetDiskless() bool {
 type EnrollRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Одноразовый код регистрации, введённый сотрудником на экране агента.
+	// Задаётся ровно одно из enrollment_code и image_key.
 	EnrollmentCode string `protobuf:"bytes,1,opt,name=enrollment_code,json=enrollmentCode,proto3" json:"enrollment_code,omitempty"`
 	// PKCS#10 CSR в PEM. Ключ ECDSA P-256 (предпочтительно) или RSA ≥ 3072, сгенерирован на ПК
 	// как неэкспортируемый машинный ключ CNG (TPM, если есть). Subject в CSR сервер игнорирует
 	// и пишет свой (см. EnrollResponse.certificate_pem).
 	CsrPem string `protobuf:"bytes,2,opt,name=csr_pem,json=csrPem,proto3" json:"csr_pem,omitempty"`
 	// Сведения о ПК.
-	Device        *DeviceInfo `protobuf:"bytes,3,opt,name=device,proto3" json:"device,omitempty"`
+	Device *DeviceInfo `protobuf:"bytes,3,opt,name=device,proto3" json:"device,omitempty"`
+	// Многоразовый ключ образа клуба для бездисковых ПК ("zik_…", решение Q-037, docs/agent-protocol.md §12.8).
+	// Служба бездискового ПК вызывает Enroll с ним после каждой загрузки. Правила сервера:
+	//   * IP ПК (как его видит сервер) должен входить в одну из подсетей ключа, ключ не отозван и не истёк;
+	//   * device.mac_address обязателен;
+	//   * MAC уже известен клубу → сертификат сразу, срок 24 часа (продление — тоже на 24 часа);
+	//   * MAC новый → FAILED_PRECONDITION + PENDING_APPROVAL + RetryInfo: ПК ждёт подтверждения в панели
+	//     клуба и повторяет Enroll через retry_delay; после подтверждения Enroll выдаёт сертификат;
+	//   * сотрудник отклонил ПК → PERMISSION_DENIED + ENROLLMENT_CODE_INVALID.
+	// Лимиты — те же, что у кодов (неверный ключ — +1 к счётчику неудач IP).
+	ImageKey      string `protobuf:"bytes,4,opt,name=image_key,json=imageKey,proto3" json:"image_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -239,6 +249,13 @@ func (x *EnrollRequest) GetDevice() *DeviceInfo {
 		return x.Device
 	}
 	return nil
+}
+
+func (x *EnrollRequest) GetImageKey() string {
+	if x != nil {
+		return x.ImageKey
+	}
+	return ""
 }
 
 // Ответ регистрации.
@@ -528,11 +545,12 @@ const file_agent_v1_enrollment_proto_rawDesc = "" +
 	"\tgpu_model\x18\t \x01(\tR\bgpuModel\x12\x19\n" +
 	"\blocal_ip\x18\n" +
 	" \x01(\tR\alocalIp\x12\x1a\n" +
-	"\bdiskless\x18\v \x01(\bR\bdiskless\"\x86\x01\n" +
+	"\bdiskless\x18\v \x01(\bR\bdiskless\"\xa3\x01\n" +
 	"\rEnrollRequest\x12'\n" +
 	"\x0fenrollment_code\x18\x01 \x01(\tR\x0eenrollmentCode\x12\x17\n" +
 	"\acsr_pem\x18\x02 \x01(\tR\x06csrPem\x123\n" +
-	"\x06device\x18\x03 \x01(\v2\x1b.zafiro.agent.v1.DeviceInfoR\x06device\"\xa3\x03\n" +
+	"\x06device\x18\x03 \x01(\v2\x1b.zafiro.agent.v1.DeviceInfoR\x06device\x12\x1b\n" +
+	"\timage_key\x18\x04 \x01(\tR\bimageKey\"\xa3\x03\n" +
 	"\x0eEnrollResponse\x12'\n" +
 	"\x0fcertificate_pem\x18\x01 \x01(\tR\x0ecertificatePem\x12 \n" +
 	"\fca_chain_pem\x18\x02 \x03(\tR\n" +

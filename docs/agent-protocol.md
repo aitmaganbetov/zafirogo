@@ -106,7 +106,7 @@ UI (WPF/WebView2) общается со службой по именованно
 
 Ключ установки клуба (64 символа, многоразовый) и вход сотрудника на ПК для его подключения
 (`/api/clubs/resolve`, `/api/club-computers/resolve|register`, `/api/agent/enroll`) больше не нужны.
-Исключение — бездисковые ПК: см. `docs/open-questions/api.md`, вопрос «Бездисковые ПК».
+Исключение — бездисковые ПК: регистрация по «ключу образа» клуба (решение Q-037), §12.8.
 
 ### Отзыв сертификата
 
@@ -152,6 +152,40 @@ UI (WPF/WebView2) общается со службой по именованно
    ставит. Любое несовпадение — `UPDATE_VERIFICATION_FAILED`, файл удаляется.
 4. Ротация ключа: в агенте список открытых ключей; новый ключ добавляется выпуском, подписанным старым.
 5. Итог — `AgentEvent.update_result`.
+
+Решение «Обновления агента» (docs/DECISIONS.md): **подпись Ed25519 обязательна**; ключ подписи — только в
+CI-секретах, открытый ключ вшит в агента.
+
+**Проверка на сервере** (`server/internal/agent/commands`, `update.go`). Сервер ничего не подписывает и ключа
+подписи не знает. Перед рассылкой (`Sender.Send`) команда `UpdateAvailable` проверяется:
+
+- `Validate` (всегда): `version` и `channel` непустые и без переводов строк, `url` — `https://хост`, `sha256` —
+  64 hex-символа в нижнем регистре, `size_bytes > 0`, `signature_ed25519` — ровно 64 байта, `key_id` непустой;
+- `VerifyUpdate`: `key_id` есть среди открытых ключей конфигурации `agent.update.public_keys`, подпись сходится
+  (`ed25519.Verify` по строке выше — `commands.UpdateSigningMessage`). Нет ключей в конфигурации — обновления не
+  рассылаются вовсе (`ErrInvalidCommand`). Это отсекает неподписанный или испорченный выпуск до того, как он уйдёт
+  на 50 000 ПК; агент всё равно проверяет подпись сам своим встроенным ключом.
+
+Настройка: `agent.update.public_keys` (env `ZAFIRO_AGENT_UPDATE_PUBLIC_KEYS`) — список `key_id:base64`, где base64 —
+32 байта открытого ключа Ed25519 (не секрет; несколько — на время ротации), например
+`ZAFIRO_AGENT_UPDATE_PUBLIC_KEYS=2026-10:Ab3…=,2027-04:Xy9…=`. Неверный формат — ошибка запуска.
+
+**Как CI подписывает выпуск** (реализация CI — отдельная задача):
+
+1. Ключ: `openssl genpkey -algorithm ed25519 -out agent-update-<key_id>.pem` — один раз, офлайн. Приватный ключ
+   кладётся только в секрет CI (например `AGENT_UPDATE_SIGNING_KEY`, лучше — KMS с операцией Sign), копия — в
+   офлайн-хранилище. Открытый: `openssl pkey -in … -pubout -outform DER | tail -c 32 | base64` — в
+   `agent.update.public_keys` сервера и в список ключей агента (`key_id` → ключ) в исходниках агента.
+2. Сборка выпуска: установщик → `sha256` (hex, нижний регистр) и `size_bytes` (байты) файла.
+3. Строка подписи (UTF-8, `\n` — LF, без завершающего перевода строки):
+   `zafiro-agent-update/v1\n<version>\n<sha256>\n<size_bytes>\n<channel>`.
+4. Подпись: `openssl pkeyutl -sign -inkey key.pem -rawin -in message.txt -out sig.bin` (64 байта, Ed25519 «чистый»,
+   без предхеширования). Проверка в том же job: `openssl pkeyutl -verify -pubin -inkey pub.pem -rawin -in message.txt
+   -sigfile sig.bin`.
+5. Метаданные выпуска (`version`, `url`, `sha256`, `size_bytes`, `channel`, `key_id`, `signature_ed25519` в base64)
+   публикуются вместе с установщиком; сервер берёт их в команду `UpdateAvailable` как есть.
+6. Ротация: новый ключ `key_id` добавляется в агента выпуском, подписанным старым ключом, и в
+   `agent.update.public_keys` сервера; старый убирается после перехода всех агентов.
 
 ## 7. Ошибки
 
@@ -323,7 +357,7 @@ CA: офлайн-корень → онлайн выпускающий CA «agent
 
 | Ситуация | gRPC | `ErrorInfo.reason` |
 |---|---|---|
-| нет клиентского сертификата на защищённом методе | `UNAUTHENTICATED` | `ERROR_CODE_CERTIFICATE_EXPIRED` (нужна регистрация) |
+| нет клиентского сертификата на защищённом методе | `UNAUTHENTICATED` | `ERROR_CODE_CERTIFICATE_REQUIRED` (нужна регистрация) |
 | сертификат истёк за время жизни соединения | `UNAUTHENTICATED` | `ERROR_CODE_CERTIFICATE_EXPIRED` |
 | отозван / удалён / не совпадает с записью | `UNAUTHENTICATED` | `ERROR_CODE_CERTIFICATE_REVOKED` |
 | база недоступна при проверке неизвестного серийного номера | `UNAVAILABLE` | `ERROR_CODE_INTERNAL` |
@@ -362,7 +396,7 @@ CA: офлайн-корень → онлайн выпускающий CA «agent
   карточкой как `AuthenticateAgentDevice::samePc` (`DEVICE_MISMATCH`); подписка не проверяется (Q-039). Прежний
   сертификат действует до первого вызова с новым (тогда `superseded`) или до своего `not_after`.
 - **Отзыв**: «Отключить ПК» (`RevokeComputer`), «Перерегистрировать» (`Reregister`), удаление карточки (триггер),
-  повторный Enroll. Агент на `CERTIFICATE_REVOKED` удаляет ключ и сертификат.
+  повторный Enroll, отзыв ключа образа (§12.8). Агент на `CERTIFICATE_REVOKED` удаляет ключ и сертификат.
 
 ### 12.6. Агент на .NET 10: ключ, CSR, канал (без кода)
 
@@ -384,7 +418,7 @@ CA: офлайн-корень → онлайн выпускающий CA «agent
 6. **Продление** после `renew_after` (+ jitter до 24 ч): новый именованный ключ → CSR → `RenewCertificate` по текущему
    каналу → новый канал с новым сертификатом → после первого успешного вызова удалить старый ключ (`CngKey.Delete`).
 7. **Ошибки**: `RpcException.GetRpcStatus()?.GetDetail<ErrorInfo>()?.Reason` (пакет `Grpc.StatusProto`).
-   `CERTIFICATE_REVOKED` → удалить ключ и сертификат, экран «ПК не подключён к клубу»; `CERTIFICATE_EXPIRED` → Enroll.
+   `CERTIFICATE_REVOKED` → удалить ключ и сертификат, экран «ПК не подключён к клубу»; `CERTIFICATE_EXPIRED` и `CERTIFICATE_REQUIRED` → Enroll (бездисковый ПК — с ключом образа, §12.8).
 
 **Проверено (30.10.2026):** клиент .NET 10 (`mcr.microsoft.com/dotnet/sdk:10.0`, Linux, `Grpc.Net.Client 2.85.0`,
 `Grpc.StatusProto 2.85.0`) против Go-сервера (`internal/agent/enroll`, dev-PKI): CSR `CertificateRequest` (P-256,
@@ -404,9 +438,48 @@ SHA-256) принят; Enroll → сертификат `CN=computer:1, O=club:1,
 | `agent.pki.dev_dir` | path | пусто (только dev) | содержит ключи |
 | `agent.enroll.code_pepper` | string ≥ 32 байт | — | да |
 | `agent.enroll.code_ttl` | duration | `15m` | нет |
+| `agent.enroll.diskless_cert_lifetime` (сертификат по ключу образа, §12.8) | duration | `24h` | нет |
+| `agent.update.public_keys` (открытые ключи подписи обновлений, §6) | список `key_id:base64` | пусто — обновления не рассылаются | нет |
 | `agent.cert.lifetime` | duration | `720h` | нет |
 | `agent.cert_cache.refresh` / `full_reload` | duration | `5s` / `10m` | нет |
 | `database.platform_url` (пул `zafiro_platform` для кэша сертификатов) | DSN | — | да |
+
+### 12.8. Бездисковые ПК: ключ образа
+
+Решение Q-037 (docs/DECISIONS.md). Бездисковый ПК (CCBoot, iCafe8 и т.п.) теряет ключ и сертификат при каждой
+перезагрузке, вводить одноразовый код каждый раз нельзя. Реализация: `server/internal/agent/enroll/image_key.go`,
+миграция `0013_agent_image_keys.sql`, запросы `db/queries/agent_image_keys.sql`.
+
+- **Ключ образа** — многоразовый секрет клуба `zik_` + 32 символа base64url (192 бита). Создают, видят список и
+  отзывают роли owner и admin (как «Ключ установки клуба» в старом `settings/club.blade.php`), не в режиме
+  просмотра суперадмином. Полный ключ показывается один раз при создании; в базе — `HMAC-SHA256(agent.enroll.code_pepper,
+  ключ)` и первые 12 символов для показа; в аудите — только начало. У ключа: название, 1–16 подсетей (CIDR,
+  `/0` запрещён), необязательный срок, отзыв. Ключ кладётся в образ (конфигурация службы агента).
+- **Подсети** — адрес, который видит сервер (адрес TCP-соединения; обычно внешний IP клуба). За балансировщиком
+  нужен PROXY protocol (см. open-questions/stage2-agent-enroll.md §8).
+- **Enroll** с `EnrollRequest.image_key` (вместо `enrollment_code`, оба сразу — `VALIDATION_FAILED`): те же лимиты,
+  что у кодов (неверный, истёкший ключ или чужая сеть — +1 к неудачам IP). `device.mac_address` обязателен.
+  Транзакция: поиск ключа по хешу (политика RLS `image_key_lookup`) → `app.club_id` → ключ не отозван и не истёк
+  (`ENROLLMENT_CODE_EXPIRED`), IP в подсетях (`ENROLLMENT_CODE_INVALID`) → подписка клуба → карточка по MAC:
+  - **MAC известен** (есть карточка с этим MAC) — железо, отзыв прежних сертификатов (`reenrolled`), сертификат на
+    24 часа (`agent.enroll.diskless_cert_lifetime`), `issued_via = image_key`, `diskless = true`, аудит `agent.enrolled`;
+  - **MAC новый** — заявка в `agent_pending_computers` (повтор обновляет её: железо, IP, `attempts`), ответ
+    `FAILED_PRECONDITION` + `ERROR_CODE_PENDING_APPROVAL` + `RetryInfo` (30 с). Агент повторяет Enroll через
+    `retry_delay`. Нерешённых заявок на клуб — не больше 200 (иначе `RATE_LIMITED`);
+  - **ПК отклонён** — `PERMISSION_DENIED` + `ENROLLMENT_CODE_INVALID`.
+- **Подтверждение** — роли owner/admin/manager/operator (как коды): `ApprovePending` создаёт карточку по правилам
+  `ClubComputerRegistrar::register` (лимит ПК тарифа, зона — выбранная или «Не назначена», вместимость, номер)
+  или берёт существующую с этим MAC; следующий Enroll ПК — «MAC известен». `RejectPending` — отказ; отклонённый ПК
+  можно подтвердить позже. Аудит: `agent.pending_computer.created|approved|rejected`.
+- **Продление** сертификата бездискового ПК (`RenewCertificate`) — тоже на 24 часа и только пока ключ образа,
+  по которому выдан сертификат, действует и IP в его подсетях. После перезагрузки ПК просто снова вызывает Enroll.
+- **Отзыв ключа** (`RevokeImageKey`) сразу отзывает все действующие сертификаты, выданные по нему (включая
+  продлённые), — ПК теряют связь; новый Enroll — `ENROLLMENT_CODE_EXPIRED`. Аудит `agent.image_key.created|revoked`.
+- **Риск** (принят решением Q-037): утечка образа = возможность выдать себя за ПК клуба с известным MAC из сети
+  клуба. Ограничители: подсети, короткий сертификат, отзыв ключа, подтверждение новых MAC.
+
+Сервисные методы для панели (REST — при переносе экрана ПК): `CreateImageKey`, `ListImageKeys`, `RevokeImageKey`,
+`ListPending`, `ApprovePending`, `RejectPending`.
 
 ## 13. Нагрузка сервера (стрим `Connect`, присутствие, команды)
 

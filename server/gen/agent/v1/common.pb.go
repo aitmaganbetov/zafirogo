@@ -94,6 +94,14 @@ const (
 	// Подписка клуба неактивна (FAILED_PRECONDITION). Старый аналог: HTTP 402
 	// (app/Http/Middleware/RequireActiveSubscription.php, AuthenticateAgentDevice).
 	ErrorCode_ERROR_CODE_SUBSCRIPTION_INACTIVE ErrorCode = 28
+	// Бездисковый ПК с новым MAC зарегистрирован по ключу образа и ждёт подтверждения сотрудником
+	// в панели клуба (FAILED_PRECONDITION) + google.rpc.RetryInfo. Агент повторяет Enroll через
+	// retry_delay (решение Q-037).
+	ErrorCode_ERROR_CODE_PENDING_APPROVAL ErrorCode = 29
+	// Защищённый метод вызван без клиентского сертификата (UNAUTHENTICATED): ПК не зарегистрирован —
+	// агент идёт в Enroll. В отличие от CERTIFICATE_REVOKED ключ не удаляется
+	// (docs/open-questions/stage2-agent-enroll.md §4).
+	ErrorCode_ERROR_CODE_CERTIFICATE_REQUIRED ErrorCode = 30
 	// Неверный телефон или пароль (UNAUTHENTICATED). Старый аналог: HTTP 401 из
 	// AuthController::issueUserLoginResponse.
 	ErrorCode_ERROR_CODE_INVALID_CREDENTIALS ErrorCode = 40
@@ -182,6 +190,8 @@ var (
 		26:  "ERROR_CODE_COMPUTER_LIMIT_REACHED",
 		27:  "ERROR_CODE_COMPUTER_NOT_FOUND",
 		28:  "ERROR_CODE_SUBSCRIPTION_INACTIVE",
+		29:  "ERROR_CODE_PENDING_APPROVAL",
+		30:  "ERROR_CODE_CERTIFICATE_REQUIRED",
 		40:  "ERROR_CODE_INVALID_CREDENTIALS",
 		41:  "ERROR_CODE_ACCOUNT_BLOCKED",
 		42:  "ERROR_CODE_NOT_CLUB_MEMBER",
@@ -229,6 +239,8 @@ var (
 		"ERROR_CODE_COMPUTER_LIMIT_REACHED":       26,
 		"ERROR_CODE_COMPUTER_NOT_FOUND":           27,
 		"ERROR_CODE_SUBSCRIPTION_INACTIVE":        28,
+		"ERROR_CODE_PENDING_APPROVAL":             29,
+		"ERROR_CODE_CERTIFICATE_REQUIRED":         30,
 		"ERROR_CODE_INVALID_CREDENTIALS":          40,
 		"ERROR_CODE_ACCOUNT_BLOCKED":              41,
 		"ERROR_CODE_NOT_CLUB_MEMBER":              42,
@@ -728,7 +740,7 @@ const file_agent_v1_common_proto_rawDesc = "" +
 	"computerId\x12\x16\n" +
 	"\x06number\x18\x02 \x01(\tR\x06number\x12!\n" +
 	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\x12\x1b\n" +
-	"\tzone_name\x18\x04 \x01(\tR\bzoneName*\xac\f\n" +
+	"\tzone_name\x18\x04 \x01(\tR\bzoneName*\xf2\f\n" +
 	"\tErrorCode\x12\x1a\n" +
 	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13ERROR_CODE_INTERNAL\x10\x01\x12+\n" +
@@ -746,7 +758,9 @@ const file_agent_v1_common_proto_rawDesc = "" +
 	"\x1aERROR_CODE_DEVICE_MISMATCH\x10\x19\x12%\n" +
 	"!ERROR_CODE_COMPUTER_LIMIT_REACHED\x10\x1a\x12!\n" +
 	"\x1dERROR_CODE_COMPUTER_NOT_FOUND\x10\x1b\x12$\n" +
-	" ERROR_CODE_SUBSCRIPTION_INACTIVE\x10\x1c\x12\"\n" +
+	" ERROR_CODE_SUBSCRIPTION_INACTIVE\x10\x1c\x12\x1f\n" +
+	"\x1bERROR_CODE_PENDING_APPROVAL\x10\x1d\x12#\n" +
+	"\x1fERROR_CODE_CERTIFICATE_REQUIRED\x10\x1e\x12\"\n" +
 	"\x1eERROR_CODE_INVALID_CREDENTIALS\x10(\x12\x1e\n" +
 	"\x1aERROR_CODE_ACCOUNT_BLOCKED\x10)\x12\x1e\n" +
 	"\x1aERROR_CODE_NOT_CLUB_MEMBER\x10*\x12\"\n" +

@@ -444,7 +444,7 @@ func TestRenewCertificate(t *testing.T) {
 	_, err = cli.RenewCertificate(ctx, &agentv1.RenewCertificateRequest{CsrPem: newPCKey(t).csr, Device: dev("OTHER", "11:22:33:44:55:66")})
 	wantReason(t, err, codes.PermissionDenied, "ERROR_CODE_DEVICE_MISMATCH")
 	_, err = agentv1.NewEnrollmentServiceClient(h.dial(t, nil)).RenewCertificate(ctx, &agentv1.RenewCertificateRequest{CsrPem: newPCKey(t).csr, Device: d})
-	wantReason(t, err, codes.Unauthenticated, "ERROR_CODE_CERTIFICATE_EXPIRED") // без сертификата
+	wantReason(t, err, codes.Unauthenticated, "ERROR_CODE_CERTIFICATE_REQUIRED") // без сертификата
 
 	k2 := newPCKey(t)
 	rn, err := cli.RenewCertificate(ctx, &agentv1.RenewCertificateRequest{CsrPem: k2.csr, Device: d})

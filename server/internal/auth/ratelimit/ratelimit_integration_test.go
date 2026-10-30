@@ -115,20 +115,34 @@ func TestConcurrentExactlyMax(t *testing.T) {
 	}
 }
 
-func TestDisabledAndEnable(t *testing.T) {
+// Решение Q-052 (docs/DECISIONS.md): web-login и web-register ограничены по умолчанию (5 в минуту на телефон и IP);
+// выключаются только явно (ratelimit.disable), Enable снова включает выключенное правило.
+func TestWebLimitsOnByDefault(t *testing.T) {
 	ctx := context.Background()
 	l := newLimiter(t, Options{})
-	for range 10 {
-		if res, _ := l.Allow(ctx, WebLogin, Subject{IP: "a", Phone: "1"}); !res.Allowed {
-			t.Fatal("web-login is disabled by default")
+	for _, rule := range []string{WebLogin, WebRegister} {
+		if !l.Enabled(rule) {
+			t.Fatalf("%s must be enabled by default", rule)
+		}
+		for range 5 {
+			if res, _ := l.Allow(ctx, rule, Subject{IP: "a", Phone: "1"}); !res.Allowed {
+				t.Fatalf("%s: first 5 attempts must pass", rule)
+			}
+		}
+		if res, _ := l.Allow(ctx, rule, Subject{IP: "a", Phone: "1"}); res.Allowed {
+			t.Fatalf("%s must limit by default", rule)
 		}
 	}
-	l = newLimiter(t, Options{Enable: []string{WebLogin}})
-	for range 5 {
-		_, _ = l.Allow(ctx, WebLogin, Subject{IP: "a", Phone: "1"})
+	l = newLimiter(t, Options{Disable: []string{WebLogin}})
+	for range 10 {
+		if res, _ := l.Allow(ctx, WebLogin, Subject{IP: "b", Phone: "2"}); !res.Allowed {
+			t.Fatal("explicitly disabled web-login must not limit")
+		}
 	}
-	if res, _ := l.Allow(ctx, WebLogin, Subject{IP: "a", Phone: "1"}); res.Allowed {
-		t.Fatal("enabled web-login must limit")
+	l = newLimiter(t, Options{Rules: []Rule{{Name: "x", Limits: []Limit{perMinute(1, byIP)}, Disabled: true}}, Enable: []string{"x"}})
+	_, _ = l.Allow(ctx, "x", Subject{IP: "c"})
+	if res, _ := l.Allow(ctx, "x", Subject{IP: "c"}); res.Allowed {
+		t.Fatal("Enable must turn on a disabled rule")
 	}
 	if _, err := New(Options{Client: client, Enable: []string{"nope"}}); err == nil {
 		t.Fatal("unknown rule in Enable")

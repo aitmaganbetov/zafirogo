@@ -54,8 +54,11 @@ type EnrollmentServiceClient interface {
 	// Повторный Enroll того же ПК (тот же hardware_uuid + MAC) с новым кодом выпускает
 	// новый сертификат и отзывает прежний (как issueAgentToken в Laravel отзывал старый токен).
 	//
+	// Бездисковые ПК вместо кода передают ключ образа клуба (EnrollRequest.image_key).
+	//
 	// Ошибки: ENROLLMENT_CODE_INVALID, ENROLLMENT_CODE_EXPIRED, CSR_INVALID,
-	// COMPUTER_LIMIT_REACHED, SUBSCRIPTION_INACTIVE, RATE_LIMITED, VALIDATION_FAILED.
+	// COMPUTER_LIMIT_REACHED, SUBSCRIPTION_INACTIVE, RATE_LIMITED, VALIDATION_FAILED,
+	// PENDING_APPROVAL (только ключ образа).
 	Enroll(ctx context.Context, in *EnrollRequest, opts ...grpc.CallOption) (*EnrollResponse, error)
 	// Продлевает сертификат. Вызывается ПОД mTLS текущим (ещё действующим) сертификатом.
 	// Агент генерирует НОВУЮ пару ключей и шлёт новый CSR. Прежний сертификат остаётся
@@ -117,8 +120,11 @@ type EnrollmentServiceServer interface {
 	// Повторный Enroll того же ПК (тот же hardware_uuid + MAC) с новым кодом выпускает
 	// новый сертификат и отзывает прежний (как issueAgentToken в Laravel отзывал старый токен).
 	//
+	// Бездисковые ПК вместо кода передают ключ образа клуба (EnrollRequest.image_key).
+	//
 	// Ошибки: ENROLLMENT_CODE_INVALID, ENROLLMENT_CODE_EXPIRED, CSR_INVALID,
-	// COMPUTER_LIMIT_REACHED, SUBSCRIPTION_INACTIVE, RATE_LIMITED, VALIDATION_FAILED.
+	// COMPUTER_LIMIT_REACHED, SUBSCRIPTION_INACTIVE, RATE_LIMITED, VALIDATION_FAILED,
+	// PENDING_APPROVAL (только ключ образа).
 	Enroll(context.Context, *EnrollRequest) (*EnrollResponse, error)
 	// Продлевает сертификат. Вызывается ПОД mTLS текущим (ещё действующим) сертификатом.
 	// Агент генерирует НОВУЮ пару ключей и шлёт новый CSR. Прежний сертификат остаётся

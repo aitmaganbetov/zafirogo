@@ -357,7 +357,7 @@ func (q *Queries) FindComputerByMac(ctx context.Context, arg FindComputerByMacPa
 
 const getAgentCertificate = `-- name: GetAgentCertificate :one
 SELECT serial, club_id, club_computer_id, spki_sha256, not_before, not_after, replaces_serial, first_used_at,
-       revoked_at, revoke_reason
+       revoked_at, revoke_reason, diskless, image_key_id
 FROM agent_certificates
 WHERE club_id = $1 AND serial = $2
 `
@@ -378,6 +378,8 @@ type GetAgentCertificateRow struct {
 	FirstUsedAt    *time.Time `json:"first_used_at"`
 	RevokedAt      *time.Time `json:"revoked_at"`
 	RevokeReason   *string    `json:"revoke_reason"`
+	Diskless       bool       `json:"diskless"`
+	ImageKeyID     *int64     `json:"image_key_id"`
 }
 
 func (q *Queries) GetAgentCertificate(ctx context.Context, arg GetAgentCertificateParams) (GetAgentCertificateRow, error) {
@@ -394,6 +396,8 @@ func (q *Queries) GetAgentCertificate(ctx context.Context, arg GetAgentCertifica
 		&i.FirstUsedAt,
 		&i.RevokedAt,
 		&i.RevokeReason,
+		&i.Diskless,
+		&i.ImageKeyID,
 	)
 	return i, err
 }
@@ -542,10 +546,10 @@ func (q *Queries) GetZoneForEnroll(ctx context.Context, arg GetZoneForEnrollPara
 const insertAgentCertificate = `-- name: InsertAgentCertificate :exec
 
 INSERT INTO agent_certificates (serial, club_id, club_computer_id, spki_sha256, not_before, not_after, issued_via,
-                                enrollment_code_id, replaces_serial, mac_address, hardware_uuid)
+                                enrollment_code_id, replaces_serial, mac_address, hardware_uuid, diskless, image_key_id)
 VALUES ($1, $2, $3, $4, $5,
         $6, $7, $8, $9,
-        $10, $11)
+        $10, $11, $12, $13)
 `
 
 type InsertAgentCertificateParams struct {
@@ -560,11 +564,14 @@ type InsertAgentCertificateParams struct {
 	ReplacesSerial   *string   `json:"replaces_serial"`
 	MacAddress       *string   `json:"mac_address"`
 	HardwareUuid     *string   `json:"hardware_uuid"`
+	Diskless         bool      `json:"diskless"`
+	ImageKeyID       *int64    `json:"image_key_id"`
 }
 
 // ---------------------------------------------------------------------------
 // Сертификаты
 // ---------------------------------------------------------------------------
+// diskless/image_key_id — сертификат по ключу образа (0013, решение Q-037): короткий, продлевается тоже коротким.
 func (q *Queries) InsertAgentCertificate(ctx context.Context, arg InsertAgentCertificateParams) error {
 	_, err := q.db.Exec(ctx, insertAgentCertificate,
 		arg.Serial,
@@ -578,6 +585,8 @@ func (q *Queries) InsertAgentCertificate(ctx context.Context, arg InsertAgentCer
 		arg.ReplacesSerial,
 		arg.MacAddress,
 		arg.HardwareUuid,
+		arg.Diskless,
+		arg.ImageKeyID,
 	)
 	return err
 }

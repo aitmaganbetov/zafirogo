@@ -34,8 +34,11 @@ service EnrollmentService {
   // Повторный Enroll того же ПК (тот же hardware_uuid + MAC) с новым кодом выпускает
   // новый сертификат и отзывает прежний (как issueAgentToken в Laravel отзывал старый токен).
   //
+  // Бездисковые ПК вместо кода передают ключ образа клуба (EnrollRequest.image_key).
+  //
   // Ошибки: ENROLLMENT_CODE_INVALID, ENROLLMENT_CODE_EXPIRED, CSR_INVALID,
-  // COMPUTER_LIMIT_REACHED, SUBSCRIPTION_INACTIVE, RATE_LIMITED, VALIDATION_FAILED.
+  // COMPUTER_LIMIT_REACHED, SUBSCRIPTION_INACTIVE, RATE_LIMITED, VALIDATION_FAILED,
+  // PENDING_APPROVAL (только ключ образа).
   rpc Enroll(EnrollRequest) returns (EnrollResponse);
 
   // Продлевает сертификат. Вызывается ПОД mTLS текущим (ещё действующим) сертификатом.
@@ -76,14 +79,14 @@ message DeviceInfo {
   // Локальный IPv4/IPv6 адрес активного адаптера.
   string local_ip = 10;
   // true — ПК бездисковый (загружается по сети, локальное хранилище не переживает перезагрузку).
-  // Сервер может выдать сертификат короче и разрешить повторную регистрацию по коду образа
-  // (см. open-questions/api.md, «Бездисковые ПК»).
+  // Справочно: срок сертификата определяет способ регистрации (по ключу образа — 24 часа), а не этот флаг.
   bool diskless = 11;
 }
 
 // Запрос регистрации.
 message EnrollRequest {
   // Одноразовый код регистрации, введённый сотрудником на экране агента.
+  // Задаётся ровно одно из enrollment_code и image_key.
   string enrollment_code = 1;
   // PKCS#10 CSR в PEM. Ключ ECDSA P-256 (предпочтительно) или RSA ≥ 3072, сгенерирован на ПК
   // как неэкспортируемый машинный ключ CNG (TPM, если есть). Subject в CSR сервер игнорирует
@@ -91,6 +94,16 @@ message EnrollRequest {
   string csr_pem = 2;
   // Сведения о ПК.
   DeviceInfo device = 3;
+  // Многоразовый ключ образа клуба для бездисковых ПК ("zik_…", решение Q-037, docs/agent-protocol.md §12.8).
+  // Служба бездискового ПК вызывает Enroll с ним после каждой загрузки. Правила сервера:
+  //   * IP ПК (как его видит сервер) должен входить в одну из подсетей ключа, ключ не отозван и не истёк;
+  //   * device.mac_address обязателен;
+  //   * MAC уже известен клубу → сертификат сразу, срок 24 часа (продление — тоже на 24 часа);
+  //   * MAC новый → FAILED_PRECONDITION + PENDING_APPROVAL + RetryInfo: ПК ждёт подтверждения в панели
+  //     клуба и повторяет Enroll через retry_delay; после подтверждения Enroll выдаёт сертификат;
+  //   * сотрудник отклонил ПК → PERMISSION_DENIED + ENROLLMENT_CODE_INVALID.
+  // Лимиты — те же, что у кодов (неверный ключ — +1 к счётчику неудач IP).
+  string image_key = 4;
 }
 
 // Ответ регистрации.

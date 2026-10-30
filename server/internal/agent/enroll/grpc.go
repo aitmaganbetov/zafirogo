@@ -22,7 +22,8 @@ func NewGRPC(svc *Service) *GRPC { return &GRPC{svc: svc} }
 // Enroll — без клиентского сертификата (grpcserver.MethodEnroll в списке публичных).
 func (g *GRPC) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
 	resp, err := g.svc.Enroll(ctx, EnrollInput{
-		Code: req.GetEnrollmentCode(), CSRPEM: req.GetCsrPem(), Device: req.GetDevice(), IP: peerAddr(ctx),
+		Code: req.GetEnrollmentCode(), ImageKey: req.GetImageKey(), CSRPEM: req.GetCsrPem(), Device: req.GetDevice(),
+		IP: peerAddr(ctx),
 	})
 	if err != nil {
 		return nil, g.toStatus(ctx, "Enroll", err)

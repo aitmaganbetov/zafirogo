@@ -53,6 +53,22 @@ func RateLimited(retryAfter time.Duration, message string) error {
 	)
 }
 
+// ErrorWithRetry — Error + RetryInfo и retry_after_seconds в ErrorInfo.metadata: «повторите позже», но не лимит
+// (например, PENDING_APPROVAL у бездисковых ПК — решение Q-037, docs/DECISIONS.md).
+func ErrorWithRetry(code codes.Code, reason agentv1.ErrorCode, message string, retryAfter time.Duration) error {
+	if retryAfter < time.Second {
+		retryAfter = time.Second
+	}
+	secs := int64((retryAfter + time.Second - 1) / time.Second)
+	st := status.New(code, message)
+	return withDetails(st,
+		&errdetails.ErrorInfo{Reason: reason.String(), Domain: ErrorDomain,
+			Metadata: map[string]string{"retry_after_seconds": strconv.FormatInt(secs, 10)}},
+		&errdetails.RetryInfo{RetryDelay: durationpb.New(time.Duration(secs) * time.Second)},
+		&errdetails.LocalizedMessage{Locale: MessageLocale, Message: message},
+	)
+}
+
 // Validation — INVALID_ARGUMENT + ERROR_CODE_VALIDATION_FAILED + BadRequest с нарушением поля.
 func Validation(field, message string) error {
 	st := status.New(codes.InvalidArgument, message)

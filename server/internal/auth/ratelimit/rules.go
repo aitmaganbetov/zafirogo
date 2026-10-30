@@ -111,8 +111,9 @@ const (
 	ClubComputerRegistration = "club-computer-registration"
 
 	// WebLogin и WebRegister — вход и регистрация в веб-панели. В старом лимита НЕ было
-	// (routes/web.php:158, 165 без throttle:; docs/open-questions/screens.md §1) — правило выключено
-	// по умолчанию, значения как у customer-login. Вопрос владельцу — docs/open-questions/stage2-auth.md.
+	// (routes/web.php:158, 165 без throttle:; docs/open-questions/screens.md §1).
+	// Решение Q-052 (docs/DECISIONS.md): лимит включён по умолчанию, значения как у customer-login;
+	// выключить можно только явно (ratelimit.disable).
 	WebLogin    = "web-login"
 	WebRegister = "web-register"
 )
@@ -156,8 +157,9 @@ func DefaultRules() []Rule {
 		{Name: AgentTranslations, Limits: []Limit{perMinute(600, byIP)}},
 		{Name: ClubComputerRegistration, Limits: []Limit{perMinute(10, byPC)}},
 
-		{Name: WebLogin, Limits: phoneAndIP(5, 300), Disabled: true},
-		{Name: WebRegister, Limits: phoneAndIP(5, 300), Disabled: true},
+		// Решение Q-052 (docs/DECISIONS.md): включены по умолчанию.
+		{Name: WebLogin, Limits: phoneAndIP(5, 300)},
+		{Name: WebRegister, Limits: phoneAndIP(5, 300)},
 	}
 	// throttle:N,M,<префикс> — routes/web.php и routes/api.php, routes/api_staff.php.
 	for _, t := range throttles {
