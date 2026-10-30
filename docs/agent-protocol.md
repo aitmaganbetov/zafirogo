@@ -87,7 +87,7 @@ UI (WPF/WebView2) общается со службой по именованно
   хотя бы в секрете вне репозитория). Корень встроен в агент (pinning), системное хранилище Windows не используется.
 - Клиентский ключ: ECDSA P-256, генерируется на ПК как неэкспортируемый машинный ключ CNG
   (Microsoft Platform Crypto Provider — TPM, если есть; иначе Software Key Storage Provider), доступ только SYSTEM.
-- Сертификат: `CN=pc-<computer_id>`, `O=club-<club_id>`, SAN URI `zafiro://club/<club_id>/computer/<computer_id>`,
+- Сертификат: `CN=computer:<computer_id>`, `O=club:<club_id>`, SAN URI `zafiro://club/<club_id>/computer/<computer_id>`,
   EKU `clientAuth`, срок 30 дней, продление после 2/3 срока (`RenewCertificate`) с новым ключом.
 - Сервер на каждом рукопожатии (`VerifyPeerCertificate`) проверяет цепочку, срок и статус серийного номера
   (таблица `agent_certificates` + кэш в Valkey/памяти, инвалидация через NATS).
@@ -265,3 +265,237 @@ tools/proto-csharp-check.sh    # C#: Grpc.Tools 2.85.0 → генерация в
 
 В агенте (C#) рекомендуется подключать `.proto` через `Grpc.Tools` в csproj (`<Protobuf Include=… GrpcServices="Client" />`),
 а не коммитить сгенерированный код.
+
+## 12. Реализация mTLS
+
+Код: `server/internal/pki` (CA, CSR, выпуск), `server/internal/agent/enroll` (коды, `Enroll`, `RenewCertificate`, отзыв,
+кэш сертификатов), `server/internal/grpc` (пакет `grpcserver`: TLS, перехватчики, ошибки), `server/internal/agent/identity`
+(идентичность ПК в контексте), миграция `db/migrations/0009_agent_enrollment.sql`, запросы `db/queries/agent_enroll.sql`.
+Вопросы — `docs/open-questions/stage2-agent-enroll.md`.
+
+### 12.1. Алгоритмы
+
+- **ECDSA P-256 + SHA-256** — и у CA, и у клиента. Агент на .NET 10 под Windows: `SslStream` (через `SocketsHttpHandler`
+  в `Grpc.Net.Client`) использует SChannel, который принимает клиентские сертификаты ECDSA P-256/P-384 и RSA;
+  `CertificateRequest` строит CSR для `ECDsa`/`RSA`; ключ CNG P-256 бывает и программным, и в TPM (Microsoft Platform
+  Crypto Provider). **Ed25519 не подходит**: ни SChannel, ни `X509Certificate2`/`CertificateRequest` его не поддерживают.
+- Сервер принимает в CSR только **ECDSA P-256** или **RSA 3072–8192** (как в `enrollment.proto`). RSA 2048, P-384,
+  Ed25519, подпись SHA-1/MD5, чужая подпись CSR → `ERROR_CODE_CSR_INVALID`.
+- **TLS 1.2 минимум**, только ECDHE + AEAD (AES-GCM, ChaCha20-Poly1305), кривые X25519/P-256/P-384, ALPN `h2`.
+  TLS 1.3 не обязателен: SChannel Windows 10 (большинство ПК клубов) его не поддерживает. Session tickets включены —
+  массовое переподключение после `Drain` обходится без полной проверки подписей.
+
+### 12.2. Сертификат ПК
+
+| Поле | Значение |
+|---|---|
+| Subject | `CN=computer:<computer_id>, O=club:<club_id>` (Subject из CSR игнорируется) |
+| SAN | URI `zafiro://club/<club_id>/computer/<computer_id>` — источник идентичности, CN сверяется с ним |
+| Серийный номер | случайные 128 бит, в базе — hex нижним регистром (`agent_certificates.serial`) |
+| Срок | `NotBefore = now − 5 мин` (часы ПК), `NotAfter = now + 30 дней` (настройка), не дольше срока CA |
+| `renew_after` | `now + 2/3` срока |
+| Расширения | `KeyUsage = digitalSignature` (+ `keyEncipherment` для RSA), `EKU = clientAuth`, `CA:false` |
+
+
+CA: офлайн-корень → онлайн выпускающий CA «agent-issuing». Сервер грузит сертификат выпускающего CA (с цепочкой до
+корня) и его ключ из файлов-секретов (`pki.Options.CACertFile/CAKeyFile`), в репозитории их нет. В dev
+(`pki.Options.DevDir`) при первом запуске генерируются корень, выпускающий CA и серверный сертификат gRPC
+(подписан тем же корнем) — каталог `0700`, файлы `0600`. Серверный сертификат в production — из файлов
+(`ServerCertFile/ServerKeyFile`). Ротация выпускающего CA: `pki.LoadCAFromPEM(..., extraTrust...)` — прежний CA
+остаётся в `ClientCAs`, пока живут его сертификаты (≤ 30 дней).
+
+### 12.3. Проверка на сервере
+
+- Один listener, `tls.Config.ClientAuth = VerifyClientCertIfGiven`, `ClientCAs` = выпускающие CA. Присланный
+  сертификат Go проверяет на рукопожатии (цепочка, срок, `clientAuth`): чужой CA или истёкший → обрыв TLS
+  (`UNAVAILABLE` у клиента), поэтому агент сам смотрит на свой `not_after` и при истечении идёт в `Enroll`.
+- Перехватчик (unary + stream): методы без сертификата — только из явного списка (`EnrollmentService/Enroll`).
+  Для остальных: проверенная на рукопожатии цепочка обязательна → срок (соединение HTTP/2 живёт дольше сертификата) →
+  идентичность из SAN URI → статус серийного номера в `CertCache` → `identity.Identity{ClubID, ComputerID, CertSerial}`
+  в контексте. Для `Enroll` идентичность не ставится, даже если сертификат прислан.
+- `CertCache` — allow-list действующих сертификатов в памяти инстанса (50 000 ПК ≈ 100 000 строк, единицы МБ):
+  полная загрузка при старте и раз в 10 минут (ловит удаления), инкрементально раз в 5 секунд по
+  `agent_certificates.changed_at` с перекрытием 2 минуты; неизвестный серийный номер (выпущен другим инстансом)
+  читается из базы. Отзыв на своём инстансе действует сразу; на других — через ≤ 5 с или сразу, если подписать
+  `CertCache.MarkRevoked` на событие NATS (`enroll.Options.OnRevoked` публикует). `CertCache.OnRevoked` —
+  подписка для закрытия стрима `Connect` отозванного ПК (агент A3).
+- Удаление карточки ПК отзывает её сертификаты триггером БД (`computer_deleted`), кто бы ни удалял.
+
+| Ситуация | gRPC | `ErrorInfo.reason` |
+|---|---|---|
+| нет клиентского сертификата на защищённом методе | `UNAUTHENTICATED` | `ERROR_CODE_CERTIFICATE_EXPIRED` (нужна регистрация) |
+| сертификат истёк за время жизни соединения | `UNAUTHENTICATED` | `ERROR_CODE_CERTIFICATE_EXPIRED` |
+| отозван / удалён / не совпадает с записью | `UNAUTHENTICATED` | `ERROR_CODE_CERTIFICATE_REVOKED` |
+| база недоступна при проверке неизвестного серийного номера | `UNAVAILABLE` | `ERROR_CODE_INTERNAL` |
+
+Все ошибки — `google.rpc.Status` с `ErrorInfo{domain: "agent.zafiro.kz"}` + `LocalizedMessage` (русский ключ перевода);
+валидация — ещё `BadRequest`, лимиты — `RetryInfo`.
+
+### 12.4. Лимиты транспорта (`grpcserver.DefaultLimits`)
+
+| Параметр | Значение | Почему |
+|---|---|---|
+| `MaxRecvMsgSize` / `MaxSendMsgSize` | 1 МБ / 8 МБ | сообщения агента маленькие; самый большой ответ — словарь переводов |
+| `MaxConcurrentStreams` | 16 на соединение | один `Connect` + параллельные unary гостя |
+| keepalive enforcement | `MinTime = 20 с`, `PermitWithoutStream` | агент пингует раз в 30 с (§2) |
+| keepalive сервера | ping после 60 с тишины, таймаут 20 с | мёртвый ПК освобождается за ~80 с (TTL присутствия 90 с) |
+| `MaxConnectionAge` | не задан | долгий стрим; перебалансировка — `Drain` с jitter |
+| окно HTTP/2 | фиксированно 64 КБ (без роста BDP до 4 МБ) | память при 10–25 тыс. соединений на инстанс |
+| буферы чтения/записи | 16 КБ (запись — общий буфер) | по умолчанию 32+32 КБ × 25 000 = 1,6 ГБ |
+| `ConnectionTimeout` | 10 с | медленное рукопожатие не держит горутину и дескриптор |
+
+### 12.5. Регистрация, продление, отзыв
+
+- **Код** выдаёт сотрудник с ролью owner/admin/manager/operator (как `ClubComputerPolicy::register`, кассир — нет;
+  режим просмотра суперадмином — нет): 8 символов `A–Z` без `I/O` + `2–9`, показ `ABCD-EFGH`, 15 минут. В базе —
+  только `HMAC-SHA256(секрет сервера, код)` (40 бит кода не выдерживают перебора sha256 без секрета); код не пишется
+  ни в лог, ни в аудит. Варианты: «новый ПК» (по желанию — зона) или «Перерегистрировать» конкретную карточку
+  (прежние сертификаты отзываются сразу).
+- **Enroll**: лимиты `agent-enroll` (5/мин на IP+UUID, 300/мин на IP; неверный/истёкший код — +1 к неудачам IP,
+  после 20/мин — `RATE_LIMITED`). Транзакция: поиск кода по хешу (политика RLS `enroll_code_lookup` видит только строку
+  с этим хешем) → `app.club_id` клуба кода → атомарное гашение (`UPDATE … WHERE used_at IS NULL … RETURNING`:
+  второй Enroll с тем же кодом ждёт блокировку и получает `ENROLLMENT_CODE_EXPIRED`) → блокировка клуба →
+  подписка (иначе `SUBSCRIPTION_INACTIVE`, код не гасится) → карточка по правилам `ClubComputerRegistrar`
+  (MAC, затем UUID без MAC; новая — лимит ПК тарифа, зона/«Не назначена», вместимость, номер = max + 1) →
+  железо → отзыв прежних сертификатов карточки (`reenrolled`) → выпуск → аудит (`security`, `agent.enrolled`).
+- **RenewCertificate** (под mTLS): 10/мин на ПК; новый CSR обязан быть на **новом** ключе; железо сверяется с
+  карточкой как `AuthenticateAgentDevice::samePc` (`DEVICE_MISMATCH`); подписка не проверяется (Q-039). Прежний
+  сертификат действует до первого вызова с новым (тогда `superseded`) или до своего `not_after`.
+- **Отзыв**: «Отключить ПК» (`RevokeComputer`), «Перерегистрировать» (`Reregister`), удаление карточки (триггер),
+  повторный Enroll. Агент на `CERTIFICATE_REVOKED` удаляет ключ и сертификат.
+
+### 12.6. Агент на .NET 10: ключ, CSR, канал (без кода)
+
+1. **Ключ.** Служба (SYSTEM) создаёт **именованный постоянный** машинный ключ CNG: `CngKey.Create` с алгоритмом
+   `ECDsaP256`, `CngKeyCreationParameters { Provider = MicrosoftPlatformCryptoProvider (TPM), при ошибке —
+   MicrosoftSoftwareKeyStorageProvider; KeyCreationOptions = MachineKey; ExportPolicy = None }`, имя вида
+   `Zafiro.Agent.<guid>`. Именованный ключ обязателен: SChannel не умеет клиентскую аутентификацию с эфемерным
+   ключом (`ECDsa.Create()` + `CopyWithPrivateKey` работает на Linux/OpenSSL, но на Windows падает в `SslStream`).
+2. **CSR.** `new ECDsaCng(key)` → `new CertificateRequest("CN=zafiro-agent", ecdsa, HashAlgorithmName.SHA256)` →
+   `CreateSigningRequestPem()`. Subject любой — сервер его заменяет. В сервер уходит только CSR, ключ не покидает ПК.
+3. **Enroll** — по отдельному каналу **без** клиентского сертификата (с просроченным сертификатом TLS не поднимется).
+4. **Сертификат.** `X509Certificate2.CreateFromPem(certificate_pem)` → `CopyWithPrivateKey(ecdsa)`. Сертификат (PEM)
+   и имя ключа — в `%ProgramData%\Zafiro` с ACL только для SYSTEM; ключ остаётся в CNG/TPM. Проверить, что
+   `ca_chain_pem` заканчивается встроенным корнем (pinning).
+5. **Канал mTLS.** `SocketsHttpHandler`: `SslOptions.ClientCertificates = { cert }`, проверка сервера —
+   `CertificateChainPolicy { TrustMode = CustomRootTrust, CustomTrustStore = { встроенный корень },
+   RevocationMode = NoCheck }` (системное хранилище не используется), `KeepAlivePingDelay = 30 с`,
+   `KeepAlivePingTimeout = 10 с`, `PooledConnectionIdleTimeout = Infinite`; `GrpcChannel.ForAddress("https://"+agent_endpoint)`.
+6. **Продление** после `renew_after` (+ jitter до 24 ч): новый именованный ключ → CSR → `RenewCertificate` по текущему
+   каналу → новый канал с новым сертификатом → после первого успешного вызова удалить старый ключ (`CngKey.Delete`).
+7. **Ошибки**: `RpcException.GetRpcStatus()?.GetDetail<ErrorInfo>()?.Reason` (пакет `Grpc.StatusProto`).
+   `CERTIFICATE_REVOKED` → удалить ключ и сертификат, экран «ПК не подключён к клубу»; `CERTIFICATE_EXPIRED` → Enroll.
+
+**Проверено (30.10.2026):** клиент .NET 10 (`mcr.microsoft.com/dotnet/sdk:10.0`, Linux, `Grpc.Net.Client 2.85.0`,
+`Grpc.StatusProto 2.85.0`) против Go-сервера (`internal/agent/enroll`, dev-PKI): CSR `CertificateRequest` (P-256,
+SHA-256) принят; Enroll → сертификат `CN=computer:1, O=club:1, SAN URI zafiro://club/1/computer/1`; повтор кода →
+`ENROLLMENT_CODE_EXPIRED` с русским текстом; Renew тем же ключом → `CSR_INVALID`; Renew по mTLS новым ключом → новый
+сертификат; после первого вызова новым сертификатом прежний → `CERTIFICATE_REVOKED`. **Не проверено:** Windows/SChannel
+и ключ в TPM (нет Windows-машины) — пункт в `open-questions/stage2-agent-enroll.md`.
+
+### 12.7. Настройки сервера (подключает `cmd/zafiro`)
+
+| Ключ | Тип | По умолчанию | Секрет |
+|---|---|---|---|
+| `agent.grpc.listen` | string | `:8443` | нет |
+| `agent.grpc.endpoint` (адрес для `EnrollResponse.agent_endpoint`) | string | — | нет |
+| `agent.pki.ca_cert_file` / `ca_key_file` | path | — (в production обязательны) | ключ — да |
+| `agent.pki.server_cert_file` / `server_key_file` | path | — (в production обязательны) | ключ — да |
+| `agent.pki.dev_dir` | path | пусто (только dev) | содержит ключи |
+| `agent.enroll.code_pepper` | string ≥ 32 байт | — | да |
+| `agent.enroll.code_ttl` | duration | `15m` | нет |
+| `agent.cert.lifetime` | duration | `720h` | нет |
+| `agent.cert_cache.refresh` / `full_reload` | duration | `5s` / `10m` | нет |
+| `database.platform_url` (пул `zafiro_platform` для кэша сертификатов) | DSN | — | да |
+
+## 13. Нагрузка сервера (стрим `Connect`, присутствие, команды)
+
+Реализация: `server/internal/agent/stream` (стрим), `presence` (Valkey + запись изменений в Postgres + фоновая
+проверка), `commands` (очередь и маршрутизация), миграция `0010_agent_stream.sql`, запросы `db/queries/agent_presence.sql`.
+Открытые вопросы — `docs/open-questions/stage2-agent-stream.md`.
+
+### 13.1. Где живёт состояние ПК
+
+| Что | Где | Когда пишется |
+|---|---|---|
+| Кто держит стрим (`<instance>\|<gen>`) | Valkey `zafiro:agent:pc:<computer>`, TTL 90 с | при подключении; продлевается тикером инстанса пачкой (раз в TTL/3) и каждым `Status` |
+| Снимок (`presence.State`: онлайн, версия, возможности, состояние, сессия, гость, загрузка, IP) | память инстанса + Valkey hash `zafiro:agent:club:<club>` | каждый принятый `Status` (не чаще 1 в 2 с) |
+| Срок проверки | Valkey zset `zafiro:agent:online` (`<club>:<computer>` → крайний срок) | вместе с владением; при закрытии стрима — «сейчас + grace» |
+| `status = 'online'/'offline'`, `last_seen_at` | Postgres `club_computers` | только переходы: подключение (если было не `online`), офлайн после grace/TTL |
+| `agent_state` (+ снятие `staff_*` для idle/locked/in_session, как `changes()`) | Postgres | смена состояния, дебаунс 5 с (итоговое значение) |
+| `agent_version`, `agent_boot_id`, `remote_ip`, железо, `device_name`, `hardware_reported_at` | Postgres | в `Hello`, только изменившиеся поля |
+| Долговременные команды (`seq > 0`) и их итог | Postgres `agent_commands` (+ счётчик `agent_command_counters`) | постановка, `ACCEPTED`, итог |
+| «Заменяемые последним» (`BalanceChanged`, `GuestCountersChanged`) | Valkey `zafiro:agent:last:<computer>:<kind>`, TTL 5 мин | при отправке; досылаются после `Welcome` |
+| Дедупликация `AgentEvent.event_id` | Valkey `zafiro:agent:evt:<computer>:<event_id>`, TTL 24 ч | после успешной обработки события |
+
+Сравнение со старым: `ClubComputerSessions::heartbeat()` писал `club_computers` (транзакция + `SELECT … FOR UPDATE`),
+если что-то изменилось **или `last_seen_at` старше `SEEN_WRITE_SECONDS = 20 с`**. Heartbeat шёл раз в 30 с (> 20 с),
+поэтому почти каждый heartbeat писал в MySQL — ≈ 2 UPDATE в минуту на ПК, ≈ 1 700 UPDATE/с на 50 000 ПК, плюс
+heartbeat службы (60 с) и экрана входа (15 с). Теперь ПК с неизменным состоянием не пишет в Postgres ничего
+(замер ниже: 0 строк за минуту на 10 000 ПК); онлайн — открытый стрим, а не `last_seen_at` моложе 90 с.
+
+### 13.2. Офлайн и «зависшие» ПК
+
+- Закрытие стрима → снимок `online = false`, срок «сейчас + `OfflineGrace`» (15 с). Переподключился в пределах grace
+  (обрыв Wi-Fi, `Drain`, перезапуск службы) — в Postgres ничего не пишется.
+- Падение инстанса → владение не продлевается и истекает через TTL 90 с.
+- `presence.Sweeper` (один исполнитель — лок в Valkey; раз в 5 с) забирает из zset ПК с истёкшим сроком без живого
+  владельца (атомарно, Lua) и пишет `status = 'offline'`. Раз в 5 минут — сверка `status = 'online'` в Postgres с Valkey
+  (ПК без следа в Valkey два прохода подряд → `offline`; спасает от потери данных Valkey), истечение невыполненных команд
+  (`status = 'expired'`) и удаление строк `agent_commands` старше 7 дней.
+- Гонка «офлайн записан, а ПК уже переподключился» исключена порядком: новое соединение берёт владение в Valkey
+  **до** чтения карточки из Postgres; Sweeper после записи `offline` проверяет владельца и при наличии возвращает `online`.
+
+### 13.3. Один стрим на ПК
+
+Подключение берёт владение Lua-скриптом с новым поколением `gen` (монотонно, не меньше времени Valkey в мкс). Прежнее
+соединение закрывается `ABORTED "replaced"`: на том же инстансе — сразу, на другом — сообщением `kick{gen}` в NATS
+на subject того инстанса; закрывается только соединение с меньшим `gen`, поэтому при двух одновременных подключениях
+выживает ровно одно (новейшее). Закрывшееся старое соединение не снимает присутствие нового (сравнение владельца в Lua).
+Отзыв сертификата — `stream.Service.Kick(..., codes.Unauthenticated, ERROR_CODE_CERTIFICATE_REVOKED, …)`.
+
+### 13.4. Команды
+
+- `Commands.Send` (`commands.Sender.Send`): `command_id` — UUID v7, `issued_at` — сервер, `expires_at` — по виду
+  (питание и WoL 120 с, сообщение 300 с — как `ComputerPower`; `StartSession` — до конца сессии; `EndSession`, `Lock`,
+  `Unlock`, `SignOutGuest` — 10 мин; `UpdateAvailable` — 24 ч). Долговременная команда сначала сохраняется
+  (seq выдаётся `INSERT … ON CONFLICT DO UPDATE … RETURNING` в той же транзакции, поэтому порядок коммитов = порядок seq),
+  затем отправитель смотрит владельца в Valkey и публикует конверт в NATS на **subject инстанса**
+  `zafiro.agent.inst.<instance>` (одна подписка на инстанс; не `agent.cmd.<club>.<computer>` из §2 — см. вопрос AS-1).
+- Инстанс-владелец кладёт команду в очередь соединения; учёт `seq` и постановка в очередь — под одной блокировкой,
+  поэтому агент получает долговременные команды строго по возрастанию `seq` (если через NATS пришла `N+2` раньше `N+1`,
+  соединение досылает из Postgres по порядку).
+- После `Hello`: если последний выданный seq больше `last_command_seq` — досылка неистёкших невыполненных команд;
+  иначе запроса к очереди нет. Если агент знает seq больше выданного (база из копии) — счётчик поднимается.
+- Нет `CommandResult` за 30 с — повтор (до 3 раз, тот же `command_id`). `ACCEPTED` останавливает повторы.
+- Команда, которую агент не умеет (`AgentCapabilities`), не отправляется и получает `FAILED + COMMAND_UNSUPPORTED`.
+
+### 13.5. Замер (нагрузочный тест)
+
+`server/internal/agent/stream/load_test.go`, теги `integration load` (не в CI):
+
+```bash
+cd server && go test -tags 'integration load' -run '^TestLoad$' -v -timeout 30m ./internal/agent/stream/
+# ZAFIRO_LOAD_PCS (10000), ZAFIRO_LOAD_STATUS_EVERY (30s), ZAFIRO_LOAD_WINDOW (60s), ZAFIRO_LOAD_REPORT (путь JSON)
+```
+
+Сервер — отдельный процесс (тот же тестовый бинарник), gRPC без TLS на 127.0.0.1 с лимитами `grpcserver.DefaultLimits`,
+идентичность ПК — тестовый перехватчик. Агенты — 10 000 отдельных TCP-соединений по одному стриму. Postgres 18.6,
+Valkey 9.1.3, NATS 2.15.2 в Docker; всё (включая клиентов) на одной машине: 4 vCPU, 16 ГБ, Go 1.27.3.
+
+| Показатель (10 000 стримов, Status раз в 30 с, окно 61 с) | Значение |
+|---|---|
+| Записей в Postgres за окно (`club_computers.updated_at`, `agent_commands`) / `Recorder.Writes()` | **0 / 0** |
+| Status за окно | 20 364 (≈ 333/с) |
+| CPU процесса сервера | 17–21 % одного ядра (3 прогона) |
+| RSS процесса сервера | ≈ 620 МБ всего, **≈ 61 КБ на стрим** |
+| Куча Go / стеки горутин на стрим | ≈ 25 КБ / ≈ 34 КБ |
+| Горутин на стрим | **5,0** (2 стрима: отправка и чтение; 3 — транспорт HTTP/2 соединения) |
+| Подключение 10 000 ПК | 45 с (≈ 220/с; клиенты, сервер и базы делят 4 vCPU) |
+| 1 000 команд `ShowMessage` с «другого инстанса» (последовательные `Send`) | 2,2–2,5 с на все; последняя доставлена через ≤ 2,5 с от первой отправки (≈ 2,3 мс на `Send`: транзакция Postgres + Valkey + NATS) |
+
+Оценка на 50 000 ПК (Status по умолчанию раз в 60 с): ≈ 830 Lua-вызовов Valkey в секунду, ≈ 3 ГБ RAM на все инстансы
+под стримы (без TLS; TLS 1.3 добавляет память на соединение — замерить на стенде с mTLS), ≈ 0,5 ядра суммарно на статусы.
+Postgres — только переходы (подключения, смены состояния, команды), не статусы. Узкое место массового переподключения —
+чтение карточки ПК при `Hello` (1 запрос) и запись `online` после офлайна; `Drain` с окном 30 с растягивает 50 000
+подключений до ≈ 1 700/с на кластер.
