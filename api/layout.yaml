@@ -1,0 +1,48 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — layout
+  version: 0.1.0
+  description: |
+    Каркас панели клуба (layouts/admin.blade.php, partials/sidebar.blade.php): бейджи меню. Дальше бейджи обновляет
+    WebSocket (chat.unread, shop_order.*; решение Q-063). Конвенции — api/README.md.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/layout/badges:
+    get:
+      operationId: getSidebarBadges
+      tags: [layout]
+      summary: Бейджи «Чат» и «Заказы»
+      description: |
+        ChatController::unreadTotal() и ShopOrder::newCount(). Счётчик без права раздела (chat.view / orders.view) — 0
+        (в старом бейдж показывался только у видимого пункта меню).
+      responses:
+        "200":
+          description: Счётчики.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SidebarBadges"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+  schemas:
+    SidebarBadges:
+      type: object
+      required: [chat, orders]
+      properties:
+        chat:
+          type: integer
+          format: int64
+        orders:
+          type: integer
+          format: int64

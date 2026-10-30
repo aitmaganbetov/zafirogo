@@ -1,0 +1,285 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — customers
+  version: 0.1.0
+  description: |
+    Клиенты клуба и их балансы (UserController).
+    Конвенции — api/README.md. Деньги — целые тиыны (integer, int64), никогда number.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/customers:
+    get:
+      operationId: listCustomers
+      tags: [customers]
+      summary: Клиенты клуба
+      description: |
+        Laravel: UserController::index() (users.index, customers.view): членства не из ClubRoles::STAFF с балансами,
+        по user_id. Поиск — подстрока имени или телефона. Пагинация keyset: after_id = next_after_id.
+      parameters:
+        - $ref: "common.yaml#/components/parameters/Search"
+        - name: after_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - $ref: "common.yaml#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Страница клиентов.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerPage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/customers/{userId}:
+    get:
+      operationId: getCustomer
+      tags: [customers]
+      summary: Клиент и его балансы
+      description: |
+        Laravel: UserController (users.index, customers.view). Сотрудник или чужой клуб — 404.
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "200":
+          description: Клиент.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/customers/{userId}/ledger:
+    get:
+      operationId: listCustomerLedger
+      tags: [customers]
+      summary: История баланса клиента (журнал операций)
+      description: |
+        Проводки по основному и бонусному балансу клиента (ledger), новые сверху (users.index, customers.view).
+        Пагинация keyset: cursor = next_cursor.
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "common.yaml#/components/parameters/Cursor"
+        - $ref: "common.yaml#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Страница проводок.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LedgerPage"
+        "400":
+          $ref: "common.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/customers/{userId}/balance-adjustments:
+    post:
+      operationId: adjustCustomerBalance
+      tags: [customers]
+      summary: Пополнение или списание баланса владельцем без кассы
+      description: |
+        Laravel: UserController::update() — top_up_amount / balance_action (users.update, customers.update; только роль
+        owner, иначе 422 «Пополнять и списывать баланс без кассы может только владелец клуба.»).
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "common.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BalanceAdjustmentRequest"
+      responses:
+        "200":
+          description: Баланс изменён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BalanceAdjustmentResult"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/customers/{userId}/initial-balance:
+    post:
+      operationId: setCustomerInitialBalance
+      tags: [customers]
+      summary: Начальный баланс нового клиента
+      description: |
+        Laravel: UserController::store() — balance / bonus_balance формы (users.store, customers.create; суммы задаёт
+        только право customer_money.update, иначе 403 «Скидку и баланс клиента задаёт менеджер; пополнение — через кассу.»).
+        Один раз на клиента: другой запрос с другими суммами — 409.
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "common.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InitialBalanceRequest"
+      responses:
+        "200":
+          description: Балансы клиента.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  parameters:
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    Customer:
+      type: object
+      required: [user_id, name, phone, role, discount, total_spent_tiyn, balance_tiyn, bonus_balance_tiyn]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        phone:
+          type: string
+        role:
+          type: string
+        discount:
+          type: string
+          description: Персональная скидка, % (decimal(5,2) строкой, «12.50»).
+        total_spent_tiyn:
+          type: integer
+          format: int64
+        balance_tiyn:
+          type: integer
+          format: int64
+        bonus_balance_tiyn:
+          type: integer
+          format: int64
+    CustomerPage:
+      type: object
+      required: [items, next_after_id]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Customer"
+        next_after_id:
+          type: integer
+          format: int64
+          nullable: true
+    LedgerEntry:
+      type: object
+      required: [id, transaction_id, kind, account, amount_tiyn, balance_after_tiyn, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        transaction_id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          description: Вид операции ledger (top_up, tariff_purchase, session_refund, …).
+        account:
+          type: string
+          enum: [member_main, member_bonus]
+        amount_tiyn:
+          type: integer
+          format: int64
+        balance_after_tiyn:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+    LedgerPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LedgerEntry"
+        next_cursor:
+          type: string
+          nullable: true
+    BalanceAdjustmentRequest:
+      type: object
+      additionalProperties: false
+      required: [balance_type, action, amount_tiyn]
+      properties:
+        balance_type:
+          type: string
+          description: balance | bonus_balance (top_up_balance старой формы)
+        action:
+          type: string
+          description: top_up | write_off (balance_action старой формы)
+        amount_tiyn:
+          type: integer
+          format: int64
+    BalanceAdjustmentResult:
+      type: object
+      required: [customer, message]
+      properties:
+        customer:
+          $ref: "#/components/schemas/Customer"
+        message:
+          type: string
+    InitialBalanceRequest:
+      type: object
+      additionalProperties: false
+      required: [balance_tiyn, bonus_balance_tiyn]
+      properties:
+        balance_tiyn:
+          type: integer
+          format: int64
+        bonus_balance_tiyn:
+          type: integer
+          format: int64

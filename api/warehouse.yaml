@@ -1,0 +1,270 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — warehouse
+  version: 0.1.0
+  description: |
+    Склад (WarehouseController, ProductController, StockMovementController).
+    Конвенции — api/README.md. Деньги — целые тиыны (integer, int64), никогда number.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/warehouse/products:
+    get:
+      operationId: listProducts
+      tags: [warehouse]
+      summary: Товары склада
+      description: |
+        Laravel: WarehouseController (warehouse, warehouse.view). По имени; поиск — подстрока имени или SKU.
+        Пагинация keyset: cursor = next_cursor предыдущей страницы.
+      parameters:
+        - $ref: "common.yaml#/components/parameters/Search"
+        - $ref: "common.yaml#/components/parameters/Cursor"
+        - $ref: "common.yaml#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Страница товаров.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductPage"
+        "400":
+          $ref: "common.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+    post:
+      operationId: createProduct
+      tags: [warehouse]
+      summary: Новый товар
+      description: |
+        Laravel: ProductController, CreateProductAction (warehouse.products.store, warehouse.create). Начальный остаток
+        > 0 — движение «Начальный остаток при создании товара».
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+      responses:
+        "201":
+          description: Товар создан.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/warehouse/products/{productId}:
+    patch:
+      operationId: updateProduct
+      tags: [warehouse]
+      summary: Изменить товар
+      description: |
+        Laravel: UpdateProductAction (warehouse.products.update, warehouse.update). Остаток меняется только движениями.
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductRequest"
+      responses:
+        "200":
+          description: Товар после правки.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/warehouse/stock-movements:
+    post:
+      operationId: createStockMovement
+      tags: [warehouse]
+      summary: Оприходовать или списать товар
+      description: |
+        Laravel: StockMovementController, AdjustStockAction (warehouse.stock-movements.store, warehouse.update).
+        Списание больше остатка — 422 «Нельзя списать больше, чем есть на складе.».
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StockMovementRequest"
+      responses:
+        "201":
+          description: Движение записано.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockMovementResult"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/warehouse/categories:
+    get:
+      operationId: listProductCategories
+      tags: [warehouse]
+      summary: Категории товаров
+      description: |
+        Laravel: WarehouseController (warehouse, warehouse.view).
+      responses:
+        "200":
+          description: Категории.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductCategory"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  parameters:
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    Product:
+      type: object
+      required: [id, sku, name, category, price_tiyn, quantity]
+      properties:
+        id:
+          type: integer
+          format: int64
+        sku:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        product_category_id:
+          type: integer
+          format: int64
+          nullable: true
+        price_tiyn:
+          type: integer
+          format: int64
+        quantity:
+          type: integer
+          format: int64
+    ProductPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+        next_cursor:
+          type: string
+          nullable: true
+    ProductCategory:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+    CreateProductRequest:
+      type: object
+      additionalProperties: false
+      required: [sku, name, product_category_id, price_tiyn, quantity]
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        product_category_id:
+          type: integer
+          format: int64
+        price_tiyn:
+          type: integer
+          format: int64
+        quantity:
+          type: integer
+          format: int64
+    UpdateProductRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        sku:
+          type: string
+        name:
+          type: string
+        product_category_id:
+          type: integer
+          format: int64
+        price_tiyn:
+          type: integer
+          format: int64
+    StockMovementRequest:
+      type: object
+      additionalProperties: false
+      required: [product_id, type, quantity]
+      properties:
+        product_id:
+          type: integer
+          format: int64
+        type:
+          type: string
+          description: receipt | write_off
+        quantity:
+          type: integer
+          format: int64
+        note:
+          type: string
+          nullable: true
+    StockMovementResult:
+      type: object
+      required: [id, product, type, quantity, balance_after]
+      properties:
+        id:
+          type: integer
+          format: int64
+        product:
+          $ref: "#/components/schemas/Product"
+        type:
+          type: string
+          enum: [receipt, write_off]
+        quantity:
+          type: integer
+          format: int64
+        balance_after:
+          type: integer
+          format: int64

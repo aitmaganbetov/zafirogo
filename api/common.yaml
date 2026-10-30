@@ -1,0 +1,134 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — общие схемы
+  version: 0.1.0
+  description: |
+    Общие схемы, параметры и ответы для всех разделов ($ref: "common.yaml#/components/...").
+    Конвенции — api/README.md. Деньги — целые тиыны (integer, int64), никогда number.
+servers:
+  - url: /
+paths: {}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+        Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    Search:
+      name: q
+      in: query
+      required: false
+      description: Поиск — подстрока без учёта регистра.
+      schema:
+        type: string
+        maxLength: 100
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Непрозрачный курсор следующей страницы (next_cursor).
+      schema:
+        type: string
+        maxLength: 512
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Размер страницы (по умолчанию 25, как paginate(25) старого кода).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+  responses:
+    Unauthenticated:
+      description: Нет действующей сессии.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Нет прав (текст — как в старом коде).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Не найдено.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ValidationFailed:
+      description: Ошибка в полях формы.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ValidationError"
+    TooManyRequests:
+      description: |
+        Превышен лимит (throttle). Заголовки Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BadRequest:
+      description: Неверный запрос (параметр, курсор, нет заголовка Idempotency-Key).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Ключ идемпотентности уже использован запросом с другим телом (idempotency_conflict).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Машинный код (unauthenticated, forbidden, read_only, not_found, too_many_requests, …).
+        message:
+          type: string
+          description: Текст для пользователя (русский текст = ключ перевода).
+    ValidationError:
+      type: object
+      required: [error, message, errors]
+      properties:
+        error:
+          type: string
+          enum: [validation_failed]
+        message:
+          type: string
+          description: Первая ошибка.
+        errors:
+          type: object
+          description: Поле формы → тексты ошибок (как Laravel withErrors).
+          additionalProperties:
+            type: array
+            items:
+              type: string

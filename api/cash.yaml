@@ -1,0 +1,815 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — cash
+  version: 0.1.0
+  description: |
+    Касса (Laravel CashRegisterController, CashRegisterService).
+    Конвенции — api/README.md. Деньги — целые тиыны (integer, int64), никогда number.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/cash/shift:
+    get:
+      operationId: getCashShift
+      tags: [cash]
+      summary: Открытая смена и её итоги
+      description: |
+        Laravel: CashRegisterController::index() (маршрут cash-register.index, право cash.view).
+        Нет открытой смены — shift и totals равны null.
+      responses:
+        "200":
+          description: Состояние кассы.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashShiftState"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/cash/shifts:
+    post:
+      operationId: openCashShift
+      tags: [cash]
+      summary: Открыть смену
+      description: |
+        Laravel: CashRegisterController::open(), CashRegisterService::open() (cash-register.shifts.open, cash.create).
+        Ошибка «Смена уже открыта.» — 422 на поле opening_balance.
+      parameters:
+        - $ref: "common.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenShiftRequest"
+      responses:
+        "201":
+          description: Смена открыта.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashShiftState"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/cash/shifts/{shiftId}/close:
+    post:
+      operationId: closeCashShift
+      tags: [cash]
+      summary: Закрыть смену
+      description: |
+        Laravel: CashRegisterController::close(), CashRegisterService::close() (cash-register.shifts.close, cash.create).
+        Без отметки печати Z-отчёта — 422 «Сначала распечатайте Z-отчёт. Без печати смена не закрывается.» (поле shift).
+      parameters:
+        - $ref: "#/components/parameters/ShiftId"
+        - $ref: "common.yaml#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Смена закрыта.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashShiftState"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/cash/reports/x:
+    get:
+      operationId: getCashXReport
+      tags: [cash]
+      summary: X-отчёт открытой смены
+      description: |
+        Laravel: CashRegisterController::xReport() (cash-register.x-report, cash.view). Нет открытой смены — 404.
+      responses:
+        "200":
+          description: Отчёт.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashReport"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/cash/shifts/{shiftId}/z-report:
+    get:
+      operationId: getCashZReport
+      tags: [cash]
+      summary: Z-отчёт смены
+      description: |
+        Laravel: CashRegisterController::zReport() (cash-register.z-report, cash.view). Nonce печати выдаёт отдельный
+        POST …/z-report/nonce (в старом коде его ставил тот же GET в сессию).
+      parameters:
+        - $ref: "#/components/parameters/ShiftId"
+      responses:
+        "200":
+          description: Отчёт.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashReport"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/cash/shifts/{shiftId}/z-report/nonce:
+    post:
+      operationId: issueZReportNonce
+      tags: [cash]
+      summary: Одноразовый nonce печати Z-отчёта
+      description: |
+        Laravel: CashRegisterController::zReport() — Str::random(40) в сессию (cash-register.z-report, cash.view).
+        Прежний nonce смены перестаёт действовать. В БД хранится только его хеш.
+      parameters:
+        - $ref: "#/components/parameters/ShiftId"
+      responses:
+        "200":
+          description: Nonce.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZReportNonce"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/cash/shifts/{shiftId}/z-report/printed:
+    post:
+      operationId: markZReportPrinted
+      tags: [cash]
+      summary: Отметка «Z-отчёт напечатан»
+      description: |
+        Laravel: CashRegisterController::markZReportPrinted() (cash-register.z-report.printed, cash.create).
+        Смена не открыта — 422; nonce неверный или уже использован — 419 (как в старом коде).
+      parameters:
+        - $ref: "#/components/parameters/ShiftId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ZReportPrintedRequest"
+      responses:
+        "200":
+          description: Отмечено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZReportPrinted"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "419":
+          description: Nonce неверный или уже использован.
+          content:
+            application/json:
+              schema:
+                $ref: "common.yaml#/components/schemas/Error"
+        "422":
+          description: Смена не открыта.
+          content:
+            application/json:
+              schema:
+                $ref: "common.yaml#/components/schemas/Error"
+  /api/cash/sales:
+    post:
+      operationId: createCashSale
+      tags: [cash]
+      summary: Продажа POS
+      description: |
+        Laravel: CashRegisterController::sale(), CashRegisterService::sale() (cash-register.sales.store, cash.create).
+        Повтор с тем же Idempotency-Key и теми же строками — та же продажа (replayed = true), с другими — 409.
+      parameters:
+        - $ref: "common.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaleRequest"
+      responses:
+        "201":
+          description: Продажа проведена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashOperationResult"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/cash/balance-top-ups:
+    post:
+      operationId: createBalanceTopUp
+      tags: [cash]
+      summary: Пополнение баланса клиента на кассе
+      description: |
+        Laravel: CashRegisterController::topUpBalance(), CashRegisterService::topUpBalance()
+        (cash-register.balance-top-ups.store, cash.create). Бонус за пополнение — по настройкам клуба.
+      parameters:
+        - $ref: "common.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TopUpRequest"
+      responses:
+        "201":
+          description: Баланс пополнен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopUpResult"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/cash/transactions:
+    post:
+      operationId: createCashTransaction
+      tags: [cash]
+      summary: Приход или расход кассы
+      description: |
+        Laravel: CashRegisterController::transaction(), CashRegisterService::transact()
+        (cash-register.transactions.store, cash.create).
+      parameters:
+        - $ref: "common.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CashTransactionRequest"
+      responses:
+        "201":
+          description: Операция проведена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashOperationResult"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/cash/operations:
+    get:
+      operationId: listCashOperations
+      tags: [cash]
+      summary: Приходы открытой смены (для возвратов)
+      description: |
+        Laravel: CashRegisterController::operations() (cash-register.operations, cash.view): приходы открытой смены,
+        новые сверху, с возвратом. Нет открытой смены — 404. Пагинация keyset: before_id = next_before_id.
+      parameters:
+        - name: before_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - $ref: "common.yaml#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Страница операций.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashOperationPage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/cash/receipts/{transactionId}:
+    get:
+      operationId: getCashReceipt
+      tags: [cash]
+      summary: Чек прихода
+      description: |
+        Laravel: CashRegisterController::receipt() (cash-register.receipt, cash.view). Не приход — 404.
+      parameters:
+        - $ref: "#/components/parameters/TransactionId"
+      responses:
+        "200":
+          description: Чек.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashReceipt"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/cash/receipts/{transactionId}/refund:
+    post:
+      operationId: refundCashReceipt
+      tags: [cash]
+      summary: Возврат по чеку
+      description: |
+        Laravel: CashRegisterController::refund(), CashRegisterService::refund() (cash-register.refund, cash.delete;
+        отказ — 403 «Нет права на возвраты. Его даёт владелец клуба в «Настройки → Права».»).
+        Повтор с тем же Idempotency-Key — тот же ответ.
+      parameters:
+        - $ref: "#/components/parameters/TransactionId"
+        - $ref: "common.yaml#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Возврат проведён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefundResult"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  parameters:
+    ShiftId:
+      name: shiftId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    TransactionId:
+      name: transactionId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    CashShift:
+      type: object
+      required: [id, status, opening_balance_tiyn, opened_at, z_report_printed]
+      properties:
+        id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [open, closed]
+        opened_by:
+          type: integer
+          format: int64
+          nullable: true
+        closed_by:
+          type: integer
+          format: int64
+          nullable: true
+        opening_balance_tiyn:
+          type: integer
+          format: int64
+        closing_balance_tiyn:
+          type: integer
+          format: int64
+          nullable: true
+        opened_at:
+          type: string
+          format: date-time
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+        z_report_printed:
+          type: boolean
+          description: Z-отчёт напечатан (без этого смена не закрывается).
+    CashTotals:
+      type: object
+      required: [opening_tiyn, income_tiyn, expense_tiyn, balance_tiyn]
+      properties:
+        opening_tiyn:
+          type: integer
+          format: int64
+        income_tiyn:
+          type: integer
+          format: int64
+        expense_tiyn:
+          type: integer
+          format: int64
+        balance_tiyn:
+          type: integer
+          format: int64
+          description: Остаток смены = начальный + приход − расход.
+    CashShiftState:
+      type: object
+      required: [shift, totals]
+      properties:
+        shift:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/CashShift"
+        totals:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/CashTotals"
+    OpenShiftRequest:
+      type: object
+      additionalProperties: false
+      required: [opening_balance_tiyn]
+      properties:
+        opening_balance_tiyn:
+          type: integer
+          format: int64
+          description: Начальный остаток кассы (min:0).
+    ZReportNonce:
+      type: object
+      required: [nonce]
+      properties:
+        nonce:
+          type: string
+    ZReportPrintedRequest:
+      type: object
+      additionalProperties: false
+      required: [nonce]
+      properties:
+        nonce:
+          type: string
+          maxLength: 128
+    ZReportPrinted:
+      type: object
+      required: [printed]
+      properties:
+        printed:
+          type: boolean
+    ReceiptLine:
+      type: object
+      required: [name, quantity, price_tiyn, total_tiyn]
+      properties:
+        product_id:
+          type: integer
+          format: int64
+          nullable: true
+        service_id:
+          type: integer
+          format: int64
+          nullable: true
+        name:
+          type: string
+        quantity:
+          type: integer
+          format: int64
+        price_tiyn:
+          type: integer
+          format: int64
+        total_tiyn:
+          type: integer
+          format: int64
+    ReceiptTopUp:
+      type: object
+      required: [user_id, balance_type, bonus_tiyn]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        balance_type:
+          type: string
+          enum: [balance, bonus_balance]
+        bonus_tiyn:
+          type: integer
+          format: int64
+    CashTransaction:
+      type: object
+      required: [id, shift_id, type, amount_tiyn, description, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        shift_id:
+          type: integer
+          format: int64
+        type:
+          type: string
+          enum: [income, expense]
+        amount_tiyn:
+          type: integer
+          format: int64
+        description:
+          type: string
+          description: Текст операции, как записал старый код (на русском).
+        user_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Кто провёл операцию.
+        payment_method:
+          type: string
+          nullable: true
+          enum: [cash, card, qr]
+        income_kind:
+          type: string
+          nullable: true
+          enum: [top_up, guest_session]
+        refund_of_id:
+          type: integer
+          format: int64
+          nullable: true
+        items:
+          type: array
+          description: Строки чека продажи POS.
+          items:
+            $ref: "#/components/schemas/ReceiptLine"
+        top_up:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ReceiptTopUp"
+        created_at:
+          type: string
+          format: date-time
+    CashRefundRef:
+      type: object
+      required: [id, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+    CashReceipt:
+      type: object
+      required: [transaction, refund, refundable, can_refund]
+      properties:
+        transaction:
+          $ref: "#/components/schemas/CashTransaction"
+        refund:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/CashRefundRef"
+        refundable:
+          type: boolean
+          description: Операция такого вида возвращается (продажа или пополнение).
+        can_refund:
+          type: boolean
+          description: У сотрудника есть право cash.delete.
+    CashOperationPage:
+      type: object
+      required: [shift_id, items, next_before_id]
+      properties:
+        shift_id:
+          type: integer
+          format: int64
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CashReceipt"
+        next_before_id:
+          type: integer
+          format: int64
+          nullable: true
+    SaleItem:
+      type: object
+      additionalProperties: false
+      required: [quantity]
+      properties:
+        product_id:
+          type: integer
+          format: int64
+          nullable: true
+        service_id:
+          type: integer
+          format: int64
+          nullable: true
+        quantity:
+          type: integer
+          format: int64
+    SaleRequest:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/SaleItem"
+    CashOperationResult:
+      type: object
+      required: [transaction, replayed, message]
+      properties:
+        transaction:
+          $ref: "#/components/schemas/CashTransaction"
+        replayed:
+          type: boolean
+          description: Ответ на повтор запроса (ничего не записано).
+        message:
+          type: string
+          description: Текст статуса старого кода («Продажа проведена. Распечатайте чек.», «Операция проведена»).
+    TopUpRequest:
+      type: object
+      additionalProperties: false
+      required: [user_id, amount_tiyn, balance_type, payment_method]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        amount_tiyn:
+          type: integer
+          format: int64
+        balance_type:
+          type: string
+          description: balance | bonus_balance
+        payment_method:
+          type: string
+          description: cash | card | qr
+    TopUpResult:
+      type: object
+      required: [transaction, bonus_tiyn, new_balance_tiyn, new_bonus_balance_tiyn, replayed, message]
+      properties:
+        transaction:
+          $ref: "#/components/schemas/CashTransaction"
+        bonus_tiyn:
+          type: integer
+          format: int64
+        new_balance_tiyn:
+          type: integer
+          format: int64
+          description: Основной баланс клиента после операции.
+        new_bonus_balance_tiyn:
+          type: integer
+          format: int64
+        replayed:
+          type: boolean
+        message:
+          type: string
+          description: |
+            «Баланс пользователя пополнен.» или «… Бонус за пополнение: :amount.».
+    CashTransactionRequest:
+      type: object
+      additionalProperties: false
+      required: [type, amount_tiyn, description]
+      properties:
+        type:
+          type: string
+          description: income | expense
+        amount_tiyn:
+          type: integer
+          format: int64
+        description:
+          type: string
+          maxLength: 1000
+    RefundResult:
+      type: object
+      required: [refund, kind, message]
+      properties:
+        refund:
+          $ref: "#/components/schemas/CashTransaction"
+        kind:
+          type: string
+          enum: [sale, top_up]
+        message:
+          type: string
+          description: |
+            «Возврат проведён: :amount KZT выданы из кассы.»
+    CashReportRow:
+      type: object
+      required: [label, count, amount_tiyn]
+      properties:
+        label:
+          type: string
+        count:
+          type: integer
+          format: int64
+        amount_tiyn:
+          type: integer
+          format: int64
+    CashReportItem:
+      type: object
+      required: [name, quantity, amount_tiyn, stock]
+      properties:
+        name:
+          type: string
+        quantity:
+          type: integer
+          format: int64
+        amount_tiyn:
+          type: integer
+          format: int64
+        stock:
+          type: integer
+          format: int64
+          nullable: true
+          description: Остаток на складе сейчас; null — услуга или товар не найден («—»).
+    CashReportStaff:
+      type: object
+      required: [user_id, name, count, income_tiyn, expense_tiyn]
+      properties:
+        user_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        count:
+          type: integer
+          format: int64
+        income_tiyn:
+          type: integer
+          format: int64
+        expense_tiyn:
+          type: integer
+          format: int64
+    CashReport:
+      type: object
+      required: [type, shift, totals, kinds, refunds, items, items_total_tiyn, discount_tiyn, staff, cashier_name, closed_by_name, operator_name]
+      properties:
+        type:
+          type: string
+          enum: [X, Z]
+        shift:
+          $ref: "#/components/schemas/CashShift"
+        totals:
+          $ref: "#/components/schemas/CashTotals"
+        kinds:
+          type: array
+          items:
+            $ref: "#/components/schemas/CashReportRow"
+        refunds:
+          type: object
+          required: [count, amount_tiyn]
+          properties:
+            count:
+              type: integer
+              format: int64
+            amount_tiyn:
+              type: integer
+              format: int64
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CashReportItem"
+        items_total_tiyn:
+          type: integer
+          format: int64
+        discount_tiyn:
+          type: integer
+          format: int64
+        staff:
+          type: array
+          items:
+            $ref: "#/components/schemas/CashReportStaff"
+        cashier_name:
+          type: string
+        closed_by_name:
+          type: string
+          description: Закрывший смену, если это другой сотрудник; пусто — строки нет.
+        operator_name:
+          type: string

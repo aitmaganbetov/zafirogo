@@ -43,7 +43,9 @@ rules:
   # ExpireDueSessions — воркер истечения сессий по всем клубам (роль zafiro_platform, advisory lock).
   # ListExpiredTimePackages — воркер сгорания пакетов по всем клубам (роль zafiro_platform, Q-011).
   # GetUserByPhone, GetUserAuth, UpdateUserPasswordHash — платформенная таблица users (без club_id и RLS), вход.
+  # Register*, InvitationUserEmail, ClubLocaleTimezone — users/clubs/saas_plans при регистрации и входе (Этап 3, F1).
+  # I18n* — платформенные languages/translations (общие для всех клубов).
   - name: tenant-filter
     message: "запрос должен фильтровать по club_id (или быть в списке платформенных исключений в sqlc.yaml)"
     rule: |
-      !query.sql.contains("club_id") && !(query.name in ["GetClub", "GetClubBySlug", "ExpireDueSessions", "ListExpiredTimePackages", "GetUserByPhone", "GetUserAuth", "UpdateUserPasswordHash"])
+      !query.sql.contains("club_id") && !(query.name in ["GetClub", "GetClubBySlug", "ExpireDueSessions", "ListExpiredTimePackages", "GetUserByPhone", "GetUserAuth", "UpdateUserPasswordHash", "RegisterCreateUser", "RegisterPhoneTaken", "RegisterCreateClub", "RegisterTrialPlan", "InvitationUserEmail", "ClubLocaleTimezone", "I18nEnabledLanguages", "I18nVersion", "I18nLines", "I18nEnsureLanguage", "I18nLanguageID", "I18nInsertMissing"])

@@ -278,6 +278,7 @@ func TestValidateProd(t *testing.T) {
 		"dev pki in prod":    append(base, "ZAFIRO_AGENT_PKI_DEV_DIR=/tmp/pki"),
 		"same dsn":           append(drop("ZAFIRO_DATABASE_PLATFORM_URL="), "ZAFIRO_DATABASE_PLATFORM_URL=postgres://app:topsecret@db/zafiro"),
 		"bad instance":       append(base, "ZAFIRO_AGENT_INSTANCE_ID=node.1"),
+		"fixed now in prod":  append(base, "ZAFIRO_DEV_FIXED_NOW=2026-10-15T12:00:00+05:00"),
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -347,5 +348,29 @@ func TestAgentUpdateKeysAndDiskless(t *testing.T) {
 		if _, err := Load("", environ(bad)); err == nil {
 			t.Errorf("%s: expected validation error", bad)
 		}
+	}
+}
+
+func TestDevFixedNow(t *testing.T) {
+	cfg, err := Load("", environ())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if before, got := time.Now(), cfg.Now()(); got.Before(before) {
+		t.Errorf("default clock must be the system clock, got %v", got)
+	}
+
+	cfg, err = Load("", environ("ZAFIRO_DEV_FIXED_NOW=2026-10-15T12:00:00+05:00"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := time.Date(2026, 10, 15, 7, 0, 0, 0, time.UTC)
+	if got := cfg.Now()(); !got.Equal(want) {
+		t.Errorf("fixed now = %v, want %v", got, want)
+	}
+
+	if _, err := Load("", environ("ZAFIRO_DEV_FIXED_NOW=15.10.2026 12:00")); err == nil ||
+		!strings.Contains(err.Error(), "dev.fixed_now") {
+		t.Errorf("bad dev.fixed_now must fail validation, got %v", err)
 	}
 }

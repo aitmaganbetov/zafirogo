@@ -1,0 +1,92 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — i18n
+  version: 0.1.0
+  description: |
+    Переводы интерфейса (Laravel: TranslationCatalog, LocaleResolver). Общие для всех клубов, правятся в суперадминке.
+    Ключ — русский текст; подстановки и формы множественного числа — в формате i18next (решение Q-065).
+    Конвенции — api/README.md.
+servers:
+  - url: /
+paths:
+  /api/i18n:
+    get:
+      operationId: listLanguages
+      tags: [i18n]
+      summary: Включённые языки и версия переводов
+      description: |
+        TranslationCatalog::enabledCodes(). Гость выбирает язык по Accept-Language браузера среди включённых
+        (LocaleResolver::forGuest), сотрудник — язык клуба (me.club.locale).
+      security: []
+      responses:
+        "200":
+          description: Языки.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LanguageList"
+  /api/i18n/{locale}:
+    get:
+      operationId: getTranslations
+      tags: [i18n]
+      summary: Пакет переводов языка для i18next
+      description: |
+        JSON-фразы (группа '*') и группы pagination/validation (ключ «группа.ключ», как __('pagination.next'))
+        языка поверх запасного en (TranslationCatalog::buildPack()), ключи и тексты с
+        `{{name}}`; trans_choice — ещё ключи `<ключ>_one|_few|_many|_other`. ETag; If-None-Match → 304.
+      security: []
+      parameters:
+        - name: locale
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$"
+            maxLength: 16
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+            maxLength: 128
+      responses:
+        "200":
+          description: Переводы.
+          headers:
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TranslationPack"
+        "304":
+          description: Не изменились.
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+components:
+  schemas:
+    Language:
+      type: object
+      required: [code, name]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+    LanguageList:
+      type: object
+      required: [languages, version]
+      properties:
+        languages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Language"
+        version:
+          type: string
+          description: Версия переводов (меняется при любой правке).
+    TranslationPack:
+      type: object
+      description: Ключ (русский текст) → перевод.
+      additionalProperties:
+        type: string

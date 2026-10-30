@@ -165,12 +165,12 @@ const themeScriptHash = "'sha256-Q0ff/urOFGMeyQTTciYPZpaSp2g7nEe6ZluM9LDruS0='"
 
 // contentSecurityPolicy — CSP для SPA. Скрипты — только с того же origin + inline-скрипт темы по хешу.
 // 'unsafe-inline' только для стилей (атрибуты style в React-компонентах).
-// Внешние источники как в старом проекте: Inter с Google Fonts, Font Awesome 6.4.0 с cdnjs.
+// Внешних источников нет: Inter и Font Awesome 6.4.0 — из npm в сборке (решение Q-064).
 const contentSecurityPolicy = "default-src 'self'; " +
 	"script-src 'self' " + themeScriptHash + "; " +
-	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; " +
+	"style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data: blob:; " +
-	"font-src 'self' data: https://fonts.gstatic.com https://cdnjs.cloudflare.com; " +
+	"font-src 'self' data:; " +
 	"connect-src 'self' ws: wss:; " +
 	"object-src 'none'; " +
 	"base-uri 'self'; " +

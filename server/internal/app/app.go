@@ -262,8 +262,16 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 
 	// --- Деньги (Этап 1): касса как CashRecorder гостевых продаж, системные часы ---
 	// Уведомления агента (SetNotifier, Cash.Notifier) подключаются ниже, когда создан поток.
-	a.Cash = &cashsvc.Service{}
-	a.Billing = billingsvc.New(a.AppPool, billingsvc.SystemClock{}, a.Cash)
+	// dev.fixed_now (только dev/test, tools/visual) — фиксированное «сейчас» денег, кассы и обработчиков админки.
+	now := cfg.Now()
+	var clock billingsvc.Clock = billingsvc.SystemClock{}
+	if cfg.Dev.FixedNow != "" {
+		log.Warn("dev.fixed_now: the application clock is frozen (dev only)", "now", cfg.Dev.FixedNow)
+		clock = billingsvc.ClockFunc(now)
+		ro.Now = now
+	}
+	a.Cash = &cashsvc.Service{Now: ro.Now}
+	a.Billing = billingsvc.New(a.AppPool, clock, a.Cash)
 
 	// --- Агенты: PKI, кэш сертификатов, регистрация, поток ---
 	popts := pki.Options{
@@ -425,6 +433,9 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	ro.Auth = a.Auth
 	ro.Limiter = a.Limiter
 	ro.Pool = a.AppPool
+	ro.PlatformPool = a.PlatformPool
+	ro.Valkey = a.Valkey
+	ro.Passwords = hasher
 	ro.Billing = a.Billing
 	ro.Cash = a.Cash
 	ro.Presence = a.Stream.Presence()

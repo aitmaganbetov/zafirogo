@@ -67,6 +67,7 @@ type Config struct {
 	Webhooks        Webhooks      `koanf:"webhooks"`
 	Realtime        Realtime      `koanf:"realtime"`
 	Workers         Workers       `koanf:"workers"`
+	Dev             Dev           `koanf:"dev"`
 
 	// Generated — ключи, для которых в dev/test сгенерирован случайный секрет (не заданы явно).
 	// Такие секреты живут до перезапуска процесса. Не из конфигурации.
@@ -314,6 +315,25 @@ type Realtime struct {
 	OriginPatterns  []string      `koanf:"origin_patterns"`
 }
 
+// Dev — только для dev/test, в prod запрещено валидацией.
+type Dev struct {
+	// FixedNow — «сейчас» приложения (RFC 3339, например 2026-10-15T12:00:00+05:00) вместо системных часов:
+	// визуальное сравнение со старым Laravel на одних демо-данных (tools/visual). Пусто — системные часы.
+	// Время в SQL (now() в запросах), сроки токенов и сессий не меняются.
+	FixedNow string `koanf:"fixed_now"`
+}
+
+// Now — часы приложения: фиксированное время dev.fixed_now или time.Now. Вызывать после Validate.
+func (c *Config) Now() func() time.Time {
+	if c.Dev.FixedNow == "" {
+		return time.Now
+	}
+	if t, err := time.Parse(time.RFC3339, c.Dev.FixedNow); err == nil {
+		return func() time.Time { return t }
+	}
+	return time.Now
+}
+
 // Workers — периодические задачи.
 type Workers struct {
 	ExpireSessions ExpireSessions `koanf:"expire_sessions"`
@@ -432,6 +452,8 @@ func Defaults() map[string]any {
 		"workers.expire_sessions.interval": "1m",
 		"workers.partitions.interval":      "24h",
 		"workers.partitions.months":        3,
+
+		"dev.fixed_now": "",
 	}
 }
 
@@ -764,6 +786,13 @@ func (c *Config) Validate() error {
 	if files && (pki.CACertFile == "" || pki.CAKeyFile == "" || pki.ServerCertFile == "" || pki.ServerKeyFile == "") {
 		add("agent.pki: нужны все четыре файла: ca_cert_file, ca_key_file, server_cert_file, server_key_file")
 	}
+	if c.Dev.FixedNow != "" {
+		if prod {
+			add("dev.fixed_now: запрещён в prod")
+		} else if _, err := time.Parse(time.RFC3339, c.Dev.FixedNow); err != nil {
+			add("dev.fixed_now: ожидается RFC 3339 (2026-10-15T12:00:00+05:00), получено %q", c.Dev.FixedNow)
+		}
+	}
 	if prod && pki.DevDir != "" {
 		add("agent.pki.dev_dir: запрещён в prod — задайте файлы CA и серверного сертификата")
 	}
@@ -897,6 +926,7 @@ func (c *Config) LogValue() slog.Value {
 			slog.Any("enroll_code_pepper", c.Agent.Enroll.CodePepper),
 		),
 		slog.Any("generated_secrets", c.Generated),
+		slog.String("dev_fixed_now", c.Dev.FixedNow),
 	)
 }
 

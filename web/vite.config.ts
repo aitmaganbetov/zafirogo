@@ -1,5 +1,6 @@
 /// <reference types="vitest/config" />
 import tailwindcss from '@tailwindcss/vite';
+import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
@@ -7,12 +8,14 @@ import { defineConfig } from 'vite';
 const backend = process.env.ZAFIRO_DEV_BACKEND ?? 'http://localhost:8080';
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  // Маршруты — файлы src/routes (tsr.config.json); плагин до react().
+  plugins: [tanstackRouter(), react(), tailwindcss()],
   server: {
     port: 5173,
     strictPort: true,
     proxy: {
-      '/api': { target: backend, changeOrigin: false, ws: true },
+      '/api': { target: backend, changeOrigin: false },
+      '/ws': { target: backend.replace(/^http/, 'ws'), ws: true },
       '/healthz': { target: backend },
       '/readyz': { target: backend },
     },

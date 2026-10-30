@@ -17,6 +17,7 @@ env:
   GOVULNCHECK_VERSION: v1.9.0
   GOSEC_VERSION: v2.30.0
   GOOSE_VERSION: v3.29.0
+  OAPI_CODEGEN_VERSION: v2.8.1
 
 defaults:
   run:
@@ -38,6 +39,13 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
+      - name: REST code matches api/*.yaml (oapi-codegen по разделам)
+        working-directory: .
+        run: |
+          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@${OAPI_CODEGEN_VERSION}
+          sh api/gen.sh
+          git diff --exit-code -- server/internal/http/api
+          test -z "$(git status --porcelain -- server/internal/http/api)"
       - name: go vet
         run: |
           go vet ./...

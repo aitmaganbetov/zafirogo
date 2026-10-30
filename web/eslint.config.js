@@ -5,7 +5,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'node_modules', 'playwright-report', 'test-results', 'src/api/schema.d.ts'] },
+  { ignores: ['dist', 'node_modules', 'playwright-report', 'test-results', 'src/api/gen', 'src/routeTree.gen.ts'] },
   {
     files: ['**/*.{ts,tsx}'],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
@@ -24,7 +24,12 @@ export default tseslint.config(
     },
   },
   {
-    files: ['*.config.{ts,js}', 'e2e/**/*.ts'],
+    // Файлы маршрутов TanStack Router экспортируют Route и держат компонент страницы рядом.
+    files: ['src/routes/**/*.tsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
+  },
+  {
+    files: ['*.config.{ts,js}', 'e2e/**/*.ts', 'scripts/**/*.mjs'],
     languageOptions: { globals: globals.node },
   },
 );

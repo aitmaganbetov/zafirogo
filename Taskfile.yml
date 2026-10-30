@@ -148,6 +148,17 @@ tasks:
     cmds:
       - npm run test:e2e
 
+  visual:
+    desc: "Визуальное сравнение старого Laravel и нового сервера (tools/visual/README.md); одна страница — task visual -- --page dashboard"
+    cmds:
+      - tools/visual/run.sh {{.CLI_ARGS}}
+
+  visual:stop:
+    desc: Остановить серверы визуального сравнения (после task visual -- --keep)
+    cmds:
+      - tools/visual/old.sh stop
+      - tools/visual/new.sh stop
+
   # ---------- линтеры ----------
 
   lint:
@@ -187,14 +198,23 @@ tasks:
       - sqlc generate
 
   gen:api:
+    desc: oapi-codegen по разделам — api/<раздел>.yaml → server/internal/http/api/<раздел> (api/gen.sh)
     cmds:
-      - oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
+      - sh api/gen.sh
+
+  gen:check:
+    desc: Сгенерированный код совпадает с исходниками (CI)
+    cmds:
+      - task: gen
+      - git diff --exit-code -- server/internal/store server/internal/http/api server/gen web/src/api/gen
+      - test -z "$(git status --porcelain -- server/internal/store server/internal/http/api server/gen web/src/api/gen)"
 
   gen:proto:
     cmds:
       - buf generate
 
   gen:web:
+    desc: openapi-typescript по разделам — api/<раздел>.yaml → web/src/api/gen/<раздел>.d.ts
     dir: web
     deps: [web:install]
     cmds:

@@ -1,0 +1,108 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — clubmap
+  version: 0.1.0
+  description: |
+    Карта клуба (ClubZoneController).
+    Конвенции — api/README.md. Деньги — целые тиыны (integer, int64), никогда number.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/club-map/state:
+    get:
+      operationId: getClubMapState
+      tags: [clubmap]
+      summary: Состояние ПК на карте клуба
+      description: |
+        Laravel: ClubZoneController::state() (club-map.state, club_map.view). Сессии — из БД, связь с агентом
+        (online/offline, версия) — из присутствия агента (Valkey). Дальше — события computer.* по WebSocket.
+      responses:
+        "200":
+          description: ПК клуба.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClubMapState"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  schemas:
+    ComputerState:
+      type: object
+      required: [id, zone_id, number, name, status, connection, is_reserved, has_session, session_guest, agent_state, agent_version]
+      properties:
+        id:
+          type: integer
+          format: int64
+        zone_id:
+          type: integer
+          format: int64
+        number:
+          type: integer
+          format: int64
+        name:
+          type: string
+        status:
+          type: string
+          description: online | offline | maintenance (как ClubComputer::currentStatus()).
+        connection:
+          type: string
+          enum: [online, offline]
+        is_reserved:
+          type: boolean
+        has_session:
+          type: boolean
+        session_id:
+          type: string
+          nullable: true
+        session_ends_at:
+          type: string
+          format: date-time
+          nullable: true
+        session_guest:
+          type: boolean
+        session_user_id:
+          type: integer
+          format: int64
+          nullable: true
+        session_user:
+          type: string
+          description: «Имя · телефон» клиента; гость — «Гость без аккаунта».
+        agent_state:
+          type: string
+        agent_version:
+          type: string
+        last_seen:
+          type: string
+          format: date-time
+          nullable: true
+        staff_until:
+          type: string
+          format: date-time
+          nullable: true
+        staff_name:
+          type: string
+          nullable: true
+    ClubMapState:
+      type: object
+      required: [computers]
+      properties:
+        computers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComputerState"
+

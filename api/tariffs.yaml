@@ -1,0 +1,109 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — tariffs
+  version: 0.1.0
+  description: |
+    Тарифы (TariffController).
+    Конвенции — api/README.md. Деньги — целые тиыны (integer, int64), никогда number.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/tariffs:
+    get:
+      operationId: listTariffs
+      tags: [tariffs]
+      summary: Тарифы и цены часа по зонам
+      description: |
+        Laravel: TariffController::index() (tariffs.index, tariffs.view). Только чтение.
+      responses:
+        "200":
+          description: Тарифы и зоны.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TariffList"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  schemas:
+    Tariff:
+      type: object
+      required: [id, name, duration_minutes, price_tiyn, currency, is_active, payment_method, discount_enabled, zone_ids]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        duration_minutes:
+          type: integer
+          format: int64
+        price_tiyn:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        is_active:
+          type: boolean
+        payment_method:
+          type: string
+          enum: [main_balance_only, main_or_bonus]
+        discount_enabled:
+          type: boolean
+        usage_limit_minutes:
+          type: integer
+          format: int64
+          nullable: true
+        quantity_limit:
+          type: integer
+          format: int64
+          nullable: true
+        zone_ids:
+          type: array
+          description: Зоны действия; пусто — все зоны.
+          items:
+            type: integer
+            format: int64
+    Zone:
+      type: object
+      required: [id, name, price_per_hour_tiyn]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        price_per_hour_tiyn:
+          type: integer
+          format: int64
+          nullable: true
+          description: Цена часа поминутной продажи; null — в зоне поминутно не продаётся.
+    TariffList:
+      type: object
+      required: [tariffs, zones]
+      properties:
+        tariffs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tariff"
+        zones:
+          type: array
+          items:
+            $ref: "#/components/schemas/Zone"

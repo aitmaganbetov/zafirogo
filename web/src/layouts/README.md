@@ -64,12 +64,13 @@ import { AdminSessionContext, useAdminPageTitle } from './layouts/adminSession';
 
 ## Что пока заглушка
 
-- **Данные сессии**: `STUB_ADMIN_SESSION` в `adminSession.ts` (пустой пользователь, роль owner, без клубов).
-  Настоящие данные — API сессии (Этап 1).
-- **Уведомления**: источник `session.notifications` (`load`, `markSeen`, `subscribe`). Без `subscribe`
-  работает запасной опрос раз в 60 с, как в старом layout; цель — WebSocket.
-- **Бейджи меню** (`badges.chat`, `badges.orders`): в старом проекте считались при каждой отрисовке
-  страницы (`ChatController::unreadTotal()`, `ShopOrder::newCount()`); в SPA их должен обновлять WebSocket.
+- **Данные сессии**: подключены — `AdminShell.tsx` строит `AdminSession` из `/api/auth/me` (`adminSessionFrom.ts`),
+  бейджи — `realtime/badges.ts`, смена клуба / выход / выход из просмотра — API. `STUB_ADMIN_SESSION` — только
+  для тестов.
+- **Уведомления**: источник `session.notifications` (`load`, `markSeen`, `subscribe`) — эндпоинта ещё нет
+  (`docs/open-questions/stage3-foundation.md` F1-11), `AdminShell` передаёт `null`.
+- **Бейджи меню** (`badges.chat`, `badges.orders`): `GET /api/layout/badges` + события `chat.unread`,
+  `shop_order.*` по WebSocket (Q-063).
 - **Поиск в верхней панели** — в старом проекте без обработчика; перенесён как есть.
 - **Выход / смена клуба / «Вернуться в кабинет»**: формы POST на старые URI (`/logout`, `/clubs/switch`,
   `/superadmin/leave-club`) с `_token`, либо колбэки `onLogout` / `onSwitchClub` / `onLeaveViewedClub`,
