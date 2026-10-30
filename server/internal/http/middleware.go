@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
+
+	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 )
 
 // RealIP подставляет в r.RemoteAddr IP клиента из X-Forwarded-For / X-Real-IP,
@@ -69,6 +71,22 @@ func clientIP(r *http.Request, trusted []netip.Prefix) (netip.Addr, bool) {
 		}
 	}
 	return netip.Addr{}, false
+}
+
+// RequestMeta кладёт в контекст данные запроса для журнала действий (activity.WithRequestMeta): IP клиента
+// (r.RemoteAddr после RealIP — с учётом доверенных прокси), User-Agent и публичный префикс API-ключа
+// (apiKeyPrefix; nil — без ключей). Laravel: ActivityLogger::record() — request()->ip(), userAgent(),
+// attributes['api_key']['prefix']. Ставится на каждый запрос до обработчиков (вход, REST, /ws).
+func RequestMeta(apiKeyPrefix func(*http.Request) string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			m := activity.RequestMeta{IP: hostOnly(r.RemoteAddr), UserAgent: r.UserAgent()}
+			if apiKeyPrefix != nil {
+				m.APIKeyPrefix = apiKeyPrefix(r)
+			}
+			next.ServeHTTP(w, r.WithContext(activity.WithRequestMeta(r.Context(), m)))
+		})
+	}
 }
 
 // RequestLogger пишет одну запись на запрос: метод, путь (без query — там могут быть токены),

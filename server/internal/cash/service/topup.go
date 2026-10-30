@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/bonus"
+	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
@@ -132,6 +134,34 @@ func (s *Service) TopUp(ctx context.Context, q *store.Queries, p TopUpParams) (T
 	}
 	if res.Bonus != planned {
 		return TopUpResult{}, fmt.Errorf("cash: top-up bonus %s differs from the receipt %s", res.Bonus, planned)
+	}
+	// Laravel: CashRegisterService::topUpBalance() (стр. 128–139) — журнал cash.income и user.balance_topped_up
+	// с одними details: суммы — float, подписи баланса и оплаты — текстом.
+	details := map[string]any{
+		"amount": billingsvc.PHPFloat(p.Amount.Amount), "balance_type": balanceLabels[p.Field],
+		"payment_method": paymentLabels[p.PaymentMethod], "new_balance": billingsvc.PHPFloat(res.NewBalance),
+	}
+	if planned > 0 {
+		details["bonus_amount"], details["bonus_percent"], details["new_bonus_balance"] =
+			billingsvc.PHPFloat(planned), phpFloatOf(percent), billingsvc.PHPFloat(res.NewBonusBalance)
+	}
+	if err := record(ctx, q, activity.Entry{
+		ClubID: p.ClubID, Event: "cash.income", Description: row.Description, UserID: p.Actor.UserID,
+		SubjectType: billingsvc.SubjectCashTransaction, SubjectID: row.ID, Details: details,
+	}); err != nil {
+		return TopUpResult{}, err
+	}
+	if err := record(ctx, q, activity.Entry{
+		ClubID: p.ClubID, Event: "user.balance_topped_up", Description: row.Description, UserID: p.Actor.UserID,
+		SubjectType: billingsvc.SubjectUser, SubjectID: p.UserID, Details: details,
+	}); err != nil {
+		return TopUpResult{}, err
+	}
+	if err := cashTransactionEvent(ctx, q, p.ClubID, row, txTopUp); err != nil {
+		return TopUpResult{}, err
+	}
+	if err := s.balanceChanged(ctx, q, p.ClubID, p.UserID); err != nil {
+		return TopUpResult{}, err
 	}
 	return TopUpResult{Transaction: row, Bonus: planned, BonusPercent: percent, Balance: res}, nil
 }

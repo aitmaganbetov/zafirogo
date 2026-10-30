@@ -55,6 +55,8 @@ type Service struct {
 	pool  db.Beginner
 	clock Clock
 	cash  CashRecorder
+	// notifier — уведомления агента после коммита (SetNotifier); nil — без уведомлений.
+	notifier SessionNotifier
 	// newSessionID — (string) Str::uuid(): UUID v4.
 	newSessionID func() string
 }

@@ -231,6 +231,9 @@ func (s *Service) SellGuestSession(ctx context.Context, req GuestSessionRequest)
 			out.Computers = append(out.Computers, GuestComputerResult{
 				ComputerID: pc.ID, Name: names[i], SessionID: sid, SessionEndsAt: ends, Extends: c.Extends, Price: c.Price,
 			})
+			if err := AddEvent(ctx, q, req.ClubID, "computer.state", computerEvent(pc.ID, sid, 0, true, &ends)); err != nil {
+				return err
+			}
 		}
 		out.Amount, out.Minutes = quote.Total, quote.Minutes
 
@@ -253,6 +256,16 @@ func (s *Service) SellGuestSession(ctx context.Context, req GuestSessionRequest)
 		out.CashTransactionID, out.LedgerTransactionID = rec.CashTransactionID, rec.LedgerTransactionID
 		return remember(ctx, q, req.ClubID, req.IdempotencyKey, out)
 	})
+	if err == nil && !out.Replayed && s.notifier != nil {
+		now := s.clock.Now()
+		for _, c := range out.Computers {
+			started := now
+			if c.Extends {
+				started = time.Time{}
+			}
+			NotifySessionStarted(ctx, s.notifier, req.ClubID, c.ComputerID, c.SessionID, 0, true, started, c.SessionEndsAt, req.CashierID)
+		}
+	}
 	return out, err
 }
 

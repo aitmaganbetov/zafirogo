@@ -4,6 +4,7 @@ import (
 	"context"
 	"unicode/utf8"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
@@ -123,6 +124,30 @@ func (s *Service) recordGuest(ctx context.Context, q *store.Queries, in GuestSes
 	details := map[string]any{"amount": int64(amount), "payment_method": string(method)}
 	if in.Computers != "" {
 		details["computers"], details["minutes"], details["tariff"] = in.Computers, in.Minutes, in.Tariff
+	}
+	// Laravel: GuestSessions::sell() (стр. 89–92) — журнал cash.income и computer.guest_session (без предмета)
+	// с одними details: amount — строка formatCents, способ оплаты — подписью.
+	tariff := in.Tariff
+	if tariff == "" {
+		tariff = "—"
+	}
+	journal := map[string]any{
+		"computers": in.Computers, "minutes": in.Minutes, "amount": amount.Tenge(),
+		"payment_method": paymentLabels[method], "tariff": tariff,
+	}
+	if err := record(ctx, q, activity.Entry{
+		ClubID: clubID, Event: "cash.income", Description: description, UserID: in.CashierID,
+		SubjectType: billingsvc.SubjectCashTransaction, SubjectID: row.ID, Details: journal,
+	}); err != nil {
+		return GuestSessionRecorded{}, err
+	}
+	if err := record(ctx, q, activity.Entry{
+		ClubID: clubID, Event: "computer.guest_session", Description: description, UserID: in.CashierID, Details: journal,
+	}); err != nil {
+		return GuestSessionRecorded{}, err
+	}
+	if err := cashTransactionEvent(ctx, q, clubID, row, txGuestSession); err != nil {
+		return GuestSessionRecorded{}, err
 	}
 	return GuestSessionRecorded{Transaction: row, Ledger: res}, audit(ctx, q, clubID, actor, "cash.guest_session", "cash_transaction", row.ID, res, details)
 }

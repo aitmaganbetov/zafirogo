@@ -206,6 +206,574 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cash/shift": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Открытая смена и её итоги
+         * @description Laravel: CashRegisterController::index() (маршрут cash-register.index, право cash.view).
+         *     Нет открытой смены — shift и totals равны null.
+         */
+        get: operations["getCashShift"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/shifts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Открыть смену
+         * @description Laravel: CashRegisterController::open(), CashRegisterService::open() (cash-register.shifts.open, cash.create).
+         *     Ошибка «Смена уже открыта.» — 422 на поле opening_balance.
+         */
+        post: operations["openCashShift"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/shifts/{shiftId}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Закрыть смену
+         * @description Laravel: CashRegisterController::close(), CashRegisterService::close() (cash-register.shifts.close, cash.create).
+         *     Без отметки печати Z-отчёта — 422 «Сначала распечатайте Z-отчёт. Без печати смена не закрывается.» (поле shift).
+         */
+        post: operations["closeCashShift"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/reports/x": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * X-отчёт открытой смены
+         * @description Laravel: CashRegisterController::xReport() (cash-register.x-report, cash.view). Нет открытой смены — 404.
+         */
+        get: operations["getCashXReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/shifts/{shiftId}/z-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Z-отчёт смены
+         * @description Laravel: CashRegisterController::zReport() (cash-register.z-report, cash.view). Nonce печати выдаёт отдельный
+         *     POST …/z-report/nonce (в старом коде его ставил тот же GET в сессию).
+         */
+        get: operations["getCashZReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/shifts/{shiftId}/z-report/nonce": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Одноразовый nonce печати Z-отчёта
+         * @description Laravel: CashRegisterController::zReport() — Str::random(40) в сессию (cash-register.z-report, cash.view).
+         *     Прежний nonce смены перестаёт действовать. В БД хранится только его хеш.
+         */
+        post: operations["issueZReportNonce"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/shifts/{shiftId}/z-report/printed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Отметка «Z-отчёт напечатан»
+         * @description Laravel: CashRegisterController::markZReportPrinted() (cash-register.z-report.printed, cash.create).
+         *     Смена не открыта — 422; nonce неверный или уже использован — 419 (как в старом коде).
+         */
+        post: operations["markZReportPrinted"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/sales": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Продажа POS
+         * @description Laravel: CashRegisterController::sale(), CashRegisterService::sale() (cash-register.sales.store, cash.create).
+         *     Повтор с тем же Idempotency-Key и теми же строками — та же продажа (replayed = true), с другими — 409.
+         */
+        post: operations["createCashSale"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/balance-top-ups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Пополнение баланса клиента на кассе
+         * @description Laravel: CashRegisterController::topUpBalance(), CashRegisterService::topUpBalance()
+         *     (cash-register.balance-top-ups.store, cash.create). Бонус за пополнение — по настройкам клуба.
+         */
+        post: operations["createBalanceTopUp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/transactions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Приход или расход кассы
+         * @description Laravel: CashRegisterController::transaction(), CashRegisterService::transact()
+         *     (cash-register.transactions.store, cash.create).
+         */
+        post: operations["createCashTransaction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Приходы открытой смены (для возвратов)
+         * @description Laravel: CashRegisterController::operations() (cash-register.operations, cash.view): приходы открытой смены,
+         *     новые сверху, с возвратом. Нет открытой смены — 404. Пагинация keyset: before_id = next_before_id.
+         */
+        get: operations["listCashOperations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/receipts/{transactionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Чек прихода
+         * @description Laravel: CashRegisterController::receipt() (cash-register.receipt, cash.view). Не приход — 404.
+         */
+        get: operations["getCashReceipt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cash/receipts/{transactionId}/refund": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Возврат по чеку
+         * @description Laravel: CashRegisterController::refund(), CashRegisterService::refund() (cash-register.refund, cash.delete;
+         *     отказ — 403 «Нет права на возвраты. Его даёт владелец клуба в «Настройки → Права».»).
+         *     Повтор с тем же Idempotency-Key — тот же ответ.
+         */
+        post: operations["refundCashReceipt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/warehouse/products": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Товары склада
+         * @description Laravel: WarehouseController (warehouse, warehouse.view). По имени; поиск — подстрока имени или SKU.
+         *     Пагинация keyset: cursor = next_cursor предыдущей страницы.
+         */
+        get: operations["listProducts"];
+        put?: never;
+        /**
+         * Новый товар
+         * @description Laravel: ProductController, CreateProductAction (warehouse.products.store, warehouse.create). Начальный остаток
+         *     > 0 — движение «Начальный остаток при создании товара».
+         */
+        post: operations["createProduct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/warehouse/products/{productId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Изменить товар
+         * @description Laravel: UpdateProductAction (warehouse.products.update, warehouse.update). Остаток меняется только движениями.
+         */
+        patch: operations["updateProduct"];
+        trace?: never;
+    };
+    "/api/warehouse/stock-movements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Оприходовать или списать товар
+         * @description Laravel: StockMovementController, AdjustStockAction (warehouse.stock-movements.store, warehouse.update).
+         *     Списание больше остатка — 422 «Нельзя списать больше, чем есть на складе.».
+         */
+        post: operations["createStockMovement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/warehouse/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Категории товаров
+         * @description Laravel: WarehouseController (warehouse, warehouse.view).
+         */
+        get: operations["listProductCategories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/customers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Клиенты клуба
+         * @description Laravel: UserController::index() (users.index, customers.view): членства не из ClubRoles::STAFF с балансами,
+         *     по user_id. Поиск — подстрока имени или телефона. Пагинация keyset: after_id = next_after_id.
+         */
+        get: operations["listCustomers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/customers/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Клиент и его балансы
+         * @description Laravel: UserController (users.index, customers.view). Сотрудник или чужой клуб — 404.
+         */
+        get: operations["getCustomer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/customers/{userId}/ledger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * История баланса клиента (журнал операций)
+         * @description Проводки по основному и бонусному балансу клиента (ledger), новые сверху (users.index, customers.view).
+         *     Пагинация keyset: cursor = next_cursor.
+         */
+        get: operations["listCustomerLedger"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/customers/{userId}/balance-adjustments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Пополнение или списание баланса владельцем без кассы
+         * @description Laravel: UserController::update() — top_up_amount / balance_action (users.update, customers.update; только роль
+         *     owner, иначе 422 «Пополнять и списывать баланс без кассы может только владелец клуба.»).
+         */
+        post: operations["adjustCustomerBalance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/customers/{userId}/initial-balance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Начальный баланс нового клиента
+         * @description Laravel: UserController::store() — balance / bonus_balance формы (users.store, customers.create; суммы задаёт
+         *     только право customer_money.update, иначе 403 «Скидку и баланс клиента задаёт менеджер; пополнение — через кассу.»).
+         *     Один раз на клиента: другой запрос с другими суммами — 409.
+         */
+        post: operations["setCustomerInitialBalance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tariffs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Тарифы и цены часа по зонам
+         * @description Laravel: TariffController::index() (tariffs.index, tariffs.view). Только чтение.
+         */
+        get: operations["listTariffs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/club-computers/guest-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Гостевая сессия на кассе
+         * @description Laravel: GuestSessionController::store(), GuestSessions::sell() (club-computers.guest-session, cash.create;
+         *     throttle 30/мин). Время без аккаунта на выбранных ПК, оплата в открытую смену.
+         */
+        post: operations["sellGuestSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/club-computers/{computerId}/end-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Завершить сессию ПК (сотрудник)
+         * @description Laravel: ClubComputerSessions::end() с isStaff (club-computers.end-sessions, pc_control.delete). Неиспользованные
+         *     минуты возвращаются на балансы, остаток тарифа с лимитом сохраняется пакетом.
+         */
+        post: operations["endComputerSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/club-computers/{computerId}/transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Пересадить клиента на другой ПК (сотрудник)
+         * @description Laravel: SeatTransfers::transfer() (в старом — только сам клиент; сотрудником — новое, право pc_control.update,
+         *     маршрут club-computers.control). Остаток сессии переезжает на свободный ПК, где действует тариф; денег не двигается.
+         */
+        post: operations["transferComputerSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/club-map/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Состояние ПК на карте клуба
+         * @description Laravel: ClubZoneController::state() (club-map.state, club_map.view). Сессии — из БД, связь с агентом
+         *     (online/offline, версия) — из присутствия агента (Valkey). Дальше — события computer.* по WebSocket.
+         */
+        get: operations["getClubMapState"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -299,6 +867,477 @@ export interface components {
                 [key: string]: "ok" | "fail";
             };
         };
+        CashShift: {
+            /** Format: int64 */
+            id: number;
+            /** @enum {string} */
+            status: "open" | "closed";
+            /** Format: int64 */
+            opened_by?: number | null;
+            /** Format: int64 */
+            closed_by?: number | null;
+            /** Format: int64 */
+            opening_balance_tiyn: number;
+            /** Format: int64 */
+            closing_balance_tiyn?: number | null;
+            /** Format: date-time */
+            opened_at: string;
+            /** Format: date-time */
+            closed_at?: string | null;
+            /** @description Z-отчёт напечатан (без этого смена не закрывается). */
+            z_report_printed: boolean;
+        };
+        CashTotals: {
+            /** Format: int64 */
+            opening_tiyn: number;
+            /** Format: int64 */
+            income_tiyn: number;
+            /** Format: int64 */
+            expense_tiyn: number;
+            /**
+             * Format: int64
+             * @description Остаток смены = начальный + приход − расход.
+             */
+            balance_tiyn: number;
+        };
+        CashShiftState: {
+            shift: components["schemas"]["CashShift"] | null;
+            totals: components["schemas"]["CashTotals"] | null;
+        };
+        OpenShiftRequest: {
+            /**
+             * Format: int64
+             * @description Начальный остаток кассы (min:0).
+             */
+            opening_balance_tiyn: number;
+        };
+        ZReportNonce: {
+            nonce: string;
+        };
+        ZReportPrintedRequest: {
+            nonce: string;
+        };
+        ZReportPrinted: {
+            printed: boolean;
+        };
+        ReceiptLine: {
+            /** Format: int64 */
+            product_id?: number | null;
+            /** Format: int64 */
+            service_id?: number | null;
+            name: string;
+            /** Format: int64 */
+            quantity: number;
+            /** Format: int64 */
+            price_tiyn: number;
+            /** Format: int64 */
+            total_tiyn: number;
+        };
+        ReceiptTopUp: {
+            /** Format: int64 */
+            user_id: number;
+            /** @enum {string} */
+            balance_type: "balance" | "bonus_balance";
+            /** Format: int64 */
+            bonus_tiyn: number;
+        };
+        CashTransaction: {
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            shift_id: number;
+            /** @enum {string} */
+            type: "income" | "expense";
+            /** Format: int64 */
+            amount_tiyn: number;
+            /** @description Текст операции, как записал старый код (на русском). */
+            description: string;
+            /**
+             * Format: int64
+             * @description Кто провёл операцию.
+             */
+            user_id?: number | null;
+            /** @enum {string|null} */
+            payment_method?: "cash" | "card" | "qr" | null;
+            /** @enum {string|null} */
+            income_kind?: "top_up" | "guest_session" | null;
+            /** Format: int64 */
+            refund_of_id?: number | null;
+            /** @description Строки чека продажи POS. */
+            items?: components["schemas"]["ReceiptLine"][];
+            top_up?: components["schemas"]["ReceiptTopUp"] | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        CashRefundRef: {
+            /** Format: int64 */
+            id: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        CashReceipt: {
+            transaction: components["schemas"]["CashTransaction"];
+            refund: components["schemas"]["CashRefundRef"] | null;
+            /** @description Операция такого вида возвращается (продажа или пополнение). */
+            refundable: boolean;
+            /** @description У сотрудника есть право cash.delete. */
+            can_refund: boolean;
+        };
+        CashOperationPage: {
+            /** Format: int64 */
+            shift_id: number;
+            items: components["schemas"]["CashReceipt"][];
+            /** Format: int64 */
+            next_before_id: number | null;
+        };
+        SaleItem: {
+            /** Format: int64 */
+            product_id?: number | null;
+            /** Format: int64 */
+            service_id?: number | null;
+            /** Format: int64 */
+            quantity: number;
+        };
+        SaleRequest: {
+            items: components["schemas"]["SaleItem"][];
+        };
+        CashOperationResult: {
+            transaction: components["schemas"]["CashTransaction"];
+            /** @description Ответ на повтор запроса (ничего не записано). */
+            replayed: boolean;
+            /** @description Текст статуса старого кода («Продажа проведена. Распечатайте чек.», «Операция проведена»). */
+            message: string;
+        };
+        TopUpRequest: {
+            /** Format: int64 */
+            user_id: number;
+            /** Format: int64 */
+            amount_tiyn: number;
+            /** @description balance | bonus_balance */
+            balance_type: string;
+            /** @description cash | card | qr */
+            payment_method: string;
+        };
+        TopUpResult: {
+            transaction: components["schemas"]["CashTransaction"];
+            /** Format: int64 */
+            bonus_tiyn: number;
+            /**
+             * Format: int64
+             * @description Основной баланс клиента после операции.
+             */
+            new_balance_tiyn: number;
+            /** Format: int64 */
+            new_bonus_balance_tiyn: number;
+            replayed: boolean;
+            /** @description «Баланс пользователя пополнен.» или «… Бонус за пополнение: :amount.». */
+            message: string;
+        };
+        CashTransactionRequest: {
+            /** @description income | expense */
+            type: string;
+            /** Format: int64 */
+            amount_tiyn: number;
+            description: string;
+        };
+        RefundResult: {
+            refund: components["schemas"]["CashTransaction"];
+            /** @enum {string} */
+            kind: "sale" | "top_up";
+            /** @description «Возврат проведён: :amount KZT выданы из кассы.» */
+            message: string;
+        };
+        CashReportRow: {
+            label: string;
+            /** Format: int64 */
+            count: number;
+            /** Format: int64 */
+            amount_tiyn: number;
+        };
+        CashReportItem: {
+            name: string;
+            /** Format: int64 */
+            quantity: number;
+            /** Format: int64 */
+            amount_tiyn: number;
+            /**
+             * Format: int64
+             * @description Остаток на складе сейчас; null — услуга или товар не найден («—»).
+             */
+            stock: number | null;
+        };
+        CashReportStaff: {
+            /** Format: int64 */
+            user_id: number;
+            name: string;
+            /** Format: int64 */
+            count: number;
+            /** Format: int64 */
+            income_tiyn: number;
+            /** Format: int64 */
+            expense_tiyn: number;
+        };
+        CashReport: {
+            /** @enum {string} */
+            type: "X" | "Z";
+            shift: components["schemas"]["CashShift"];
+            totals: components["schemas"]["CashTotals"];
+            kinds: components["schemas"]["CashReportRow"][];
+            refunds: {
+                /** Format: int64 */
+                count: number;
+                /** Format: int64 */
+                amount_tiyn: number;
+            };
+            items: components["schemas"]["CashReportItem"][];
+            /** Format: int64 */
+            items_total_tiyn: number;
+            /** Format: int64 */
+            discount_tiyn: number;
+            staff: components["schemas"]["CashReportStaff"][];
+            cashier_name: string;
+            /** @description Закрывший смену, если это другой сотрудник; пусто — строки нет. */
+            closed_by_name: string;
+            operator_name: string;
+        };
+        Product: {
+            /** Format: int64 */
+            id: number;
+            sku: string;
+            name: string;
+            category: string;
+            /** Format: int64 */
+            product_category_id?: number | null;
+            /** Format: int64 */
+            price_tiyn: number;
+            /** Format: int64 */
+            quantity: number;
+        };
+        ProductPage: {
+            items: components["schemas"]["Product"][];
+            next_cursor: string | null;
+        };
+        ProductCategory: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+        };
+        CreateProductRequest: {
+            sku: string;
+            name: string;
+            /** Format: int64 */
+            product_category_id: number;
+            /** Format: int64 */
+            price_tiyn: number;
+            /** Format: int64 */
+            quantity: number;
+        };
+        UpdateProductRequest: {
+            sku?: string;
+            name?: string;
+            /** Format: int64 */
+            product_category_id?: number;
+            /** Format: int64 */
+            price_tiyn?: number;
+        };
+        StockMovementRequest: {
+            /** Format: int64 */
+            product_id: number;
+            /** @description receipt | write_off */
+            type: string;
+            /** Format: int64 */
+            quantity: number;
+            note?: string | null;
+        };
+        StockMovementResult: {
+            /** Format: int64 */
+            id: number;
+            product: components["schemas"]["Product"];
+            /** @enum {string} */
+            type: "receipt" | "write_off";
+            /** Format: int64 */
+            quantity: number;
+            /** Format: int64 */
+            balance_after: number;
+        };
+        Customer: {
+            /** Format: int64 */
+            user_id: number;
+            name: string;
+            phone: string;
+            role: string;
+            /** @description Персональная скидка, % (decimal(5,2) строкой, «12.50»). */
+            discount: string;
+            /** Format: int64 */
+            total_spent_tiyn: number;
+            /** Format: int64 */
+            balance_tiyn: number;
+            /** Format: int64 */
+            bonus_balance_tiyn: number;
+        };
+        CustomerPage: {
+            items: components["schemas"]["Customer"][];
+            /** Format: int64 */
+            next_after_id: number | null;
+        };
+        LedgerEntry: {
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            transaction_id: number;
+            /** @description Вид операции ledger (top_up, tariff_purchase, session_refund, …). */
+            kind: string;
+            /** @enum {string} */
+            account: "member_main" | "member_bonus";
+            /** Format: int64 */
+            amount_tiyn: number;
+            /** Format: int64 */
+            balance_after_tiyn: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        LedgerPage: {
+            items: components["schemas"]["LedgerEntry"][];
+            next_cursor: string | null;
+        };
+        BalanceAdjustmentRequest: {
+            /** @description balance | bonus_balance (top_up_balance старой формы) */
+            balance_type: string;
+            /** @description top_up | write_off (balance_action старой формы) */
+            action: string;
+            /** Format: int64 */
+            amount_tiyn: number;
+        };
+        BalanceAdjustmentResult: {
+            customer: components["schemas"]["Customer"];
+            message: string;
+        };
+        InitialBalanceRequest: {
+            /** Format: int64 */
+            balance_tiyn: number;
+            /** Format: int64 */
+            bonus_balance_tiyn: number;
+        };
+        Tariff: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            description?: string | null;
+            /** Format: int64 */
+            duration_minutes: number;
+            /** Format: int64 */
+            price_tiyn: number;
+            currency: string;
+            is_active: boolean;
+            /** @enum {string} */
+            payment_method: "main_balance_only" | "main_or_bonus";
+            discount_enabled: boolean;
+            /** Format: int64 */
+            usage_limit_minutes?: number | null;
+            /** Format: int64 */
+            quantity_limit?: number | null;
+            /** @description Зоны действия; пусто — все зоны. */
+            zone_ids: number[];
+        };
+        Zone: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            /**
+             * Format: int64
+             * @description Цена часа поминутной продажи; null — в зоне поминутно не продаётся.
+             */
+            price_per_hour_tiyn: number | null;
+        };
+        TariffList: {
+            tariffs: components["schemas"]["Tariff"][];
+            zones: components["schemas"]["Zone"][];
+        };
+        GuestSessionRequest: {
+            computer_ids: number[];
+            /** Format: int64 */
+            tariff_id?: number | null;
+            /** Format: int64 */
+            minutes?: number | null;
+            /** @description cash | card | qr */
+            payment_method: string;
+        };
+        GuestSessionComputer: {
+            /** Format: int64 */
+            computer_id: number;
+            name: string;
+            session_id: string;
+            /** Format: date-time */
+            session_ends_at: string;
+            extends: boolean;
+            /** Format: int64 */
+            price_tiyn: number;
+        };
+        GuestSessionResult: {
+            /** Format: int64 */
+            amount_tiyn: number;
+            /** Format: int64 */
+            minutes: number;
+            computers: components["schemas"]["GuestSessionComputer"][];
+            description: string;
+            /** Format: int64 */
+            cash_transaction_id: number;
+        };
+        EndSessionRequest: {
+            session_id: string;
+        };
+        EndSessionResult: {
+            /** Format: int64 */
+            refund_main_tiyn: number;
+            /** Format: int64 */
+            refund_bonus_tiyn: number;
+            /** Format: int64 */
+            kept_minutes: number;
+        };
+        TransferSessionRequest: {
+            /** Format: int64 */
+            target_computer_id: number;
+        };
+        TransferSessionResult: {
+            /** Format: int64 */
+            computer_id: number;
+            session_id: string;
+            /** Format: date-time */
+            session_ends_at: string;
+        };
+        ComputerState: {
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            zone_id: number;
+            /** Format: int64 */
+            number: number;
+            name: string;
+            /** @description online | offline | maintenance (как ClubComputer::currentStatus()). */
+            status: string;
+            /** @enum {string} */
+            connection: "online" | "offline";
+            is_reserved: boolean;
+            has_session: boolean;
+            session_id?: string | null;
+            /** Format: date-time */
+            session_ends_at?: string | null;
+            session_guest: boolean;
+            /** Format: int64 */
+            session_user_id?: number | null;
+            /** @description «Имя · телефон» клиента; гость — «Гость без аккаунта». */
+            session_user?: string;
+            agent_state: string;
+            agent_version: string;
+            /** Format: date-time */
+            last_seen?: string | null;
+            /** Format: date-time */
+            staff_until?: string | null;
+            staff_name?: string | null;
+        };
+        ClubMapState: {
+            computers: components["schemas"]["ComputerState"][];
+        };
     };
     responses: {
         /** @description Нет действующей сессии. */
@@ -347,12 +1386,46 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description Неверный запрос (параметр, курсор, нет заголовка Idempotency-Key). */
+        BadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Ключ идемпотентности уже использован запросом с другим телом (idempotency_conflict). */
+        Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
     parameters: {
         /** @description Значение cookie __Host-zafiro_csrf. */
         CSRFToken: string;
         /** @description Обязателен при выходе по refresh-cookie (без access-токена). */
         CSRFTokenOptional: string;
+        /**
+         * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+         *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+         */
+        IdempotencyKey: string;
+        ShiftId: number;
+        TransactionId: number;
+        ProductId: number;
+        UserId: number;
+        ComputerId: number;
+        /** @description Поиск — подстрока без учёта регистра. */
+        Search: string;
+        /** @description Непрозрачный курсор следующей страницы (next_cursor). */
+        Cursor: string;
+        /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
+        Limit: number;
     };
     requestBodies: never;
     headers: never;
@@ -600,6 +1673,843 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getCashShift: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Состояние кассы. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashShiftState"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    openCashShift: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+                 *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenShiftRequest"];
+            };
+        };
+        responses: {
+            /** @description Смена открыта. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashShiftState"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    closeCashShift: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+                 *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                shiftId: components["parameters"]["ShiftId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Смена закрыта. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashShiftState"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getCashXReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Отчёт. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashReport"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getCashZReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shiftId: components["parameters"]["ShiftId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Отчёт. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashReport"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    issueZReportNonce: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shiftId: components["parameters"]["ShiftId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Nonce. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ZReportNonce"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    markZReportPrinted: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                shiftId: components["parameters"]["ShiftId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ZReportPrintedRequest"];
+            };
+        };
+        responses: {
+            /** @description Отмечено. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ZReportPrinted"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Nonce неверный или уже использован. */
+            419: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Смена не открыта. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createCashSale: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+                 *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaleRequest"];
+            };
+        };
+        responses: {
+            /** @description Продажа проведена. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashOperationResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    createBalanceTopUp: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+                 *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TopUpRequest"];
+            };
+        };
+        responses: {
+            /** @description Баланс пополнен. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopUpResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    createCashTransaction: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+                 *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CashTransactionRequest"];
+            };
+        };
+        responses: {
+            /** @description Операция проведена. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashOperationResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listCashOperations: {
+        parameters: {
+            query?: {
+                before_id?: number;
+                /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Страница операций. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashOperationPage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getCashReceipt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transactionId: components["parameters"]["TransactionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Чек. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashReceipt"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    refundCashReceipt: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+                 *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                transactionId: components["parameters"]["TransactionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Возврат проведён. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefundResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listProducts: {
+        parameters: {
+            query?: {
+                /** @description Поиск — подстрока без учёта регистра. */
+                q?: components["parameters"]["Search"];
+                /** @description Непрозрачный курсор следующей страницы (next_cursor). */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Страница товаров. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createProduct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProductRequest"];
+            };
+        };
+        responses: {
+            /** @description Товар создан. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Product"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    updateProduct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: components["parameters"]["ProductId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProductRequest"];
+            };
+        };
+        responses: {
+            /** @description Товар после правки. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Product"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    createStockMovement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StockMovementRequest"];
+            };
+        };
+        responses: {
+            /** @description Движение записано. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockMovementResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listProductCategories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Категории. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductCategory"][];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listCustomers: {
+        parameters: {
+            query?: {
+                /** @description Поиск — подстрока без учёта регистра. */
+                q?: components["parameters"]["Search"];
+                after_id?: number;
+                /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Страница клиентов. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomerPage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getCustomer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Клиент. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Customer"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listCustomerLedger: {
+        parameters: {
+            query?: {
+                /** @description Непрозрачный курсор следующей страницы (next_cursor). */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Страница проводок. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LedgerPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    adjustCustomerBalance: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+                 *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BalanceAdjustmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Баланс изменён. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BalanceAdjustmentResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    setCustomerInitialBalance: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+                 *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InitialBalanceRequest"];
+            };
+        };
+        responses: {
+            /** @description Балансы клиента. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Customer"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    listTariffs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Тарифы и зоны. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TariffList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    sellGuestSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+                 *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GuestSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Сессии открыты. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuestSessionResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    endComputerSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+                 *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                computerId: components["parameters"]["ComputerId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Сессия завершена. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndSessionResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    transferComputerSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                computerId: components["parameters"]["ComputerId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransferSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Сессия на новом ПК. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferSessionResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getClubMapState: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ПК клуба. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClubMapState"];
                 };
             };
             401: components["responses"]["Unauthenticated"];

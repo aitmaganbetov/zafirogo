@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/bonus"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/pricing"
@@ -74,7 +75,10 @@ type TariffPurchaseRequest struct {
 // часть сессии → сессия ПК. Баланс блокируется раньше проверок (в Laravel — внутри sell()): порядок
 // блокировок тот же, отличается только то, что при отказе строка баланса тоже была заблокирована.
 func (s *Service) PurchaseTariff(ctx context.Context, req TariffPurchaseRequest) (PurchaseResult, error) {
-	var out PurchaseResult
+	var (
+		out         PurchaseResult
+		currencyOut string
+	)
 	err := s.tx(ctx, req.ClubID, func(q *store.Queries) error {
 		out = PurchaseResult{}
 		replayed, err := s.claim(ctx, q, req.ClubID, req.IdempotencyKey, opTariffPurchase, struct {
@@ -153,12 +157,33 @@ func (s *Service) PurchaseTariff(ctx context.Context, req TariffPurchaseRequest)
 		if err != nil {
 			return err
 		}
+		currency, err := q.GetTariffCurrency(ctx, store.GetTariffCurrencyParams{ClubID: req.ClubID, ID: t.ID})
+		if err != nil {
+			return err
+		}
+		// Laravel: AgentTariffPurchaseService::purchase() (стр. 89–98) — журнал tariff.purchased.
+		if err := RecordActivity(ctx, q, activity.Entry{
+			ClubID: req.ClubID, Event: "tariff.purchased", Description: "Куплен тариф: " + t.Name,
+			UserID: req.UserID, SubjectType: SubjectTariff, SubjectID: t.ID,
+			Details: map[string]any{
+				"amount": out.Price.Tenge(), "currency": currency,
+				"main_balance_amount": (out.Price - out.BonusPaid).Tenge(), "bonus_balance_amount": out.BonusPaid.Tenge(),
+				"duration_minutes": out.MinutesAdded, "computer_id": pc.ID, "session_id": out.SessionID,
+				"session_ends_at": ISO8601(out.SessionEndsAt),
+			},
+		}); err != nil {
+			return err
+		}
+		currencyOut = club.currency
 		// Счётчик лимита количества: только продажи в агенте (Допущение Этапа 1: Q-007).
 		if err := q.IncrementTariffSales(ctx, store.IncrementTariffSalesParams{ClubID: req.ClubID, TariffID: t.ID, Now: now}); err != nil {
 			return err
 		}
 		return remember(ctx, q, req.ClubID, req.IdempotencyKey, out)
 	})
+	if err == nil && !out.Replayed {
+		s.notifyPurchase(ctx, req.ClubID, req.UserID, req.ComputerID, out, currencyOut, req.Actor.UserID)
+	}
 	return out, err
 }
 
@@ -179,7 +204,10 @@ type MinutesPurchaseRequest struct {
 // (стр. 141–150), sell(). Порядок: ПК FOR UPDATE → зона (без блокировки) → нет цены часа → ensureComputerFor →
 // цена (скидка, если клуб применяет её к поминутке и у клиента есть членство) → sell().
 func (s *Service) PurchaseMinutes(ctx context.Context, req MinutesPurchaseRequest) (PurchaseResult, error) {
-	var out PurchaseResult
+	var (
+		out         PurchaseResult
+		currencyOut string
+	)
 	err := s.tx(ctx, req.ClubID, func(q *store.Queries) error {
 		out = PurchaseResult{}
 		replayed, err := s.claim(ctx, q, req.ClubID, req.IdempotencyKey, opMinutesPurchase, struct {
@@ -242,8 +270,31 @@ func (s *Service) PurchaseMinutes(ctx context.Context, req MinutesPurchaseReques
 		if err != nil {
 			return err
 		}
+		// Laravel: AgentTariffPurchaseService::purchaseMinutes() (стр. 124–135) — журнал time.purchased;
+		// price_per_hour — hourlyPrice(): цена часа зоны со скидкой клиента (formatCents).
+		hourly, err := pricing.HourlyPrice(*zonePrice, club.rules, discount)
+		if err != nil {
+			return err
+		}
+		if err := RecordActivity(ctx, q, activity.Entry{
+			ClubID: req.ClubID, Event: "time.purchased",
+			Description: "Куплено " + itoa(out.MinutesAdded) + " мин. в зоне " + zoneName,
+			UserID:      req.UserID, SubjectType: SubjectZone, SubjectID: zoneID,
+			Details: map[string]any{
+				"amount": out.Price.Tenge(), "currency": club.currency, "price_per_hour": hourly.Tenge(),
+				"main_balance_amount": (out.Price - out.BonusPaid).Tenge(), "bonus_balance_amount": out.BonusPaid.Tenge(),
+				"duration_minutes": out.MinutesAdded, "computer_id": pc.ID, "session_id": out.SessionID,
+				"session_ends_at": ISO8601(out.SessionEndsAt),
+			},
+		}); err != nil {
+			return err
+		}
+		currencyOut = club.currency
 		return remember(ctx, q, req.ClubID, req.IdempotencyKey, out)
 	})
+	if err == nil && !out.Replayed {
+		s.notifyPurchase(ctx, req.ClubID, req.UserID, req.ComputerID, out, currencyOut, req.Actor.UserID)
+	}
 	return out, err
 }
 
@@ -367,9 +418,38 @@ func (s *Service) StartPackage(ctx context.Context, req PackageStartRequest) (Pu
 		if err := q.DeleteTimePackage(ctx, store.DeleteTimePackageParams{ClubID: req.ClubID, ID: pkg.ID}); err != nil {
 			return err
 		}
+		// Laravel: AgentTariffPurchaseService::startPackage() (стр. 193–197) — журнал time.package_started.
+		if err := RecordActivity(ctx, q, activity.Entry{
+			ClubID: req.ClubID, Event: "time.package_started",
+			Description: "Запущен абонемент " + pkg.Name + ": " + itoa(out.MinutesAdded) + " мин.",
+			UserID:      req.UserID, SubjectType: SubjectComputer, SubjectID: pc.ID,
+			Details: map[string]any{
+				"minutes": out.MinutesAdded, "session_id": out.SessionID, "session_ends_at": ISO8601(out.SessionEndsAt),
+			},
+		}); err != nil {
+			return err
+		}
 		return remember(ctx, q, req.ClubID, req.IdempotencyKey, out)
 	})
+	if err == nil && !out.Replayed {
+		s.notifyPurchase(ctx, req.ClubID, req.UserID, req.ComputerID, out, "", req.Actor.UserID)
+	}
 	return out, err
+}
+
+// notifyPurchase — после коммита покупки: сессия на ПК (новая или продлённая) и балансы, если деньги списаны.
+func (s *Service) notifyPurchase(ctx context.Context, clubID, userID, computerID int64, out PurchaseResult, currency string, issuedBy int64) {
+	if s.notifier == nil {
+		return
+	}
+	var started time.Time
+	if !out.ExtendsSession {
+		started = s.clock.Now()
+	}
+	NotifySessionStarted(ctx, s.notifier, clubID, computerID, out.SessionID, userID, false, started, out.SessionEndsAt, issuedBy)
+	if out.LedgerTransactionID > 0 && out.MainPaid+out.BonusPaid > 0 {
+		NotifyBalance(ctx, s.notifier, clubID, userID, out.NewBalance, out.NewBonus, currency)
+	}
 }
 
 // quoteWithBalance блокирует баланс клиента и считает покупку. Нет строки баланса (в Laravel
@@ -511,6 +591,15 @@ func (s *Service) sell(ctx context.Context, q *store.Queries, in sale) (Purchase
 		SessionGuest: false, SessionEndsAt: &ends, Now: &in.now,
 	}); err != nil {
 		return PurchaseResult{}, err
+	}
+	// События админки (docs/realtime.md): карта клуба и баланс клиента.
+	if err := AddEvent(ctx, q, in.clubID, "computer.state", computerEvent(in.computer.ID, sessionID, user, false, &ends)); err != nil {
+		return PurchaseResult{}, err
+	}
+	if out.LedgerTransactionID > 0 {
+		if err := AddEvent(ctx, q, in.clubID, "balance.changed", BalanceEvent(in.userID, out.NewBalance, out.NewBonus)); err != nil {
+			return PurchaseResult{}, err
+		}
 	}
 	return out, nil
 }

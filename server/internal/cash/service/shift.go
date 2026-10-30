@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
+	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
@@ -82,6 +84,17 @@ func (s *Service) OpenShift(ctx context.Context, q *store.Queries, p OpenShiftPa
 	if err != nil {
 		return OpenShiftResult{}, err
 	}
+	// Laravel: CashRegisterService::open() (стр. 94) — журнал cash.shift_opened.
+	if err := record(ctx, q, activity.Entry{
+		ClubID: p.ClubID, Event: "cash.shift_opened", Description: "Открыта кассовая смена", UserID: p.Actor.UserID,
+		SubjectType: billingsvc.SubjectCashShift, SubjectID: row.ID,
+		Details: map[string]any{"opening_balance": billingsvc.PHPFloat(p.OpeningBalance)},
+	}); err != nil {
+		return OpenShiftResult{}, err
+	}
+	if err := shiftEvent(ctx, q, p.ClubID, row.ID, "opened"); err != nil {
+		return OpenShiftResult{}, err
+	}
 	return OpenShiftResult{Shift: row, DrawerAdjustment: adj}, audit(ctx, q, p.ClubID, p.Actor, "cash.shift_opened", "cash_shift", row.ID, adj,
 		map[string]any{"opening_balance": int64(p.OpeningBalance), "drawer_before": drawer})
 }
@@ -132,6 +145,17 @@ func (s *Service) CloseShift(ctx context.Context, q *store.Queries, p CloseShift
 	})
 	if err != nil {
 		return CloseShiftResult{}, fmt.Errorf("cash: close shift: %w", err)
+	}
+	// Laravel: CashRegisterService::close() (стр. 263) — журнал cash.shift_closed.
+	if err := record(ctx, q, activity.Entry{
+		ClubID: p.ClubID, Event: "cash.shift_closed", Description: "Закрыта кассовая смена", UserID: p.Actor.UserID,
+		SubjectType: billingsvc.SubjectCashShift, SubjectID: row.ID,
+		Details: map[string]any{"closing_balance": billingsvc.PHPFloat(closing)},
+	}); err != nil {
+		return CloseShiftResult{}, err
+	}
+	if err := shiftEvent(ctx, q, p.ClubID, row.ID, "closed"); err != nil {
+		return CloseShiftResult{}, err
 	}
 	return CloseShiftResult{Shift: closed, Totals: totals}, audit(ctx, q, p.ClubID, p.Actor, "cash.shift_closed", "cash_shift", row.ID, nil,
 		map[string]any{"closing_balance": int64(closing), "income": int64(totals.Income), "expense": int64(totals.Expense)})
@@ -190,6 +214,13 @@ func (s *Service) MarkZReportPrinted(ctx context.Context, q *store.Queries, club
 		ClubID: clubID, ID: shiftID, Now: &now, PrintedBy: nonZero(actor.UserID),
 	}); err != nil {
 		return false, fmt.Errorf("cash: mark z printed: %w", err)
+	}
+	// Laravel: CashRegisterController::markZReportPrinted() (стр. 187) — журнал cash.z_report_printed без details.
+	if err := record(ctx, q, activity.Entry{
+		ClubID: clubID, Event: "cash.z_report_printed", Description: "Напечатан Z-отчёт смены #" + strconv.FormatInt(shiftID, 10),
+		UserID: actor.UserID, SubjectType: billingsvc.SubjectCashShift, SubjectID: shiftID,
+	}); err != nil {
+		return false, err
 	}
 	return true, audit(ctx, q, clubID, actor, "cash.z_report_printed", "cash_shift", shiftID, nil, map[string]any{"shift_id": shiftID})
 }

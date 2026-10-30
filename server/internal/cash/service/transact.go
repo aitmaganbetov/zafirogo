@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
+	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -69,6 +71,21 @@ func (s *Service) Transact(ctx context.Context, q *store.Queries, p TransactPara
 	res, err := postDrawer(ctx, q, p.ClubID, kind, ledgerKey(p.IdempotencyKey, row.ID), drawerIn, ledger.AccountCashOther,
 		ledger.Refs{CashShiftID: op.ShiftID, CashTransactionID: row.ID}, nil, p.Actor)
 	if err != nil {
+		return TransactResult{}, err
+	}
+	// Laravel: CashRegisterService::transact() (стр. 241–250) — журнал cash.income / cash.expense.
+	desc, txKind := "Пополнение кассы: "+row.Description, txIncome
+	if op.Type == cash.Expense {
+		desc, txKind = "Расход из кассы: "+row.Description, txExpense
+	}
+	if err := record(ctx, q, activity.Entry{
+		ClubID: p.ClubID, Event: action, Description: desc, UserID: p.Actor.UserID,
+		SubjectType: billingsvc.SubjectCashTransaction, SubjectID: row.ID,
+		Details: map[string]any{"amount": billingsvc.PHPFloat(op.Amount)},
+	}); err != nil {
+		return TransactResult{}, err
+	}
+	if err := cashTransactionEvent(ctx, q, p.ClubID, row, txKind); err != nil {
 		return TransactResult{}, err
 	}
 	return TransactResult{Transaction: row, Ledger: res}, audit(ctx, q, p.ClubID, p.Actor, action, "cash_transaction", row.ID, res,

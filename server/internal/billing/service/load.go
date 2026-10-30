@@ -32,6 +32,8 @@ type clubContext struct {
 	bonus      bonus.Settings
 	loc        *time.Location
 	gapMinutes int64
+	// currency — finances.currency (по умолчанию KZT): журнал покупок и баланс для агента.
+	currency string
 }
 
 // DefaultBookingGapMinutes — ComputerReservations::DEFAULT_GAP_MINUTES.
@@ -63,6 +65,7 @@ func loadClub(ctx context.Context, q *store.Queries, clubID int64) (clubContext,
 		bonus:      bs,
 		loc:        loc,
 		gapMinutes: bookingGapMinutes(c.Settings),
+		currency:   clubCurrency(c.Settings),
 	}, nil
 }
 
@@ -199,6 +202,7 @@ type computerRow struct {
 	SessionGuest         bool
 	SessionEndsAt        *time.Time
 	StaffUntil           *time.Time
+	Status               string
 }
 
 func lockComputer(ctx context.Context, q *store.Queries, clubID, id int64) (computerRow, error) {
@@ -227,8 +231,14 @@ func (c computerRow) session() session.Computer {
 	return session.Computer{
 		ID: c.ID, ZoneID: c.ClubZoneID, IsReserved: c.IsReserved, LastSeenAt: c.LastSeenAt,
 		SessionID: c.CurrentSessionID, SessionUserID: c.CurrentSessionUserID, SessionGuest: c.SessionGuest,
-		SessionEndsAt: c.SessionEndsAt, StaffUntil: c.StaffUntil,
+		SessionEndsAt: c.SessionEndsAt, StaffUntil: c.StaffUntil, Connected: c.connected(),
 	}
+}
+
+// connected — «в сети» по club_computers.status, который ведёт presence агента (AS-2).
+func (c computerRow) connected() *bool {
+	online := c.Status == "online"
+	return &online
 }
 
 // pricing — ПК для расчёта покупки: hasPaidSession() считает session.Computer.HasPaidSession (BR-030).
@@ -332,6 +342,12 @@ const MaxIdempotencyKeyLen = 200
 // ответ первого выполнения декодируется в out и возвращается true; другое тело или операция —
 // ErrIdempotencyConflict. Параллельный запрос с тем же ключом ждёт COMMIT первого на уникальном индексе.
 func (s *Service) claim(ctx context.Context, q *store.Queries, clubID int64, key, operation string, request, out any) (bool, error) {
+	return ClaimRequest(ctx, q, clubID, key, operation, request, out, s.clock.Now())
+}
+
+// ClaimRequest — claim для других слоёв (HTTP-идемпотентность денежных запросов админки): та же таблица
+// billing_requests, тот же порядок. Вызывать в транзакции операции; ответ сохранить RememberRequest в ней же.
+func ClaimRequest(ctx context.Context, q *store.Queries, clubID int64, key, operation string, request, out any, now time.Time) (bool, error) {
 	if strings.TrimSpace(key) == "" || len(key) > MaxIdempotencyKeyLen {
 		return false, fmt.Errorf("%w: idempotency key must be 1..%d bytes", ErrInvalidInput, MaxIdempotencyKeyLen)
 	}
@@ -344,7 +360,7 @@ func (s *Service) claim(ctx context.Context, q *store.Queries, clubID int64, key
 	}
 	fp := sha256.Sum256(body)
 	_, err = q.ClaimBillingRequest(ctx, store.ClaimBillingRequestParams{
-		ClubID: clubID, IdempotencyKey: key, Operation: operation, Fingerprint: fp[:], Now: s.clock.Now(),
+		ClubID: clubID, IdempotencyKey: key, Operation: operation, Fingerprint: fp[:], Now: now,
 	})
 	if err == nil {
 		return false, nil
@@ -363,6 +379,11 @@ func (s *Service) claim(ctx context.Context, q *store.Queries, clubID int64, key
 		return false, fmt.Errorf("service: decode stored response: %w", err)
 	}
 	return true, nil
+}
+
+// RememberRequest сохраняет ответ под ключом, захваченным ClaimRequest (в той же транзакции).
+func RememberRequest(ctx context.Context, q *store.Queries, clubID int64, key string, response any) error {
+	return remember(ctx, q, clubID, key, response)
 }
 
 // remember сохраняет ответ под ключом (в той же транзакции, что и операция).

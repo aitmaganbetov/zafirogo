@@ -163,11 +163,11 @@ func (e *env) zone(name string, pricePerHour *int64) int64 {
 		e.club, name, pricePerHour)
 }
 
-// computer — ПК в зоне, онлайн (last_seen_at = сейчас по часам теста).
+// computer — ПК в зоне, онлайн (status = 'online' — его ведёт presence агента, AS-2; last_seen_at = сейчас).
 func (e *env) computer(zone, number int64) int64 {
 	e.t.Helper()
-	return scalar[int64](e.t, `INSERT INTO club_computers (club_id, club_zone_id, number, last_seen_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, now(), now()) RETURNING id`, e.club, zone, number, e.clock.Now())
+	return scalar[int64](e.t, `INSERT INTO club_computers (club_id, club_zone_id, number, last_seen_at, status, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, 'online', now(), now()) RETURNING id`, e.club, zone, number, e.clock.Now())
 }
 
 type tariffSpec struct {

@@ -23,7 +23,7 @@
 //
 // Аудит (audit_log, категория money): cash.shift_opened, cash.shift_closed, cash.pos_sale, cash.income, cash.expense,
 // cash.refund, cash.guest_session, cash.z_report_printed; пополнение и его возврат пишет billing (money.top_up…).
-// Журнал интерфейса (activity_logs) и вебхуки — у вызывающего: результаты содержат всё нужное.
+// Журнал интерфейса (activity_logs), события админки и вебхуки (outbox) — в той же транзакции (events.go).
 // Права (cash.delete на возврат и т.п.) проверяет вызывающий.
 package service
 
@@ -41,6 +41,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
+	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
@@ -54,6 +55,9 @@ type Service struct {
 	Now func() time.Time
 	// Rand — источник случайности для nonce печати Z-отчёта. nil — crypto/rand.
 	Rand io.Reader
+	// Notifier — уведомления агента о балансе клиента после коммита (через billingsvc.AfterCommit:
+	// вызывающий создаёт billingsvc.WithCommitHooks и выполняет их после COMMIT). nil — без уведомлений.
+	Notifier billingsvc.SessionNotifier
 }
 
 func (s *Service) now() time.Time {

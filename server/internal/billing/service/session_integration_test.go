@@ -248,7 +248,7 @@ func TestSeatTransfer(t *testing.T) {
 			if n != 4 {
 				exec(t, "UPDATE club_computers SET last_seen_at = $2 WHERE id = $1", id, t0)
 			} else {
-				exec(t, "UPDATE club_computers SET last_seen_at = $2 WHERE id = $1", id, t0.Add(-5*time.Minute))
+				exec(t, "UPDATE club_computers SET last_seen_at = $2, status = 'offline' WHERE id = $1", id, t0.Add(-5*time.Minute))
 			}
 		}
 		exec(t, "UPDATE club_computers SET is_reserved = true WHERE id = $1", pcs[6])

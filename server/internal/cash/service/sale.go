@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
+	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
 	"github.com/aitmaganbetov/zafirogo/server/internal/stock"
@@ -57,6 +59,7 @@ func (s *Service) Sale(ctx context.Context, q *store.Queries, p SaleParams) (Sal
 
 	// Блокировки в порядке строк запроса, как цикл sale(); услуги — без блокировки.
 	products := map[int64]cash.Product{}
+	rows := map[int64]store.Product{}
 	var serviceIDs []int64
 	for _, it := range p.Items {
 		if it.ServiceID != 0 {
@@ -71,6 +74,7 @@ func (s *Service) Sale(ctx context.Context, q *store.Queries, p SaleParams) (Sal
 			return SaleResult{}, err
 		}
 		products[pr.ID] = cash.Product{ID: pr.ID, SKU: pr.Sku, Name: pr.Name, Price: tiyn(pr.Price), Quantity: pr.Quantity}
+		rows[pr.ID] = pr
 	}
 	services := map[int64]cash.Service{}
 	if len(serviceIDs) > 0 {
@@ -106,9 +110,30 @@ func (s *Service) Sale(ctx context.Context, q *store.Queries, p SaleParams) (Sal
 			return SaleResult{}, err
 		}
 		out.Movements = append(out.Movements, mv)
+		if err := stockMoved(ctx, q, p.ClubID, p.Actor.UserID, rows[w.ProductID], mv, true); err != nil {
+			return SaleResult{}, err
+		}
 	}
 	if out.Ledger, err = postDrawer(ctx, q, p.ClubID, ledger.KindPOSSale, ledgerKey(p.IdempotencyKey, row.ID), sale.Amount,
 		ledger.AccountRevenuePOS, ledger.Refs{CashShiftID: shift.ID, CashTransactionID: row.ID}, nil, p.Actor); err != nil {
+		return SaleResult{}, err
+	}
+	// Laravel: CashRegisterService::sale() (стр. 74–81) — журнал product.purchased и вебхук sale.completed
+	// (amount — number_format(…, 2, '.', ''), строки чека как receipt_data.items).
+	if err := record(ctx, q, activity.Entry{
+		ClubID: p.ClubID, Event: "product.purchased", Description: "Покупка товаров: " + itemsSummary(sale.Lines),
+		UserID: p.Actor.UserID, SubjectType: billingsvc.SubjectCashTransaction, SubjectID: row.ID,
+		Details: map[string]any{"amount": billingsvc.PHPFloat(sale.Amount), "item_count": len(sale.Lines)},
+	}); err != nil {
+		return SaleResult{}, err
+	}
+	if err := event(ctx, q, p.ClubID, "sale.completed", map[string]any{
+		"sale_id": row.ID, "cash_shift_id": shift.ID, "amount": sale.Amount.Tenge(), "amount_tiyn": int64(sale.Amount),
+		"items": receiptItems(sale.Lines),
+	}); err != nil {
+		return SaleResult{}, err
+	}
+	if err := cashTransactionEvent(ctx, q, p.ClubID, row, txSale); err != nil {
 		return SaleResult{}, err
 	}
 	return out, audit(ctx, q, p.ClubID, p.Actor, "cash.pos_sale", "cash_transaction", row.ID, out.Ledger,

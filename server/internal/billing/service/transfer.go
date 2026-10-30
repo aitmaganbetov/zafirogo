@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
+	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/session"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
@@ -14,6 +16,9 @@ type TransferRequest struct {
 	UserID           int64
 	FromComputerID   int64
 	TargetComputerID int64
+	// ActorUserID — кто пересаживает (журнал, команда агенту); 0 — сам клиент (UserID).
+	// Сотрудник пересаживает клиента с панели (новое, open-questions/stage2-rest.md RQ-6): UserID — клиент сессии.
+	ActorUserID int64
 }
 
 // TransferResult — сессия на новом ПК.
@@ -35,6 +40,10 @@ type TransferResult struct {
 // целевой ПК: те же поля сессии.
 func (s *Service) TransferSeat(ctx context.Context, req TransferRequest) (TransferResult, error) {
 	var out TransferResult
+	actor := req.ActorUserID
+	if actor == 0 {
+		actor = req.UserID
+	}
 	err := s.tx(ctx, req.ClubID, func(q *store.Queries) error {
 		out = TransferResult{}
 		now := s.clock.Now()
@@ -90,8 +99,36 @@ func (s *Service) TransferSeat(ctx context.Context, req TransferRequest) (Transf
 			return err
 		}
 		out = TransferResult{ComputerID: target.ID, SessionID: sid, SessionEndsAt: ends, SecondsMoved: plan.SecondsMoved}
-		return nil
+
+		// Laravel: SeatTransfers::transfer() (стр. 108–116) — журнал session.transferred, предмет — новый ПК.
+		names, err := q.ListClubUserNames(ctx, store.ListClubUserNamesParams{ClubID: req.ClubID, Ids: []int64{req.UserID}})
+		if err != nil {
+			return err
+		}
+		userName := ""
+		if len(names) > 0 {
+			userName = names[0].Name
+		}
+		fromName, toName := from.displayName(), target.displayName()
+		if err := RecordActivity(ctx, q, activity.Entry{
+			ClubID: req.ClubID, Event: "session.transferred",
+			Description: userName + " пересел с ПК " + fromName + " на ПК " + toName,
+			UserID:      actor, SubjectType: SubjectComputer, SubjectID: target.ID,
+			Details: map[string]any{"from": fromName, "to": toName, "session_id": sid},
+		}); err != nil {
+			return err
+		}
+		if err := AddEvent(ctx, q, req.ClubID, "computer.state", computerEvent(from.ID, "", 0, false, nil)); err != nil {
+			return err
+		}
+		return AddEvent(ctx, q, req.ClubID, "computer.state", computerEvent(target.ID, sid, user, false, &ends))
 	})
+	if err == nil && s.notifier != nil {
+		NotifySessionEnded(ctx, s.notifier, req.ClubID, req.FromComputerID, &agentv1.EndSession{
+			SessionId: out.SessionID, Reason: agentv1.SessionEndReason_SESSION_END_REASON_SEAT_TRANSFER,
+		}, actor)
+		NotifySessionStarted(ctx, s.notifier, req.ClubID, out.ComputerID, out.SessionID, req.UserID, false, time.Time{}, out.SessionEndsAt, actor)
+	}
 	return out, err
 }
 

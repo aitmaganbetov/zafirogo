@@ -9,7 +9,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
+	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
 	"github.com/aitmaganbetov/zafirogo/server/internal/stock"
@@ -77,12 +79,15 @@ func (s *Service) Refund(ctx context.Context, q *store.Queries, p RefundParams) 
 	now := s.now()
 	if kind == cash.RefundSale {
 		for _, ret := range cash.SaleStockReturns(income.Receipt.Items) {
-			mv, ok, err := returnToStock(ctx, q, p.ClubID, p.Actor.UserID, ret, now)
+			mv, product, ok, err := returnToStock(ctx, q, p.ClubID, p.Actor.UserID, ret, now)
 			if err != nil {
 				return RefundResult{}, err
 			}
 			if ok {
 				out.Movements = append(out.Movements, mv)
+				if err := stockMoved(ctx, q, p.ClubID, p.Actor.UserID, product, mv, false); err != nil {
+					return RefundResult{}, err
+				}
 			}
 		}
 	}
@@ -97,6 +102,8 @@ func (s *Service) Refund(ctx context.Context, q *store.Queries, p RefundParams) 
 
 	incomeKey := strconv.FormatInt(income.ID, 10)
 	details := map[string]any{"amount": int64(income.Amount), "receipt": income.ID, "kind": string(kind)}
+	// details журнала — как в старом коде: сумма float, номер чека.
+	journal := map[string]any{"amount": billingsvc.PHPFloat(income.Amount), "receipt": income.ID}
 	switch kind {
 	case cash.RefundSale:
 		if out.Ledger, err = postDrawer(ctx, q, p.ClubID, ledger.KindPOSRefund, "pos_refund:"+incomeKey, -income.Amount,
@@ -123,13 +130,41 @@ func (s *Service) Refund(ctx context.Context, q *store.Queries, p RefundParams) 
 		}
 		out.TopUp = &res
 		details["balance_field"], details["new_balance"], details["bonus_taken_back"] = string(field), int64(res.NewBalance), int64(res.BonusTakenBack)
+		// Laravel: refund() (стр. 187–190) — журнал user.balance_refunded, если клиент есть.
+		journal["balance_field"], journal["new_balance"], journal["bonus_taken_back"] =
+			string(field), billingsvc.PHPFloat(res.NewBalance), billingsvc.PHPFloat(res.BonusTakenBack)
+		names, err := userNames(ctx, q, p.ClubID, top.UserID)
+		if err != nil {
+			return RefundResult{}, err
+		}
+		if name, ok := names[top.UserID]; ok {
+			if err := record(ctx, q, activity.Entry{
+				ClubID: p.ClubID, Event: "user.balance_refunded", Description: "Возврат пополнения: " + name,
+				UserID: p.Actor.UserID, SubjectType: billingsvc.SubjectUser, SubjectID: top.UserID, Details: journal,
+			}); err != nil {
+				return RefundResult{}, err
+			}
+		}
+		if err := s.balanceChanged(ctx, q, p.ClubID, top.UserID); err != nil {
+			return RefundResult{}, err
+		}
+	}
+	// Laravel: refund() (стр. 200) — журнал cash.refund.
+	if err := record(ctx, q, activity.Entry{
+		ClubID: p.ClubID, Event: "cash.refund", Description: out.Refund.Description, UserID: p.Actor.UserID,
+		SubjectType: billingsvc.SubjectCashTransaction, SubjectID: out.Refund.ID, Details: journal,
+	}); err != nil {
+		return RefundResult{}, err
+	}
+	if err := cashTransactionEvent(ctx, q, p.ClubID, out.Refund, txRefund); err != nil {
+		return RefundResult{}, err
 	}
 	return out, audit(ctx, q, p.ClubID, p.Actor, "cash.refund", "cash_transaction", out.Refund.ID, out.Ledger, details)
 }
 
 // returnToStock — CashRegisterService::returnToStock(): товар по product_id или (старый чек) по имени, FOR UPDATE;
 // не найден или удалён — пропуск (ok = false); иначе quantity +=, движение receipt «Возврат POS».
-func returnToStock(ctx context.Context, q *store.Queries, clubID, userID int64, ret cash.StockReturn, now time.Time) (store.StockMovement, bool, error) {
+func returnToStock(ctx context.Context, q *store.Queries, clubID, userID int64, ret cash.StockReturn, now time.Time) (store.StockMovement, store.Product, bool, error) {
 	var (
 		product store.Product
 		err     error
@@ -137,21 +172,21 @@ func returnToStock(ctx context.Context, q *store.Queries, clubID, userID int64, 
 	if ret.ProductID != 0 {
 		product, err = stock.LockProduct(ctx, q, clubID, ret.ProductID)
 		if errors.Is(err, stock.ErrProductNotFound) {
-			return store.StockMovement{}, false, nil
+			return store.StockMovement{}, product, false, nil
 		}
 	} else {
 		product, err = q.LockProductByName(ctx, store.LockProductByNameParams{ClubID: clubID, Name: ret.Name})
 		if errors.Is(err, pgx.ErrNoRows) {
-			return store.StockMovement{}, false, nil
+			return store.StockMovement{}, product, false, nil
 		}
 	}
 	if err != nil {
-		return store.StockMovement{}, false, fmt.Errorf("cash: return to stock: %w", err)
+		return store.StockMovement{}, product, false, fmt.Errorf("cash: return to stock: %w", err)
 	}
 	m, err := stock.Adjust(product.ID, product.Quantity, stock.Receipt, ret.Quantity, 0, cash.RefundNote)
 	if err != nil {
-		return store.StockMovement{}, false, err
+		return store.StockMovement{}, product, false, err
 	}
 	mv, err := stock.ApplyMovement(ctx, q, clubID, userID, m, now)
-	return mv, err == nil, err
+	return mv, product, err == nil, err
 }
