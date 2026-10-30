@@ -4,6 +4,9 @@ updates:
     directory: /server
     schedule:
       interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14
     groups:
       go-minor:
         update-types: [minor, patch]
@@ -12,6 +15,9 @@ updates:
     directory: /web
     schedule:
       interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14
     groups:
       npm-minor:
         update-types: [minor, patch]
@@ -20,8 +26,14 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14
 
   - package-ecosystem: docker-compose
     directory: /
     schedule:
       interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14
