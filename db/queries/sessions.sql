@@ -40,7 +40,7 @@ SET current_session_id = sqlc.narg(session_id),
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);
 
 -- name: ListSessionZonePurchases :many
--- Части сессии для зон пересадки (Допущение Этапа 1: Q-007/OQ-BR-04 — вместо журнала tariff.purchased /
+-- Части сессии для зон пересадки (Решение Q-007/OQ-BR-04 (docs/DECISIONS.md) — вместо журнала tariff.purchased /
 -- time.purchased). tariff_found — тариф есть и НЕ удалён мягко (Tariff::find() без withTrashed).
 SELECT sp.id, sp.kind, sp.source, sp.zone_id, sp.tariff_id,
        (t.id IS NOT NULL)::boolean AS tariff_found,

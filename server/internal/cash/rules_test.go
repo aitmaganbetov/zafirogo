@@ -285,9 +285,10 @@ func TestPlanTopUpRefund(t *testing.T) {
 	eq(t, "GAP-024", got, TopUpRefund{Field: FieldMain, Amount: 200000, BonusTakenBack: 5000, NewBalance: 0, NewBonusBalance: 0})
 }
 
-// Сортировка «Продано товаров» — по float-сумме, как usort в PHP: «Б» (0.10 × 3 = 0.30000000000000004)
-// идёт раньше «А» (0.30 × 1 = 0.3), хотя точные суммы равны и по имени «А» первее.
-func TestReportItemsSortedByFloatAmount(t *testing.T) {
+// Решение CQ-7 (docs/DECISIONS.md): сортировка «Продано товаров» — по точной сумме в тиынах, затем по имени.
+// В PHP usort по float ставил «Б» (0.10 × 3 = 0.30000000000000004) раньше «А» (0.30 × 1 = 0.3); теперь равные
+// суммы идут по имени: «А», «Б», «В».
+func TestReportItemsSortedByTiynAmount(t *testing.T) {
 	ops := []Operation{
 		{ID: 1, Type: Income, Description: POSSale, Amount: 30, Receipt: &Receipt{Items: []ReceiptLine{{ProductID: 1, Name: "Б", Quantity: 3, Price: 10, Total: 30}}}},
 		{ID: 2, Type: Income, Description: POSSale, Amount: 30, Receipt: &Receipt{Items: []ReceiptLine{{ProductID: 2, Name: "А", Quantity: 1, Price: 30, Total: 30}}}},
@@ -298,11 +299,16 @@ func TestReportItemsSortedByFloatAmount(t *testing.T) {
 	for _, it := range r.Items {
 		names = append(names, it.Name)
 	}
-	eq(t, "order", strings.Join(names, ","), "Б,А,В")
-	eq(t, "stock Б", *r.Items[0].Stock, 4)
-	eq(t, "stock А (нет товара)", r.Items[1].Stock == nil, true)
+	eq(t, "order", strings.Join(names, ","), "А,Б,В")
+	eq(t, "stock А (нет товара)", r.Items[0].Stock == nil, true)
+	eq(t, "stock Б", *r.Items[1].Stock, 4)
 	eq(t, "stock В = 0", *r.Items[2].Stock, 0)
 	eq(t, "items_total", r.ItemsTotal, 90)
+
+	// Большая сумма — раньше, независимо от имени.
+	ops = append(ops, Operation{ID: 4, Type: Income, Description: POSSale, Amount: 31, Receipt: &Receipt{Items: []ReceiptLine{{ProductID: 4, Name: "Я", Quantity: 1, Price: 31, Total: 31}}}})
+	r = BuildReport(ReportInput{Operations: ops})
+	eq(t, "first by amount", r.Items[0].Name, "Я")
 }
 
 func TestReportItemsGroupingAndOther(t *testing.T) {

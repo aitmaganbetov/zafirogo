@@ -103,7 +103,7 @@ type GuestSessionResult struct {
 // ПК FOR UPDATE по id (не все найдены → «Выберите ПК на карте клуба.») → для каждого ПК: цена → занят →
 // бронь (чужая любая, гость = 0) → сессия (продление гостевой — тот же id) → один приход в кассу на сумму.
 // Цена тарифа — без скидки, минуты — по цене часа зоны каждого ПК (BR-038). Лимит количества тарифа не
-// расходуется (Допущение Этапа 1: Q-007).
+// расходуется (Решение Q-007 (docs/DECISIONS.md)).
 func (s *Service) SellGuestSession(ctx context.Context, req GuestSessionRequest) (GuestSessionResult, error) {
 	if s.cash == nil {
 		return GuestSessionResult{}, ErrNoCashRecorder

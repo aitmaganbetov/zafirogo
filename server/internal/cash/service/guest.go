@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"unicode/utf8"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
@@ -87,8 +86,9 @@ func (s *Service) recordGuest(ctx context.Context, q *store.Queries, in GuestSes
 	if !method.Valid() {
 		return GuestSessionRecorded{}, &cash.Error{Field: "payment_method", Rule: cash.RuleIn}
 	}
-	if description == "" || utf8.RuneCountInString(description) > cash.MaxDescription {
-		// description varchar(255): длинный список ПК в старом коде — ошибка MySQL (500).
+	// Решение CSQ-9/PD-6 (docs/DECISIONS.md): description — text (0014), список ПК в описании не обрезается и не
+	// ограничивается 255 символами (в старом varchar(255) — ошибка MySQL 500 и несостоявшаяся продажа).
+	if description == "" {
 		return GuestSessionRecorded{}, &cash.Error{Field: "computer_ids", Rule: cash.RuleMax}
 	}
 	shiftRow, err := LockOpenShift(ctx, q, clubID)

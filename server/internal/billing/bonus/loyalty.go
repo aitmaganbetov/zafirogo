@@ -39,7 +39,9 @@ func DiscountIsCumulative(levels []Level, personalDiscount float64, totalSpent m
 //
 //	if ($cents > 0) { ...->increment('total_spent', formatCents($cents)); }
 //
-// Выход за money.MaxAmount → money.ErrOutOfRange (в MySQL decimal(12,2) — ошибка 1264 и откат).
+// Предел здесь — только общий предел арифметики пакета money: выход за money.MaxAmount → money.ErrOutOfRange.
+// Предел колонки (в MySQL decimal(12,2), больше 9 999 999 999.99 — ошибка 1264 и откат) проверяет сервис:
+// billing/service MaxTotalSpent (решение SV-7, docs/DECISIONS.md / stage1-service.md).
 func AddSpending(totalSpent, cents money.Tiyn) (money.Tiyn, error) {
 	if cents <= 0 {
 		return totalSpent, nil

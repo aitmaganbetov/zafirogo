@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,25 +12,31 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 )
 
-// receipt_data кассовой операции — JSON того же вида, что в старом коде (допущение Этапа 1: Q-003 — формат JSON
-// в БД не меняем, суммы внутри — тенге числом; в тиыны — на границе чтения):
+// receipt_data кассовой операции. Решение Q-003 (docs/DECISIONS.md): новые записи — формат v2 (суммы в тиынах,
+// поле версии "v": 2); чтение поддерживает и формат старого кода (v1, суммы в тенге), который приходит с переносом
+// данных, пока инструмент переноса не переведёт всё в v2.
 //
-//	продажа POS: {"items": [{"product_id"|"service_id": id, "name", "quantity", "price", "total"}]}
-//	пополнение:  {"top_up": {"user_id", "balance_type", "bonus"}}
+//	v2 продажа POS: {"v": 2, "items": [{"product_id"|"service_id": id, "name", "quantity", "price_tiyn", "total_tiyn"}]}
+//	v2 пополнение:  {"v": 2, "top_up": {"user_id", "balance_type", "bonus_tiyn"}}
+//	v1 продажа POS: {"items": [{"product_id"|"service_id": id, "name", "quantity", "price", "total"}]}
+//	v1 пополнение:  {"top_up": {"user_id", "balance_type", "bonus"}}
 //
-// Laravel: app/Services/CashRegisterService.php sale() ('price' => (float) $product->price, 'total' => (float) price * qty),
-// topUpBalance() ('bonus' => $bonus['cents'] / 100). Числа пишем десятичной записью с двумя знаками ("700.00"):
-// значение то же, что у PHP-float из decimal(…,2).
+// Поля сумм v2 названы иначе, чем в v1 (price_tiyn, а не price), чтобы читатель v1 не принял тиыны за тенге.
+// v1 — как писал старый код: app/Services/CashRegisterService.php sale() ('price' => (float) $product->price,
+// 'total' => (float) price * qty), topUpBalance() ('bonus' => $bonus['cents'] / 100); суммы — тенге числом
+// (PHP float) или строкой, в тиыны — как MySQL decimal(…,2) / PHP 8.4 (tengeOf).
 
-// encodeReceipt — receipt_data для записи.
+// ReceiptVersion — версия формата receipt_data, который пишет encodeReceipt (решение Q-003).
+const ReceiptVersion = 2
+
+// encodeReceipt — receipt_data для записи (формат v2, решение Q-003).
 func encodeReceipt(r cash.Receipt) (json.RawMessage, error) {
-	out := map[string]any{}
+	out := map[string]any{"v": ReceiptVersion}
 	if r.Items != nil {
 		items := make([]map[string]any, 0, len(r.Items))
 		for _, l := range r.Items {
 			line := map[string]any{
-				"name": l.Name, "quantity": l.Quantity,
-				"price": json.Number(l.Price.Tenge()), "total": json.Number(l.Total.Tenge()),
+				"name": l.Name, "quantity": l.Quantity, "price_tiyn": int64(l.Price), "total_tiyn": int64(l.Total),
 			}
 			if l.ServiceID != 0 {
 				line["service_id"] = l.ServiceID
@@ -42,16 +49,19 @@ func encodeReceipt(r cash.Receipt) (json.RawMessage, error) {
 	}
 	if r.TopUp != nil {
 		out["top_up"] = map[string]any{
-			"user_id": r.TopUp.UserID, "balance_type": string(r.TopUp.Field), "bonus": json.Number(r.TopUp.Bonus.Tenge()),
+			"user_id": r.TopUp.UserID, "balance_type": string(r.TopUp.Field), "bonus_tiyn": int64(r.TopUp.Bonus),
 		}
 	}
 	if r.DiscountAmount != 0 {
-		out["discount_amount"] = json.Number(r.DiscountAmount.Tenge())
+		out["discount_amount_tiyn"] = int64(r.DiscountAmount)
 	}
 	return json.Marshal(out)
 }
 
-// decodeReceipt читает receipt_data (в том числе перенесённые старые чеки). nil/null — нет данных.
+// ErrReceiptFormat — receipt_data v2 с неверными полями (суммы v2 — только целые тиыны).
+var ErrReceiptFormat = errors.New("cash: malformed receipt_data v2")
+
+// decodeReceipt читает receipt_data обоих форматов (v2 и перенесённые старые чеки v1). nil/null — нет данных.
 // Не-объект (старые данные) — пустой чек: в старом коде is_array($sale->receipt_data) ? … : [].
 func decodeReceipt(raw json.RawMessage) (*cash.Receipt, error) {
 	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
@@ -60,6 +70,9 @@ func decodeReceipt(raw json.RawMessage) (*cash.Receipt, error) {
 	var top map[string]json.RawMessage
 	if err := unmarshalNumbers(raw, &top); err != nil {
 		return &cash.Receipt{}, nil //nolint:nilerr // не объект — как пустой массив PHP
+	}
+	if isV2(top) {
+		return decodeReceiptV2(top)
 	}
 	r := &cash.Receipt{}
 	if itemsRaw, ok := top["items"]; ok {
@@ -104,6 +117,62 @@ func decodeReceipt(raw json.RawMessage) (*cash.Receipt, error) {
 			if r.DiscountAmount, err = tengeOf(v); err != nil {
 				return nil, err
 			}
+		}
+	}
+	return r, nil
+}
+
+// isV2 — receipt_data в формате v2 ("v": 2).
+func isV2(top map[string]json.RawMessage) bool {
+	v, ok := top["v"]
+	if !ok {
+		return false
+	}
+	var n json.Number
+	return unmarshalNumbers(v, &n) == nil && n.String() == strconv.Itoa(ReceiptVersion)
+}
+
+// receiptV2 — receipt_data v2 (решение Q-003).
+type receiptV2 struct {
+	Items *[]struct {
+		ProductID int64  `json:"product_id"`
+		ServiceID int64  `json:"service_id"`
+		Name      string `json:"name"`
+		Quantity  int64  `json:"quantity"`
+		PriceTiyn int64  `json:"price_tiyn"`
+		TotalTiyn int64  `json:"total_tiyn"`
+	} `json:"items"`
+	TopUp *struct {
+		UserID      int64  `json:"user_id"`
+		BalanceType string `json:"balance_type"`
+		BonusTiyn   int64  `json:"bonus_tiyn"`
+	} `json:"top_up"`
+	DiscountAmountTiyn int64 `json:"discount_amount_tiyn"`
+}
+
+// decodeReceiptV2 — чтение формата v2: строгие типы (суммы — целые тиыны), иначе ErrReceiptFormat.
+func decodeReceiptV2(top map[string]json.RawMessage) (*cash.Receipt, error) {
+	raw, err := json.Marshal(top)
+	if err != nil {
+		return nil, err
+	}
+	var v receiptV2
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReceiptFormat, err)
+	}
+	r := &cash.Receipt{DiscountAmount: money.Tiyn(v.DiscountAmountTiyn)}
+	if v.Items != nil {
+		r.Items = make([]cash.ReceiptLine, 0, len(*v.Items))
+		for _, it := range *v.Items {
+			r.Items = append(r.Items, cash.ReceiptLine{
+				ProductID: it.ProductID, ServiceID: it.ServiceID, Name: it.Name, Quantity: it.Quantity,
+				Price: money.Tiyn(it.PriceTiyn), Total: money.Tiyn(it.TotalTiyn),
+			})
+		}
+	}
+	if v.TopUp != nil {
+		r.TopUp = &cash.TopUpReceipt{
+			UserID: v.TopUp.UserID, Field: cash.BalanceField(v.TopUp.BalanceType), Bonus: money.Tiyn(v.TopUp.BonusTiyn),
 		}
 	}
 	return r, nil

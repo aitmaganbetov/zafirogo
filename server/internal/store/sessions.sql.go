@@ -228,7 +228,7 @@ type ListSessionZonePurchasesRow struct {
 	TariffZoneIds []int64 `json:"tariff_zone_ids"`
 }
 
-// Части сессии для зон пересадки (Допущение Этапа 1: Q-007/OQ-BR-04 — вместо журнала tariff.purchased /
+// Части сессии для зон пересадки (Решение Q-007/OQ-BR-04 (docs/DECISIONS.md) — вместо журнала tariff.purchased /
 // time.purchased). tariff_found — тариф есть и НЕ удалён мягко (Tariff::find() без withTrashed).
 func (q *Queries) ListSessionZonePurchases(ctx context.Context, arg ListSessionZonePurchasesParams) ([]ListSessionZonePurchasesRow, error) {
 	rows, err := q.db.Query(ctx, listSessionZonePurchases, arg.ClubID, arg.SessionID)

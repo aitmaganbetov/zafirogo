@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -40,9 +41,10 @@ type OpenShiftResult struct {
 // Гонку двух открытий ловит уникальный индекс (club_id, open_marker) — та же ошибка.
 //
 // Новое (ledger): начальный остаток смены вводит кассир, а касса в журнале — остаток прошлых смен. Разница
-// (деньги, внесённые или изъятые между сменами) проводится операцией cash_income/cash_expense со счётом
-// opening_balance и meta.reason = "shift_opening", ключ "cash_shift_open:<id>" — после неё остаток cash_drawer
-// равен остатку смены (вопрос CSQ-1).
+// (деньги, внесённые или изъятые между сменами) проводится операцией cash_shift_opening со счётом
+// opening_balance, ключ "cash_shift_open:<id>" — после неё остаток cash_drawer равен остатку смены.
+// Решение CSQ-1 (docs/DECISIONS.md): отдельный вид, а не cash_income/cash_expense с meta.reason.
+// Остаток кассы по журналу — снимок последней закрытой смены + проводки после него (решение CSQ-7, drawerBalance).
 func (s *Service) OpenShift(ctx context.Context, q *store.Queries, p OpenShiftParams) (OpenShiftResult, error) {
 	if p.OpeningBalance < 0 {
 		return OpenShiftResult{}, &cash.Error{Field: "opening_balance", Rule: cash.RuleMin}
@@ -69,18 +71,16 @@ func (s *Service) OpenShift(ctx context.Context, q *store.Queries, p OpenShiftPa
 		return OpenShiftResult{}, fmt.Errorf("cash: open shift: %w", err)
 	}
 
-	drawer, err := q.CashDrawerLedgerBalance(ctx, p.ClubID)
+	drawerTiyn, _, err := drawerBalance(ctx, q, p.ClubID)
 	if err != nil {
-		return OpenShiftResult{}, fmt.Errorf("cash: drawer balance: %w", err)
+		return OpenShiftResult{}, err
 	}
-	delta := p.OpeningBalance - money.Tiyn(drawer)
-	kind := ledger.KindCashIncome
-	if delta < 0 {
-		kind = ledger.KindCashExpense
-	}
-	adj, err := postDrawer(ctx, q, p.ClubID, kind, "cash_shift_open:"+strconv.FormatInt(row.ID, 10), delta,
+	drawer := int64(drawerTiyn)
+	delta := p.OpeningBalance - drawerTiyn
+	// Решение CSQ-1 (docs/DECISIONS.md): вид cash_shift_opening для разницы любого знака.
+	adj, err := postDrawer(ctx, q, p.ClubID, ledger.KindCashShiftOpening, "cash_shift_open:"+strconv.FormatInt(row.ID, 10), delta,
 		ledger.AccountOpeningBalance, ledger.Refs{CashShiftID: row.ID},
-		map[string]any{"reason": "shift_opening", "drawer_before": drawer, "opening_balance": int64(p.OpeningBalance)}, p.Actor)
+		map[string]any{"drawer_before": drawer, "opening_balance": int64(p.OpeningBalance)}, p.Actor)
 	if err != nil {
 		return OpenShiftResult{}, err
 	}
@@ -121,6 +121,8 @@ type CloseShiftResult struct {
 // CashRegisterService::close() (~стр. 255–267): смена FOR UPDATE (findOrFail); не open → «Смена уже закрыта.»;
 // closed_by, status closed, open_marker null, closing_balance = balance(), closed_at = now.
 // Проводок нет: все операции смены уже в журнале, остаток cash_drawer равен closing_balance.
+// Решение CSQ-7 (docs/DECISIONS.md): смена запоминает снимок остатка кассы по журналу (последняя учтённая проводка
+// cash_drawer и остаток после неё) — следующее открытие суммирует только проводки после снимка.
 func (s *Service) CloseShift(ctx context.Context, q *store.Queries, p CloseShiftParams) (CloseShiftResult, error) {
 	row, err := q.LockCashShift(ctx, store.LockCashShiftParams{ClubID: p.ClubID, ID: p.ShiftID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -138,10 +140,17 @@ func (s *Service) CloseShift(ctx context.Context, q *store.Queries, p CloseShift
 	if err != nil {
 		return CloseShiftResult{}, err
 	}
+	// Смена заблокирована: все операции кассы клуба (и все проводки cash_drawer) ждут эту транзакцию,
+	// поэтому снимок видит всё, что было до закрытия, а следующие проводки получат id больше снимка.
+	drawer, lastEntryID, err := drawerBalance(ctx, q, p.ClubID)
+	if err != nil {
+		return CloseShiftResult{}, err
+	}
 	now := s.now()
 	closingBalance := int64(closing)
 	closed, err := q.CloseCashShift(ctx, store.CloseCashShiftParams{
 		ClubID: p.ClubID, ID: row.ID, ClosedBy: nonZero(p.Actor.UserID), ClosingBalance: &closingBalance, Now: &now,
+		DrawerSnapshotEntryID: lastEntryID, DrawerSnapshotBalance: int64(drawer),
 	})
 	if err != nil {
 		return CloseShiftResult{}, fmt.Errorf("cash: close shift: %w", err)
@@ -248,4 +257,42 @@ func (s *Service) ShiftTotals(ctx context.Context, q *store.Queries, clubID, shi
 		return cash.Totals{}, fmt.Errorf("cash: shift: %w", err)
 	}
 	return shiftTotals(ctx, q, clubID, &row)
+}
+
+// drawerSnapshotMargin — запас нижней границы created_at при чтении проводок после снимка. created_at проводки —
+// начало её транзакции (now()), а не момент записи: транзакция, начавшаяся до закрытия смены, может записать
+// проводку кассы после снимка (например, открытие следующей смены, ждавшее блокировку). Граница нужна только для
+// отсечения старых партиций; сутки — с большим запасом над временем жизни транзакции (lock_timeout 5 с).
+const drawerSnapshotMargin = 24 * time.Hour
+
+// drawerBalance — остаток счёта cash_drawer по журналу и id последней его проводки (0 — проводок нет).
+//
+// Решение CSQ-7 (docs/DECISIONS.md): остаток = снимок последней закрытой смены (cash_shifts.drawer_snapshot_*) +
+// проводки с id больше снимка, а не SUM по всем проводкам кассы за годы. Нет снимка (первая смена, перенесённые
+// смены) — полная сумма. Вызывать под блокировкой кассы (открытая смена FOR UPDATE или открытие без смены):
+// проводки cash_drawer пишутся только под ней, поэтому порядок id совпадает с порядком коммитов.
+func drawerBalance(ctx context.Context, q *store.Queries, clubID int64) (money.Tiyn, int64, error) {
+	var (
+		base, after int64
+		from        time.Time // без снимка — с начала времён
+	)
+	snap, err := q.LatestCashDrawerSnapshot(ctx, clubID)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+	case err != nil:
+		return 0, 0, fmt.Errorf("cash: drawer snapshot: %w", err)
+	default:
+		base, after, from = snap.Balance, snap.EntryID, snap.SnapshotAt.Add(-drawerSnapshotMargin)
+	}
+	since, err := q.CashDrawerLedgerSince(ctx, store.CashDrawerLedgerSinceParams{
+		ClubID: clubID, AfterEntryID: after, FromCreatedAt: from,
+	})
+	if err != nil {
+		return 0, 0, fmt.Errorf("cash: drawer balance: %w", err)
+	}
+	balance, err := money.Add(money.Tiyn(base), money.Tiyn(since.Balance))
+	if err != nil {
+		return 0, 0, fmt.Errorf("cash: drawer balance: %w", err)
+	}
+	return balance, max(after, since.LastEntryID), nil
 }

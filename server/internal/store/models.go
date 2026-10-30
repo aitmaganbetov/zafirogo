@@ -240,6 +240,12 @@ type CashShift struct {
 	// Z-отчёт напечатан (afterprint + nonce): без этого веб-панель смену не закрывает (BR-056, Q-015)
 	ZReportPrintedAt *time.Time `json:"z_report_printed_at"`
 	ZReportPrintedBy *int64     `json:"z_report_printed_by"`
+	// CSQ-7: id последней проводки cash_drawer, учтённой при закрытии (0 — проводок не было); NULL — снимка нет
+	DrawerSnapshotEntryID *int64 `json:"drawer_snapshot_entry_id"`
+	// CSQ-7: остаток cash_drawer по журналу (тиыны) после проводки drawer_snapshot_entry_id
+	DrawerSnapshotBalance *int64 `json:"drawer_snapshot_balance"`
+	// CSQ-7: время БД (now() транзакции закрытия) — нижняя граница партиций для проводок после снимка
+	DrawerSnapshotAt *time.Time `json:"drawer_snapshot_at"`
 }
 
 type CashTransaction struct {

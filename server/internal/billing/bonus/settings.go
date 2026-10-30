@@ -6,7 +6,8 @@ import "errors"
 // с теми же значениями по умолчанию, что в старом коде (BR-003): сервисы читают СЫРОЙ JSON
 // (CurrentClub::settings()), а не слитый с SettingsController::defaultSettings().
 //
-// Допущение Этапа 1: Q-003 — формат JSON в БД не меняем, перевод в типы Go — на чтении.
+// Решение Q-003 (docs/DECISIONS.md): уровни читаются в обоих форматах — v2 ({"v": 2, "levels": [{threshold_tiyn,
+// percent_bp}]}, EncodeLevels) и формат старого кода (список в тенге и процентах, Normalize).
 // Ограничения из SaveSettingsRequest (≤ 20 уровней, 0.01…100 % и т.п.) на чтении НЕ применяются —
 // старый код их тоже не применял (см. ValidateLevels для сохранения).
 type Settings struct {
@@ -68,9 +69,9 @@ func SettingsFrom(settings Value) (Settings, error) {
 	}
 	return Settings{
 		TopUpBonusEnabled: dataGet(settings, "finances", "topup_bonus_enabled", Bool(false)).Truthy(),
-		TopUpBonusLevels:  Normalize(dataGet(settings, "finances", "topup_bonus_levels", List()), ThresholdAmount),
+		TopUpBonusLevels:  levelsFrom(dataGet(settings, "finances", "topup_bonus_levels", List()), ThresholdAmount),
 		LoyaltyEnabled:    dataGet(settings, "finances", "loyalty_enabled", Bool(false)).Truthy(),
-		LoyaltyLevels:     Normalize(dataGet(settings, "finances", "loyalty_levels", List()), ThresholdSpent),
+		LoyaltyLevels:     levelsFrom(dataGet(settings, "finances", "loyalty_levels", List()), ThresholdSpent),
 	}, nil
 }
 

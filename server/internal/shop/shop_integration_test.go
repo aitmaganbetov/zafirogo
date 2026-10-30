@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -141,6 +142,16 @@ func TestGoldenAgentShop(t *testing.T) {
 		e.scan(&pc, "SELECT club_computer_id FROM shop_orders WHERE id = $1", o.OrderID)
 		if status != "new" || name != "PC-05" || amount != 95050 || pc != e.pc {
 			t.Fatalf("shop_orders = %s %s %d %d", status, name, amount, pc)
+		}
+		// Решение Q-003 (docs/DECISIONS.md): shop_orders.items — v2 в тиынах; читается обратно в те же строки.
+		var raw []byte
+		e.scan(&raw, "SELECT items FROM shop_orders WHERE id = $1", o.OrderID)
+		lines, err := shop.DecodeItems(raw)
+		if err != nil || !reflect.DeepEqual(lines, o.Lines) {
+			t.Fatalf("items %s = %+v, %v; want %+v", raw, lines, err, o.Lines)
+		}
+		if v := e.int("SELECT (items->>'v')::bigint FROM shop_orders WHERE id = $1", o.OrderID); v != shop.ItemsVersion {
+			t.Fatalf("items version = %d", v)
 		}
 		// Проводка shop_order: member_main −950.50 / revenue_shop +950.50.
 		if n := e.int(`SELECT count(*) FROM ledger_transactions WHERE club_id = $1 AND kind = 'shop_order' AND shop_order_id = $2`, e.club, o.OrderID); n != 1 {

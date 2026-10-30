@@ -61,7 +61,7 @@ type TariffPurchaseInput struct {
 	Rules           PaymentRules
 	DiscountPercent float64 // LoyaltyProgram::discountFor() клиента (float, %)
 	Role            string  // club_memberships.role
-	PurchaseCount   int64   // продаж тарифа в агенте (Допущение Этапа 1: Q-007)
+	PurchaseCount   int64   // продаж тарифа в агенте (Решение Q-007 (docs/DECISIONS.md))
 	UserID          int64
 	Computer        Computer
 	Choice          BalanceChoice

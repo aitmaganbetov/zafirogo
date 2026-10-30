@@ -15,7 +15,7 @@ const (
 // Laravel: app/Models/CashTransaction.php POS_SALE.
 const POSSale = "Продажа POS"
 
-// PaymentMethod — способ оплаты (cash/card/qr). Допущение Этапа 1: Q-013 — необязательное поле
+// PaymentMethod — способ оплаты (cash/card/qr). Решение Q-013 (docs/DECISIONS.md) — необязательное поле
 // (cash_transactions.payment_method nullable), в остатке смены и X/Z-отчётах не используется.
 type PaymentMethod string
 
@@ -59,7 +59,7 @@ func (f BalanceField) Valid() bool { return f == FieldMain || f == FieldBonus }
 // В старом коде вид «Пополнение балансов» / «Гостевые сессии» определялся по журналу действий:
 // приход входит в вид, если у него есть запись cash.income с details.balance_type / details.computers
 // (Laravel: app/Services/ShiftReport.php for(), $logged(); BR-057, BR-160). В новом коде вид — поле
-// кассовой операции, которое заполняет вызывающий (OQ-BR-04, допущение Этапа 1: Q-007/BR-160).
+// кассовой операции, которое заполняет вызывающий (OQ-BR-04, Решение Q-007/BR-160 (docs/DECISIONS.md)).
 // «Продажа товаров» определяется не видом, а маркером description = POSSale, как в старом коде.
 type IncomeKind string
 

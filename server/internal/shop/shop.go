@@ -409,13 +409,7 @@ func validateOrder(req OrderRequest) error {
 }
 
 func (s *Service) insertOrder(ctx context.Context, q *store.Queries, req OrderRequest, computerName string, lines []Line, total money.Tiyn, now time.Time) (store.ShopInsertOrderRow, error) {
-	// shop_orders.items — как в старом: {product_id, name, quantity, price, total}, суммы — строки formatCents.
-	items := make([]map[string]any, len(lines))
-	for i, l := range lines {
-		items[i] = map[string]any{"product_id": l.ProductID, "name": l.Name, "quantity": l.Quantity,
-			"price": formatCents(l.Price), "total": formatCents(l.Total)}
-	}
-	body, err := json.Marshal(items)
+	body, err := EncodeItems(lines)
 	if err != nil {
 		return store.ShopInsertOrderRow{}, err
 	}
@@ -445,6 +439,129 @@ func (s *Service) record(ctx context.Context, q *store.Queries, req OrderRequest
 		Details: map[string]any{"amount": formatCents(total), "items": items, "computer": computerName},
 	})
 	return err
+}
+
+// ItemsVersion — версия формата shop_orders.items, который пишет EncodeItems (решение Q-003).
+const ItemsVersion = 2
+
+// ErrItemsFormat — shop_orders.items не читается ни как v2, ни как формат старого кода.
+var ErrItemsFormat = errors.New("shop: malformed shop_orders.items")
+
+type itemsV2 struct {
+	V     int      `json:"v"`
+	Items []itemV2 `json:"items"`
+}
+
+type itemV2 struct {
+	ProductID int64  `json:"product_id"`
+	Name      string `json:"name"`
+	Quantity  int64  `json:"quantity"`
+	PriceTiyn int64  `json:"price_tiyn"`
+	TotalTiyn int64  `json:"total_tiyn"`
+}
+
+// EncodeItems — shop_orders.items для записи. Решение Q-003 (docs/DECISIONS.md): формат v2 — суммы в тиынах,
+// поле версии: {"v": 2, "items": [{product_id, name, quantity, price_tiyn, total_tiyn}]}.
+// Старый код (AgentShop::purchase()) писал список [{product_id, name, quantity, price, total}] с суммами-строками
+// formatCents в тенге — его читает DecodeItems (v1).
+func EncodeItems(lines []Line) (json.RawMessage, error) {
+	out := itemsV2{V: ItemsVersion, Items: make([]itemV2, len(lines))}
+	for i, l := range lines {
+		out.Items[i] = itemV2{ProductID: l.ProductID, Name: l.Name, Quantity: l.Quantity,
+			PriceTiyn: int64(l.Price), TotalTiyn: int64(l.Total)}
+	}
+	return json.Marshal(out)
+}
+
+// DecodeItems читает shop_orders.items обоих форматов (решение Q-003): v2 — объект с "v": 2 и суммами в тиынах
+// (только целые); v1 — список старого кода, суммы — тенге строкой ("950.50", formatCents) или числом,
+// в тиыны как MySQL decimal(12,2) (money.ParseTengeRounded; экспонента — через float, как (float) в PHP 8.4).
+func DecodeItems(raw json.RawMessage) ([]Line, error) {
+	trimmed := bytes.TrimSpace(raw)
+	switch {
+	case len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")):
+		return nil, nil
+	case trimmed[0] == '{':
+		var v itemsV2
+		if err := json.Unmarshal(trimmed, &v); err != nil || v.V != ItemsVersion {
+			return nil, fmt.Errorf("%w: %s", ErrItemsFormat, trimmed)
+		}
+		out := make([]Line, len(v.Items))
+		for i, it := range v.Items {
+			out[i] = Line{ProductID: it.ProductID, Name: it.Name, Quantity: it.Quantity,
+				Price: money.Tiyn(it.PriceTiyn), Total: money.Tiyn(it.TotalTiyn)}
+		}
+		return out, nil
+	}
+	var legacy []map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &legacy); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrItemsFormat, err)
+	}
+	out := make([]Line, len(legacy))
+	for i, it := range legacy {
+		l := Line{}
+		var err error
+		if l.ProductID, err = legacyInt(it["product_id"]); err != nil {
+			return nil, err
+		}
+		if l.Quantity, err = legacyInt(it["quantity"]); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(it["name"], &l.Name)
+		if l.Price, err = legacyTenge(it["price"]); err != nil {
+			return nil, err
+		}
+		if l.Total, err = legacyTenge(it["total"]); err != nil {
+			return nil, err
+		}
+		out[i] = l
+	}
+	return out, nil
+}
+
+// legacyInt — целое из v1 (число или числовая строка).
+func legacyInt(raw json.RawMessage) (int64, error) {
+	if len(raw) == 0 {
+		return 0, nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(raw, &n); err != nil {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return 0, fmt.Errorf("%w: %s", ErrItemsFormat, raw)
+		}
+		n = json.Number(strings.TrimSpace(s))
+	}
+	v, err := n.Int64()
+	if err != nil {
+		return 0, fmt.Errorf("%w: %s", ErrItemsFormat, raw)
+	}
+	return v, nil
+}
+
+// legacyTenge — сумма v1 (тенге строкой или числом) в тиынах.
+func legacyTenge(raw json.RawMessage) (money.Tiyn, error) {
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return 0, nil
+	}
+	var str string
+	if err := json.Unmarshal(raw, &str); err != nil {
+		var n json.Number
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return 0, fmt.Errorf("%w: %s", ErrItemsFormat, raw)
+		}
+		str = n.String()
+	}
+	str = strings.TrimSpace(str)
+	t, err := money.ParseTengeRounded(str)
+	if err == nil {
+		return t, nil
+	}
+	f, ferr := strconv.ParseFloat(str, 64)
+	if ferr != nil {
+		return 0, fmt.Errorf("%w: amount %q", ErrItemsFormat, str)
+	}
+	return money.FromTengeFloatDecimal(f)
 }
 
 // formatCents — AgentTariffPurchaseService::formatCents(): sprintf('%d.%02d', intdiv(c, 100), c % 100). Суммы заказа

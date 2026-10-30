@@ -70,7 +70,7 @@ type TariffPurchaseRequest struct {
 //
 // Laravel: app/Services/AgentTariffPurchaseService.php purchase() (стр. 62–101) и sell() (стр. 236–311).
 // Порядок как в старом коде: тариф FOR UPDATE → членство FOR UPDATE → ПК FOR UPDATE → (баланс FOR UPDATE) →
-// isAvailable (лимит количества — счётчик tariff_sales, Допущение Этапа 1: Q-007) → ensureComputerFor →
+// isAvailable (лимит количества — счётчик tariff_sales, Решение Q-007 (docs/DECISIONS.md)) → ensureComputerFor →
 // зоны тарифа → цена → раскладка по балансам → бронь → списание (ledger tariff_purchase) → траты лояльности →
 // часть сессии → сессия ПК. Баланс блокируется раньше проверок (в Laravel — внутри sell()): порядок
 // блокировок тот же, отличается только то, что при отказе строка баланса тоже была заблокирована.
@@ -175,7 +175,7 @@ func (s *Service) PurchaseTariff(ctx context.Context, req TariffPurchaseRequest)
 			return err
 		}
 		currencyOut = club.currency
-		// Счётчик лимита количества: только продажи в агенте (Допущение Этапа 1: Q-007).
+		// Счётчик лимита количества: только продажи в агенте (Решение Q-007 (docs/DECISIONS.md)).
 		if err := q.IncrementTariffSales(ctx, store.IncrementTariffSalesParams{ClubID: req.ClubID, TariffID: t.ID, Now: now}); err != nil {
 			return err
 		}
@@ -316,7 +316,7 @@ type PackageStartRequest struct {
 // (docs/DECISIONS.md): после отката пакет сгорает в отдельной транзакции — ledger package_expired и журнал) →
 // ensureComputerFor → зоны тарифа (withTrashed) → период действия → sell(0, main_balance_only, main) →
 // удаление пакета. Ledger минут: операция package_start, минус весь остаток пакета (пакет удаляется
-// целиком, даже если срок урезал минуты; Допущение Этапа 1: Q-011).
+// целиком, даже если срок урезал минуты; Решение Q-011 (docs/DECISIONS.md)).
 func (s *Service) StartPackage(ctx context.Context, req PackageStartRequest) (PurchaseResult, error) {
 	var out PurchaseResult
 	err := s.tx(ctx, req.ClubID, func(q *store.Queries) error {

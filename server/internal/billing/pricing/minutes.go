@@ -49,7 +49,7 @@ func MinuteOfferFor(zonePricePerHour *money.Tiyn, rules PaymentRules, discountPe
 //	let minutes = Math.min(max_minutes || 720, Math.floor(balanceCents * 60 / hourCents));
 //	while (minutes > 0 && minutesPrice(hourCents, minutes) > balanceCents) minutes--;
 //
-// Допущение Этапа 1: Q-008 — формула агента переносится на сервер, числа те же.
+// Решение Q-008 (docs/DECISIONS.md) — формула агента переносится на сервер, числа те же.
 // Агент считал во float (Math.floor(balance*60/hour)). Пока balance*60 < 2^53 (баланс < 1,5e14 тиынов),
 // числитель и знаменатель точны, а частное IEEE округляется до целого вверх, только если оно больше 2^53, —
 // значит, целочисленное деление даёт то же число. Цикл всё равно не даёт цене превысить баланс.
@@ -107,7 +107,7 @@ type AutoBillingDecision struct {
 //	иначе пауза auto_billing_pause_minutes от autoPauseStart, затем купить affordableMinutes() с основного баланса.
 //
 // Сброс PauseStartedAt (вышел из аккаунта, ушёл в «не ждёт») — забота вызывающего, как в autoBillingTick().
-// Допущение Этапа 1: Q-008 — логика агента переносится на сервер.
+// Решение Q-008 (docs/DECISIONS.md) — логика агента переносится на сервер.
 // Источник: WindowsAgent/Frontend/main.js autoBillingOn/autoBillingWaits/startAutoBilling/autoBillingTick
 // (~стр. 1001–1046) (BR-023, GS-055).
 func AutoBilling(o MinuteOffer, st AutoBillingState, mainBalance money.Tiyn, now time.Time) AutoBillingDecision {

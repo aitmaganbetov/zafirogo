@@ -61,7 +61,7 @@ SET total_spent = sqlc.arg(total_spent), updated_at = sqlc.arg(now)
 WHERE club_id = sqlc.arg(club_id) AND user_id = sqlc.arg(user_id);
 
 -- name: GetTariffSales :one
--- Продаж тарифа в агенте (Допущение Этапа 1: Q-007; вызывать под блокировкой тарифа).
+-- Продаж тарифа в агенте (Решение Q-007 (docs/DECISIONS.md); вызывать под блокировкой тарифа).
 SELECT COALESCE((SELECT sold FROM tariff_sales WHERE club_id = sqlc.arg(club_id) AND tariff_id = sqlc.arg(tariff_id)), 0)::bigint AS sold;
 
 -- name: IncrementTariffSales :exec

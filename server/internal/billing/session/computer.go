@@ -73,7 +73,7 @@ func IsDue(c Computer, now time.Time) bool {
 // вызывается: нет возврата, нет пакетов (весь остаток уже 0 — время вышло), нет журнала, части
 // session_purchases НЕ удаляются (их чистит суточная задача через 8 дней, BR-034). GAP-005.
 //
-// Допущение Этапа 1: Q-010 — пока повторяем старое поведение (DeletePurchases = false).
+// Решение Q-010 (docs/DECISIONS.md): как в старом (DeletePurchases = false), плюс журнал computer.session_expired в сервисе.
 type Expiry struct {
 	ClearSession    bool // обнулить поля сессии ПК
 	Settle          bool // всегда false

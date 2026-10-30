@@ -114,3 +114,12 @@ WHERE a.club_id = sqlc.arg(club_id)
   AND a.user_id IS NULL
   AND e.created_at >= sqlc.arg(from_created_at)
   AND e.created_at < sqlc.arg(to_created_at);
+
+-- name: GetLedgerTransactionByCashTransaction :one
+-- Операция кассового документа заданного вида (CSQ-6: исходная продажа/пополнение для reverses_transaction_id
+-- возврата). Индекс ledger_transactions_club_id_cash_transaction_id_index (по партиции — одна точка индекса).
+SELECT id, created_at
+FROM ledger_transactions
+WHERE club_id = sqlc.arg(club_id) AND cash_transaction_id = sqlc.arg(cash_transaction_id) AND kind = sqlc.arg(kind)
+ORDER BY created_at, id
+LIMIT 1;

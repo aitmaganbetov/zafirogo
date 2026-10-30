@@ -35,7 +35,7 @@ type TransferResult struct {
 // Laravel: app/Services/SeatTransfers.php transfer() (стр. 83–120): оба ПК FOR UPDATE в порядке id →
 // тот же/несуществующий ПК → своя оплаченная сессия на исходном → свободен ли целевой (не резерв, онлайн,
 // без сессии и сотрудника, без чужой брони до конца сессии + интервал) и подходит ли зона
-// (allowedZoneIds() — последняя покупка сессии; Допущение Этапа 1: Q-007/OQ-BR-04 — из session_purchases,
+// (allowedZoneIds() — последняя покупка сессии; Решение Q-007/OQ-BR-04 (docs/DECISIONS.md) — из session_purchases,
 // а не из журнала действий) → исходный ПК: id/клиент/конец = NULL → целевой ПК: те же поля сессии.
 // Решение Q-016 (docs/DECISIONS.md): session_guest = false на обоих ПК (в старом не трогался).
 func (s *Service) TransferSeat(ctx context.Context, req TransferRequest) (TransferResult, error) {

@@ -40,7 +40,7 @@ type ZonePurchase struct {
 // Laravel: app/Services/SeatTransfers.php allowedZoneIds() (стр. 135–152), BR-035:
 // последняя по id запись журнала tariff.purchased|time.purchased этой сессии; поминутное время —
 // только своя зона; тариф не найден или без зон — любая; иначе зоны тарифа.
-// Допущение Этапа 1: Q-007/OQ-BR-04 — источник не журнал, а покупки сессии; смысл тот же, пакеты
+// Решение Q-007/OQ-BR-04 (docs/DECISIONS.md) — источник не журнал, а покупки сессии; смысл тот же, пакеты
 // не учитываются.
 func AllowedZones(purchases []ZonePurchase) []int64 {
 	var last *ZonePurchase

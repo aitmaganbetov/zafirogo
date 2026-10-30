@@ -16,12 +16,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 )
 
-// Kind — вид операции (ledger_transactions.kind, CHECK в 0002_ledger.sql).
+// Kind — вид операции (ledger_transactions.kind, CHECK в 0002_ledger.sql и 0014_stage1_decisions.sql).
 type Kind string
 
 // Виды операций.
@@ -46,6 +47,10 @@ const (
 	KindCashExpense             Kind = "cash_expense"              // BR-054
 	KindGuestSession            Kind = "guest_session"             // BR-038
 	KindMigrationOpeningBalance Kind = "migration_opening_balance" // перенос из MySQL
+	// KindCashShiftOpening — выравнивание кассы при открытии смены: разница начального остатка смены и остатка
+	// cash_drawer по журналу (деньги, внесённые или изъятые между сменами), счёт opening_balance.
+	// Решение CSQ-1 (docs/DECISIONS.md), миграция 0014.
+	KindCashShiftOpening Kind = "cash_shift_opening"
 )
 
 var validKinds = map[Kind]bool{
@@ -54,10 +59,21 @@ var validKinds = map[Kind]bool{
 	KindPackageStart: true, KindSessionRefund: true, KindPackageKept: true, KindPackageExpired: true,
 	KindShopOrder: true, KindShopOrderCancel: true, KindPOSSale: true, KindPOSRefund: true,
 	KindCashIncome: true, KindCashExpense: true, KindGuestSession: true, KindMigrationOpeningBalance: true,
+	KindCashShiftOpening: true,
 }
 
 // Valid сообщает, что вид операции известен схеме.
 func (k Kind) Valid() bool { return validKinds[k] }
+
+// Kinds — все виды операций, известные схеме (по алфавиту).
+func Kinds() []Kind {
+	out := make([]Kind, 0, len(validKinds))
+	for k := range validKinds {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
 
 // AccountKind — вид счёта (ledger_accounts.kind).
 type AccountKind string

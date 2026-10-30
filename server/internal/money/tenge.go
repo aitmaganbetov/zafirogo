@@ -12,7 +12,7 @@ import (
 // StaffApiController::money() (app/Http/Controllers/Api/Staff/StaffApiController.php).
 // Для отрицательных старый formatCents давал "0.-50" (баг, BR-001, §15.1 п. 1); мы его не повторяем
 // и пишем "-0.50", как Friends::formatCents() и number_format().
-// Допущение Этапа 1: Q-004.
+// Решение Q-004 (docs/DECISIONS.md).
 func (t Tiyn) Tenge() string {
 	var b [24]byte
 	return string(t.appendTenge(b[:0]))

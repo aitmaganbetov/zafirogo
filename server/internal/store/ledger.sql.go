@@ -111,6 +111,34 @@ func (q *Queries) GetLedgerTransaction(ctx context.Context, arg GetLedgerTransac
 	return i, err
 }
 
+const getLedgerTransactionByCashTransaction = `-- name: GetLedgerTransactionByCashTransaction :one
+SELECT id, created_at
+FROM ledger_transactions
+WHERE club_id = $1 AND cash_transaction_id = $2 AND kind = $3
+ORDER BY created_at, id
+LIMIT 1
+`
+
+type GetLedgerTransactionByCashTransactionParams struct {
+	ClubID            int64  `json:"club_id"`
+	CashTransactionID *int64 `json:"cash_transaction_id"`
+	Kind              string `json:"kind"`
+}
+
+type GetLedgerTransactionByCashTransactionRow struct {
+	ID        int64     `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Операция кассового документа заданного вида (CSQ-6: исходная продажа/пополнение для reverses_transaction_id
+// возврата). Индекс ledger_transactions_club_id_cash_transaction_id_index (по партиции — одна точка индекса).
+func (q *Queries) GetLedgerTransactionByCashTransaction(ctx context.Context, arg GetLedgerTransactionByCashTransactionParams) (GetLedgerTransactionByCashTransactionRow, error) {
+	row := q.db.QueryRow(ctx, getLedgerTransactionByCashTransaction, arg.ClubID, arg.CashTransactionID, arg.Kind)
+	var i GetLedgerTransactionByCashTransactionRow
+	err := row.Scan(&i.ID, &i.CreatedAt)
+	return i, err
+}
+
 const insertLedgerEntries = `-- name: InsertLedgerEntries :many
 INSERT INTO ledger_entries (club_id, transaction_id, account_id, amount, created_at)
 SELECT $1, $2, e.account_id, e.amount, $3

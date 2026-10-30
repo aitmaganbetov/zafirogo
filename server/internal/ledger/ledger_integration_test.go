@@ -629,3 +629,33 @@ func isSQLState(err error, code string) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == code
 }
+
+// Решение CSQ-1 (docs/DECISIONS.md): виды операций Go и CHECK ledger_transactions_kind_check совпадают,
+// включая cash_shift_opening (0014).
+func TestKindsMatchSchemaCheck(t *testing.T) {
+	d := testDB(t)
+	var def string
+	if err := d.Owner.QueryRow(context.Background(),
+		`SELECT pg_get_constraintdef(oid) FROM pg_constraint
+		 WHERE conname = 'ledger_transactions_kind_check' AND conrelid = 'ledger_transactions'::regclass`).Scan(&def); err != nil {
+		t.Fatal(err)
+	}
+	inSchema := map[string]bool{}
+	for i, part := range strings.Split(def, "'") {
+		if i%2 == 1 { // литералы в кавычках
+			inSchema[part] = true
+		}
+	}
+	for _, k := range ledger.Kinds() {
+		if !inSchema[string(k)] {
+			t.Errorf("kind %q is not in the schema CHECK: %s", k, def)
+		}
+		delete(inSchema, string(k))
+	}
+	for k := range inSchema {
+		t.Errorf("schema kind %q has no Go constant", k)
+	}
+	if !ledger.KindCashShiftOpening.Valid() {
+		t.Fatal("cash_shift_opening is not valid")
+	}
+}

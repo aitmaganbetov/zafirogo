@@ -106,11 +106,22 @@ func (s *Service) Refund(ctx context.Context, q *store.Queries, p RefundParams) 
 	journal := map[string]any{"amount": billingsvc.PHPFloat(income.Amount), "receipt": income.ID}
 	switch kind {
 	case cash.RefundSale:
+		// Решение CSQ-6 (docs/DECISIONS.md): возврат ссылается на исходную операцию pos_sale.
+		original, err := ledgerTxOf(ctx, q, p.ClubID, income.ID, ledger.KindPOSSale)
+		if err != nil {
+			return RefundResult{}, err
+		}
 		if out.Ledger, err = postDrawer(ctx, q, p.ClubID, ledger.KindPOSRefund, "pos_refund:"+incomeKey, -income.Amount,
-			ledger.AccountRevenuePOS, ledger.Refs{CashShiftID: shift.ID, CashTransactionID: out.Refund.ID}, nil, p.Actor); err != nil {
+			ledger.AccountRevenuePOS, ledger.Refs{CashShiftID: shift.ID, CashTransactionID: out.Refund.ID, ReversesTransactionID: original},
+			nil, p.Actor); err != nil {
 			return RefundResult{}, err
 		}
 	case cash.RefundTopUp:
+		// Решение CSQ-6 (docs/DECISIONS.md): так же и возврат пополнения — на исходную операцию top_up.
+		original, err := ledgerTxOf(ctx, q, p.ClubID, income.ID, ledger.KindTopUp)
+		if err != nil {
+			return RefundResult{}, err
+		}
 		top := income.Receipt.TopUp
 		field := billing.FieldMain
 		if top.Field == cash.FieldBonus {
@@ -119,7 +130,7 @@ func (s *Service) Refund(ctx context.Context, q *store.Queries, p RefundParams) 
 		res, err := billing.RefundTopUp(ctx, q, billing.RefundTopUpParams{
 			ClubID: p.ClubID, UserID: top.UserID, Field: field, Amount: income.Amount, Bonus: top.Bonus,
 			IncomeCashTransactionID: income.ID, CashShiftID: shift.ID, RefundCashTransactionID: out.Refund.ID,
-			Actor: p.Actor,
+			ReversesTransactionID: original, Actor: p.Actor,
 		})
 		var be *billing.BalanceError
 		if errors.As(err, &be) {
@@ -189,4 +200,19 @@ func returnToStock(ctx context.Context, q *store.Queries, clubID, userID int64, 
 	}
 	mv, err := stock.ApplyMovement(ctx, q, clubID, userID, m, now)
 	return mv, product, err == nil, err
+}
+
+// ledgerTxOf — id ledger-операции вида kind кассового документа cashTransactionID (0 — нет: нулевая сумма,
+// перенесённые данные). Решение CSQ-6 (docs/DECISIONS.md).
+func ledgerTxOf(ctx context.Context, q *store.Queries, clubID, cashTransactionID int64, kind ledger.Kind) (int64, error) {
+	row, err := q.GetLedgerTransactionByCashTransaction(ctx, store.GetLedgerTransactionByCashTransactionParams{
+		ClubID: clubID, CashTransactionID: &cashTransactionID, Kind: string(kind),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("cash: ledger operation of %d: %w", cashTransactionID, err)
+	}
+	return row.ID, nil
 }

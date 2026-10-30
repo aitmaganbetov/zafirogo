@@ -206,7 +206,7 @@ type GetTariffSalesParams struct {
 	TariffID int64 `json:"tariff_id"`
 }
 
-// Продаж тарифа в агенте (Допущение Этапа 1: Q-007; вызывать под блокировкой тарифа).
+// Продаж тарифа в агенте (Решение Q-007 (docs/DECISIONS.md); вызывать под блокировкой тарифа).
 func (q *Queries) GetTariffSales(ctx context.Context, arg GetTariffSalesParams) (int64, error) {
 	row := q.db.QueryRow(ctx, getTariffSales, arg.ClubID, arg.TariffID)
 	var sold int64

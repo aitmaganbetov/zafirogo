@@ -80,7 +80,7 @@ type PackageStart struct {
 //	ensureComputerFor; зоны тарифа; период действия тарифа; sell(price 0, …, $minutes, part); $package->delete();
 //
 // При ErrPackageExpired старый код пакет не удалял (транзакция откатывалась), его чистит суточная задача
-// (BR-034). Допущение Этапа 1: Q-011 — вызывающий решает, удалять ли пакет сразу; здесь только ошибка.
+// (BR-034). Решение Q-011 (docs/DECISIONS.md): пакет сжигает вызывающий отдельной транзакцией; здесь только ошибка.
 func StartPackage(p Package, tariff *PackageTariff, c Computer, userID int64, now time.Time) (PackageStart, error) {
 	minutes := min(p.MinutesLeft, money.IntDiv(max(0, p.ExpiresAt.Unix()-now.Unix()), 60))
 	if minutes <= 0 {

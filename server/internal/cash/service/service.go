@@ -18,8 +18,8 @@
 //	cash_income    cash_drawer −S, cash_other +S          cash_expense cash_drawer +S, cash_other −S
 //	guest_session  cash_drawer −S, revenue_time +S
 //	top_up / top_up_refund — billing.TopUp / billing.RefundTopUp
-//	открытие смены — разница начального остатка и остатка кассы по журналу: cash_drawer ∓d, opening_balance ±d
-//	(вид cash_income/cash_expense с meta.reason = "shift_opening", вопрос CSQ-1)
+//	cash_shift_opening — разница начального остатка смены и остатка кассы по журналу: cash_drawer ∓d,
+//	opening_balance ±d (решение CSQ-1); остаток кассы — снимок закрытой смены + проводки после него (CSQ-7)
 //
 // Аудит (audit_log, категория money): cash.shift_opened, cash.shift_closed, cash.pos_sale, cash.income, cash.expense,
 // cash.refund, cash.guest_session, cash.z_report_printed; пополнение и его возврат пишет billing (money.top_up…).

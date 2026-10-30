@@ -16,7 +16,7 @@ import (
 // распространяется на дробную ("-1.50" → -50, BR-001 / §15.1 п. 1); (int)"строка" берёт ведущее
 // число по правилам PHP (пробелы в начале, знак; "abc" → 0; переполнение → насыщение до int64).
 // Нужен только для сверки с данными старой системы (миграция, оракул), а не для нового кода:
-// новые суммы хранятся в тиынах. Допущение Этапа 1: Q-004.
+// новые суммы хранятся в тиынах. Решение Q-004 (docs/DECISIONS.md).
 func LegacyAmountToCents(amount string) (int64, error) {
 	whole, fraction, ok := strings.Cut(amount, ".")
 	if !ok {
@@ -41,7 +41,7 @@ func LegacyAmountToCents(amount string) (int64, error) {
 // (Laravel: app/Services/AgentTariffPurchaseService.php formatCents(), стр. 392–395):
 // sprintf('%d.%02d', intdiv($cents, 100), $cents % 100). Для отрицательных даёт "0.-50" и "-1.-50" —
 // старый баг (BR-001, §15.1 п. 1). Не используйте в новом коде (там Tiyn.Tenge()); функция — для
-// сверки со старыми ответами. Допущение Этапа 1: Q-004.
+// сверки со старыми ответами. Решение Q-004 (docs/DECISIONS.md).
 func LegacyFormatCents(cents int64) string {
 	return strconv.FormatInt(IntDiv(cents, 100), 10) + "." + phpSprintf02d(PHPMod(cents, 100))
 }

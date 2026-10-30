@@ -40,10 +40,13 @@ VALUES (sqlc.arg(club_id), sqlc.narg(opened_by), 'open', true, sqlc.arg(opening_
 RETURNING *;
 
 -- name: CloseCashShift :one
--- close(): closed_by, status = closed, open_marker = null, closing_balance, closed_at = now.
+-- close(): closed_by, status = closed, open_marker = null, closing_balance, closed_at = now;
+-- снимок остатка кассы по журналу (CSQ-7, docs/DECISIONS.md).
 UPDATE cash_shifts
 SET closed_by = sqlc.narg(closed_by), status = 'closed', open_marker = NULL,
-    closing_balance = sqlc.arg(closing_balance), closed_at = sqlc.arg(now), updated_at = sqlc.arg(now)
+    closing_balance = sqlc.arg(closing_balance), closed_at = sqlc.arg(now), updated_at = sqlc.arg(now),
+    drawer_snapshot_entry_id = sqlc.arg(drawer_snapshot_entry_id)::bigint,
+    drawer_snapshot_balance = sqlc.arg(drawer_snapshot_balance)::bigint, drawer_snapshot_at = now()
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id) AND status = 'open'
 RETURNING *;
 
@@ -176,3 +179,24 @@ SELECT COALESCE(-sum(e.amount), 0)::bigint AS balance
 FROM ledger_accounts a
 JOIN ledger_entries e ON e.club_id = a.club_id AND e.account_id = a.id
 WHERE a.club_id = sqlc.arg(club_id) AND a.kind = 'cash_drawer' AND a.user_id IS NULL;
+
+-- name: LatestCashDrawerSnapshot :one
+-- Последний снимок остатка кассы (CSQ-7): закрытая смена со снимком с наибольшим id (смены клуба открываются
+-- по одной, поэтому порядок id = порядок закрытия). Индекс cash_shifts_club_id_drawer_snapshot_index.
+SELECT id, drawer_snapshot_entry_id::bigint AS entry_id, drawer_snapshot_balance::bigint AS balance,
+       drawer_snapshot_at::timestamptz AS snapshot_at
+FROM cash_shifts
+WHERE club_id = sqlc.arg(club_id) AND drawer_snapshot_entry_id IS NOT NULL
+ORDER BY id DESC
+LIMIT 1;
+
+-- name: CashDrawerLedgerSince :one
+-- Проводки кассы после снимка (CSQ-7): id > after_entry_id; created_at >= from_created_at — только чтобы
+-- не читать старые партиции (граница с запасом, см. cash/service drawerBalance). Остаток = −SUM (актив).
+-- last_entry_id — наибольший id среди них (0 — проводок нет). Без снимка: after_entry_id = 0, from — начало времён.
+SELECT COALESCE(-sum(e.amount), 0)::bigint AS balance, COALESCE(max(e.id), 0)::bigint AS last_entry_id
+FROM ledger_accounts a
+JOIN ledger_entries e ON e.club_id = a.club_id AND e.account_id = a.id
+WHERE a.club_id = sqlc.arg(club_id) AND a.kind = 'cash_drawer' AND a.user_id IS NULL
+  AND e.id > sqlc.arg(after_entry_id) AND e.created_at >= sqlc.arg(from_created_at);
+

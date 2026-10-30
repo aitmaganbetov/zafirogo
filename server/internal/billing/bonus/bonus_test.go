@@ -333,6 +333,15 @@ func TestSpending(t *testing.T) {
 	if _, err := AddSpending(money.MaxAmount, 1); err == nil {
 		t.Fatal("AddSpending выше MaxAmount: нет ошибки")
 	}
+	// Решение SV-7 (docs/DECISIONS.md): AddSpending ограничен только money.MaxAmount; предел decimal(12,2)
+	// (999 999 999 999 тиынов) проверяет billing/service MaxTotalSpent, а не чистая арифметика.
+	const decimal12x2 money.Tiyn = 999_999_999_999
+	if got, err := AddSpending(decimal12x2, 1); err != nil || got != decimal12x2+1 {
+		t.Fatalf("AddSpending за пределом decimal(12,2) = %d, %v; want %d, nil", got, err, decimal12x2+1)
+	}
+	if got, err := AddSpending(money.MaxAmount-1, 1); err != nil || got != money.MaxAmount {
+		t.Fatalf("AddSpending до MaxAmount = %d, %v", got, err)
+	}
 }
 
 // TestParseSettings — чтение finances.* из clubs.settings (BR-003, Q-003): умолчания, (bool), data_get.

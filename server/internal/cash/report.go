@@ -95,13 +95,13 @@ type ReportInput struct {
 //     count = all − Σcount, amount = round(all_sum − Σsum, 2) во float;
 //   - возвраты: операции смены с refund_of_id (count, SUM);
 //   - товары: строки чеков продаж POS с receipt_data, кроме возвращённых; группировка по name: quantity +=, amount += total
-//     (float); product_id — первый непустой; сортировка amount ↓, затем name ↑ (strcmp); stock — текущий остаток
+//     (float); product_id — первый непустой; сортировка amount ↓ (в тиынах, CQ-7), затем name ↑ (strcmp); stock — текущий остаток
 //     (последний коммит старого репо fab81f2: «остаток склада вместо суммы продаж»), у услуг — null;
 //   - items_total = round(Σ amount, 2); discount = round(Σ receipt.discount_amount, 2);
 //   - сотрудники: по user_id — count (все операции), SUM прихода, SUM расхода; sortByDesc('income') (устойчиво).
 //
 // Суммы по SQL (виды, возвраты, сотрудники, итоги) в старом коде точные (SUM по decimal) — здесь сложение тиынов.
-// Float-места (прочий приход, суммы товаров, их сортировка) повторены во float64 + PHPRound.
+// Float-места (прочий приход, суммы товаров) повторены во float64 + PHPRound; сортировка товаров — по тиынам (CQ-7).
 // Способ оплаты (Q-013) не участвует.
 func BuildReport(in ReportInput) Report {
 	r := Report{Totals: ComputeTotals(in.Opening, in.Operations)}
@@ -157,7 +157,7 @@ func BuildReport(in ReportInput) Report {
 
 type itemAcc struct {
 	row       ItemRow
-	amountF   float64 // (float) сумма, как в PHP: ключ сортировки
+	amountF   float64 // (float) сумма, как в PHP: слагаемое items_total
 	productID int64
 }
 
@@ -196,10 +196,12 @@ func soldItems(in ReportInput, refunded map[int64]bool) ([]ItemRow, money.Tiyn, 
 	for _, n := range order {
 		accs = append(accs, byName[n])
 	}
-	// Laravel: usort($items, fn ($a, $b) => $b['amount'] <=> $a['amount'] ?: strcmp($a['name'], $b['name']));
+	// Laravel: usort($items, fn ($a, $b) => $b['amount'] <=> $a['amount'] ?: strcmp($a['name'], $b['name'])).
+	// Решение CQ-7 (docs/DECISIONS.md): сумма сравнивается точно в тиынах, а не во float (в PHP 0.10 × 3 =
+	// 0.30000000000000004 вставало раньше 0.30 × 1); затем — по имени, как strcmp.
 	sort.SliceStable(accs, func(i, j int) bool {
-		if accs[i].amountF != accs[j].amountF {
-			return accs[i].amountF > accs[j].amountF
+		if accs[i].row.Amount != accs[j].row.Amount {
+			return accs[i].row.Amount > accs[j].row.Amount
 		}
 		return accs[i].row.Name < accs[j].row.Name // strcmp — побайтно, как сравнение строк Go
 	})

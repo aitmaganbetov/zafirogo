@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
@@ -46,9 +48,16 @@ func TestGoldenTopUpBonus(t *testing.T) {
 		eq(t, "bonus fund", e.account(ledger.AccountBonusFund), -(100006 + 12500))
 		e.checkLedger(1350055)
 
-		var receipt map[string]map[string]any
+		// Решение Q-003 (docs/DECISIONS.md): чек v2 — бонус в тиынах (в старом коде "bonus": 1000.06 тенге).
+		var receipt struct {
+			V     int `json:"v"`
+			TopUp struct {
+				BonusTiyn int64 `json:"bonus_tiyn"`
+			} `json:"top_up"`
+		}
 		e.must(json.Unmarshal(r.Transaction.ReceiptData, &receipt))
-		eq(t, "receipt bonus", receipt["top_up"]["bonus"], any(1000.06))
+		eq(t, "receipt version", receipt.V, 2)
+		eq(t, "receipt bonus", receipt.TopUp.BonusTiyn, 100006)
 		eq(t, "income kind", *r.Transaction.IncomeKind, "top_up")
 	})
 	t.Run("GS-003", func(t *testing.T) {
@@ -127,6 +136,10 @@ func TestGoldenRefund(t *testing.T) {
 		eq(t, "receipt movements", e.count("SELECT count(*) FROM stock_movements WHERE product_id = $1 AND type = 'receipt' AND note = 'Возврат POS' AND quantity = 3", cola), 1)
 		eq(t, "balance", e.totals(sh.ID).Balance(), 100000)
 		eq(t, "revenue pos", e.account(ledger.AccountRevenuePOS), 0)
+		// Решение CSQ-6 (docs/DECISIONS.md): pos_refund ссылается на исходную операцию pos_sale.
+		eq(t, "reverses pos_sale", ref.Ledger.Refs.ReversesTransactionID, sale.Ledger.TransactionID)
+		eq(t, "reverses_transaction_id in db", e.count(`SELECT reverses_transaction_id FROM ledger_transactions
+			WHERE club_id = $1 AND kind = 'pos_refund' AND id = $2`, e.club, ref.Ledger.TransactionID), sale.Ledger.TransactionID)
 		e.checkLedger(100000)
 
 		_, err = e.refund(owner, sale.Transaction.ID)
@@ -165,6 +178,8 @@ func TestGoldenRefund(t *testing.T) {
 		e.wantBalances(c, 50000, 0)
 		eq(t, "bonus taken back", ref.TopUp.BonusTakenBack, 20000)
 		eq(t, "refund amount", ref.Refund.Amount, int64(200000))
+		// Решение CSQ-6: возврат пополнения ссылается на исходную операцию top_up.
+		eq(t, "reverses top_up", ref.TopUp.Ledger.Refs.ReversesTransactionID, top.Balance.Ledger.TransactionID)
 		e.checkLedger(0)
 	})
 	t.Run("GS-006", func(t *testing.T) {
@@ -381,7 +396,8 @@ func TestGoldenShift(t *testing.T) {
 		e.checkLedger(570000)
 	})
 	t.Run("shift-opening-drawer", func(t *testing.T) {
-		// Между сменами из кассы изъяли 700: проводка выравнивания cash_expense / opening_balance.
+		// Между сменами из кассы изъяли 700: проводка выравнивания cash_shift_opening / opening_balance
+		// (решение CSQ-1, docs/DECISIONS.md).
 		e := newEnv(t)
 		owner := e.user("Владелец")
 		sh := e.open(owner, "1000")
@@ -392,7 +408,64 @@ func TestGoldenShift(t *testing.T) {
 		e.open(owner, "1000")
 		e.checkLedger(100000)
 		eq(t, "opening_balance account", e.account(ledger.AccountOpeningBalance), 100000-70000)
-		eq(t, "expense ops", e.count("SELECT count(*) FROM ledger_transactions WHERE club_id = $1 AND kind = 'cash_expense' AND meta->>'reason' = 'shift_opening'", e.club), 1)
+		eq(t, "opening ops", e.count("SELECT count(*) FROM ledger_transactions WHERE club_id = $1 AND kind = 'cash_shift_opening'", e.club), 2)
+		eq(t, "opening op of shift 2", e.count(`SELECT -e.amount FROM ledger_transactions t
+			JOIN ledger_entries e ON e.club_id = t.club_id AND e.transaction_id = t.id AND e.created_at = t.created_at
+			JOIN ledger_accounts a ON a.club_id = e.club_id AND a.id = e.account_id AND a.kind = 'cash_drawer'
+			WHERE t.club_id = $1 AND t.kind = 'cash_shift_opening' AND t.idempotency_key <> $2`, e.club, "cash_shift_open:"+strconv.FormatInt(sh.ID, 10)), -70000)
+		eq(t, "no cash_income/expense for opening", e.count("SELECT count(*) FROM ledger_transactions WHERE club_id = $1 AND kind IN ('cash_income', 'cash_expense') AND cash_transaction_id IS NULL", e.club), 0)
+	})
+	t.Run("drawer-snapshot", func(t *testing.T) {
+		// Решение CSQ-7 (docs/DECISIONS.md): закрытие смены запоминает снимок остатка кассы по журналу;
+		// открытие следующей — снимок + проводки после него.
+		e := newEnv(t)
+		owner := e.user("Владелец")
+		sh := e.open(owner, "1000")
+		e.mustTransact(owner, cash.Income, "700", "Приход")
+		res, err := e.close(owner, sh.ID, false)
+		e.must(err)
+		eq(t, "snapshot balance", *res.Shift.DrawerSnapshotBalance, int64(170000))
+		eq(t, "snapshot entry", *res.Shift.DrawerSnapshotEntryID, e.count(`SELECT max(e.id) FROM ledger_entries e
+			JOIN ledger_accounts a ON a.club_id = e.club_id AND a.id = e.account_id
+			WHERE a.club_id = $1 AND a.kind = 'cash_drawer'`, e.club))
+		eq(t, "snapshot at", res.Shift.DrawerSnapshotAt != nil, true)
+
+		// Проводка кассы вне смены после снимка (входящий остаток переноса) — учитывается.
+		e.must(e.tx(func(ctx context.Context, q *store.Queries) error {
+			_, err := ledger.Post(ctx, q, ledger.Operation{
+				ClubID: e.club, Kind: ledger.KindMigrationOpeningBalance, IdempotencyKey: "drawer-after-snapshot",
+				Entries: []ledger.Entry{
+					{Account: ledger.ClubAccount(ledger.AccountCashDrawer), Amount: -5000},
+					{Account: ledger.ClubAccount(ledger.AccountOpeningBalance), Amount: 5000},
+				},
+			})
+			return err
+		}))
+		eq(t, "drawer", e.drawer(), 175000)
+
+		// Снимок действительно используется: подменённый остаток снимка сдвигает выравнивание на ту же разницу.
+		_, err = fixDB.Owner.Exec(context.Background(),
+			"UPDATE cash_shifts SET drawer_snapshot_balance = drawer_snapshot_balance + 100 WHERE club_id = $1 AND id = $2", e.club, sh.ID)
+		e.must(err)
+		sh2 := e.open(owner, "2000")
+		eq(t, "opening adjustment", e.count(`SELECT -e.amount FROM ledger_transactions t
+			JOIN ledger_entries e ON e.club_id = t.club_id AND e.transaction_id = t.id AND e.created_at = t.created_at
+			JOIN ledger_accounts a ON a.club_id = e.club_id AND a.id = e.account_id AND a.kind = 'cash_drawer'
+			WHERE t.club_id = $1 AND t.idempotency_key = $2`, e.club, "cash_shift_open:"+strconv.FormatInt(sh2.ID, 10)),
+			200000-175000-100)
+		_, err = fixDB.Owner.Exec(context.Background(),
+			"UPDATE cash_shifts SET drawer_snapshot_balance = drawer_snapshot_balance - 100 WHERE club_id = $1 AND id = $2", e.club, sh.ID)
+		e.must(err)
+		e.checkLedger(200000 - 100)
+
+		// Вторая смена: снимок = снимок первой + проводки после него.
+		e.mustTransact(owner, cash.Expense, "50", "Расход")
+		res2, err := e.close(owner, sh2.ID, false)
+		e.must(err)
+		eq(t, "snapshot 2", *res2.Shift.DrawerSnapshotBalance, e.count(`SELECT -sum(e.amount)::bigint FROM ledger_entries e
+			JOIN ledger_accounts a ON a.club_id = e.club_id AND a.id = e.account_id
+			WHERE a.club_id = $1 AND a.kind = 'cash_drawer'`, e.club))
+		eq(t, "closing", *res2.Shift.ClosingBalance, int64(195000))
 	})
 }
 
@@ -408,17 +481,21 @@ func TestGoldenSale(t *testing.T) {
 		eq(t, "description", sale.Transaction.Description, cash.POSSale)
 		eq(t, "payment_method", sale.Transaction.PaymentMethod == nil, true)
 		eq(t, "created_at", sale.Transaction.CreatedAt.Equal(clock), true)
+		// Решение Q-003 (docs/DECISIONS.md): чек v2 — суммы в тиынах (в старом коде "total": 1500.0 тенге).
 		var receipt struct {
+			V     int `json:"v"`
 			Items []struct {
-				ProductID int64   `json:"product_id"`
-				Quantity  int64   `json:"quantity"`
-				Price     float64 `json:"price"`
-				Total     float64 `json:"total"`
+				ProductID int64 `json:"product_id"`
+				Quantity  int64 `json:"quantity"`
+				PriceTiyn int64 `json:"price_tiyn"`
+				TotalTiyn int64 `json:"total_tiyn"`
 			} `json:"items"`
 		}
 		e.must(json.Unmarshal(sale.Transaction.ReceiptData, &receipt))
+		eq(t, "receipt version", receipt.V, 2)
 		eq(t, "receipt quantity", receipt.Items[0].Quantity, 2)
-		eq(t, "receipt total", receipt.Items[0].Total, 1500.0)
+		eq(t, "receipt price", receipt.Items[0].PriceTiyn, 75000)
+		eq(t, "receipt total", receipt.Items[0].TotalTiyn, 150000)
 		eq(t, "movements", len(sale.Movements), 1)
 		eq(t, "balance_after", sale.Movements[0].BalanceAfter, 3)
 		eq(t, "note", *sale.Movements[0].Note, cash.SaleNote)
@@ -703,3 +780,62 @@ func TestGoldenStaffAPI(t *testing.T) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+
+// Решение CSQ-9/PD-6 (docs/DECISIONS.md): описание гостевой сессии с длинным списком ПК записывается целиком
+// (cash_transactions.description — text; в старом varchar(255) — ошибка MySQL 500).
+func TestGuestSessionLongDescription(t *testing.T) {
+	e := newEnv(t)
+	owner := e.user("Владелец")
+	e.open(owner, "0")
+	pcs := make([]string, 0, 120)
+	for i := 1; i <= 120; i++ {
+		pcs = append(pcs, "PC-"+strconv.Itoa(i))
+	}
+	description := "Гостевая сессия: 60 минут, ПК " + strings.Join(pcs, ", ") + " (Наличные)"
+	if n := utf8.RuneCountInString(description); n <= 255 {
+		t.Fatalf("description is too short for the test: %d", n)
+	}
+	rec, err := e.guest(owner, 6000000, description, cash.PayCash, "guest-long")
+	e.must(err)
+	eq(t, "stored", e.count("SELECT count(*) FROM cash_transactions WHERE club_id = $1 AND id = $2 AND description = $3",
+		e.club, rec.Transaction.ID, description), 1)
+	eq(t, "returned", rec.Transaction.Description, description)
+}
+
+// Решение Q-003 (docs/DECISIONS.md): новые чеки — v2 (тиыны, "v": 2); перенесённые чеки v1 (тенге) в той же
+// смене читаются X/Z-отчётом, чеком и возвратом так же, как новые.
+func TestReceiptV1AndV2InOneShift(t *testing.T) {
+	e := newEnv(t)
+	owner := e.user("Владелец")
+	sh := e.open(owner, "0")
+	cola := e.product("Cola", 70050, 10)
+	chips := e.product("Chips", 30000, 10)
+
+	sale := e.mustSale(owner, prod(cola, 2))
+	eq(t, "v2 written", e.count(`SELECT count(*) FROM cash_transactions WHERE club_id = $1 AND id = $2
+		AND receipt_data->>'v' = '2' AND receipt_data->'items'->0->>'price_tiyn' = '70050'`, e.club, sale.Transaction.ID), 1)
+
+	// Чек старого формата (как его писал Laravel): 2 × 300.00 ₸; без ledger — в журнале кассы его нет,
+	// поэтому инварианты кассы здесь не проверяются.
+	legacy := e.count(`INSERT INTO cash_transactions (club_id, cash_shift_id, user_id, type, amount, description, receipt_data, created_at, updated_at)
+		VALUES ($1, $2, $3, 'income', 60000, 'Продажа POS', $4::jsonb, now(), now()) RETURNING id`,
+		e.club, sh.ID, owner, `{"items":[{"product_id":`+strconv.FormatInt(chips, 10)+`,"name":"Chips","quantity":2,"price":300.0,"total":600.0}]}`)
+	_, err := fixDB.Owner.Exec(context.Background(), "UPDATE products SET quantity = 8 WHERE id = $1", chips)
+	e.must(err)
+
+	x := e.report(cash.ReportX, 0, "Владелец")
+	eq(t, "items", len(x.Report.Items), 2)
+	eq(t, "cola first (больше сумма)", x.Report.Items[0].Name+"/"+strconv.FormatInt(int64(x.Report.Items[0].Amount), 10), "Cola/140100")
+	eq(t, "chips v1", x.Report.Items[1].Name+"/"+strconv.FormatInt(int64(x.Report.Items[1].Amount), 10), "Chips/60000")
+	eq(t, "items total", x.Report.ItemsTotal, 200100)
+
+	// Возврат чека v1: товары — на склад, деньги — из кассы.
+	ref, err := e.refund(owner, legacy)
+	e.must(err)
+	eq(t, "refund amount", ref.Refund.Amount, int64(60000))
+	eq(t, "chips back", e.stockOf(chips), 10)
+	ref2, err := e.refund(owner, sale.Transaction.ID)
+	e.must(err)
+	eq(t, "refund v2", ref2.Refund.Amount, int64(140100))
+	eq(t, "cola back", e.stockOf(cola), 10)
+}
