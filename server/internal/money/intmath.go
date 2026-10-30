@@ -98,7 +98,7 @@ func MulDivRound(a, mul, add, div int64) (int64, error) {
 }
 
 // BasisPoints — (int) round($percent * 100): процент (float, как из decimal(5,2)/JSON настроек)
-// в базисные пункты с PHP-округлением.
+// в базисные пункты с PHP-округлением (PHP 8.4: 0.145 → 14, в 8.3 было 15).
 //   - Laravel: app/Services/AgentTariffPurchaseService.php discounted() — (int) round($percent * 100) (BR-012);
 //   - Laravel: app/Services/TopUpBonus.php TopUpBonus::for() — (int) round($percent * 100) (BR-041).
 //

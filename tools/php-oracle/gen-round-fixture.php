@@ -3,9 +3,10 @@
 /**
  * Оракул PHP для пакета server/internal/money (round(), (int), number_format(), хелперы центов).
  *
- * Запуск (нужен PHP той же ветки, что в проде старого Laravel; фикстура снята на 8.3.6):
+ * Запуск (нужен PHP той же ветки, что в проде старого Laravel — 8.4; фикстура снята на 8.4.27):
  *   php tools/php-oracle/gen-round-fixture.php                   # пишет server/internal/money/testdata/php_round.json
  *   php tools/php-oracle/gen-round-fixture.php --full FILE.json  # все ≥ 200 000 кейсов round() для дифференциального теста
+ *   php -- --full - < tools/php-oracle/gen-round-fixture.php     # то же в stdout (так его запускает Go-тест, в т.ч. через Docker)
  *
  * Детерминирован: mt_srand(фиксированное зерно), MT19937 одинаков во всех PHP ≥ 7.1.
  * float передаются как 16 hex-символов IEEE-754 (big-endian), чтобы сравнивать побитно.
@@ -154,12 +155,15 @@ function roundCandidates(): Generator
             }
         }
     }
-    // 10. Известные примеры из docs/business-rules.md §2 BR-001 и баг GH-12143.
+    // 10. Известные примеры из docs/business-rules.md §2 BR-001, баг GH-12143 (исправлен в 8.4)
+    //     и ветки 8.4: places == 0 у целого, |x·10^p| в [1e15, 1e16) (8.3 возвращал x как есть), 0.145 * 100.
     foreach ([[12.345, 2], [100.005 * 100, 0], [1.005 * 100, 0], [2.675, 2], [1.005, 2], [1.955, 2], [5.055, 2],
         [0.285, 2], [1.4999999999999999, 0], [0.49999999999999994, 0], [-0.49999999999999994, 0], [-0.5, 0], [0.5, 0],
         [1.45, 1], [-1.45, 1], [5.0e15 + 0.5, 0], [4503599627370495.5, 0], [1e15, 2], [999999999999.995, 2],
         [PHP_FLOAT_MIN, 2], [PHP_FLOAT_MAX, 2], [PHP_FLOAT_MAX, -308], [PHP_FLOAT_EPSILON, 16], [5e-324, 400],
         [123456.789, -2], [1234.5678, PHP_INT_MAX], [1234.5678, PHP_INT_MIN], [1234.5678, -2147483648], [0.1 + 0.2, 1],
+        [0.145 * 100, 0], [0.285 * 100, 0], [3.0, 0], [-1e20, 0], [123456789012345.67, 1], [-1234567890123.4565, 3],
+        [0.285, 10], [1.5, 0], [-2.5, 0], [12345678.9, -23], [0.5e-20, 23],
     ] as [$x, $p]) {
         yield [$x, $p, 'known'];
     }
@@ -276,7 +280,7 @@ $full = null;
 if (($argv[1] ?? '') === '--full') {
     $full = $argv[2] ?? null;
     if ($full === null) {
-        fwrite(STDERR, "usage: --full FILE.json\n");
+        fwrite(STDERR, "usage: --full FILE.json | --full -\n");
         exit(2);
     }
 }
@@ -290,7 +294,7 @@ foreach (roundCandidates() as [$x, $p, $cat]) {
 }
 
 if ($full !== null) {
-    file_put_contents($full, json_encode(['php' => PHP_VERSION, 'round' => $all], JSON_THROW_ON_ERROR));
+    file_put_contents($full === '-' ? 'php://stdout' : $full, json_encode(['php' => PHP_VERSION, 'round' => $all], JSON_THROW_ON_ERROR));
     fwrite(STDERR, sprintf("full: %d кейсов round() → %s\n", count($all), $full));
     exit(0);
 }

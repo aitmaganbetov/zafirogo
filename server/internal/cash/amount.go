@@ -125,7 +125,7 @@ type TopUpAmount struct {
 	// Amount — что легло в member_balances и в cash_transactions.amount: (float) → decimal(…,2) MySQL.
 	// Laravel: CashRegisterService::topUpBalance() — $balance->increment($balanceType, $amount), create(['amount' => $amount]).
 	Amount money.Tiyn
-	// BonusBase — от чего считается бонус за пополнение: (int) round($amount * 100) (PHP 8.3).
+	// BonusBase — от чего считается бонус за пополнение: (int) round($amount * 100) (PHP 8.4+).
 	// Laravel: app/Services/TopUpBonus.php TopUpBonus::for() — $cents = (int) round($amount * 100) (BR-041).
 	// Почти всегда равно Amount; расходится только на вводе с > 14 значащими цифрами
 	// (например "0.0149999999999999": Amount = 2 тиына, BonusBase = 1 тиын) — поэтому передаём оба.

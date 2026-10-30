@@ -123,8 +123,8 @@ func TestTopUpForPHPRounding(t *testing.T) {
 	if s, _ := TopUpForTengeString(levels, "100.005"); s != got {
 		t.Fatalf("TopUpForTengeString = %+v, want %+v", s, got)
 	}
-	// MQ-2: 1.005 → 101 центов в PHP 8.3 (наивно 100).
-	if c := money.FromTengeFloat(mul(1.005, 1)); c != 101 {
+	// MQ-2: 1.005 → 100 центов в PHP 8.4+ (round() без знаков = math.Round; в PHP 8.3 было 101).
+	if c := money.FromTengeFloat(mul(1.005, 1)); c != 100 {
 		t.Fatalf("FromTengeFloat(1.005) = %d", c)
 	}
 	// Переполнение int64 в intdiv() — в PHP TypeError, здесь ErrOverflow.

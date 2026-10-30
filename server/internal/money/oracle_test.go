@@ -1,17 +1,22 @@
 package money
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// Фикстура снята PHP 8.3.6 скриптом tools/php-oracle/gen-round-fixture.php (см. README там же).
+// Фикстура снята PHP 8.4.27 скриптом tools/php-oracle/gen-round-fixture.php (см. README там же).
 const fixturePath = "testdata/php_round.json"
+
+// Те же кейсы round(), снятые PHP 8.3.6 до перехода на 8.4, — только для PHPRound83.
+const fixture83Path = "testdata/php83_round.json"
 
 type oracleFixture struct {
 	PHP                  string            `json:"php"`
@@ -81,8 +86,9 @@ func naiveRound(x float64, places int) float64 {
 	return math.Round(x*f) / f
 }
 
-// checkRoundRows сравнивает PHPRound с PHP побитно; возвращает число кейсов, где наивный math.Round ошибается.
-func checkRoundRows(t *testing.T, rows []json.RawMessage) (naiveWrong int) {
+// checkRoundRows сравнивает round (PHPRound или PHPRound83) с PHP побитно;
+// возвращает число кейсов, где наивный math.Round ошибается.
+func checkRoundRows(t *testing.T, rows []json.RawMessage, round func(float64, int) float64) (naiveWrong int) {
 	t.Helper()
 	failures := 0
 	for _, raw := range rows {
@@ -91,7 +97,7 @@ func checkRoundRows(t *testing.T, rows []json.RawMessage) (naiveWrong int) {
 		var naiveDiffers bool
 		unrow(t, raw, &xs, &places, &rs, &cat, &naiveDiffers)
 		x, want := f64(t, xs), f64(t, rs)
-		got := PHPRound(x, places)
+		got := round(x, places)
 		if math.Float64bits(got) != math.Float64bits(want) {
 			failures++
 			if failures <= 20 {
@@ -113,7 +119,10 @@ func TestPHPRoundFixture(t *testing.T) {
 	if len(f.Round) < 2000 {
 		t.Fatalf("в фикстуре мало кейсов round(): %d", len(f.Round))
 	}
-	naive := checkRoundRows(t, f.Round)
+	if !strings.HasPrefix(f.PHP, "8.4.") {
+		t.Fatalf("фикстура снята PHP %s, ожидается 8.4.x (прод старого Laravel)", f.PHP)
+	}
+	naive := checkRoundRows(t, f.Round, PHPRound)
 	// Защита от «упрощения» PHPRound до math.Round: фикстура обязана содержать кейсы, где они расходятся.
 	if naive < 1000 {
 		t.Fatalf("наивный math.Round ошибся лишь в %d кейсах — фикстура не показательна", naive)
@@ -121,28 +130,76 @@ func TestPHPRoundFixture(t *testing.T) {
 	t.Logf("PHP %s: %d кейсов round() совпали побитно; наивный math.Round ошибся бы в %d", f.PHP, len(f.Round), naive)
 }
 
+// TestPHPRound83Fixture — PHPRound83 против ответов PHP 8.3.6 (справочная реализация).
+func TestPHPRound83Fixture(t *testing.T) {
+	f := loadFixture(t, fixture83Path)
+	if !strings.HasPrefix(f.PHP, "8.3.") || len(f.Round) < 2000 {
+		t.Fatalf("фикстура 8.3: PHP %s, %d кейсов", f.PHP, len(f.Round))
+	}
+	checkRoundRows(t, f.Round, PHPRound83)
+	differ := 0
+	for _, raw := range f.Round {
+		var xs, rs, cat string
+		var places int
+		var naive bool
+		unrow(t, raw, &xs, &places, &rs, &cat, &naive)
+		if x := f64(t, xs); math.Float64bits(PHPRound(x, places)) != math.Float64bits(PHPRound83(x, places)) {
+			differ++
+		}
+	}
+	// Фикстура 8.3 должна показывать, чем 8.4 отличается (иначе PHPRound83 «тихо» совпал бы с PHPRound).
+	if differ < 1000 {
+		t.Fatalf("PHPRound и PHPRound83 расходятся лишь в %d кейсах фикстуры 8.3", differ)
+	}
+	t.Logf("PHP %s: %d кейсов совпали с PHPRound83; в %d из них PHP 8.4 (PHPRound) отвечает иначе", f.PHP, len(f.Round), differ)
+}
+
 // TestPHPRoundOracleFull — полный дифференциальный тест (≥ 200 000 кейсов) против живого PHP.
-// Запускается только при ZAFIRO_PHP_ORACLE=1 и наличии php в PATH (CI без PHP его пропускает).
+// Запускается только при ZAFIRO_PHP_ORACLE=1 (CI без PHP его пропускает).
+//
+// PHP берётся из ZAFIRO_PHP_BIN — командная строка, к которой дописываются аргументы php, например
+//
+//	ZAFIRO_PHP_BIN="docker run --rm -i php:8.4.27-cli php"
+//
+// (по умолчанию — php из PATH). Скрипт оракула подаётся на stdin, результат читается из stdout,
+// поэтому монтировать каталоги в контейнер не нужно.
 func TestPHPRoundOracleFull(t *testing.T) {
 	if os.Getenv("ZAFIRO_PHP_ORACLE") != "1" {
 		t.Skip("ZAFIRO_PHP_ORACLE != 1")
 	}
-	php, err := exec.LookPath("php")
+	argv := strings.Fields(os.Getenv("ZAFIRO_PHP_BIN"))
+	if len(argv) == 0 {
+		php, err := exec.LookPath("php")
+		if err != nil {
+			t.Skip("php не найден (задайте ZAFIRO_PHP_BIN)")
+		}
+		argv = []string{php}
+	}
+	script, err := os.Open(filepath.Join("..", "..", "..", "tools", "php-oracle", "gen-round-fixture.php"))
 	if err != nil {
-		t.Skip("php не найден")
+		t.Fatalf("скрипт оракула: %v", err)
 	}
-	out := filepath.Join(t.TempDir(), "full.json")
-	script := filepath.Join("..", "..", "..", "tools", "php-oracle", "gen-round-fixture.php")
-	cmd := exec.Command(php, "-d", "memory_limit=2G", script, "--full", out) //nolint:gosec // G204: тестовый запуск оракула
-	cmd.Stderr = os.Stderr
+	defer func() { _ = script.Close() }()
+	argv = append(argv, "-d", "memory_limit=2G", "--", "--full", "-")
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // G204: тестовый запуск оракула из переменной окружения разработчика
+	var out bytes.Buffer
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = script, &out, os.Stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("php: %v", err)
+		t.Fatalf("%s: %v", strings.Join(argv, " "), err)
 	}
-	f := loadFixture(t, out)
+	var f oracleFixture
+	if err := json.Unmarshal(out.Bytes(), &f); err != nil {
+		t.Fatalf("разбор ответа оракула: %v", err)
+	}
 	if len(f.Round) < 200000 {
 		t.Fatalf("оракул вернул %d кейсов, нужно ≥ 200 000", len(f.Round))
 	}
-	naive := checkRoundRows(t, f.Round)
+	// PHPRound повторяет 8.4 (и 8.5 — код round() тот же); для оракула 8.3 сверяем PHPRound83.
+	round := PHPRound
+	if strings.HasPrefix(f.PHP, "8.3.") {
+		round = PHPRound83
+	}
+	naive := checkRoundRows(t, f.Round, round)
 	t.Logf("PHP %s: %d кейсов round() совпали побитно; наивный math.Round ошибся бы в %d", f.PHP, len(f.Round), naive)
 }
 

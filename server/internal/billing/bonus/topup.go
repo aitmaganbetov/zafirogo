@@ -20,7 +20,7 @@ type TopUpBonus struct {
 
 // TopUpFor — TopUpBonus::for(float $amount) (BR-041): бонус за пополнение основного баланса.
 // levels — уровни в силе (TopUpLevelsInForce: пусто, если бонус выключен). amount — сумма в тенге
-// как float из запроса ((float) $data['amount']); перевод в центы — (int) round($amount * 100) PHP 8.3.
+// как float из запроса ((float) $data['amount']); перевод в центы — (int) round($amount * 100) PHP 8.4+.
 //
 // Laravel: app/Services/TopUpBonus.php TopUpBonus::for() (~стр. 29–35):
 //

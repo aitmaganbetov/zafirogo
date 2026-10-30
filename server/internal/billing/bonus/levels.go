@@ -132,7 +132,7 @@ type Level struct {
 //
 //	fn (mixed $value): int|float => floor($rounded = round((float) $value, 2)) === $rounded ? (int) $rounded : $rounded
 //
-// Laravel: app/Support/PercentLevels.php normalize() (~стр. 18). round() — PHP 8.3 (money.PHPRound).
+// Laravel: app/Support/PercentLevels.php normalize() (~стр. 18). round() — PHP 8.4+ (money.PHPRound).
 func normalizeNumber(v Value) Number {
 	r := money.PHPRound(v.ToFloat(), 2)
 	if math.Floor(r) == r { // NaN != NaN → float, ±INF → (int) = 0, как в PHP

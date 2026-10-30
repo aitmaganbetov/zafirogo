@@ -6,7 +6,9 @@
 считал деньги, и пишет фикстуру `server/internal/money/testdata/php_round.json`. Go-тесты пакета
 `server/internal/money` читают её без PHP.
 
-Что в фикстуре (снята на **PHP 8.3.6**, поле `php`):
+Фикстура снята на **PHP 8.4.27** (`php:8.4.27-cli`, поле `php`) — версии прода старого Laravel (его `composer.lock`
+требует PHP ≥ 8.4.1). `money.PHPRound` повторяет `round()` 8.4. PHP 8.5.12 (`php:8.5-cli`) на том же наборе отвечает
+байт в байт так же (код `round()` в ветке PHP-8.5 не менялся).
 
 | Ключ | Строка | Что проверяет Go |
 |---|---|---|
@@ -21,30 +23,40 @@
 Функции старого кода в скрипте — буквальные копии из `../Zafiro/app/Services/AgentTariffPurchaseService.php`
 и `app/Services/Friends.php`.
 
-Кандидаты (≈ 310 000, детерминированно, `mt_srand(20261030)`): суммы `x.xx5` и `x.xxx5`, `x.xx5 * 100`, крупные суммы
+Кандидаты (310 449, детерминированно, `mt_srand(20261030)`): суммы `x.xx5` и `x.xxx5`, `x.xx5 * 100`, крупные суммы
 до `decimal(12,2)`, произведения `a*b/100` и `a*100`, соседи половин `k + 0.5 ± 1 ulp`, очень большие/малые значения с
-`places` от −400 до 400 (ветка `strtod` в `_php_math_round`), случайные битовые шаблоны, степени десяти и `places` на
-границах условия предокругления. В фикстуру попадают: известные примеры, **все** расхождения наивного `math.Round`
-в «денежных» категориях, по 60 кейсов каждой категории и ~1500 расхождений из прочих.
+`places` от −400 до 400 (ветка `strtod` при `|places| ≥ 23`), случайные битовые шаблоны, степени десяти и известные
+примеры (в том числе ветки 8.4). В фикстуру попадают: известные примеры, **все** расхождения наивного `math.Round`
+в «денежных» категориях, по 60 кейсов каждой категории и ~1500 расхождений из прочих (сейчас 8 019 строк).
+
+`testdata/php83_round.json` — те же кейсы, снятые PHP 8.3.6 до перехода на 8.4 (все 2 482, где 8.3 и 8.4 расходятся,
+и каждый 4-й из прочих): проверка справочной `money.PHPRound83`. Генератор её больше не пишет.
 
 ### Регенерация
 
 ```sh
-php tools/php-oracle/gen-round-fixture.php            # перезаписывает testdata/php_round.json
-cd server && go test ./internal/money/                # фикстура без PHP
+docker run --rm -v "$PWD":/w -w /w php:8.4.27-cli php -d memory_limit=2G tools/php-oracle/gen-round-fixture.php
+cd server && go test ./internal/money/     # фикстура без PHP; тест требует поле php = 8.4.x
 ```
-
-Регенерировать только тем же минорным PHP, что в проде старого Laravel (8.3): в PHP 8.4 `round()` переписан,
-и часть ответов другая (см. `docs/open-questions/stage1-money.md`).
 
 ### Полный дифференциальный тест
 
 ```sh
-cd server && ZAFIRO_PHP_ORACLE=1 go test -run TestPHPRoundOracleFull -v ./internal/money/
+cd server && ZAFIRO_PHP_ORACLE=1 ZAFIRO_PHP_BIN="docker run --rm -i php:8.4.27-cli php" \
+  go test -run TestPHPRoundOracleFull -v ./internal/money/
 ```
 
-Тест запускает `gen-round-fixture.php --full <tmp>` и сравнивает все ≈ 310 000 кейсов `round()` с `money.PHPRound` побитно.
-Последний прогон (PHP 8.3.6, 2026-10-30): 310 438 кейсов, расхождений 0; наивный `math.Round(x*10^p)/10^p` ошибся бы в 15 358 из них (только `places` 0…3).
+`ZAFIRO_PHP_BIN` — командная строка PHP (без неё — `php` из `PATH`). Тест подаёт скрипт на stdin
+(`php -d memory_limit=2G -- --full -`), читает JSON всех кейсов из stdout и сравнивает `round()` с `money.PHPRound`
+побитно (если оракул — PHP 8.3, то с `money.PHPRound83`). Последние прогоны (2026-10-30), 310 449 кейсов, расхождений 0:
+
+| PHP | Сверяется с | Наивный `math.Round(x*10^p)/10^p` ошибся бы (`places` 0…3) |
+|---|---|---|
+| 8.4.27 (`php:8.4.27-cli`) | `PHPRound` | 6 800 |
+| 8.5.12 (`php:8.5-cli`) | `PHPRound` | 6 800 |
+| 8.3.6 (локальный) | `PHPRound83` | 15 362 |
+
+8.3 и 8.4 расходятся в 13 475 кейсах из 310 449 — см. `docs/business-rules.md` BR-001 и `docs/open-questions/stage1-money.md` MQ-1.
 
 ## Pest-оракул
 

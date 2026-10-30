@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"math/rand/v2"
 	"strconv"
 	"testing"
 )
@@ -232,13 +233,13 @@ func TestFromTengeFloat(t *testing.T) {
 		want Tiyn
 	}{
 		{"BR-001/100.005", 100.005, 10001},
-		{"BR-001/1.005", 1.005, 101}, // наивно math.Round(1.005*100) = 100
-		{"0.145", 0.145, 15},         // наивно 14
-		{"0.285", 0.285, 29},         // наивно 28
+		{"BR-001/1.005", 1.005, 100}, // PHP 8.4; в 8.3 было 101
+		{"0.145", 0.145, 14},         // PHP 8.4; в 8.3 было 15
+		{"0.285", 0.285, 28},         // PHP 8.4; в 8.3 было 29
 		{"GS-002/10000.55", 10000.55, 1000055},
 		{"0.1+0.2", 0.1 + 0.2, 30},
 		{"-12.34", -12.34, -1234},
-		{"-1.005", -1.005, -101},
+		{"-1.005", -1.005, -100},
 		{"NaN", math.NaN(), 0},
 		{"+Inf", math.Inf(1), 0},
 		{"-Inf", math.Inf(-1), 0},
@@ -251,10 +252,9 @@ func TestFromTengeFloat(t *testing.T) {
 			}
 		})
 	}
-	// 1.005*100 во float64 = 100.49999999999999: наивный math.Round даёт 100, PHP 8.3 — 101.
-	// (Для 100.005*100 произведение во float64 ровно 10000.5, и наивный вариант случайно совпадает.)
-	if math.Round(mul(1.005, 100)) != 100 || FromTengeFloat(1.005) != 101 {
-		t.Fatal("ожидалось, что наивный math.Round ошибается на 1.005*100")
+	// 1.005*100 во float64 = 100.49999999999999: PHP 8.4 (как и math.Round) даёт 100, PHP 8.3 предокруглял до 101.
+	if math.Round(mul(1.005, 100)) != 100 || PHPRound83(mul(1.005, 100), 0) != 101 {
+		t.Fatal("ожидалось расхождение 8.3 и 8.4 на 1.005*100")
 	}
 }
 
@@ -294,8 +294,8 @@ func TestFormatFloat2(t *testing.T) {
 		in   float64
 		want string
 	}{
-		{1000.055, "1000.06"}, // PHP-предокругление; наивно было бы 1000.05
-		{1.005, "1.01"},
+		{1000.055, "1000.06"},
+		{1.005, "1.01"}, // наивно math.Round(1.005*100)/100 = 1.00
 		{-1.005, "-1.01"},
 		{-0.001, "0.00"}, // «-0.00» не бывает
 		{math.Copysign(0, -1), "0.00"},
@@ -318,12 +318,15 @@ func TestPHPRoundKnown(t *testing.T) {
 		places int
 		want   float64
 	}{
-		// docs/business-rules.md BR-001 (проверено php -r).
+		// docs/business-rules.md BR-001 (проверено php:8.4.27-cli, php -r).
 		{12.345, 2, 12.35},
 		{mul(100.005, 100), 0, 10001},
-		{mul(1.005, 100), 0, 101},
+		{mul(1.005, 100), 0, 100}, // 8.3: 101
+		{mul(0.145, 100), 0, 14},  // 8.3: 15
+		{1.005, 2, 1.01},          // наивно math.Round(x*100)/100 = 1.00
+		{0.285, 2, 0.29},          // наивно 0.28
 		{2.675, 2, 2.68},
-		{0.49999999999999994, 0, 1}, // GH-12143 в 8.3 ещё не исправлен
+		{0.49999999999999994, 0, 0}, // GH-12143 исправлен в 8.4 (8.3: 1)
 		{-0.5, 0, -1},
 		{0, 2, 0},
 		{math.Inf(1), 2, math.Inf(1)},
@@ -340,6 +343,42 @@ func TestPHPRoundKnown(t *testing.T) {
 	}
 	if !math.IsNaN(PHPRound(math.NaN(), 2)) {
 		t.Error("NaN")
+	}
+	// Те же примеры в PHP 8.3 (PHPRound83, справочно).
+	for _, tt := range []struct {
+		x      float64
+		places int
+		want   float64
+	}{
+		{mul(1.005, 100), 0, 101},
+		{mul(0.145, 100), 0, 15},
+		{0.49999999999999994, 0, 1},
+		{1.005, 2, 1.01},
+		{math.Inf(-1), 2, math.Inf(-1)},
+	} {
+		if got := PHPRound83(tt.x, tt.places); math.Float64bits(got) != math.Float64bits(tt.want) {
+			t.Errorf("PHPRound83(%v, %d) = %v, want %v", tt.x, tt.places, got, tt.want)
+		}
+	}
+}
+
+// TestPHPRoundPlacesZeroIsMathRound — в PHP 8.4 round($x) без знаков — это math.Round:
+// exponent = 1, целая часть floor/ceil точна, edge = |целая ± 0.5| точна (|x| < 2^52 у нецелых).
+// Поэтому формулы (int) round($x * 100) переносятся как math.Round(x*100) — но round($x, 2) нет.
+func TestPHPRoundPlacesZeroIsMathRound(t *testing.T) {
+	r := rand.New(rand.NewPCG(20261030, 1))
+	check := func(x float64) {
+		if got, want := PHPRound(x, 0), math.Round(x); math.Float64bits(got) != math.Float64bits(want) {
+			t.Fatalf("PHPRound(%v, 0) = %v, math.Round = %v", x, got, want)
+		}
+	}
+	for i := 0; i < 200000; i++ {
+		check(math.Float64frombits(r.Uint64()))
+		check(float64(r.Int64N(1_000_000_000_000)) / 1000 * 100)
+		check(float64(r.Int64N(1<<53)) + 0.5)
+	}
+	for _, x := range []float64{0.5, -0.5, 1.5, 2.5, 0.49999999999999994, mul(1.005, 100), 4503599627370495.5, math.Copysign(0, -1)} {
+		check(x)
 	}
 }
 
@@ -403,8 +442,15 @@ func TestPHPIntLog10AbsMatchesTable(t *testing.T) {
 }
 
 func TestPHPIntPow10(t *testing.T) {
-	if phpIntPow10(-1) != 0.1 || phpIntPow10(23) != 1e23 || phpIntPow10(22) != 1e22 {
+	if phpIntPow10(-1) != 0.1 || phpIntPow10(22) != 1e22 || phpIntPow10(24) != 1e24 || !math.IsInf(phpIntPow10(309), 1) {
 		t.Error("phpIntPow10")
+	}
+	// glibc pow(10, n) ≠ корректно округлённому 1e<n> только для 23 и 210 (php:8.4.27-cli: pow(10.0, 23.0) = 1.0000000000000001E+23).
+	for _, n := range []int{23, 210} {
+		v, _ := strconv.ParseFloat("1e"+strconv.Itoa(n), 64)
+		if phpIntPow10(n) != math.Nextafter(v, math.Inf(1)) {
+			t.Errorf("phpIntPow10(%d)", n)
+		}
 	}
 }
 

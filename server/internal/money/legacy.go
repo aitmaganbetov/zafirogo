@@ -78,7 +78,7 @@ func StoredCents(amount string) Tiyn {
 	return FromTengeFloat(PHPStringToFloat(amount))
 }
 
-// PHPStringToInt — PHP (int)"строка" в PHP 8.3 (Zend/zend_operators.c zval_get_long_func(), ветка IS_STRING,
+// PHPStringToInt — PHP (int)"строка" в PHP 8.3 и 8.4 (Zend/zend_operators.c zval_get_long_func(), ветка IS_STRING,
 // через _is_numeric_string_ex(allow_errors = true)): ведущие пробельные символы " \t\n\r\v\f", знак,
 // цифры; хвост игнорируется ("12abc" → 12, "abc" → 0). Если в числе есть точка или экспонента
 // ("1.9", "1e3") или целое не помещается в int64, число читается как float и приводится с насыщением
