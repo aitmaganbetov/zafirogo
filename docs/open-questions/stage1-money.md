@@ -10,7 +10,7 @@
     `x.xx5` (категории `x.xx5`, `big x.xx5`, `a*b/100`) ответы 8.3 и 8.4 **совпадают**. Расходятся формулы вида `round($x * 100)`:
     в категории `x.xx5 * 100` разный ответ у 1 147 из 25 000 сумм (4,6 %), у крупных сумм — 452 из 10 000. Примеры:
     `round(0.145 * 100)`: 8.3 → 15, 8.4 → 14; `round(1.005 * 100)`: 8.3 → 101, 8.4 → 100; `round(0.49999999999999994)`: 8.3 → 1, 8.4 → 0.
-  - Где это в старом коде: `app/Services/TopUpBonus.php` `TopUpBonus::forAmount()` (`$cents = (int) round($amount * 100)`, процент
+  - Где это в старом коде: `app/Services/TopUpBonus.php` `TopUpBonus::for()` (`$cents = (int) round($amount * 100)`, процент
     `(int) round($percent * 100)`), `app/Services/Friends.php` `storedCents()`, `AgentTariffPurchaseService::discounted()`
     (`(int) round($percent * 100)`), `app/Support/PercentLevels.php` (`(int) round($level[...] * 100)`). Входы — decimal из БД
     (максимум 2 знака), а у них `x*100` почти всегда целое во float с ошибкой < 1e-9, поэтому на реальных данных 8.3 и 8.4,

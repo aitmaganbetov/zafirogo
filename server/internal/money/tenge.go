@@ -94,7 +94,7 @@ func allDigits(s string) bool {
 
 // FromTengeFloat — PHP (int) round($tenge * 100) в PHP 8.3, с предокруглением PHP (см. PHPRound).
 // Так старый код переводил float-суммы в центы:
-//   - Laravel: app/Services/TopUpBonus.php TopUpBonus::forAmount() — $cents = (int) round($amount * 100);
+//   - Laravel: app/Services/TopUpBonus.php TopUpBonus::for() — $cents = (int) round($amount * 100);
 //   - Laravel: app/Services/Friends.php Friends::storedCents() — (int) round((float) $amount * 100) (BR-002).
 //
 // Результат вне MaxAmount не обрезается (как в PHP); проверка — Tiyn.Check() у вызывающего.

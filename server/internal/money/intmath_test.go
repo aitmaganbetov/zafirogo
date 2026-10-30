@@ -144,7 +144,7 @@ func TestBasisPointsAndPercent(t *testing.T) {
 		bp      int64
 		want    Tiyn
 	}{
-		// GS-002: 10000.55 ₸ × 10% = 1000.055 → 1000.06 (Laravel: TopUpBonus::forAmount()).
+		// GS-002: 10000.55 ₸ × 10% = 1000.055 → 1000.06 (Laravel: TopUpBonus::for()).
 		{"GS-002/10000.55×10%", FromTengeFloat(10000.55), 10, 1000, 100006},
 		{"GS-002/2500×5%", FromTengeFloat(2500), 5, 500, 12500},
 		{"BR-012/12.5%", 99999, 12.5, 1250, 12500},

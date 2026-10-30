@@ -79,7 +79,7 @@ func Sub(a, b Tiyn) (Tiyn, error) {
 // MulDivRound — intdiv($a * $mul + $half, $div) с проверкой переполнения: общий вид
 // целочисленных формул старого кода «+5000 / 10000», «+30 / 60», «* $seconds / $total».
 //   - Laravel: app/Services/AgentTariffPurchaseService.php discounted() — intdiv($price * $bp + 5000, 10000) (BR-012);
-//   - Laravel: app/Services/TopUpBonus.php TopUpBonus::forAmount() — intdiv($cents * $bp + 5000, 10000) (BR-041);
+//   - Laravel: app/Services/TopUpBonus.php TopUpBonus::for() — intdiv($cents * $bp + 5000, 10000) (BR-041);
 //   - Laravel: app/Services/AgentTariffPurchaseService.php — intdiv(amountToCents($pricePerHour) * $minutes + 30, 60) (BR-014);
 //   - Laravel: app/Services/SessionSettlement.php settle() — intdiv($part->main_cents * $seconds, $total) (BR-032, add = 0).
 //
@@ -100,7 +100,7 @@ func MulDivRound(a, mul, add, div int64) (int64, error) {
 // BasisPoints — (int) round($percent * 100): процент (float, как из decimal(5,2)/JSON настроек)
 // в базисные пункты с PHP-округлением.
 //   - Laravel: app/Services/AgentTariffPurchaseService.php discounted() — (int) round($percent * 100) (BR-012);
-//   - Laravel: app/Services/TopUpBonus.php TopUpBonus::forAmount() — (int) round($percent * 100) (BR-041).
+//   - Laravel: app/Services/TopUpBonus.php TopUpBonus::for() — (int) round($percent * 100) (BR-041).
 //
 // Ограничение 0…10000 (min/max в discounted()) — забота вызывающего: в TopUpBonus его нет.
 func BasisPoints(percent float64) int64 {
