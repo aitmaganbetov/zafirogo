@@ -11,7 +11,11 @@ import (
 // access — права операций раздела: операция → маршрут Laravel (RequireClubArea::ROUTES → право).
 var access = httpx.Access{
 	Routes: map[string]string{
-		"ListTariffs": "tariffs.index",
+		"ListTariffs":    "tariffs.index",
+		"GetTariffsPage": "tariffs.index",
+		"CreateTariff":   "tariffs.store",
+		"UpdateTariff":   "tariffs.update",
+		"DeleteTariff":   "tariffs.destroy",
 	},
 }
 

@@ -103,6 +103,9 @@ func Record(ctx context.Context, q *store.Queries, e Entry) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("activity: insert %s: %w", e.Event, err)
 	}
+	if err := notifyBell(ctx, q, e); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 
