@@ -105,6 +105,16 @@ type AuditLog struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Ключи идемпотентности покупок/продаж времени: отпечаток тела и ответ первого успешного выполнения
+type BillingRequest struct {
+	ClubID         int64           `json:"club_id"`
+	IdempotencyKey string          `json:"idempotency_key"`
+	Operation      string          `json:"operation"`
+	Fingerprint    []byte          `json:"fingerprint"`
+	Response       json.RawMessage `json:"response"`
+	CreatedAt      time.Time       `json:"created_at"`
+}
+
 type CashShift struct {
 	ID       int64  `json:"id"`
 	OpenedBy *int64 `json:"opened_by"`
@@ -121,6 +131,11 @@ type CashShift struct {
 	CreatedAt      *time.Time `json:"created_at"`
 	UpdatedAt      *time.Time `json:"updated_at"`
 	ClubID         int64      `json:"club_id"`
+	// sha256 одноразового nonce последнего показа Z-отчёта (Q-015); сам nonce не хранится
+	ZReportNonceHash []byte `json:"z_report_nonce_hash"`
+	// Z-отчёт напечатан (afterprint + nonce): без этого веб-панель смену не закрывает (BR-056, Q-015)
+	ZReportPrintedAt *time.Time `json:"z_report_printed_at"`
+	ZReportPrintedBy *int64     `json:"z_report_printed_by"`
 }
 
 type CashTransaction struct {
@@ -140,6 +155,10 @@ type CashTransaction struct {
 	ClubID      int64           `json:"club_id"`
 	// cash/card/qr (Q-013); NULL — не указан (POS-продажа, старые данные). В остатке смены не разделяется
 	PaymentMethod *string `json:"payment_method"`
+	// Вид прихода для X/Z (OQ-BR-04, Q-007): top_up, guest_session; NULL — продажа POS или прочий приход
+	IncomeKind *string `json:"income_kind"`
+	// Ключ запроса кассы; тот же ключ у ledger-операции. NULL — старые данные, возвраты
+	IdempotencyKey *string `json:"idempotency_key"`
 }
 
 type ChatMessage struct {
@@ -564,6 +583,10 @@ type SessionPurchase struct {
 	ExpiresAt  *time.Time `json:"expires_at"`
 	CreatedAt  *time.Time `json:"created_at"`
 	UpdatedAt  *time.Time `json:"updated_at"`
+	// Зона ПК в момент покупки (для минут — зона цены часа). NULL — данные до 0006. Без FK: как subject_id журнала
+	ZoneID *int64 `json:"zone_id"`
+	// tariff — покупка тарифа, minutes — поминутно, package — запуск сохранённого пакета (не влияет на зоны пересадки). NULL — данные до 0006
+	Source *string `json:"source"`
 }
 
 type ShopOrder struct {
@@ -619,6 +642,14 @@ type Tariff struct {
 	SalePeriods json.RawMessage `json:"sale_periods"`
 	ClubID      int64           `json:"club_id"`
 	DeletedAt   *time.Time      `json:"deleted_at"`
+}
+
+// Продажи тарифа в агенте (лимит количества, BR-016, Q-007). Кассовые гостевые продажи не считаются
+type TariffSale struct {
+	ClubID    int64     `json:"club_id"`
+	TariffID  int64     `json:"tariff_id"`
+	Sold      int64     `json:"sold"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type TimePackage struct {

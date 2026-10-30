@@ -40,7 +40,8 @@ sql:
 rules:
   # Каждый запрос обязан фильтровать по club_id (тенантность, см. CLAUDE.md).
   # Исключения — только платформенные запросы, перечисленные явно.
+  # ExpireDueSessions — воркер истечения сессий по всем клубам (роль zafiro_platform, advisory lock).
   - name: tenant-filter
     message: "запрос должен фильтровать по club_id (или быть в списке платформенных исключений в sqlc.yaml)"
     rule: |
-      !query.sql.contains("club_id") && !(query.name in ["GetClub", "GetClubBySlug"])
+      !query.sql.contains("club_id") && !(query.name in ["GetClub", "GetClubBySlug", "ExpireDueSessions"])

@@ -86,10 +86,14 @@ type TopUpBonusFunc func(amount money.Tiyn) (money.Tiyn, error)
 
 // TopUpParams — пополнение баланса клиента через кассу.
 type TopUpParams struct {
-	ClubID            int64
-	UserID            int64
-	Field             BalanceField
-	Amount            money.Tiyn
+	ClubID int64
+	UserID int64
+	Field  BalanceField
+	Amount money.Tiyn
+	// BonusBase — от чего считать бонус за пополнение: (int) round($amount * 100) (cash.TopUpAmount.BonusBase, CQ-4).
+	// Laravel: app/Services/TopUpBonus.php TopUpBonus::for() — $cents = (int) round($amount * 100), а баланс получает
+	// (float) → decimal(12,2); суммы расходятся только на вводе с > 14 значащими цифрами. 0 — считать от Amount.
+	BonusBase         money.Tiyn
 	PaymentMethod     string // cash, card, qr (Q-013: хранится, в остатке не разделяется)
 	CashShiftID       int64
 	CashTransactionID int64
@@ -117,12 +121,15 @@ func TopUp(ctx context.Context, q *store.Queries, p TopUpParams) (TopUpResult, e
 	if !p.Field.Valid() || p.UserID <= 0 {
 		return TopUpResult{}, fmt.Errorf("%w: user and balance field are required", ledger.ErrInvalidOperation)
 	}
-	if p.Amount <= 0 || p.Amount > MaxCashTopUp {
+	if p.Amount <= 0 || p.Amount > MaxCashTopUp || p.BonusBase < 0 {
 		return TopUpResult{}, ErrBalanceAmountOutOfRange
 	}
 	request := map[string]any{
 		"user_id": p.UserID, "field": p.Field, "amount": int64(p.Amount),
 		"payment_method": p.PaymentMethod, "cash_transaction_id": p.CashTransactionID,
+	}
+	if p.BonusBase > 0 && p.BonusBase != p.Amount {
+		request["bonus_base"] = int64(p.BonusBase) // в отпечатке, только если отличается (прежние ключи не меняются)
 	}
 	pending, replay, err := ledger.Begin(ctx, q, p.ClubID, ledger.KindTopUp, p.IdempotencyKey, request)
 	if err != nil {
@@ -138,7 +145,11 @@ func TopUp(ctx context.Context, q *store.Queries, p TopUpParams) (TopUpResult, e
 	var bonus money.Tiyn
 	if p.Field == FieldMain && p.Bonus != nil {
 		// Laravel: CashRegisterService::topUpBalance(): $bonus = $balanceType === 'balance' ? $this->topUpBonus->for($amount) : 0
-		if bonus, err = p.Bonus(p.Amount); err != nil {
+		base := p.Amount
+		if p.BonusBase > 0 {
+			base = p.BonusBase // CQ-4
+		}
+		if bonus, err = p.Bonus(base); err != nil {
 			return TopUpResult{}, err
 		}
 		if bonus < 0 {
