@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// Журнал действий клуба (интерфейс, история клиента). Партиции по месяцам (UTC), 0011
 type ActivityLog struct {
 	ID          int64  `json:"id"`
 	Event       string `json:"event"`
@@ -24,9 +25,72 @@ type ActivityLog struct {
 	Details   json.RawMessage `json:"details"`
 	IpAddress string          `json:"ip_address"`
 	UserAgent *string         `json:"user_agent"`
-	CreatedAt *time.Time      `json:"created_at"`
+	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt *time.Time      `json:"updated_at"`
 	ClubID    int64           `json:"club_id"`
+}
+
+// Клиентские сертификаты агентов ПК (mTLS). Действующий = revoked_at IS NULL и now() < not_after
+type AgentCertificate struct {
+	Serial           string     `json:"serial"`
+	ClubID           int64      `json:"club_id"`
+	ClubComputerID   int64      `json:"club_computer_id"`
+	SpkiSha256       []byte     `json:"spki_sha256"`
+	NotBefore        time.Time  `json:"not_before"`
+	NotAfter         time.Time  `json:"not_after"`
+	IssuedAt         time.Time  `json:"issued_at"`
+	IssuedVia        string     `json:"issued_via"`
+	EnrollmentCodeID *int64     `json:"enrollment_code_id"`
+	ReplacesSerial   *string    `json:"replaces_serial"`
+	FirstUsedAt      *time.Time `json:"first_used_at"`
+	MacAddress       *string    `json:"mac_address"`
+	HardwareUuid     *string    `json:"hardware_uuid"`
+	RevokedAt        *time.Time `json:"revoked_at"`
+	RevokeReason     *string    `json:"revoke_reason"`
+	RevokedByUserID  *int64     `json:"revoked_by_user_id"`
+	ChangedAt        time.Time  `json:"changed_at"`
+}
+
+// Долговременные команды агенту (seq > 0): хранятся до expires_at, досылаются после reconnect по Hello.last_command_seq
+type AgentCommand struct {
+	ClubID     int64       `json:"club_id"`
+	ComputerID int64       `json:"computer_id"`
+	Seq        int64       `json:"seq"`
+	CommandID  pgtype.UUID `json:"command_id"`
+	Kind       string      `json:"kind"`
+	// Command в двоичном protobuf (zafiro.agent.v1.Command)
+	Payload        []byte     `json:"payload"`
+	IssuedByUserID *int64     `json:"issued_by_user_id"`
+	CreatedAt      time.Time  `json:"created_at"`
+	ExpiresAt      *time.Time `json:"expires_at"`
+	Status         string     `json:"status"`
+	ErrorCode      *int32     `json:"error_code"`
+	ResultMessage  *string    `json:"result_message"`
+	AcceptedAt     *time.Time `json:"accepted_at"`
+	CompletedAt    *time.Time `json:"completed_at"`
+}
+
+// Последний seq долговременной команды агента на ПК (Command.seq)
+type AgentCommandCounter struct {
+	ClubID     int64 `json:"club_id"`
+	ComputerID int64 `json:"computer_id"`
+	LastSeq    int64 `json:"last_seq"`
+}
+
+// Одноразовые коды «Подключить ПК» (15 минут). Код не хранится — только HMAC-SHA256
+type AgentEnrollmentCode struct {
+	ID              int64       `json:"id"`
+	ClubID          int64       `json:"club_id"`
+	CodeHash        []byte      `json:"code_hash"`
+	ClubZoneID      *int64      `json:"club_zone_id"`
+	ClubComputerID  *int64      `json:"club_computer_id"`
+	CreatedByUserID *int64      `json:"created_by_user_id"`
+	CreatedAt       time.Time   `json:"created_at"`
+	ExpiresAt       time.Time   `json:"expires_at"`
+	UsedAt          *time.Time  `json:"used_at"`
+	UsedComputerID  *int64      `json:"used_computer_id"`
+	UsedIp          *netip.Addr `json:"used_ip"`
+	CanceledAt      *time.Time  `json:"canceled_at"`
 }
 
 type AgentQrLogin struct {
@@ -238,6 +302,8 @@ type ClubComputer struct {
 	AgentTokenIssuedAt   *time.Time `json:"agent_token_issued_at"`
 	StaffMessage         *string    `json:"staff_message"`
 	StaffMessageAt       *time.Time `json:"staff_message_at"`
+	// Hello.boot_id последней загрузки Windows (новый — свежая загрузка ПК)
+	AgentBootID *string `json:"agent_boot_id"`
 }
 
 type ClubInvitation struct {
@@ -468,6 +534,21 @@ type News struct {
 	CreatedBy   *int64     `json:"created_by"`
 	CreatedAt   *time.Time `json:"created_at"`
 	UpdatedAt   *time.Time `json:"updated_at"`
+}
+
+// Outbox: события, записанные в транзакции действия; публикуются в NATS JetStream (zafiro-events)
+type OutboxEvent struct {
+	ID     int64 `json:"id"`
+	ClubID int64 `json:"club_id"`
+	// Id события для получателей и Nats-Msg-Id (дедупликация JetStream)
+	EventID pgtype.UUID `json:"event_id"`
+	Type    string      `json:"type"`
+	// Данные события (data). Без секретов; для типов-вебхуков — без персональных данных
+	Payload     json.RawMessage `json:"payload"`
+	CreatedAt   time.Time       `json:"created_at"`
+	PublishedAt *time.Time      `json:"published_at"`
+	Attempts    int32           `json:"attempts"`
+	LastError   *string         `json:"last_error"`
 }
 
 type PasswordRecoveryCode struct {

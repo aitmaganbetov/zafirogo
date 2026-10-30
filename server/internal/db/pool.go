@@ -29,8 +29,8 @@ func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// PartitionedTables — таблицы с месячными партициями (0002_ledger.sql, 0003_audit.sql).
-var PartitionedTables = []string{"ledger_transactions", "ledger_entries", "ledger_minute_entries", "audit_log"}
+// PartitionedTables — таблицы с месячными партициями (0002_ledger.sql, 0003_audit.sql, 0011_events.sql).
+var PartitionedTables = []string{"ledger_transactions", "ledger_entries", "ledger_minute_entries", "audit_log", "activity_logs"}
 
 // EnsurePartitions создаёт месячные партиции (UTC) с месяца from на months месяцев вперёд для всех
 // PartitionedTables; возвращает число созданных. Вызывает фоновая задача раз в сутки (Q-081) пулом
