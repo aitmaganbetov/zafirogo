@@ -1,0 +1,1946 @@
+{
+  "about": "Входы SessionSettlement::settle() (app/Services/SessionSettlement.php) и ответ Go-пакета server/internal/billing/session. Для оракула: Carbon::setTestNow(now); вставить parts в session_purchases (session_id общий, id как есть, created_at любой); клиенту — member_balances и club_memberships.total_spent с запасом; user_id частей, отличный от customer_id, — другой клиент клуба; вызвать settle(computer, session_id, customer_id, ends_at ? Carbon::parse(ends_at) : null, customer_id); записать в поле php результат (refund_main, refund_bonus, kept_minutes), созданные time_packages (tariff_id, minutes_left, expires_at UTC) по возрастанию id и уменьшение total_spent в тиынах. Время — UTC, now с микросекундами.",
+  "scenarios": [
+    {
+      "id": "GS-046",
+      "customer_id": 7,
+      "now": "2026-10-30T10:30:00.000000Z",
+      "ends_at": "2026-10-30T11:00:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 60,
+          "main_cents": 30000,
+          "bonus_cents": 30000,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 15000,
+        "refund_bonus": 15000,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 15000
+      },
+      "php": null
+    },
+    {
+      "id": "GS-047",
+      "customer_id": 7,
+      "now": "2026-10-30T10:30:00.000000Z",
+      "ends_at": "2026-10-30T12:00:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "Пакет",
+          "minutes": 120,
+          "main_cents": 100000,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-29T10:00:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 90,
+        "packages": [
+          {
+            "tariff_id": 101,
+            "minutes_left": 90,
+            "expires_at": "2026-11-29T10:00:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "GS-048",
+      "customer_id": 7,
+      "now": "2026-10-30T10:15:00.000000Z",
+      "ends_at": "2026-10-30T11:30:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "Пакет",
+          "minutes": 60,
+          "main_cents": 50000,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 30,
+          "main_cents": 30000,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 30000,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 30000
+      },
+      "php": null
+    },
+    {
+      "id": "GAP-001",
+      "customer_id": 7,
+      "now": "2026-10-30T10:05:20.000000Z",
+      "ends_at": "2026-10-30T10:17:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 17,
+          "main_cents": 10000,
+          "bonus_cents": 4167,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 6862,
+        "refund_bonus": 2859,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 6862
+      },
+      "php": null
+    },
+    {
+      "id": "GAP-002",
+      "customer_id": 7,
+      "now": "2026-10-30T10:30:00.000000Z",
+      "ends_at": "2026-10-30T11:00:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 60,
+          "main_cents": 60000,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 30000,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 30000
+      },
+      "php": null
+    },
+    {
+      "id": "GAP-003",
+      "customer_id": 7,
+      "now": "2026-10-30T10:29:30.000000Z",
+      "ends_at": "2026-10-30T12:00:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "Пакет",
+          "minutes": 120,
+          "main_cents": 100000,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-29T10:00:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 90,
+        "packages": [
+          {
+            "tariff_id": 101,
+            "minutes_left": 90,
+            "expires_at": "2026-11-29T10:00:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "GAP-004",
+      "customer_id": 7,
+      "now": "2026-10-30T10:10:00.000000Z",
+      "ends_at": "2026-10-30T11:30:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "Пакет",
+          "minutes": 60,
+          "main_cents": 50000,
+          "bonus_cents": 0,
+          "expires_at": "2026-10-31T10:00:00.000000Z"
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 30,
+          "main_cents": 30000,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 30000,
+        "refund_bonus": 0,
+        "kept_minutes": 50,
+        "packages": [
+          {
+            "tariff_id": 101,
+            "minutes_left": 50,
+            "expires_at": "2026-10-31T10:00:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 30000
+      },
+      "php": null
+    },
+    {
+      "id": "GAP-036",
+      "customer_id": 7,
+      "now": "2026-10-30T10:30:00.000000Z",
+      "ends_at": "2026-10-30T11:00:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 60,
+          "main_cents": 60000,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 30000,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 30000
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/пример-1",
+      "customer_id": 7,
+      "now": "2026-10-30T19:55:00.000000Z",
+      "ends_at": "2026-10-30T20:00:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "Пакет",
+          "minutes": 60,
+          "main_cents": 50000,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 60,
+          "main_cents": 30000,
+          "bonus_cents": 30000,
+          "expires_at": null
+        },
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 7,
+          "main_cents": 5251,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 3750,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 3750
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/пример-2",
+      "customer_id": 7,
+      "now": "2026-10-30T18:43:20.000000Z",
+      "ends_at": "2026-10-30T20:00:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "Пакет",
+          "minutes": 60,
+          "main_cents": 50000,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 60,
+          "main_cents": 30000,
+          "bonus_cents": 30000,
+          "expires_at": null
+        },
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 7,
+          "main_cents": 5251,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 35251,
+        "refund_bonus": 30000,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 35251
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/пример-3-5430с",
+      "customer_id": 7,
+      "now": "2026-10-30T10:29:30.000000Z",
+      "ends_at": "2026-10-30T12:00:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "Пакет",
+          "minutes": 120,
+          "main_cents": 100000,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-29T10:00:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 90,
+        "packages": [
+          {
+            "tariff_id": 101,
+            "minutes_left": 90,
+            "expires_at": "2026-11-29T10:00:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/пример-4",
+      "customer_id": 7,
+      "now": "2026-10-30T10:00:00.000000Z",
+      "ends_at": "2026-10-30T11:30:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "Пакет",
+          "minutes": 60,
+          "main_cents": 50000,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 30,
+          "main_cents": 30000,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 30000,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 30000
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/конец-в-прошлом",
+      "customer_id": 7,
+      "now": "2026-10-30T11:01:00.000000Z",
+      "ends_at": "2026-10-30T11:00:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 60,
+          "main_cents": 60000,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/конец-null",
+      "customer_id": 7,
+      "now": "2026-10-30T10:00:00.000000Z",
+      "ends_at": null,
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 60,
+          "main_cents": 60000,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/без-частей",
+      "customer_id": 7,
+      "now": "2026-10-30T10:00:00.000000Z",
+      "ends_at": "2026-10-30T11:00:00.000000Z",
+      "parts": null,
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/микросекунды-now",
+      "customer_id": 7,
+      "now": "2026-10-30T10:00:00.900000Z",
+      "ends_at": "2026-10-30T10:30:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 60,
+          "main_cents": 60000,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 30000,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 30000
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/микросекунды-конец",
+      "customer_id": 7,
+      "now": "2026-10-30T10:00:00.000000Z",
+      "ends_at": "2026-10-30T10:30:00.999000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 60,
+          "main_cents": 60000,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 30000,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 30000
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/intdiv-по-балансам",
+      "customer_id": 7,
+      "now": "2026-10-30T10:00:30.000000Z",
+      "ends_at": "2026-10-30T10:01:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 1,
+          "main_cents": 1,
+          "bonus_cents": 1,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/чужая-часть",
+      "customer_id": 7,
+      "now": "2026-10-30T10:50:00.000000Z",
+      "ends_at": "2026-10-30T11:10:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 60,
+          "main_cents": 60000,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 99,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 10,
+          "main_cents": 10000,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 10000,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 10000
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/лимит-истёк",
+      "customer_id": 7,
+      "now": "2026-10-30T10:30:00.000000Z",
+      "ends_at": "2026-10-30T12:00:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "Пакет",
+          "minutes": 120,
+          "main_cents": 100000,
+          "bonus_cents": 0,
+          "expires_at": "2026-10-30T10:20:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/лимит-ровно-сейчас",
+      "customer_id": 7,
+      "now": "2026-10-30T10:30:00.000000Z",
+      "ends_at": "2026-10-30T12:00:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "Пакет",
+          "minutes": 120,
+          "main_cents": 100000,
+          "bonus_cents": 0,
+          "expires_at": "2026-10-30T10:30:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/пакет-меньше-минуты",
+      "customer_id": 7,
+      "now": "2026-10-30T10:59:01.000000Z",
+      "ends_at": "2026-10-30T11:00:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "Пакет",
+          "minutes": 60,
+          "main_cents": 50000,
+          "bonus_cents": 0,
+          "expires_at": "2026-10-31T10:00:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/два-пакета",
+      "customer_id": 7,
+      "now": "2026-10-30T10:10:30.000000Z",
+      "ends_at": "2026-10-30T11:30:00.000000Z",
+      "parts": [
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 102,
+          "name": "Пакет",
+          "minutes": 30,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-10-31T10:00:00.000000Z"
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "Пакет",
+          "minutes": 60,
+          "main_cents": 50000,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-29T10:00:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 79,
+        "packages": [
+          {
+            "tariff_id": 102,
+            "minutes_left": 30,
+            "expires_at": "2026-10-31T10:00:00.000000Z"
+          },
+          {
+            "tariff_id": 101,
+            "minutes_left": 49,
+            "expires_at": "2026-11-29T10:00:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "BR-032/ноль-минут",
+      "customer_id": 7,
+      "now": "2026-10-30T10:00:00.000000Z",
+      "ends_at": "2026-10-30T10:10:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 0,
+          "main_cents": 100,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "Hall",
+          "minutes": 10,
+          "main_cents": 1000,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 1000,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 1000
+      },
+      "php": null
+    },
+    {
+      "id": "RND-01",
+      "customer_id": 7,
+      "now": "2026-10-30T22:04:12.493931Z",
+      "ends_at": "2026-10-31T07:25:00.000000Z",
+      "parts": [
+        {
+          "id": 4,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 104,
+          "name": "x",
+          "minutes": 476,
+          "main_cents": 1739753,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 102,
+          "name": "x",
+          "minutes": 13,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-01T05:11:00.000000Z"
+        },
+        {
+          "id": 5,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 105,
+          "name": "x",
+          "minutes": 466,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-12-03T05:11:00.000000Z"
+        },
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 103,
+          "name": "x",
+          "minutes": 218,
+          "main_cents": 1284220,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 112,
+          "main_cents": 834937,
+          "bonus_cents": 476726,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 466,
+        "packages": [
+          {
+            "tariff_id": 105,
+            "minutes_left": 466,
+            "expires_at": "2026-12-03T05:11:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "RND-02",
+      "customer_id": 7,
+      "now": "2026-10-31T01:16:05.324783Z",
+      "ends_at": "2026-10-31T21:01:00.000000Z",
+      "parts": [
+        {
+          "id": 5,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 490,
+          "main_cents": 1005474,
+          "bonus_cents": 1777108,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 102,
+          "name": "x",
+          "minutes": 215,
+          "main_cents": 1357055,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 4,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 560,
+          "main_cents": 119822,
+          "bonus_cents": 1655557,
+          "expires_at": null
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 394,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-17T08:07:00.000000Z"
+        },
+        {
+          "id": 3,
+          "user_id": 99,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 442,
+          "main_cents": 887331,
+          "bonus_cents": 931793,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 1125296,
+        "refund_bonus": 3432665,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 1125296
+      },
+      "php": null
+    },
+    {
+      "id": "RND-03",
+      "customer_id": 7,
+      "now": "2026-10-30T12:34:37.422738Z",
+      "ends_at": "2026-10-30T19:37:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 577,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-12-08T01:28:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 422,
+        "packages": [
+          {
+            "tariff_id": 101,
+            "minutes_left": 422,
+            "expires_at": "2026-12-08T01:28:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "RND-04",
+      "customer_id": 7,
+      "now": "2026-10-30T17:34:23.898423Z",
+      "ends_at": "2026-10-30T22:07:00.000000Z",
+      "parts": [
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 102,
+          "name": "x",
+          "minutes": 491,
+          "main_cents": 1907480,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 236,
+          "main_cents": 157848,
+          "bonus_cents": 133939,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "RND-05",
+      "customer_id": 7,
+      "now": "2026-10-31T14:13:30.198566Z",
+      "ends_at": "2026-10-31T22:34:00.000000Z",
+      "parts": [
+        {
+          "id": 5,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 543,
+          "main_cents": 783450,
+          "bonus_cents": 1555727,
+          "expires_at": null
+        },
+        {
+          "id": 6,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 106,
+          "name": "x",
+          "minutes": 383,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-19T23:21:00.000000Z"
+        },
+        {
+          "id": 2,
+          "user_id": 99,
+          "kind": "tariff",
+          "tariff_id": 102,
+          "name": "x",
+          "minutes": 354,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-29T08:15:00.000000Z"
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 618,
+          "main_cents": 1647375,
+          "bonus_cents": 933891,
+          "expires_at": null
+        },
+        {
+          "id": 4,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 262,
+          "main_cents": 1128741,
+          "bonus_cents": 963448,
+          "expires_at": null
+        },
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 34,
+          "main_cents": 1161958,
+          "bonus_cents": 944260,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 169531,
+        "refund_bonus": 336644,
+        "kept_minutes": 383,
+        "packages": [
+          {
+            "tariff_id": 106,
+            "minutes_left": 383,
+            "expires_at": "2026-11-19T23:21:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 169531
+      },
+      "php": null
+    },
+    {
+      "id": "RND-06",
+      "customer_id": 7,
+      "now": "2026-10-30T21:31:40.424456Z",
+      "ends_at": "2026-10-31T00:54:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 389,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-26T11:49:00.000000Z"
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 102,
+          "name": "x",
+          "minutes": 108,
+          "main_cents": 85138,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 4,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 104,
+          "name": "x",
+          "minutes": 362,
+          "main_cents": 273637,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 103,
+          "name": "x",
+          "minutes": 35,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-18T11:17:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "RND-07",
+      "customer_id": 7,
+      "now": "2026-10-30T12:15:09.317745Z",
+      "ends_at": "2026-10-31T15:19:00.000000Z",
+      "parts": [
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 283,
+          "main_cents": 155407,
+          "bonus_cents": 661196,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 99,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 269,
+          "main_cents": 1365097,
+          "bonus_cents": 405927,
+          "expires_at": null
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 162,
+          "main_cents": 1409199,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 6,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 106,
+          "name": "x",
+          "minutes": 336,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-28T16:07:00.000000Z"
+        },
+        {
+          "id": 4,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 685,
+          "main_cents": 1863100,
+          "bonus_cents": 1925356,
+          "expires_at": null
+        },
+        {
+          "id": 5,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 105,
+          "name": "x",
+          "minutes": 24,
+          "main_cents": 440490,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 2018507,
+        "refund_bonus": 2586552,
+        "kept_minutes": 336,
+        "packages": [
+          {
+            "tariff_id": 106,
+            "minutes_left": 336,
+            "expires_at": "2026-11-28T16:07:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 2018507
+      },
+      "php": null
+    },
+    {
+      "id": "RND-08",
+      "customer_id": 7,
+      "now": "2026-10-30T10:38:50.031895Z",
+      "ends_at": "2026-10-31T17:56:00.000000Z",
+      "parts": [
+        {
+          "id": 6,
+          "user_id": 99,
+          "kind": "tariff",
+          "tariff_id": 106,
+          "name": "x",
+          "minutes": 400,
+          "main_cents": 1856311,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 103,
+          "name": "x",
+          "minutes": 107,
+          "main_cents": 1720647,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 5,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 105,
+          "name": "x",
+          "minutes": 661,
+          "main_cents": 800126,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 4,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 104,
+          "name": "x",
+          "minutes": 436,
+          "main_cents": 1105510,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 102,
+          "name": "x",
+          "minutes": 166,
+          "main_cents": 1404309,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 146,
+          "main_cents": 1612804,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "RND-09",
+      "customer_id": 7,
+      "now": "2026-10-30T13:04:02.586697Z",
+      "ends_at": "2026-10-30T20:01:00.000000Z",
+      "parts": [
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 102,
+          "name": "x",
+          "minutes": 241,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-28T03:09:00.000000Z"
+        },
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 330,
+          "main_cents": 822318,
+          "bonus_cents": 839983,
+          "expires_at": null
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 30,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-25T09:56:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 822318,
+        "refund_bonus": 839983,
+        "kept_minutes": 86,
+        "packages": [
+          {
+            "tariff_id": 102,
+            "minutes_left": 86,
+            "expires_at": "2026-11-28T03:09:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 822318
+      },
+      "php": null
+    },
+    {
+      "id": "RND-10",
+      "customer_id": 7,
+      "now": "2026-10-31T17:20:25.877635Z",
+      "ends_at": "2026-10-31T17:57:00.000000Z",
+      "parts": [
+        {
+          "id": 5,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 105,
+          "name": "x",
+          "minutes": 315,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-12-08T04:18:00.000000Z"
+        },
+        {
+          "id": 6,
+          "user_id": 99,
+          "kind": "tariff",
+          "tariff_id": 106,
+          "name": "x",
+          "minutes": 59,
+          "main_cents": 979384,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 4,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 104,
+          "name": "x",
+          "minutes": 472,
+          "main_cents": 432052,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 606,
+          "main_cents": 1934613,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 102,
+          "name": "x",
+          "minutes": 85,
+          "main_cents": 1965646,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 103,
+          "name": "x",
+          "minutes": 380,
+          "main_cents": 522214,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "RND-11",
+      "customer_id": 7,
+      "now": "2026-10-30T22:43:03.912456Z",
+      "ends_at": "2026-10-31T00:12:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 367,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-30T11:30:00.000000Z"
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 102,
+          "name": "x",
+          "minutes": 485,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-12-04T22:23:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 88,
+        "packages": [
+          {
+            "tariff_id": 102,
+            "minutes_left": 88,
+            "expires_at": "2026-12-04T22:23:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "RND-12",
+      "customer_id": 7,
+      "now": "2026-10-30T11:12:33.607534Z",
+      "ends_at": "2026-10-30T22:14:00.000000Z",
+      "parts": [
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 635,
+          "main_cents": 562132,
+          "bonus_cents": 1454347,
+          "expires_at": null
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 99,
+          "main_cents": 1354107,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 562132,
+        "refund_bonus": 1454347,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 562132
+      },
+      "php": null
+    },
+    {
+      "id": "RND-13",
+      "customer_id": 7,
+      "now": "2026-10-30T13:25:25.284154Z",
+      "ends_at": "2026-10-30T16:37:00.000000Z",
+      "parts": [
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 250,
+          "main_cents": 1707872,
+          "bonus_cents": 354568,
+          "expires_at": null
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 147,
+          "main_cents": 517220,
+          "bonus_cents": 1383891,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 1308799,
+        "refund_bonus": 271717,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 1308799
+      },
+      "php": null
+    },
+    {
+      "id": "RND-14",
+      "customer_id": 7,
+      "now": "2026-10-30T12:35:09.144220Z",
+      "ends_at": "2026-10-31T17:56:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 685,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-04T18:51:00.000000Z"
+        },
+        {
+          "id": 4,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 104,
+          "name": "x",
+          "minutes": 529,
+          "main_cents": 36924,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 103,
+          "name": "x",
+          "minutes": 53,
+          "main_cents": 1046496,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 649,
+          "main_cents": 297917,
+          "bonus_cents": 818457,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 297917,
+        "refund_bonus": 818457,
+        "kept_minutes": 529,
+        "packages": [
+          {
+            "tariff_id": 101,
+            "minutes_left": 529,
+            "expires_at": "2026-11-04T18:51:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 297917
+      },
+      "php": null
+    },
+    {
+      "id": "RND-15",
+      "customer_id": 7,
+      "now": "2026-10-30T10:25:19.471397Z",
+      "ends_at": "2026-10-31T19:43:00.000000Z",
+      "parts": [
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 103,
+          "name": "x",
+          "minutes": 435,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-12-03T23:24:00.000000Z"
+        },
+        {
+          "id": 4,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 104,
+          "name": "x",
+          "minutes": 76,
+          "main_cents": 1963237,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 99,
+          "kind": "tariff",
+          "tariff_id": 102,
+          "name": "x",
+          "minutes": 368,
+          "main_cents": 1893762,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 542,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-12-09T06:54:00.000000Z"
+        },
+        {
+          "id": 5,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 602,
+          "main_cents": 1187597,
+          "bonus_cents": 1884645,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 1187597,
+        "refund_bonus": 1884645,
+        "kept_minutes": 951,
+        "packages": [
+          {
+            "tariff_id": 103,
+            "minutes_left": 435,
+            "expires_at": "2026-12-03T23:24:00.000000Z"
+          },
+          {
+            "tariff_id": 101,
+            "minutes_left": 516,
+            "expires_at": "2026-12-09T06:54:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 1187597
+      },
+      "php": null
+    },
+    {
+      "id": "RND-16",
+      "customer_id": 7,
+      "now": "2026-10-30T18:00:54.482856Z",
+      "ends_at": "2026-10-30T19:53:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 593,
+          "main_cents": 1100362,
+          "bonus_cents": 0,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "RND-17",
+      "customer_id": 7,
+      "now": "2026-10-30T16:30:25.773961Z",
+      "ends_at": "2026-10-30T21:22:00.000000Z",
+      "parts": [
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 135,
+          "main_cents": 324295,
+          "bonus_cents": 740113,
+          "expires_at": null
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 329,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-12-09T03:22:00.000000Z"
+        },
+        {
+          "id": 2,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 218,
+          "main_cents": 1533232,
+          "bonus_cents": 1058299,
+          "expires_at": null
+        }
+      ],
+      "go": {
+        "refund_main": 1425572,
+        "refund_bonus": 1500259,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 1425572
+      },
+      "php": null
+    },
+    {
+      "id": "RND-18",
+      "customer_id": 7,
+      "now": "2026-10-30T10:12:22.313820Z",
+      "ends_at": "2026-10-30T11:02:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 99,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 62,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-12-07T20:32:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "RND-19",
+      "customer_id": 7,
+      "now": "2026-11-01T09:17:35.060067Z",
+      "ends_at": "2026-11-01T10:20:00.000000Z",
+      "parts": [
+        {
+          "id": 5,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 473,
+          "main_cents": 424089,
+          "bonus_cents": 1790731,
+          "expires_at": null
+        },
+        {
+          "id": 6,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 106,
+          "name": "x",
+          "minutes": 275,
+          "main_cents": 757767,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 3,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 103,
+          "name": "x",
+          "minutes": 497,
+          "main_cents": 648566,
+          "bonus_cents": 0,
+          "expires_at": null
+        },
+        {
+          "id": 2,
+          "user_id": 99,
+          "kind": "tariff",
+          "tariff_id": 102,
+          "name": "x",
+          "minutes": 606,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-05T12:52:00.000000Z"
+        },
+        {
+          "id": 4,
+          "user_id": 7,
+          "kind": "minutes",
+          "tariff_id": null,
+          "name": "x",
+          "minutes": 447,
+          "main_cents": 839895,
+          "bonus_cents": 919782,
+          "expires_at": null
+        },
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 602,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-23T05:53:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 0,
+        "packages": [],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    },
+    {
+      "id": "RND-20",
+      "customer_id": 7,
+      "now": "2026-10-30T11:53:46.397596Z",
+      "ends_at": "2026-10-30T20:53:00.000000Z",
+      "parts": [
+        {
+          "id": 1,
+          "user_id": 7,
+          "kind": "tariff",
+          "tariff_id": 101,
+          "name": "x",
+          "minutes": 653,
+          "main_cents": 0,
+          "bonus_cents": 0,
+          "expires_at": "2026-11-11T20:49:00.000000Z"
+        }
+      ],
+      "go": {
+        "refund_main": 0,
+        "refund_bonus": 0,
+        "kept_minutes": 539,
+        "packages": [
+          {
+            "tariff_id": 101,
+            "minutes_left": 539,
+            "expires_at": "2026-11-11T20:49:00.000000Z"
+          }
+        ],
+        "total_spent_decrease": 0
+      },
+      "php": null
+    }
+  ]
+}
