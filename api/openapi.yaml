@@ -1,0 +1,75 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API
+  version: 0.1.0
+  description: |
+    REST API админки и веб-интерфейса zafirogo.
+    Сервер генерируется oapi-codegen (chi strict server) в server/internal/http/api,
+    типы фронта — openapi-typescript в web/src/api/schema.d.ts.
+    Деньги во всех схемах — целые тиыны (integer, format int64), никогда number.
+servers:
+  - url: /
+tags:
+  - name: system
+    description: Служебные эндпоинты (проверки живости и готовности).
+paths:
+  /healthz:
+    get:
+      operationId: getHealthz
+      tags: [system]
+      summary: Liveness-проверка
+      description: Процесс жив и обслуживает HTTP. Зависимости не проверяет.
+      security: []
+      responses:
+        "200":
+          description: Процесс жив.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /readyz:
+    get:
+      operationId: getReadyz
+      tags: [system]
+      summary: Readiness-проверка
+      description: |
+        Проверяет зависимости (пока только PostgreSQL, если задан ZAFIRO_DATABASE_URL).
+        Текст ошибок наружу не отдаётся — только статус каждой проверки.
+      security: []
+      responses:
+        "200":
+          description: Все зависимости доступны.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: Хотя бы одна зависимость недоступна.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+components:
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    Readiness:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, fail]
+        checks:
+          type: object
+          description: Результат каждой проверки по имени зависимости.
+          additionalProperties:
+            type: string
+            enum: [ok, fail]

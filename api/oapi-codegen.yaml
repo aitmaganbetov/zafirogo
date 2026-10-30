@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/v2.8.1/configuration-schema.json
+# Запуск из корня репозитория (task gen:api):
+#   oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
+package: api
+output: server/internal/http/api/api.gen.go
+generate:
+  models: true
+  chi-server: true
+  strict-server: true
+  embedded-spec: false
+output-options:
+  skip-prune: false
