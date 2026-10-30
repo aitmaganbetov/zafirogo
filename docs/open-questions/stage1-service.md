@@ -62,7 +62,7 @@
     проверяет этот предел (`MaxTotalSpent`). В `billing/bonus.AddSpending` предел — `money.MaxAmount` (1e15 тиынов),
     а в комментарии написано про decimal(12,2) — расхождение в чистом пакете (не мой файл; сервис его не использует
     для увеличения, увеличение — атомарным `UPDATE … total_spent + cents`, как `increment()`).
-  - Решение (30.10.2026): принято: предел `MaxTotalSpent` оставить; комментарий в `bonus.AddSpending` поправить.
+  - Решение (30.10.2026): принято: предел `MaxTotalSpent` оставить; комментарий в `bonus.AddSpending` поправить. Сделано: комментарий `bonus.AddSpending`, тест `TestSpending`.
 
 - [x] **SV-8. Журнал действий (`activity_logs`) не пишется.**
   - Старый код писал `tariff.purchased`, `time.purchased`, `time.package_started`, `time.refunded`, `time.package_kept`,

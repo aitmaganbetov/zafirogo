@@ -54,6 +54,8 @@
   Уже в тиынах и не меняются: `session_purchases.main_cents`, `session_purchases.bonus_cents`, `transfer_codes.amount_cents`.
   Суммы **внутри JSON** (`receipt_data`, `shop_orders.items`, `activity_logs.details`, `webhook_deliveries.payload`,
   уровни в `clubs.settings`) в 0001 остаются в тенге — решение в open-questions В-2.
+  ⚙️ Решение Q-003 (DECISIONS.md): новые записи `receipt_data`, `shop_orders.items` и уровней в `clubs.settings` — формат v2
+  (тиыны и базисные пункты, `"v": 2`, §10.11); читатели понимают оба формата; перенос данных переводит всё в v2.
   Требует подтверждения владельца (open-questions В-1).
 - [ ] **3.2 unsigned → CHECK (>= 0)** и тип на ступень шире (таблица выше). Поведение «уход склада в минус — ошибка БД»
   (`products.quantity` unsigned в strict-режиме MySQL) сохраняется.
@@ -316,6 +318,8 @@ func (s *Store) InClub(ctx context.Context, clubID int64, fn func(q *Queries) er
 | возвраты `session_refund`, `shop_order_cancel` (`billing.Credit`) | обратные проводки покупки |
 | `migration_opening_balance` | `member_main`/`member_bonus` ±, `opening_balance` ∓ (может быть < 0, Q-004) |
 | `pos_sale`, `cash_income`, `cash_expense`, `guest_session` (пакет cash) | `cash_drawer` −/+, `revenue_pos` / `cash_other` / `revenue_time` +/− |
+| `pos_refund` | обратные `pos_sale`; `reverses_transaction_id` — исходная `pos_sale` (CSQ-6, 0014) |
+| `cash_shift_opening` (CSQ-1, 0014) | выравнивание при открытии смены: `cash_drawer` ∓d, `opening_balance` ±d (d — начальный остаток смены минус остаток кассы по журналу) |
 
 ### 10.2. Ledger минут — отдельная таблица в той же операции
 
@@ -416,3 +420,30 @@ NULL. Тот же способ — в `ledger_transactions.meta` операци�
   `attempts`, `approved_at/by` + `club_computer_id`, `rejected_at/by`. Одна нерешённая или отклонённая заявка на MAC клуба
   (частичный уникальный индекс). RLS.
 - `agent_certificates`: `diskless` (сертификат 24 ч, продление тоже 24 ч), `image_key_id`, `issued_via += 'image_key'`.
+
+### 10.11. Решения Этапа 1 в схеме (0014) и форматы JSON v2
+
+Миграция `0014_stage1_decisions.sql` (решения из `docs/DECISIONS.md` и `docs/open-questions/stage1-*.md`):
+
+- **CSQ-1** — вид `cash_shift_opening` в `ledger_transactions_kind_check` (раньше выравнивание кассы при открытии смены шло
+  видами `cash_income`/`cash_expense` с `meta.reason = "shift_opening"`). Откат миграции невозможен, пока есть такие операции.
+- **CSQ-6** — индекс `ledger_transactions (club_id, cash_transaction_id) WHERE cash_transaction_id IS NOT NULL`; `pos_refund`
+  и `top_up_refund` заполняют `reverses_transaction_id` id исходной `pos_sale` / `top_up`.
+- **CSQ-7** — `cash_shifts.drawer_snapshot_entry_id/balance/at`: при закрытии смены — последняя учтённая проводка `cash_drawer`,
+  остаток после неё и `now()` транзакции. Остаток кассы при открытии = снимок последней закрытой смены + проводки с id больше
+  снимка (`created_at` не раньше снимка минус сутки — только для отсечения партиций). Нет снимка (перенесённые смены) —
+  полная сумма. Корректно, потому что все проводки `cash_drawer` пишутся под блокировкой открытой смены.
+- **CSQ-9, PD-6** — `cash_transactions.description` → `text` (описание гостевой сессии со всеми ПК); форма прихода/расхода — по-прежнему ≤ 255.
+- **PQ-4** — `CHECK (price BETWEEN 0 AND 999999999999)` у `tariffs.price` и `club_zones.price_per_hour` (`pricing.MaxPrice`).
+
+Форматы JSON v2 (решение Q-003; поля сумм названы иначе, чем в v1, чтобы старый читатель не принял тиыны за тенге):
+
+| Где | v2 (пишет новый код) | v1 (старый код, читается) |
+|---|---|---|
+| `cash_transactions.receipt_data` продажа | `{"v":2,"items":[{"product_id"\|"service_id","name","quantity","price_tiyn","total_tiyn"}]}` | `{"items":[{…,"price","total"}]}` — тенге (PHP float) |
+| `cash_transactions.receipt_data` пополнение | `{"v":2,"top_up":{"user_id","balance_type","bonus_tiyn"}}` | `{"top_up":{…,"bonus"}}` — тенге |
+| `shop_orders.items` | `{"v":2,"items":[{"product_id","name","quantity","price_tiyn","total_tiyn"}]}` | `[{…,"price","total"}]` — тенге строкой `formatCents` |
+| `clubs.settings.finances.topup_bonus_levels`, `loyalty_levels` | `{"v":2,"levels":[{"threshold_tiyn","percent_bp"}]}` | `[{"amount"\|"spent","percent"}]` — тенге и проценты |
+
+Код: `cash/service/receipt.go` (`encodeReceipt`/`decodeReceipt`), `shop.EncodeItems`/`shop.DecodeItems`,
+`bonus.EncodeLevels`/`bonus.ParseSettings`. Запись уровней v2 подключится к экрану настроек (Этап 3).

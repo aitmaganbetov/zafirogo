@@ -15,7 +15,7 @@
     `cash_shift_open:<id смены>`. Отдельного вида в `ledger_transactions_kind_check` нет, а пакет `ledger` не мой.
   - Варианты: (а) оставить; (б) добавить вид `cash_shift_opening` (миграция CHECK + константа в `ledger`).
   - Рекомендация: (б) — чтобы отчёты по видам операций не смешивали прочий приход и пересчёт кассы между сменами.
-  - Решение (30.10.2026): принята рекомендация: (б) отдельный вид `cash_shift_opening` (миграция CHECK + константа в `ledger`).
+  - Решение (30.10.2026): принята рекомендация: (б) отдельный вид `cash_shift_opening` (миграция CHECK + константа в `ledger`). Сделано: миграция 0014, `ledger.KindCashShiftOpening`, тест `TestGoldenShift/shift-opening-drawer`, `TestKindsMatchSchemaCheck`.
 
 - [x] **CSQ-2. Вид прихода (`cash_transactions.income_kind`) и перенос данных.**
   - Контекст: в старом X/Z «Пополнение балансов» и «Гостевые сессии» определялись по журналу действий
@@ -64,14 +64,14 @@
     cash_transaction_id» (индекс есть только частичный по `cash_shift_id`). Связь восстанавливается через
     `cash_transactions.refund_of_id` → `ledger_transactions.cash_transaction_id`.
   - Рекомендация: добавить запрос/индекс в `ledger.sql` (владелец пакета ledger) и заполнять ссылку.
-  - Решение (30.10.2026): принята рекомендация: запрос/индекс «ledger-операция по `cash_transaction_id`» и заполнение `reverses_transaction_id` у `pos_refund`.
+  - Решение (30.10.2026): принята рекомендация: запрос/индекс «ledger-операция по `cash_transaction_id`» и заполнение `reverses_transaction_id` у `pos_refund`. Сделано: индекс и запрос `GetLedgerTransactionByCashTransaction` (0014); заполняется у `pos_refund` и `top_up_refund` (`TestGoldenRefund`).
 
 - [x] **CSQ-7. Остаток кассы по журналу при открытии смены — SUM по всем проводкам счёта.**
   - Контекст: `CashDrawerLedgerBalance` суммирует все проводки `cash_drawer` клуба (индекс `(club_id, account_id, created_at)`),
     это растёт с годами (открытие смены — раз-два в сутки, поэтому терпимо).
   - Рекомендация: позже — снимок остатка (например, id последней проводки + остаток в `cash_shifts` при закрытии) и сумма
     только «после снимка».
-  - Решение (30.10.2026): принята рекомендация: позже — снимок остатка при закрытии смены и сумма только после снимка.
+  - Решение (30.10.2026): принята рекомендация: позже — снимок остатка при закрытии смены и сумма только после снимка. Сделано: `cash_shifts.drawer_snapshot_*` (0014), `cash/service drawerBalance`, тест `TestGoldenShift/drawer-snapshot`.
 
 - [x] **CSQ-8. Порядок проверок пополнения и 404.**
   - Контекст: Laravel сначала валидирует форму (`user_id` — член клуба, `amount`, `balance_type`, `payment_method`), затем
@@ -83,7 +83,7 @@
 - [x] **CSQ-9. Описание гостевой сессии длиннее 255 символов.**
   - Контекст: `cash_transactions.description varchar(255)`; длинный список ПК в старом коде — ошибка MySQL (500).
   - Сейчас: ошибка правила `max` поля `computer_ids`. Рекомендация: обрезать список ПК в описании или расширить колонку до `text`.
-  - Решение (30.10.2026): по принципам (PD-6) — `cash_transactions.description` расширить до `text`, список ПК не обрезать.
+  - Решение (30.10.2026): по принципам (PD-6) — `cash_transactions.description` расширить до `text`, список ПК не обрезать. Сделано: 0014, тест `TestGuestSessionLongDescription`.
 
 ## Замечания к другим пакетам и документам
 

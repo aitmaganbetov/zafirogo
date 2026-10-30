@@ -15,6 +15,8 @@ Q-028, L-1, Q-031, Q-037, Q-052, RQ-3, подпись обновлений аг�
 - Q-064 — шрифты и иконки из npm (`@fontsource/inter`, `@fortawesome/fontawesome-free@6.4.0`, Chart.js), CSP `font-src 'self'`, без CDN.
 - Q-065 — импорт переводов: плейсхолдеры Laravel → i18next при импорте; редактор суперадминки показывает формат Laravel.
 - Q-066 — поле «Поиск...» в верхней панели — как декорация.
+- PQ-4 — формы тарифа и зоны: цена ≤ 9 999 999 999.99 ₸ (`StoreTariffRequest` max; CHECK в схеме — 0014).
+- Q-003, BQ-4 — экран настроек клуба пишет уровни бонуса/лояльности в формате v2 (`bonus.ValidateLevels` + `Normalize` + `EncodeLevels`).
 - Q-067, PD-3 — форма прихода/расхода кассы поверх REST; `club-map.align` и `warehouse.products.update` не переносить.
 - Q-069, stage2-auth §8 — роутинг SPA по хосту; проверка «Здесь входят только суперадмины Zafiro.» на `SUPERADMIN_DOMAIN`, домен wiki.
 - Q-070 — касса и склад: поиск клиента/товара с подгрузкой вместо выпадающих списков.
@@ -51,7 +53,7 @@ Q-028, L-1, Q-031, Q-037, Q-052, RQ-3, подпись обновлений аг�
 
 ## Перенос данных (tools/migrate-from-mysql)
 
-- Q-003 — JSON (`receipt_data`, `shop_orders.items`, уровни лояльности/бонуса) → формат v2: тиыны, базисные пункты, `"v": 2`.
+- Q-003 — старые JSON (`receipt_data`, `shop_orders.items`, уровни лояльности/бонуса) → формат v2: тиыны, базисные пункты, `"v": 2` (запись v2 и чтение обоих форматов сделаны, `docs/schema-changes.md` §10.11).
 - Q-004, PQ-8 — отрицательные балансы — входящим остатком с пометкой в отчёте; `CHECK (balance >= 0)` — после проверки данных.
 - Q-005 — пересчёт балансов из истории старой БД и отчёт расхождений по клубу.
 - Q-007 — `tariff_sales.sold` = число `activity_logs` `tariff.purchased` по тарифу.
@@ -90,7 +92,6 @@ Q-028, L-1, Q-031, Q-037, Q-052, RQ-3, подпись обновлений аг�
 - A2 §8 «Windows/SChannel» — проверка агента на Windows 10 и 11 (CNG, TLS 1.2 с ECDSA-сертификатом клиента).
 - AS-6 — Valkey: primary + реплика, без cluster mode.
 - EV-4 — липкие сессии по пользователю на балансировщике (лимит WebSocket-соединений на инстанс).
-- CSQ-7 — снимок остатка кассы при закрытии смены, сумма проводок только после снимка.
 
 ## Доделки сервера и агента (до первого перевода клуба)
 
@@ -99,12 +100,6 @@ Q-028, L-1, Q-031, Q-037, Q-052, RQ-3, подпись обновлений аг�
 - Q-021, SV-11 — тикер истечения сессий раз в 5–10 с (сейчас раз в минуту).
 - Q-047, GG-12 — лимиты `GetTranslations` 30/мин на ПК и `GetProfile` 60/мин на токен.
 - Q-054, stage2-auth §2 — опция `ReadOnly` транзакции в режиме просмотра суперадмином.
-- CSQ-1 — вид ledger-операции `cash_shift_opening`.
-- CSQ-6 — ссылка `reverses_transaction_id` у `pos_refund` (запрос/индекс по `cash_transaction_id`).
-- CSQ-9, PD-6 — `cash_transactions.description` → `text`.
-- CQ-7 — сортировка «Продано товаров» по тиынам, затем по имени.
-- PQ-4 — CHECK `price BETWEEN 0 AND 999999999999` для `tariffs.price`, `club_zones.price_per_hour`.
-- SV-7 — поправить комментарий предела в `bonus.AddSpending`.
 - A2 §4, AS-7 — `ERROR_CODE_CERTIFICATE_REQUIRED` и `ERROR_CODE_STREAM_REPLACED` в конец enum при следующем изменении proto.
 - A2 §6 — код перерегистрации перезаписывает MAC и device_id карточки, если MAC свободен.
 - GG-6 — `GetSeatMap` (карта пересадки гостем) по присутствию.
@@ -116,6 +111,4 @@ Q-028, L-1, Q-031, Q-037, Q-052, RQ-3, подпись обновлений аг�
 - RQ-5 — вид `guest_session` в каталоге `cash.transaction` (`docs/realtime.md`).
 - AS-1 — `docs/agent-protocol.md` §2: subject на инстанс вместо `agent.cmd.<club>.<computer>`.
 - AS-11 — недостающие поля `ClubConfig` в `Welcome` вместе с модулями настроек и переводов.
-- MQ-2 — `docs/business-rules.md` §0: формулировка `round()` по PHP 8.4 (без «предокругления»).
-- S1-SES-03 — дописать в BR-035 разницу удалённого тарифа при пересадке и запуске пакета.
 - Q-043 — таблица «старый код → `ERROR_CODE_*` + gRPC-статус» в `docs/agent-protocol.md`.
