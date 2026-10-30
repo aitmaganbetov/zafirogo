@@ -328,9 +328,12 @@ func TestOfflineOnCloseAndCoalescedBalance(t *testing.T) {
 	if n, err := sweeper.Tick(ctx); err != nil || n != 0 {
 		t.Fatalf("tick within grace: %d %v", n, err)
 	}
-	if st, ok, _ := in.svc.Presence().Get(ctx, club, pc); !ok || st.Online {
-		t.Fatalf("presence while waiting for reconnect: %+v %v", st, ok)
-	}
+	// Поток снимается с учёта раньше, чем присутствие помечается «ждёт переподключения», —
+	// ждём это состояние, а не проверяем сразу (иначе гонка под нагрузкой).
+	eventually(t, 150*time.Millisecond, "presence waiting for reconnect", func() bool {
+		st, ok, _ := in.svc.Presence().Get(ctx, club, pc)
+		return ok && !st.Online
+	})
 	time.Sleep(300 * time.Millisecond)
 	if n, err := sweeper.Tick(ctx); err != nil || n != 1 {
 		t.Fatalf("tick after grace: %d %v", n, err)
