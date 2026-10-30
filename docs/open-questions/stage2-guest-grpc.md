@@ -8,7 +8,8 @@ AgentService.GetTranslations/VerifyStaffPin встраиванием `*stream.Se
 
 ## GG-1. Токен гостя: Valkey, привязка к ПК, 12 часов
 
-- [ ] Подтвердить.
+- [x] Подтвердить.
+  - Решение (30.10.2026): по DECISIONS Q-038 — 12 часов; (а) привязка к `club_id` + `computer_id`.
 
 `zgt_` + 32 случайных байта (base64url), в Valkey только SHA-256: `tok:<sha>` {club, pc, user, exp, used}, `pc:<pc>` (один
 токен на ПК — повторный вход на ПК отзывает прежний, как `$user->tokens()->where('name', $deviceName)->delete()`),
@@ -19,7 +20,8 @@ AgentService.GetTranslations/VerifyStaffPin встраиванием `*stream.Se
 
 ## GG-2. «Вошёл на другом ПК» без `last_used_at` Sanctum
 
-- [ ] Подтвердить.
+- [x] Подтвердить.
+  - Решение (30.10.2026): принято как сделано.
 
 `AgentSignIns::elsewhere()`: живой токен другого ПК, использованный за 2 минуты. Агент старого протокола дёргал API
 каждые ~20 с (heartbeat с Bearer), новый — держит стрим и редко вызывает unary-RPC. Поэтому «активен» = токен
@@ -28,7 +30,8 @@ AgentService.GetTranslations/VerifyStaffPin встраиванием `*stream.Se
 
 ## GG-3. Идемпотентность — два уровня
 
-- [ ] Подтвердить.
+- [x] Подтвердить.
+  - Решение (30.10.2026): принято как сделано.
 
 1) Valkey `idem:<pc>:<key>` → отпечаток запроса + ответ (proto) или бизнес-ошибка (`google.rpc.Status`), 24 ч;
 INTERNAL/UNAVAILABLE/отмена не сохраняются. 2) Ключ БД сервиса с префиксом `agent:<pc>:<key>` (`billing_requests`,
@@ -38,7 +41,8 @@ INTERNAL/UNAVAILABLE/отмена не сохраняются. 2) Ключ БД 
 
 ## GG-4. Версия переводов агента
 
-- [ ] Решить вместе с переносом суперадминки переводов.
+- [x] Решить вместе с переносом суперадминки переводов.
+  - Решение (30.10.2026): по принципам (PD-12) — версия переводов растёт при любой правке, включая удаление строки; лимит `GetTranslations` — 30/мин на ПК (Q-047); `TranslationsChanged` шлёт суперадминка.
 
 В Laravel версия — счётчик в кэше (`TranslationCatalog::flush()` +1 при правке). Здесь — момент последнего изменения
 строк/языков (`max(updated_at)` в мс): без кэша и без отдельного счётчика, растёт при любой правке, но **не** при удалении
@@ -49,7 +53,8 @@ INTERNAL/UNAVAILABLE/отмена не сохраняются. 2) Ключ БД 
 
 ## GG-5. Telegram: восстановление пароля и код перевода — Unimplemented
 
-- [ ] Перенести вместе с сервисом Telegram Gateway.
+- [x] Перенести вместе с сервисом Telegram Gateway.
+  - Решение (30.10.2026): по DECISIONS «Telegram» — Этап 4.
 
 Сервиса Telegram в Go нет, поэтому `RequestPasswordResetCode`, `ResetPassword`, `RequestTransferCode` отвечают
 `UNIMPLEMENTED` (TODO в коде). `TransferBalance` с `telegram_code` уже работает поверх `billing.ConfirmFriendTransferCode`
@@ -57,7 +62,8 @@ INTERNAL/UNAVAILABLE/отмена не сохраняются. 2) Ключ БД 
 
 ## GG-6. Пересадка: «ПК в сети» по `last_seen_at`
 
-- [ ] Решить вместе с AS-2 (open-questions/stage2-agent-stream.md).
+- [x] Решить вместе с AS-2 (open-questions/stage2-agent-stream.md).
+  - Решение (30.10.2026): по AS-2 — «в сети» из присутствия (пересадка исправлена); `GetSeatMap` — так же.
 
 `TransferSeat` вызывает `billing/service.TransferSeat`, который считает целевой ПК свободным, только если
 `last_seen_at` моложе 90 с (`session.Computer.Online`). После A3 `last_seen_at` пишется только при переходах, поэтому
@@ -66,14 +72,16 @@ INTERNAL/UNAVAILABLE/отмена не сохраняются. 2) Ключ БД 
 
 ## GG-7. Нормализация телефона при входе
 
-- [ ] Подтвердить.
+- [x] Подтвердить.
+  - Решение (30.10.2026): принято как сделано (`PhoneNumber::normalize()`, Q-033).
 
 `LoginRequest` (Laravel) не нормализовал телефон (regex `^\+?[1-9]\d{1,14}$`, поиск по точному совпадению); агент
 нормализовал сам. В контракте (`guest.proto`) сервер нормализует `PhoneNumber::normalize()` — так и сделано.
 
 ## GG-8. Журнал неудачных входов
 
-- [ ] Решить вместе с A1.
+- [x] Решить вместе с A1.
+  - Решение (30.10.2026): по принципам (PD-13) — как в старом: `auth.api_login_failed` пишется во все клубы аккаунта через пул `zafiro_platform`.
 
 `recordFailedLogin('auth.api_login_failed')` писал запись во все клубы аккаунта — нужен пул `zafiro_platform`. Здесь
 неудачный вход не журналируется (лимит `customer-login` работает). Успешные — `auth.api_login`, `auth.qr_login`,
@@ -81,7 +89,8 @@ INTERNAL/UNAVAILABLE/отмена не сохраняются. 2) Ключ БД 
 
 ## GG-9. События агента, меняющие сессию
 
-- [ ] Подтвердить.
+- [x] Подтвердить.
+  - Решение (30.10.2026): принято как сделано.
 
 `SessionEnded` с причиной `GUEST` (гость завершил на ПК, если RPC не дошёл) завершает сессию владельца с расчётом
 (`billing.EndSession`, не сотрудник). `EXPIRED` — воркер сервера, `SEAT_TRANSFER`/`STAFF` — свои RPC/панель, `POWER` —
@@ -90,7 +99,8 @@ INTERNAL/UNAVAILABLE/отмена не сохраняются. 2) Ключ БД 
 
 ## GG-10. Подтверждение QR с телефона — только серверная часть
 
-- [ ] Подключить к веб-странице `/pc-login/{code}` и мобильному приложению.
+- [x] Подключить к веб-странице `/pc-login/{code}` и мобильному приложению.
+  - Решение (30.10.2026): принято: подключить к странице `/pc-login/{code}` (Этап 3) и мобильному API (Этап 4); поиск QR по коду — узкой RLS-политикой.
 
 `Server.ApproveQrLogin(ctx, clubID, code, userID)` повторяет `QrLogins::approve()`, будит ожидание `WatchQrLogin` на этом
 инстансе и шлёт ПК подсказку `QrLoginApproved`; на других инстансах ожидание перечитывает статус раз в 3 с. Клуб передаёт
@@ -99,7 +109,8 @@ INTERNAL/UNAVAILABLE/отмена не сохраняются. 2) Ключ БД 
 
 ## GG-11. Картинки
 
-- [ ] Подтвердить адреса.
+- [x] Подтвердить адреса.
+  - Решение (30.10.2026): принято: адреса картинок — как маршруты Laravel; маршруты переносятся с экранами и хранилищем файлов (Q-085).
 
 `ProductResource.image_url` — колонки `products.image_path` в схеме нет, поле пустое. Логотип, картинка входа, новости —
 по маршрутам Laravel (`/club-logos/{club}/{file}`, `/club-signin-images/{club}/{file}`, `/news-images/{news}/{file}`) от
@@ -107,7 +118,8 @@ INTERNAL/UNAVAILABLE/отмена не сохраняются. 2) Ключ БД 
 
 ## GG-12. Прочие решения без владельца
 
-- [ ] Подтвердить.
+- [x] Подтвердить.
+  - Решение (30.10.2026): по DECISIONS/Q-047 — `GetProfile` 60/мин на токен; остальное — как сделано.
 
 - `ListProducts` — курсор keyset (name, id) вместо номера страницы; размер по умолчанию 50, максимум 100.
 - `GetProfile` — без лимита (в `guest.proto` «60/мин на токен (новый)», правила в `ratelimit` нет; в Laravel у `/api/me`
