@@ -179,6 +179,9 @@ func (h *handlers) AdjustCustomerBalance(ctx context.Context, req api.AdjustCust
 	}
 	amount, err := billing.ParseOwnerAdjustmentAmount(money.Tiyn(b.AmountTiyn).Tenge())
 	if err != nil {
+		if errors.Is(err, billing.ErrBalanceAmountDecimals) { // Решение Q-002 (docs/DECISIONS.md)
+			return nil, ruleError("top_up_amount", cash.RuleDecimal)
+		}
 		if b.AmountTiyn < 1 {
 			return nil, ruleError("top_up_amount", cash.RuleMin)
 		}

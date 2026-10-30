@@ -229,43 +229,6 @@ func (h *handlers) EndComputerSession(ctx context.Context, req api.EndComputerSe
 	return api.EndComputerSession200JSONResponse(out), nil
 }
 
-// TransferComputerSession — пересадка клиента сотрудником (SeatTransfers::transfer() от имени клиента сессии).
-func (h *handlers) TransferComputerSession(ctx context.Context, req api.TransferComputerSessionRequestObject) (api.TransferComputerSessionResponseObject, error) {
-	svc, err := h.billing()
-	if err != nil {
-		return nil, err
-	}
-	clubID := h.clubID(ctx)
-	var owner int64
-	if err := h.tx(ctx, func(ctx context.Context, q *store.Queries) error {
-		pc, err := q.AdminGetComputerSession(ctx, store.AdminGetComputerSessionParams{ClubID: clubID, ID: req.ComputerId})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return notFoundError()
-		}
-		if err != nil {
-			return err
-		}
-		if pc.CurrentSessionUserID != nil {
-			owner = *pc.CurrentSessionUserID
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	if owner == 0 {
-		// SeatTransfers::ensureOwnSession(): нет оплаченной сессии клиента (гостевую с кассы не пересаживают).
-		return nil, validation("computer_id", "На этом ПК нет вашей оплаченной сессии.")
-	}
-	res, err := svc.TransferSeat(ctx, billingsvc.TransferRequest{
-		ClubID: clubID, UserID: owner, FromComputerID: req.ComputerId, TargetComputerID: req.Body.TargetComputerId,
-		ActorUserID: h.principal(ctx).UserID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return api.TransferComputerSession200JSONResponse{ComputerId: res.ComputerID, SessionId: res.SessionID, SessionEndsAt: res.SessionEndsAt}, nil
-}
-
 // GetClubMapState — ClubZoneController::state(): ПК из БД + присутствие агента.
 func (h *handlers) GetClubMapState(ctx context.Context, _ api.GetClubMapStateRequestObject) (api.GetClubMapStateResponseObject, error) {
 	clubID := h.clubID(ctx)

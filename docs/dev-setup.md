@@ -78,12 +78,14 @@ NATS и gRPC. Нужен для смоук-теста собранного би�
 | `ZAFIRO_AUTH_SIGNING_KEYS` \* | dev: случайный | `kid:секрет[,kid2:секрет2]`, секрет ≥ 32 байт; первый подписывает |
 | `ZAFIRO_AUTH_ACCESS_TTL`, `_IDLE_TTL`, `_REMEMBER_TTL`, `_MAX_LIFETIME` | `10m`, `120m`, `720h`, `720h` | сроки токенов и сессий; также `_REFRESH_REUSE_GRACE` 10s, `_TOUCH_EVERY` 1m |
 | `ZAFIRO_PASSWORD_MEMORY_KIB`, `_ITERATIONS`, `_PARALLELISM`, `_MAX_CONCURRENT` | `19456`, `2`, `1`, `0` | Argon2id |
-| `ZAFIRO_RATELIMIT_ENABLE`, `_DISABLE`, `_FAIL_OPEN` | пусто, пусто, `false` | именованные лимиты (`web-login`, `web-register` выключены по умолчанию) |
+| `ZAFIRO_RATELIMIT_ENABLE`, `_DISABLE`, `_FAIL_OPEN` | пусто, пусто, `false` | именованные лимиты (`web-login`, `web-register` включены по умолчанию — Q-052; выключить — `_DISABLE`) |
 | `ZAFIRO_AGENT_INSTANCE_ID` | имя хоста | id инстанса в кластере `[A-Za-z0-9_-]{1,64}` |
 | `ZAFIRO_AGENT_GRPC_LISTEN`, `_ENDPOINT` | `:8443`, `localhost:8443` | gRPC агентов; публичный адрес для ответа Enroll |
 | `ZAFIRO_AGENT_PKI_CA_CERT_FILE`, `_CA_KEY_FILE`, `_SERVER_CERT_FILE`, `_SERVER_KEY_FILE` | пусто | prod: все четыре обязательны (ключи — вне репозитория) |
 | `ZAFIRO_AGENT_PKI_DEV_DIR` | dev/test: `.dev/pki` | dev-CA (в prod запрещён); `_DEV_HOSTS` — имена сертификата |
 | `ZAFIRO_AGENT_ENROLL_CODE_PEPPER` \* | dev: случайный | HMAC кодов регистрации (≥ 32 байт), общий для инстансов; `_CODE_TTL` 15m |
+| `ZAFIRO_AGENT_ENROLL_DISKLESS_CERT_LIFETIME` | `24h` | сертификат бездискового ПК по ключу образа (Q-037) |
+| `ZAFIRO_AGENT_UPDATE_PUBLIC_KEYS` | пусто | открытые ключи Ed25519 подписи обновлений агента `key_id:base64,…`; пусто — обновления не рассылаются |
 | `ZAFIRO_AGENT_CERT_LIFETIME` | `720h` | срок сертификата ПК; кэш: `ZAFIRO_AGENT_CERT_CACHE_REFRESH` 5s, `_FULL_RELOAD` 10m |
 | `ZAFIRO_AGENT_STREAM_*` | AS-12 | `PRESENCE_TTL` 90s, `OFFLINE_GRACE` 15s, `HELLO_TIMEOUT` 10s, `STATUS_INTERVAL` 60s, `STATE_DEBOUNCE` 5s, `ACK_TIMEOUT` 30s, `KEY_PREFIX`, `SUBJECT_PREFIX`, `DRAIN_WITHIN` 10s |
 | `ZAFIRO_AGENT_GUEST_TOKEN_TTL`, `_IDEMPOTENCY_TTL`, `_QR_BASE_URL`, `_PUBLIC_BASE_URL`, `_QR_POLL_EVERY` | пакета (12h, 24h, `https://zafiro.kz`, = QR, 3s) | API гостя на ПК |

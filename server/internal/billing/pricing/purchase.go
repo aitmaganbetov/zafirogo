@@ -75,7 +75,10 @@ type TariffPurchaseInput struct {
 // Laravel: app/Services/AgentTariffPurchaseService.php purchase() (стр. 62–101), sell() (236–311)
 // (BR-013, BR-015, BR-016, BR-018, BR-020; GS-049, GS-050, GS-059, GAP-006…GAP-008, GAP-011, GAP-015, GAP-016).
 func QuoteTariffPurchase(in TariffPurchaseInput) (Purchase, error) {
-	if in.Tariff.Availability(in.Role, in.PurchaseCount, in.Now, in.Location) != Available {
+	// Решение SV-2 (docs/DECISIONS.md): выключенный тариф (is_active = false) не продаётся — «Тариф недоступен.», как
+	// тариф не в продаже. В старом purchase() is_active не проверялся: тариф скрывался только из списка агента,
+	// но покупался по id.
+	if !in.Tariff.IsActive || in.Tariff.Availability(in.Role, in.PurchaseCount, in.Now, in.Location) != Available {
 		return Purchase{}, ErrTariffUnavailable
 	}
 	if err := in.Computer.CheckForCustomer(in.UserID); err != nil {

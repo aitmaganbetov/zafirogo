@@ -166,3 +166,12 @@ WHERE club_id = sqlc.arg(club_id) AND idempotency_key = sqlc.arg(idempotency_key
 UPDATE billing_requests
 SET response = sqlc.arg(response)
 WHERE club_id = sqlc.arg(club_id) AND idempotency_key = sqlc.arg(idempotency_key);
+
+-- name: ListExpiredTimePackages :many
+-- Платформенный запрос (пул zafiro_platform, все клубы): просроченные пакеты для суточного сгорания —
+-- TimePackage::withoutGlobalScope('club')->where('expires_at', '<', now())->delete() (routes/console.php,
+-- session-purchases:prune). Сжигает каждый пакет транзакция его клуба (Решение Q-011, docs/DECISIONS.md).
+SELECT club_id, id, user_id
+FROM time_packages
+WHERE expires_at < sqlc.arg(now)
+ORDER BY club_id, id;

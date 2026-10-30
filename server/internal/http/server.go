@@ -80,7 +80,7 @@ type Options struct {
 }
 
 // routeLimits — лимиты эндпоинтов этого роутера: «МЕТОД путь» → правило ratelimit.
-// Вход в панель — web-login (в старом лимита не было, правило выключено по умолчанию).
+// Вход в панель — web-login (в старом лимита не было; включён по умолчанию — решение Q-052, docs/DECISIONS.md).
 var routeLimits = map[string]string{
 	http.MethodPost + " /api/auth/login": ratelimit.WebLogin,
 	// routes/web.php: club-computers.guest-session — throttle:30,1,club-computers.guest-session.

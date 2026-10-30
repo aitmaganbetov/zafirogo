@@ -34,7 +34,7 @@ func TestGuestEndToEnd(t *testing.T) {
 	user := h.customer("Арман", phone, "password", 200000, 50000)
 	tariff := h.int(`INSERT INTO tariffs (club_id, name, duration_minutes, price, payment_method, is_active, created_at, updated_at)
 		VALUES ($1, 'Час', 60, 100000, 'main_or_bonus', true, now(), now()) RETURNING id`, h.club)
-	h.int(`INSERT INTO tariffs (club_id, name, duration_minutes, price, payment_method, is_active, created_at, updated_at)
+	inactive := h.int(`INSERT INTO tariffs (club_id, name, duration_minutes, price, payment_method, is_active, created_at, updated_at)
 		VALUES ($1, 'Выключен', 60, 1, 'main_or_bonus', false, now(), now()) RETURNING id`, h.club)
 	cola := h.int(`INSERT INTO products (club_id, sku, name, category, price, quantity, created_at, updated_at)
 		VALUES ($1, 'COLA', 'Cola', 'Напитки', 35000, 10, now(), now()) RETURNING id`, h.club)
@@ -78,6 +78,12 @@ func TestGuestEndToEnd(t *testing.T) {
 		tariffs.GetTariffs()[0].GetMinutes() != 60 || !tariffs.GetTariffs()[0].GetMixedPayment() || tariffs.GetTariffs()[0].GetBonusMaxPercent() != 100 {
 		t.Fatalf("tariffs = %+v", tariffs.GetTariffs())
 	}
+
+	// Решение SV-2 (docs/DECISIONS.md): выключенный тариф по id не покупается (было — покупался).
+	_, err = p.guest().PurchaseTariff(ctx, &agentv1.PurchaseTariffRequest{IdempotencyKey: key(), TariffId: inactive,
+		BalanceSource: agentv1.BalanceSource_BALANCE_SOURCE_MAIN})
+	wantReason(t, err, codes.FailedPrecondition, agentv1.ErrorCode_ERROR_CODE_TARIFF_UNAVAILABLE)
+	h.wantBalances(user, 200000, 50000)
 
 	// Покупка тарифа с основного; повтор с тем же ключом — тот же ответ, списание одно.
 	k := key()

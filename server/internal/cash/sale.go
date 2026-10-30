@@ -102,8 +102,8 @@ func (Sale) Description() string { return POSSale }
 //	create(['type' => income, 'amount' => $total, 'description' => 'Продажа POS', 'receipt_data' => ['items' => …]])
 //
 // products и services — то, что нашлось по items (по id); строка без найденного товара/услуги — findOrFail (404) у
-// вызывающего, здесь — ошибка поля items.N. Сумма считается буквально во float (как PHP) и переводится в тиыны
-// округлением MySQL по строке PHP-float (money.FromTengeFloatDecimal); для цен с двумя знаками это ровно Σ price × qty.
+// вызывающего, здесь — ошибка поля items.N. Сумма — точно Σ price × qty в тиынах (Решение Q-002 (docs/DECISIONS.md):
+// целые тиыны везде); старый float-расчёт для цен decimal(12,2) давал ровно то же (TestSaleFloatTotalMatchesExact).
 // Покупатель и способ оплаты продажи не записываются (Q-013: payment_method = NULL).
 func SellPOS(open *Shift, items []SaleItem, products map[int64]Product, services map[int64]Service) (Sale, error) {
 	if err := RequireOpen(open, "items"); err != nil {
@@ -113,7 +113,7 @@ func SellPOS(open *Shift, items []SaleItem, products map[int64]Product, services
 		return Sale{}, err
 	}
 	var (
-		total float64
+		total money.Tiyn
 		sale  Sale
 	)
 	left := map[int64]int64{} // остатки после списаний этой продажи (товары distinct, но так надёжнее)
@@ -129,7 +129,7 @@ func SellPOS(open *Shift, items []SaleItem, products map[int64]Product, services
 			if err != nil {
 				return Sale{}, err
 			}
-			total += s.Price.Float() * float64(qty)
+			total = min(total+line, MaxShiftAmount+1) // насыщение: строка ≤ MaxShiftAmount, int64 не переполняется
 			sale.Lines = append(sale.Lines, ReceiptLine{ServiceID: s.ID, Name: s.Name, Quantity: qty, Price: s.Price, Total: line})
 			continue
 		}
@@ -148,17 +148,16 @@ func SellPOS(open *Shift, items []SaleItem, products map[int64]Product, services
 		if err != nil {
 			return Sale{}, err
 		}
-		total += p.Price.Float() * float64(qty)
+		total = min(total+line, MaxShiftAmount+1)
 		left[p.ID] = have - qty
 		sale.Lines = append(sale.Lines, ReceiptLine{ProductID: p.ID, Name: p.Name, Quantity: qty, Price: p.Price, Total: line})
 		sale.WriteOffs = append(sale.WriteOffs, StockWriteOff{ProductID: p.ID, SKU: p.SKU, Name: p.Name, Quantity: qty, BalanceAfter: have - qty})
 	}
-	amount, err := money.FromTengeFloatDecimal(total)
-	if err != nil || amount > MaxShiftAmount {
+	if total > MaxShiftAmount {
 		// decimal(14,2) переполнен: в старом коде — ошибка MySQL и откат.
 		return Sale{}, ruleErr("items", RuleMax)
 	}
-	sale.Amount = amount
+	sale.Amount = total
 	return sale, nil
 }
 

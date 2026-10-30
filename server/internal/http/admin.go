@@ -67,7 +67,6 @@ var adminRoute = map[string]string{
 	"ListTariffs":               "tariffs.index",
 	"SellGuestSession":          "club-computers.guest-session",
 	"EndComputerSession":        "club-computers.end-sessions",
-	"TransferComputerSession":   "club-computers.control",
 	"GetClubMapState":           "club-map.state",
 }
 
@@ -349,11 +348,13 @@ var ruleTemplates = map[string]string{
 	cash.RuleGt:       "The :attribute field must be greater than :value.",
 	cash.RuleIn:       "The selected :attribute is invalid.",
 	cash.RuleDistinct: "The :attribute field has a duplicate value.",
-	"exists":          "The selected :attribute is invalid.",
-	"unique":          "The :attribute has already been taken.",
-	"max_string":      "The :attribute field must not be greater than :max characters.",
-	"string":          "The :attribute field must be a string.",
-	"prohibited":      "The :attribute field is prohibited.",
+	// Решение Q-002 (docs/DECISIONS.md): > 2 знаков после точки — 'decimal:0,2' Laravel (:decimal = "0-2").
+	cash.RuleDecimal: "The :attribute field must have :decimal decimal places.",
+	"exists":         "The selected :attribute is invalid.",
+	"unique":         "The :attribute has already been taken.",
+	"max_string":     "The :attribute field must not be greater than :max characters.",
+	"string":         "The :attribute field must be a string.",
+	"prohibited":     "The :attribute field is prohibited.",
 }
 
 // ruleParams — значения :min/:max/:value правил форм старого кода (FormRequest rules()).
@@ -400,6 +401,7 @@ func ruleMessage(field, rule, param string) string {
 		}
 	}
 	msg := strings.ReplaceAll(tpl, ":attribute", strings.ReplaceAll(field, "_", " "))
+	msg = strings.ReplaceAll(msg, ":decimal", "0-2") // replaceDecimal(): 'decimal:0,2' → "0-2"
 	for _, k := range []string{":min", ":max", ":value"} {
 		msg = strings.ReplaceAll(msg, k, param)
 	}

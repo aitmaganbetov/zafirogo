@@ -39,7 +39,7 @@ const (
 )
 
 // errNoCertificate — вызов без идентичности ПК (перехватчик mTLS не пропустил бы; на всякий случай).
-var errNoCertificate = grpcserver.Error(codes.Unauthenticated, agentv1.ErrorCode_ERROR_CODE_CERTIFICATE_EXPIRED,
+var errNoCertificate = grpcserver.Error(codes.Unauthenticated, agentv1.ErrorCode_ERROR_CODE_CERTIFICATE_REQUIRED,
 	"ПК не подключён к клубу.", nil)
 
 // rpcError — уже готовый ответ (статус gRPC), не требует сопоставления.

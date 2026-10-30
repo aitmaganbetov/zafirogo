@@ -383,6 +383,42 @@ func (q *Queries) InsertSessionPurchase(ctx context.Context, arg InsertSessionPu
 	return id, err
 }
 
+const listExpiredTimePackages = `-- name: ListExpiredTimePackages :many
+SELECT club_id, id, user_id
+FROM time_packages
+WHERE expires_at < $1
+ORDER BY club_id, id
+`
+
+type ListExpiredTimePackagesRow struct {
+	ClubID int64 `json:"club_id"`
+	ID     int64 `json:"id"`
+	UserID int64 `json:"user_id"`
+}
+
+// Платформенный запрос (пул zafiro_platform, все клубы): просроченные пакеты для суточного сгорания —
+// TimePackage::withoutGlobalScope('club')->where('expires_at', '<', now())->delete() (routes/console.php,
+// session-purchases:prune). Сжигает каждый пакет транзакция его клуба (Решение Q-011, docs/DECISIONS.md).
+func (q *Queries) ListExpiredTimePackages(ctx context.Context, now time.Time) ([]ListExpiredTimePackagesRow, error) {
+	rows, err := q.db.Query(ctx, listExpiredTimePackages, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExpiredTimePackagesRow
+	for rows.Next() {
+		var i ListExpiredTimePackagesRow
+		if err := rows.Scan(&i.ClubID, &i.ID, &i.UserID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTariffZoneIDs = `-- name: ListTariffZoneIDs :many
 SELECT club_zone_id
 FROM club_zone_tariff

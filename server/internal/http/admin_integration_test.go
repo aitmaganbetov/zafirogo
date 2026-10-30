@@ -444,6 +444,12 @@ func TestAdminCashHTTP(t *testing.T) {
 		// Расход больше остатка.
 		r = e.post(owner, "/api/cash/transactions", map[string]any{"type": "expense", "amount_tiyn": 1300000, "description": "Много"})
 		expectField(t, r, "amount", cash.MsgNotEnoughCash)
+		// Решение Q-002 (docs/DECISIONS.md): сумма в API — целые тиыны; доля тиына (ввод с > 2 знаками тенге) не
+		// округляется, запрос отклоняется целиком.
+		r = e.post(owner, "/api/cash/transactions", map[string]any{"type": "income", "amount_tiyn": 100.5, "description": "Доля"})
+		if r.status != http.StatusBadRequest {
+			t.Fatalf("fractional tiyn: status %d, want 400", r.status)
+		}
 	})
 
 	t.Run("GS-009", func(t *testing.T) {
@@ -1095,9 +1101,11 @@ func TestAdminTariffsSessionsMap(t *testing.T) {
 	if e.activityCount("computer.session_ended", pc1) != 1 || len(e.notifier.ended) != 1 {
 		t.Fatal("end journal/notifier")
 	}
-	// Пересадка гостевой сессии без аккаунта — ошибка (пересаживается только сессия клиента).
+	// Решение RQ-6 (docs/DECISIONS.md): пересадки сотрудником нет (новая функция) — маршрута нет.
 	r = do(t, "POST", e.srv.URL+fmt.Sprintf("/api/club-computers/%d/transfer", pc2), map[string]any{"target_computer_id": pc1}, bearer(operator))
-	expectField(t, r, "computer_id", "На этом ПК нет вашей оплаченной сессии.")
+	if r.status != http.StatusNotFound && r.status != http.StatusMethodNotAllowed {
+		t.Fatalf("staff transfer route: status %d, want 404/405", r.status)
+	}
 }
 
 // loginEvents — журнал входа как app/hooks.go (activity.Record в тенантной транзакции клуба).

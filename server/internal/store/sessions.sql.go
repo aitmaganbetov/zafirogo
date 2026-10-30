@@ -45,21 +45,40 @@ func (q *Queries) DeleteSessionPurchases(ctx context.Context, arg DeleteSessionP
 }
 
 const expireDueSessions = `-- name: ExpireDueSessions :many
-UPDATE club_computers
+WITH due AS (
+    SELECT d.club_id, d.id, d.current_session_id, d.current_session_user_id, d.session_guest, d.session_ends_at
+    FROM club_computers d
+    WHERE d.session_ends_at IS NOT NULL AND d.session_ends_at <= $1::timestamptz
+    ORDER BY d.club_id, d.id
+    FOR UPDATE
+)
+UPDATE club_computers c
 SET current_session_id = NULL, current_session_user_id = NULL, session_guest = false, session_ends_at = NULL,
     updated_at = $1
-WHERE session_ends_at IS NOT NULL AND session_ends_at <= $1::timestamptz
-RETURNING club_id, id
+FROM due
+WHERE c.club_id = due.club_id AND c.id = due.id
+RETURNING c.club_id, c.id, c.display_name, c.device_name, c.number,
+    due.current_session_id AS session_id, due.current_session_user_id AS session_user_id,
+    due.session_guest AS session_guest, due.session_ends_at::timestamptz AS session_ends_at
 `
 
 type ExpireDueSessionsRow struct {
-	ClubID int64 `json:"club_id"`
-	ID     int64 `json:"id"`
+	ClubID        int64     `json:"club_id"`
+	ID            int64     `json:"id"`
+	DisplayName   *string   `json:"display_name"`
+	DeviceName    *string   `json:"device_name"`
+	Number        int64     `json:"number"`
+	SessionID     *string   `json:"session_id"`
+	SessionUserID *int64    `json:"session_user_id"`
+	SessionGuest  bool      `json:"session_guest"`
+	SessionEndsAt time.Time `json:"session_ends_at"`
 }
 
 // Платформенный запрос (пул zafiro_platform, все клубы): ClubComputerSessions::expireAll() —
 // UPDATE … WHERE session_ends_at <= now() по всем клубам, без расчёта возврата (GAP-005, Q-010).
 // now передаётся из Go (часы сервиса), усечённым до секунды, как строка Y-m-d H:i:s в старом коде.
+// Возвращает и снятую сессию (значения до UPDATE) — для журнала computer.session_expired в той же транзакции
+// (Решение Q-010, docs/DECISIONS.md).
 func (q *Queries) ExpireDueSessions(ctx context.Context, now *time.Time) ([]ExpireDueSessionsRow, error) {
 	rows, err := q.db.Query(ctx, expireDueSessions, now)
 	if err != nil {
@@ -69,7 +88,17 @@ func (q *Queries) ExpireDueSessions(ctx context.Context, now *time.Time) ([]Expi
 	var items []ExpireDueSessionsRow
 	for rows.Next() {
 		var i ExpireDueSessionsRow
-		if err := rows.Scan(&i.ClubID, &i.ID); err != nil {
+		if err := rows.Scan(
+			&i.ClubID,
+			&i.ID,
+			&i.DisplayName,
+			&i.DeviceName,
+			&i.Number,
+			&i.SessionID,
+			&i.SessionUserID,
+			&i.SessionGuest,
+			&i.SessionEndsAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -234,6 +263,7 @@ UPDATE club_computers
 SET current_session_id = $1,
     current_session_user_id = $2,
     session_ends_at = $3,
+    session_guest = false,
     updated_at = $4
 WHERE club_id = $5 AND id = $6
 `
@@ -247,8 +277,9 @@ type MoveComputerSessionParams struct {
 	ID            int64      `json:"id"`
 }
 
-// SeatTransfers::transfer(): на исходном ПК обнуляются id, клиент и конец; session_guest не трогается.
-// На целевом ПК ставятся те же три поля (session_guest тоже не трогается).
+// SeatTransfers::transfer(): на исходном ПК обнуляются id, клиент и конец; на целевом ставятся те же три поля.
+// Решение Q-016 (docs/DECISIONS.md): session_guest = false на обоих ПК (пересаживается только оплаченная сессия
+// клиента). В старом коде session_guest не трогался: целевой ПК мог остаться «гостевым», исходный — тоже.
 func (q *Queries) MoveComputerSession(ctx context.Context, arg MoveComputerSessionParams) error {
 	_, err := q.db.Exec(ctx, moveComputerSession,
 		arg.SessionID,

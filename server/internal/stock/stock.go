@@ -2,7 +2,6 @@ package stock
 
 import (
 	"errors"
-	"math/big"
 	"strconv"
 	"strings"
 
@@ -141,68 +140,29 @@ func Initial(productID, quantity int64) (m Movement, ok bool, err error) {
 
 // ParsePrice — цена товара из формы (BR-071, BR-072).
 //
-// Laravel: app/Http/Requests/StoreProductRequest.php — price required|numeric|min:0|max:9999999999.99 (сравнения
-// точные, brick/math); CreateProductAction / UpdateProductAction пишут строку запроса в decimal(12,2) — округление
-// MySQL по десятичной записи (money.ParseTengeRounded). Допущение Этапа 1: Q-002.
+// Laravel: app/Http/Requests/StoreProductRequest.php — price required|numeric|min:0|max:9999999999.99;
+// CreateProductAction / UpdateProductAction писали строку запроса в decimal(12,2) (округление MySQL).
+// Решение Q-002 (docs/DECISIONS.md): разбор строгий (money.ParseTenge) — > 2 знаков после точки — ошибка decimal
+// (а не округление), экспонента и запятая — numeric. Пробелы по краям обрезаются (TrimStrings).
 func ParsePrice(s string) (money.Tiyn, error) {
-	if strings.TrimSpace(s) == "" {
+	s = strings.TrimSpace(s)
+	if s == "" {
 		return 0, &Error{Field: "price", Rule: "required"}
 	}
-	r, ok := numericRat(s)
-	if !ok {
-		return 0, &Error{Field: "price", Rule: "numeric"}
-	}
-	if r.Sign() < 0 {
-		return 0, &Error{Field: "price", Rule: "min"}
-	}
-	if r.Cmp(ratMaxPrice) > 0 {
+	t, err := money.ParseTenge(s)
+	switch {
+	case errors.Is(err, money.ErrTooManyDecimals):
+		return 0, &Error{Field: "price", Rule: "decimal"}
+	case errors.Is(err, money.ErrOutOfRange):
 		return 0, &Error{Field: "price", Rule: "max"}
-	}
-	t, err := money.ParseTengeRounded(s)
-	if err != nil || t > MaxPrice {
+	case err != nil:
+		return 0, &Error{Field: "price", Rule: "numeric"}
+	case t < 0:
+		return 0, &Error{Field: "price", Rule: "min"}
+	case t > MaxPrice:
 		return 0, &Error{Field: "price", Rule: "max"}
 	}
 	return t, nil
-}
-
-var ratMaxPrice = big.NewRat(int64(MaxPrice), 100)
-
-// numericRat — значение строки, прошедшей правило `numeric` (PHP is_numeric), как точное число: так Laravel 10+
-// сравнивает min/max (brick/math BigNumber). Экспонента вне ±1000 — ошибка. Копия cash.numericRat (пакеты независимы).
-func numericRat(s string) (*big.Rat, bool) {
-	if !money.PHPIsNumeric(s) {
-		return nil, false
-	}
-	s = strings.Trim(s, " \t\n\r\v\f")
-	neg := false
-	if s != "" && (s[0] == '+' || s[0] == '-') {
-		neg = s[0] == '-'
-		s = s[1:]
-	}
-	exp := int64(0)
-	if i := strings.IndexAny(s, "eE"); i >= 0 {
-		e, err := strconv.ParseInt(s[i+1:], 10, 32)
-		if err != nil || e > 1000 || e < -1000 {
-			return nil, false
-		}
-		exp = e
-		s = s[:i]
-	}
-	whole, frac, _ := strings.Cut(s, ".")
-	digits, ok := new(big.Int).SetString("0"+whole+frac, 10)
-	if !ok {
-		return nil, false
-	}
-	if neg {
-		digits.Neg(digits)
-	}
-	scale := exp - int64(len(frac))
-	p := new(big.Int).Exp(big.NewInt(10), big.NewInt(max(scale, -scale)), nil)
-	r := new(big.Rat).SetInt(digits)
-	if scale >= 0 {
-		return r.Mul(r, new(big.Rat).SetInt(p)), true
-	}
-	return r.Quo(r, new(big.Rat).SetInt(p)), true
 }
 
 // Change — изменение поля товара «было → стало» (журнал product.updated).

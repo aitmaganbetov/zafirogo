@@ -11,9 +11,8 @@ import (
 )
 
 const deleteUserTransferCodesInClub = `-- name: DeleteUserTransferCodesInClub :exec
-DELETE FROM transfer_codes tc
-USING friendships f
-WHERE f.id = tc.friendship_id AND f.club_id = $1 AND tc.user_id = $2
+DELETE FROM transfer_codes
+WHERE club_id = $1 AND user_id = $2
 `
 
 type DeleteUserTransferCodesInClubParams struct {
@@ -21,17 +20,17 @@ type DeleteUserTransferCodesInClubParams struct {
 	UserID int64 `json:"user_id"`
 }
 
-// После перевода по коду удаляются коды пользователя (в старом коде — все, во всех клубах).
+// После перевода по коду удаляются коды пользователя в клубе (в старом коде — все, во всех клубах; решение
+// Q-028/L-1: коды клуба — данные клуба, чужие клубы не трогаем).
 func (q *Queries) DeleteUserTransferCodesInClub(ctx context.Context, arg DeleteUserTransferCodesInClubParams) error {
 	_, err := q.db.Exec(ctx, deleteUserTransferCodesInClub, arg.ClubID, arg.UserID)
 	return err
 }
 
 const incrementTransferCodeAttempts = `-- name: IncrementTransferCodeAttempts :exec
-UPDATE transfer_codes tc
-SET attempts = tc.attempts + 1, updated_at = now()
-FROM friendships f
-WHERE f.id = tc.friendship_id AND f.club_id = $1 AND tc.id = $2
+UPDATE transfer_codes
+SET attempts = attempts + 1, updated_at = now()
+WHERE club_id = $1 AND id = $2
 `
 
 type IncrementTransferCodeAttemptsParams struct {
@@ -82,13 +81,12 @@ func (q *Queries) LockFriendshipForTransfer(ctx context.Context, arg LockFriends
 const lockLatestTransferCode = `-- name: LockLatestTransferCode :one
 SELECT tc.id, tc.friendship_id, tc.amount_cents, tc.code_hash, tc.attempts
 FROM transfer_codes tc
-JOIN friendships f ON f.id = tc.friendship_id
-WHERE f.club_id = $1
+WHERE tc.club_id = $1
   AND tc.user_id = $2
   AND tc.expires_at > $3
 ORDER BY tc.id DESC
 LIMIT 1
-FOR UPDATE OF tc
+FOR UPDATE
 `
 
 type LockLatestTransferCodeParams struct {
@@ -106,7 +104,8 @@ type LockLatestTransferCodeRow struct {
 }
 
 // FriendTransferCodes::confirm(): последний (по id) неистёкший код пользователя FOR UPDATE
-// (app/Services/FriendTransferCodes.php ~стр. 79). Ограничен дружбами клуба (см. open-questions/stage1-ledger.md).
+// (app/Services/FriendTransferCodes.php ~стр. 79). Решение Q-028/L-1 (docs/DECISIONS.md): код ищется по club_id
+// самого кода (0012), коды того же пользователя в других клубах не видны и не перекрывают этот.
 func (q *Queries) LockLatestTransferCode(ctx context.Context, arg LockLatestTransferCodeParams) (LockLatestTransferCodeRow, error) {
 	row := q.db.QueryRow(ctx, lockLatestTransferCode, arg.ClubID, arg.UserID, arg.Now)
 	var i LockLatestTransferCodeRow

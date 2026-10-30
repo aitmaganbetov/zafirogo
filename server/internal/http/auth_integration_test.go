@@ -320,18 +320,10 @@ func TestSuperadminViewHTTP(t *testing.T) {
 	}
 }
 
-// Лимит web-login (выключен по умолчанию): включённый — 6-я попытка с одного IP+телефона → 429.
+// Лимит web-login включён по умолчанию (решение Q-052, docs/DECISIONS.md): 6-я попытка с одного IP+телефона → 429.
 func TestLoginRateLimit(t *testing.T) {
-	off := newAuthEnv(t)
-	ph := off.staff("cashier", "", false)
-	for i := range 7 {
-		if r := do(t, "POST", off.srv.URL+"/api/auth/login", map[string]any{"phone": ph, "password": "bad"}, nil); r.status != 422 {
-			t.Fatalf("disabled limit, attempt %d: %d", i+1, r.status)
-		}
-	}
-
-	on := newAuthEnv(t, ratelimit.WebLogin)
-	ph = on.staff("cashier", "", false)
+	on := newAuthEnv(t)
+	ph := on.staff("cashier", "", false)
 	for i := range 5 {
 		if r := do(t, "POST", on.srv.URL+"/api/auth/login", map[string]any{"phone": ph, "password": "bad"}, nil); r.status != 422 {
 			t.Fatalf("attempt %d: %d", i+1, r.status)

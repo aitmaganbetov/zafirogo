@@ -9,26 +9,25 @@ FOR UPDATE;
 
 -- name: LockLatestTransferCode :one
 -- FriendTransferCodes::confirm(): последний (по id) неистёкший код пользователя FOR UPDATE
--- (app/Services/FriendTransferCodes.php ~стр. 79). Ограничен дружбами клуба (см. open-questions/stage1-ledger.md).
+-- (app/Services/FriendTransferCodes.php ~стр. 79). Решение Q-028/L-1 (docs/DECISIONS.md): код ищется по club_id
+-- самого кода (0012), коды того же пользователя в других клубах не видны и не перекрывают этот.
 SELECT tc.id, tc.friendship_id, tc.amount_cents, tc.code_hash, tc.attempts
 FROM transfer_codes tc
-JOIN friendships f ON f.id = tc.friendship_id
-WHERE f.club_id = sqlc.arg(club_id)
+WHERE tc.club_id = sqlc.arg(club_id)
   AND tc.user_id = sqlc.arg(user_id)
   AND tc.expires_at > sqlc.arg(now)
 ORDER BY tc.id DESC
 LIMIT 1
-FOR UPDATE OF tc;
+FOR UPDATE;
 
 -- name: IncrementTransferCodeAttempts :exec
 -- Неверный код: attempts + 1 отдельной транзакцией (в старом коде — вне транзакции перевода).
-UPDATE transfer_codes tc
-SET attempts = tc.attempts + 1, updated_at = now()
-FROM friendships f
-WHERE f.id = tc.friendship_id AND f.club_id = sqlc.arg(club_id) AND tc.id = sqlc.arg(id);
+UPDATE transfer_codes
+SET attempts = attempts + 1, updated_at = now()
+WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);
 
 -- name: DeleteUserTransferCodesInClub :exec
--- После перевода по коду удаляются коды пользователя (в старом коде — все, во всех клубах).
-DELETE FROM transfer_codes tc
-USING friendships f
-WHERE f.id = tc.friendship_id AND f.club_id = sqlc.arg(club_id) AND tc.user_id = sqlc.arg(user_id);
+-- После перевода по коду удаляются коды пользователя в клубе (в старом коде — все, во всех клубах; решение
+-- Q-028/L-1: коды клуба — данные клуба, чужие клубы не трогаем).
+DELETE FROM transfer_codes
+WHERE club_id = sqlc.arg(club_id) AND user_id = sqlc.arg(user_id);

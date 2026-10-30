@@ -230,6 +230,7 @@
 - **Дано:** открытая смена.
 - **Действие:** `POST balance-top-ups {user_id: 999999, amount: 0, balance_type: unknown, payment_method: unknown}`.
 - **Ожидается:** ошибки `user_id`, `amount`, `balance_type`, `payment_method`; `cash_transactions` пусто.
+- ⚙️ Изменено решением Q-002: было — `amount` с тремя и более знаками после точки принимался (`numeric`) и округлялся MySQL (`"100.005"` → 100.01, бонус от `round($amount*100)`); стало — **422** `amount` (правило `decimal`, «The amount field must have 0-2 decimal places.»), то же для прихода/расхода, начального остатка смены, цены товара и корректировки владельцем; «в кассе недостаточно средств» сравнивается точно в тиынах (было во float: остаток 0.30 + 0.60 не давал расход 0.90). Тесты: `cash.TestParseTopUpAmount`, `TestExpenseExactComparison`, `TestGoldenTopUp/CQ-4`.
 
 #### GS-014 · P2 · `cash` · `TestTopUpPicker_OnlyCurrentClubMembers`
 **Тест:** `CashRegisterTest.php` — «balance top-up picker lists only current club members with their balances»
@@ -658,6 +659,7 @@
 - **Дано:** ПК1 сессия до now+30 мин; ПК2 сессия `s2` до now+10 мин; `Carbon::setTestNow(now + 31 мин)`.
 - **Действие:** heartbeat ПК1 `{in_session, paid-session}`; команда `club-computers:expire-sessions`.
 - **Ожидается:** `session null`, `session_expired true`, у ПК1 `current_session_id NULL`; после команды у ПК2 `current_session_id NULL`. (В Go — воркер истечения сессий.)
+- ⚙️ Изменено решением Q-010: было — истечение без записи в журнал; стало — в той же транзакции событие журнала `computer.session_expired` (от имени клиента сессии, у гостевой — владельца клуба; `details {session_id, planned_end}`), части сессии по-прежнему не удаляются. Тест: `TestExpireSessions/GS-087/GAP-005`.
 
 #### GS-088 · P1 · `billing` · `TestSessionEnd_ByStaffLogged`
 **Тест:** `ComputerSessionTest.php` — «the owner or staff end a session early and it is logged»
@@ -745,6 +747,7 @@
 - **Дано:** `setTestNow('2026-10-15 10:00:00 UTC')`; зоны Hall, VIP; ПК: №1 (from, сессия `sess-1` клиента до 11:30), №2 свободен, №3 занят другим до 11:00, №4 офлайн, №5 в VIP, №6 `is_reserved`, №7 бронь 11:00–12:00; тариф «Hall» 120 мин, 100 ₸ только для Hall; журнал `tariff.purchased {session_id sess-1}`.
 - **Действие:** `GET /api/guest/seats?computer_id=1`; `POST /api/guest/seat-transfer` без `X-Agent-Token`; на №3; на №5; от чужого клиента; на №2.
 - **Ожидается:** `current_computer_id = 1`, 2 зоны, первая «Hall»; `available`: №1 false, №2 **true**, №3, №4, №6, №7, №5 — false; №2 `{zone_id Hall, number 2, x 5, y 5}`; без токена ПК → **403**; №3 и №5 → ошибка `target_computer_id`; чужой клиент → `computer_id`; №2 → 200, `computer.id = 2`, `session.id = sess-1`; у №1 сессии нет; у №2 `sess-1`, тот же клиент, конец **11:30** (остаток 90 мин сохранён, денег не списывается); событие `session.transferred`.
+- ⚙️ Изменено решением Q-016: было — `session_guest` при пересадке не трогался (целевой ПК мог остаться «гостевым», исходный — тоже); стало — `session_guest = false` на обоих ПК. Решение RQ-6: пересадки сотрудником (`POST /api/club-computers/{id}/transfer`) нет — только сам клиент. Тест: `TestSessionEnd/GAP-036`.
 
 #### GS-104 · P3 · `guest` · `TestSeatTransfer_DisabledByClub`
 **Тест:** `GuestFeaturesTest.php` — «seat transfer is closed when the club has it switched off»
@@ -836,6 +839,7 @@
 **Тест:** `ComputerReservationTest.php` — «the agent does not sell time running into a booking of someone else, the booked customer may play»
 - **Дано:** интервал 10; `booked` (+77012223344) и `stranger` по 1000.00; тариф «Час» 60 мин, 100 ₸; бронь 07:30–09:30 для `booked`.
 - **Действие / Ожидается:** 06:00 `stranger` покупает (до 07:00 + 10 = 07:10 < 07:30) → 200 (основной 900.00); сессия сброшена; 06:25 `stranger` → **422** `computer_id` (07:25 + 10 мин заходит на бронь); `booked` → 200; у брони `arrived_at` проставлен (`ComputerReservations::markArrivedBy()`).
+- ⚙️ Изменено решением SV-9: было — время брони в тексте ошибки «ПК забронирован с :time…» в UTC (для `api/*` старый код переключал пояс на UTC); стало — в часовом поясе клуба (`clubs.timezone`): бронь 02:30 UTC в клубе Asia/Almaty → «с 07:30». В этом сценарии клуб в UTC — числа те же. Тест: `TestPurchase/SV-9`.
 
 #### GS-122 · P3 · `club` · `TestClubMap_ReservedDuringBooking`
 **Тест:** `ComputerReservationTest.php` — «the club map shows a PC as reserved during its booking»
@@ -2720,6 +2724,7 @@
 - **Дано:** сессия поминутно 30 мин; время вышло.
 - **Действие:** heartbeat после конца или команда `club-computers:expire-sessions`.
 - **Ожидается:** сессия снята, денег не возвращается (время использовано); строки `session_purchases` этой сессии **остаются** в БД (в старом коде их удаляет только `settle()`). См. ОВ-5 — решить, переносить ли это поведение.
+- ⚙️ Изменено решением Q-010: было — без журнала; стало — плюс событие `computer.session_expired` в той же транзакции (части сессии, как и прежде, остаются).
 
 ## PaymentRules и AgentTariffPurchaseService (`app/Services/PaymentRules.php`, `AgentTariffPurchaseService::sell()`, строки ~236–311)
 
@@ -2775,12 +2780,14 @@
 - **Оракул:** ⚠️ исправлено (2026-10-30): 40 мин, удаление пакета и тот же `expires_at` подтверждены; было «пакет с `expires_at` в прошлом → удаляется, 422», стало: **422** `package` «Срок абонемента истёк.», но пакет **остаётся в БД** — `$package->delete()` откатывается вместе с транзакцией `DB::transaction()`, в которой брошено исключение (`AgentTariffPurchaseService::startPackage()`). В списке клиента его не видно (`packagesFor()` фильтрует `expires_at > now`).
 - **Дано:** пакет 90 мин, истекает через 40 мин 30 с.
 - **Ожидается:** сессия **40 мин**; пакет удалён; при следующем досрочном завершении остаток сохраняется до того же `expires_at`. Пакет с `expires_at` в прошлом → удаляется, **422** `package` «Срок абонемента истёк.»
+- ⚙️ Изменено решением Q-011: было — пакет с `expires_at` в прошлом оставался в БД до суточной `session-purchases:prune` (удаление откатывалось с исключением), суточная задача удаляла молча; стало — **422** `package` «Срок абонемента истёк.», и отдельной транзакцией пакет сгорает: ledger минут `package_expired` (−остаток), журнал `time.package_expired` («Абонемент :name сгорел: :minutes мин.»); суточная задача сжигает все просроченные так же. Тесты: `TestSessionEnd/GAP-014`, `TestSessionEnd/Q-011/daily`.
 
 #### GAP-015 · P2 · `billing` · `TestTariff_UserRolesRestriction`
 **нет в старых тестах — посчитать по коду** (`isAvailable()`, `user_roles`)
 - **Оракул:** ✅ подтверждено прогоном Pest (2026-10-30, PHP 8.4.27, `tools/php-oracle`)
 - **Дано:** тариф `user_roles ["client"]`.
 - **Ожидается:** клиенту — в списке и продаётся; сотруднику с ролью `cashier` — нет в списке, покупка **422** `tariff` «Тариф недоступен.»
+- ⚙️ Изменено решением SV-2: было — выключенный тариф (`is_active = false`) не показывался в списке, но покупался по id; стало — покупка **422** `tariff` «Тариф недоступен.» (сервис, gRPC `PurchaseTariff` → `ERROR_CODE_TARIFF_UNAVAILABLE`). Тесты: `pricing.TestTariff_UserRolesRestriction/SV-2/inactive`, `TestPurchase/SV-2`, `TestGuestEndToEnd`.
 
 #### GAP-016 · P1 · `billing` · `TestPurchase_ExtendsActiveSession`
 **нет в старых тестах — посчитать по коду** (`sell()`: `session_ends_at = текущий конец + минуты`)
@@ -2826,6 +2833,7 @@
 - **Оракул:** ✅ подтверждено прогоном Pest (2026-10-30, PHP 8.4.27, `tools/php-oracle`)
 - **Дано:** смена 0; пополнение 1000 наличными; расход 800 → остаток 200.
 - **Ожидается:** возврат пополнения 1000 → ошибка `refund` «В кассе недостаточно средств.»; балансы и касса без изменений.
+- ⚙️ Изменено решением Q-002/CQ-3: было — сравнение `(float) amount > (float) остаток`; стало — точно в тиынах (в этом сценарии результат тот же).
 
 #### GAP-023 · P1 · `cash` · `TestRefund_ClosedShiftOperation`
 **нет в старых тестах — посчитать по коду**
@@ -2916,3 +2924,4 @@
 - **Оракул:** ✅ подтверждено прогоном Pest (2026-10-30, PHP 8.4.27, `tools/php-oracle`)
 - **Дано:** 60 мин поминутно 600 ₸/час (600.00), пересадка на другой ПК через 10 мин.
 - **Ожидается:** `session_id` тот же; завершение на новом ПК ещё через 20 мин → возврат за 30 мин = **300.00** (части сессии переносятся вместе с `session_id`).
+- ⚙️ Изменено решением Q-016: было — `session_guest` не трогался; стало — `false` на обоих ПК.

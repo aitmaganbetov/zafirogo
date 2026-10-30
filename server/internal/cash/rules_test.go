@@ -10,6 +10,8 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 )
 
+// Решение Q-002 (docs/DECISIONS.md): суммы из форм разбираются строго (money.ParseTenge), > 2 знаков после точки — 422
+// (правило decimal), а не округление MySQL, как в старом коде ("100.005" давало 100.01).
 func TestParseTopUpAmount(t *testing.T) {
 	cases := []struct {
 		in           string
@@ -18,25 +20,33 @@ func TestParseTopUpAmount(t *testing.T) {
 	}{
 		{in: "750", amount: 75000, base: 75000},
 		{in: "10000.55", amount: 1000055, base: 1000055},
-		{in: "100.005", amount: 10001, base: 10001},             // BR-041: 100.005*100 во float64 = 10000.5 → 10001
-		{in: "1.005", amount: 101, base: 100},                   // decimal по строке → 101; (int) round(100.49999…) в PHP 8.4 → 100
-		{in: "1.00499999999999999", amount: 101, base: 100},     // (float) → 1.005: не так, как строка (см. приход/расход)
-		{in: "0.0149999999999999", amount: 2, base: 1},          // decimal по "0.015" → 2; (int) round(1.49999999999999) → 1
-		{in: " 7.125 ", amount: 713, base: 713},                 // is_numeric допускает пробелы по краям
-		{in: "1e3", amount: 100000, base: 100000},               // экспонента допустима (numeric)
+		{in: "0.29", amount: 29, base: 29},                      // 0.29*100 во float = 28.999999999999996 — база бонуса всё равно 29
+		{in: " 7.5 ", amount: 750, base: 750},                   // пробелы по краям обрезаются (TrimStrings)
 		{in: "9999999999.99", amount: MaxTopUp, base: MaxTopUp}, // max:9999999999.99 включительно
-		{in: "9999999999.994", rule: RuleMax},                   // max сравнивает точно, до округления
-		{in: "0", rule: RuleGt},                                 // GS-013
+		{in: "Q-002/100.005", rule: RuleDecimal},                // было: округление до 100.01 (BR-041)
+		{in: "Q-002/1.005", rule: RuleDecimal},                  // было: 1.01 на баланс и база бонуса 1.00 (CQ-4)
+		{in: "Q-002/0.0149999999999999", rule: RuleDecimal},     // было: +0.02 на баланс и база бонуса 1 тиын (CQ-4)
+		{in: "Q-002/1.500", rule: RuleDecimal},                  // три знака, даже нулевые
+		{in: "Q-002/0.001", rule: RuleDecimal},                  // было: CQ-1 (gt после округления)
+		{in: "9999999999.994", rule: RuleDecimal},
+		{in: "10000000000", rule: RuleMax},
+		{in: "0", rule: RuleGt}, // GS-013
 		{in: "-5", rule: RuleGt},
-		{in: "0.001", rule: RuleGt}, // проходит gt:0, но MySQL дал бы 0.00 — CQ-1
 		{in: "abc", rule: RuleNumeric},
 		{in: "1,5", rule: RuleNumeric},
-		{in: "1e1001", rule: RuleNumeric},
+		{in: "1e3", rule: RuleNumeric}, // экспонента — неоднозначный ввод
+		{in: ".5", rule: RuleNumeric},
+		{in: "+5", rule: RuleNumeric},
 		{in: "", rule: RuleRequired},
+		{in: "   ", rule: RuleRequired},
 	}
 	for _, c := range cases {
+		in := c.in
+		if _, v, ok := strings.Cut(in, "Q-002/"); ok {
+			in = v
+		}
 		t.Run(c.in, func(t *testing.T) {
-			got, err := ParseTopUpAmount(c.in)
+			got, err := ParseTopUpAmount(in)
 			if c.rule != "" {
 				wantErr(t, err, "amount", c.rule)
 				return
@@ -50,6 +60,25 @@ func TestParseTopUpAmount(t *testing.T) {
 	}
 }
 
+// База бонуса (int) round($amount * 100) старого кода совпадает с точной суммой для любого ввода с ≤ 2 знаками
+// (Решение Q-002 (docs/DECISIONS.md) делает расхождение CQ-4 невозможным).
+func TestTopUpBonusBaseEqualsAmount(t *testing.T) {
+	r := rand.New(rand.NewPCG(20261030, 2))
+	for i := 0; i < 200000; i++ {
+		v := money.Tiyn(r.Int64N(int64(MaxTopUp))) + 1
+		if i%4 == 0 {
+			v = money.Tiyn(r.Int64N(100_000_00)) + 1 // до 100 000 тенге — частые суммы
+		}
+		got, err := ParseTopUpAmount(v.Tenge())
+		if err != nil {
+			t.Fatal(v, err)
+		}
+		if php := money.FromTengeFloat(money.PHPStringToFloat(v.Tenge())); php != got.BonusBase || got.Amount != v {
+			t.Fatalf("%s: amount %v, base %v, PHP round %v", v.Tenge(), got.Amount, got.BonusBase, php)
+		}
+	}
+}
+
 func TestParseTransactionAmount(t *testing.T) {
 	cases := []struct {
 		in     string
@@ -57,12 +86,13 @@ func TestParseTransactionAmount(t *testing.T) {
 		rule   string
 	}{
 		{in: "300", amount: 30000},
-		{in: "1.005", amount: 101},
-		{in: "1.00499999999999999", amount: 100}, // строка в decimal как есть (не через float): 100, а пополнение дало бы 101
-		{in: "12.999", amount: 1300},
+		{in: "12.9", amount: 1290},
 		{in: "999999999999.99", amount: MaxShiftAmount},
-		{in: "1000000000000", rule: RuleMax}, // decimal(14,2) — в старом коде ошибка MySQL (CQ-2)
-		{in: "0.004", rule: RuleGt},
+		{in: "1.005", rule: RuleDecimal},               // Q-002: было 1.01
+		{in: "1.00499999999999999", rule: RuleDecimal}, // Q-002: было 1.00
+		{in: "12.999", rule: RuleDecimal},              // Q-002: было 13.00
+		{in: "1000000000000", rule: RuleMax},           // decimal(14,2) — в старом коде ошибка MySQL (CQ-2)
+		{in: "0.00", rule: RuleGt},
 		{in: "0", rule: RuleGt},
 		{in: "x", rule: RuleNumeric},
 	}
@@ -77,50 +107,56 @@ func TestParseTransactionAmount(t *testing.T) {
 				t.Fatal(err)
 			}
 			eq(t, "amount", got.Amount, c.amount)
-			eq(t, "float", got.Float, money.PHPStringToFloat(c.in))
 		})
 	}
 }
 
 func TestParseOpeningBalance(t *testing.T) {
-	for in, want := range map[string]money.Tiyn{"0": 0, "-0": 0, "10000": 1000000, "100.005": 10001, "0.004": 0} {
+	for in, want := range map[string]money.Tiyn{"0": 0, "-0": 0, "10000": 1000000, "100.05": 10005} {
 		got, err := ParseOpeningBalance(in)
 		if err != nil || got != want {
 			t.Errorf("ParseOpeningBalance(%q) = %v, %v; want %v", in, got, err, want)
 		}
 	}
-	for in, rule := range map[string]string{"-0.01": RuleMin, "": RuleRequired, "abc": RuleNumeric, "1000000000000": RuleMax} {
+	for in, rule := range map[string]string{
+		"-0.01": RuleMin, "": RuleRequired, "abc": RuleNumeric, "1000000000000": RuleMax,
+		"100.005": RuleDecimal, "0.004": RuleDecimal, // Q-002: было 100.01 и 0.00
+	} {
 		_, err := ParseOpeningBalance(in)
 		wantErr(t, err, "opening_balance", rule)
 	}
 }
 
-// Сравнение остатка во float, как в PHP: остаток 0.30 + 0.60 во float = 0.8999999999999999, и расход 0.90
-// старый код отклонял («В кассе недостаточно средств.»), хотя точный остаток 0.90 (CQ-3).
-func TestExpenseFloatComparison(t *testing.T) {
+// Решение Q-002, CQ-3 (docs/DECISIONS.md): «хватает ли наличных» — точно в тиынах. Старый код сравнивал во float:
+// остаток 0.30 + 0.60 = 0.8999999999999999, и расход 0.90 отклонялся, хотя точный остаток 0.90.
+func TestExpenseExactComparison(t *testing.T) {
 	open := &Shift{ID: 1, Status: StatusOpen, OpeningBalance: 30}
 	tot := ComputeTotals(30, []Operation{{Type: Income, Amount: 60}})
 	eq(t, "exact balance", tot.Balance(), 90)
 	amt, _ := ParseTransactionAmount("0.9")
-	wantErr(t, CheckExpense(open, tot, amt), "amount", MsgNotEnoughCash)
-	amt, _ = ParseTransactionAmount("0.89")
 	if err := CheckExpense(open, tot, amt); err != nil {
-		t.Fatal(err)
+		t.Fatalf("CQ-3: расход 0.90 при остатке 0.90 должен пройти: %v", err)
 	}
-	// Остаток, который во float получается чуть больше точного (0.1 + 0.2): расход 0.30 проходит.
+	amt, _ = ParseTransactionAmount("0.91")
+	wantErr(t, CheckExpense(open, tot, amt), "amount", MsgNotEnoughCash)
+	// Остаток 0.1 + 0.2: расход 0.30 проходит, 0.31 — нет.
 	tot = ComputeTotals(10, []Operation{{Type: Income, Amount: 20}})
 	amt, _ = ParseTransactionAmount("0.3")
 	if err := CheckExpense(open, tot, amt); err != nil {
 		t.Fatal(err)
 	}
-	// Расход по строке сравнивается до округления: "200.004" > 200.00 — отказ, хотя записалось бы 200.00.
-	tot = ComputeTotals(20000, nil)
-	amt, _ = ParseTransactionAmount("200.004")
-	eq(t, "rounded", amt.Amount, 20000)
+	amt, _ = ParseTransactionAmount("0.31")
 	wantErr(t, CheckExpense(open, tot, amt), "amount", MsgNotEnoughCash)
+	// Возврат прихода 0.90 при остатке 0.30 + 0.60 — тоже точно.
+	tot = ComputeTotals(30, []Operation{{ID: 7, ShiftID: 1, Type: Income, Amount: 60}})
+	if _, err := CheckRefund(Operation{ID: 8, ShiftID: 1, Type: Income, Amount: 90, Description: POSSale, Receipt: &Receipt{Items: []ReceiptLine{{Name: "x", Quantity: 1}}}}, open, false, tot); err != nil {
+		t.Fatalf("refund 0.90 of 0.90: %v", err)
+	}
+	eq(t, "closing", tot.ClosingBalance(), 90)
 }
 
-// Сумма продажи считается во float, как в PHP, но для цен decimal(12,2) и целых количеств совпадает с точной.
+// Сумма продажи — точно в тиынах (Решение Q-002 (docs/DECISIONS.md)); старый float-расчёт для цен decimal(12,2)
+// и целых количеств давал то же самое: 0.10 × 3 + 0.20 во float = 0.5000000000000001 → "0.5" → 50 тиынов.
 func TestSaleFloatTotalMatchesExact(t *testing.T) {
 	open := &Shift{ID: 1, Status: StatusOpen}
 	// 0.10 × 3 = 0.30000000000000004 во float; + 0.20 = 0.5000000000000001 → "0.5" → 50 тиынов.
@@ -344,7 +380,7 @@ func TestTopUpDescription(t *testing.T) {
 
 func TestPlanTopUpBonusBase(t *testing.T) {
 	open := &Shift{ID: 1, Status: StatusOpen}
-	amt, err := ParseTopUpAmount("0.0149999999999999")
+	amt, err := ParseTopUpAmount("0.02")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +389,7 @@ func TestPlanTopUpBonusBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eq(t, "bonus base", seen, 1)
+	eq(t, "bonus base", seen, 2)
 	eq(t, "amount", plan.Amount, 2)
 	// Бонусный баланс: функция бонуса не вызывается.
 	called := false

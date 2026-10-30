@@ -967,37 +967,6 @@ paths:
           $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/ValidationFailed"
-  /api/club-computers/{computerId}/transfer:
-    post:
-      operationId: transferComputerSession
-      tags: [sessions]
-      summary: Пересадить клиента на другой ПК (сотрудник)
-      description: |
-        Laravel: SeatTransfers::transfer() (в старом — только сам клиент; сотрудником — новое, право pc_control.update,
-        маршрут club-computers.control). Остаток сессии переезжает на свободный ПК, где действует тариф; денег не двигается.
-      parameters:
-        - $ref: "#/components/parameters/ComputerId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/TransferSessionRequest"
-      responses:
-        "200":
-          description: Сессия на новом ПК.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TransferSessionResult"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "422":
-          $ref: "#/components/responses/ValidationFailed"
   /api/club-map/state:
     get:
       operationId: getClubMapState
@@ -2101,26 +2070,6 @@ components:
         kept_minutes:
           type: integer
           format: int64
-    TransferSessionRequest:
-      type: object
-      additionalProperties: false
-      required: [target_computer_id]
-      properties:
-        target_computer_id:
-          type: integer
-          format: int64
-    TransferSessionResult:
-      type: object
-      required: [computer_id, session_id, session_ends_at]
-      properties:
-        computer_id:
-          type: integer
-          format: int64
-        session_id:
-          type: string
-        session_ends_at:
-          type: string
-          format: date-time
     ComputerState:
       type: object
       required: [id, zone_id, number, name, status, connection, is_reserved, has_session, session_guest, agent_state, agent_version]

@@ -260,7 +260,7 @@ func TestTenantIsolation(t *testing.T) {
 		wantIs(t, err, service.ErrNotFound)
 		// Клуб B в транзакции клуба A: RLS прячет его смену («Сначала откройте смену.»), ledger — ErrTenantMismatch.
 		_, err = svc.Transact(ctx, q, service.TransactParams{ClubID: b.club, Type: cash.Income,
-			Amount: cash.TransactionAmount{Amount: 100, Float: 1}, Description: "x", Actor: actor(ub)})
+			Amount: cash.TransactionAmount{Amount: 100}, Description: "x", Actor: actor(ub)})
 		wantCashErr(t, err, "amount", cash.MsgOpenShiftFirst)
 		_, err = stock.LockProduct(ctx, q, b.club, pB)
 		wantIs(t, err, stock.ErrProductNotFound)

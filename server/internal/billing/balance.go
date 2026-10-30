@@ -63,6 +63,9 @@ func (e *BalanceError) Error() string {
 // ErrBalanceAmountOutOfRange — сумма вне допустимого правилами формы диапазона (валидация запроса).
 var ErrBalanceAmountOutOfRange = errors.New("billing: amount out of range")
 
+// ErrBalanceAmountDecimals — больше двух знаков после точки (правило decimal, 422). Решение Q-002 (docs/DECISIONS.md).
+var ErrBalanceAmountDecimals = errors.New("billing: more than two decimal places")
+
 // Тексты ошибок старого кода (ключи перевода).
 const (
 	msgTransferAmountRange   = "Сумма перевода — от 0,01 до 1 000 000."
@@ -320,21 +323,24 @@ func refundTopUpResult(res ledger.Result, userID int64, field BalanceField) Refu
 // OwnerAdjustmentMax — UserController::update(): top_up_amount numeric min:0.01 max:10000000.
 const OwnerAdjustmentMax money.Tiyn = 1_000_000_000
 
-// ParseOwnerAdjustmentAmount — сумма пополнения/списания владельцем из формы, буквально как в старом коде.
+// ParseOwnerAdjustmentAmount — сумма пополнения/списания владельцем из формы.
 //
 // Laravel: app/Http/Controllers/UserController.php UserController::update() (~стр. 95, 113):
-// правило 'numeric', 'min:0.01', 'max:10000000'; затем $topUp = round((float) $data['top_up_amount'], 2);
-// $balance->increment/decrement($field, $topUp) — MySQL записывает float-строку PHP в decimal(12,2).
-// Пример BR-058: "1234.565" → 1234.57 → 123457 тиынов.
+// правило 'numeric', 'min:0.01', 'max:10000000'; затем $topUp = round((float) $data['top_up_amount'], 2).
+// Решение Q-002 (docs/DECISIONS.md): разбор строгий (money.ParseTenge): > 2 знаков после точки — ErrBalanceAmountDecimals
+// (422), а не round(…, 2) — было "1234.565" → 1234.57 (BR-058); экспонента, запятая — ErrBalanceAmountOutOfRange.
+// Для ввода с ≤ 2 знаками сумма та же, что в старом коде.
 func ParseOwnerAdjustmentAmount(s string) (money.Tiyn, error) {
-	if !money.PHPIsNumeric(s) {
+	t, err := money.ParseTenge(strings.TrimSpace(s))
+	switch {
+	case errors.Is(err, money.ErrTooManyDecimals):
+		return 0, ErrBalanceAmountDecimals
+	case err != nil:
+		return 0, ErrBalanceAmountOutOfRange
+	case t < 1 || t > OwnerAdjustmentMax:
 		return 0, ErrBalanceAmountOutOfRange
 	}
-	f := money.PHPStringToFloat(s)
-	if f < 0.01 || f > 10_000_000 {
-		return 0, ErrBalanceAmountOutOfRange
-	}
-	return money.FromTengeFloatDecimal(money.PHPRound(f, 2))
+	return t, nil
 }
 
 // OwnerAdjustParams — пополнение (WriteOff = false) или списание баланса владельцем без кассы.

@@ -198,8 +198,12 @@ CREATE POLICY tenant_isolation ON club_computers
 
   `current_setting(…, true)` без значения даёт NULL → условие ложно → строк нет (как `1 = 0` в Laravel).
 - [ ] `news`: `USING (club_id IS NULL OR club_id = current_setting('app.club_id', true)::bigint)` для чтения, запись — только своего клуба.
-- [ ] Таблицы без `club_id` (`transfer_codes`, `api_idempotency_keys`): добавить `club_id` (рекомендуется, open-questions В-10)
-  или политика через `EXISTS` по родителю.
+- [x] Таблицы без `club_id` (`transfer_codes`, `api_idempotency_keys`): добавить `club_id` (рекомендуется, open-questions В-10)
+  или политика через `EXISTS` по родителю. Сделано миграцией `0012` (решение Q-028, L-1): `club_id NOT NULL` с бэкфиллом
+  из родителя, составной FK `(club_id, родитель) → родитель (club_id, id)`, обычная политика `club_id = app.club_id`.
+- [x] `0012` (решение Q-031): `tariffs_club_id_name_unique` — частичный уникальный индекс `(club_id, lower(name)) WHERE deleted_at IS NULL`
+  (имя удалённого тарифа снова свободно; регистр не важен, как в MySQL, Q-025); `time_packages (expires_at)` — суточное
+  сгорание пакетов (Q-011).
 - [ ] **Как ставить через pgx** — только внутри транзакции и только `is_local = true` (значение живёт до конца транзакции,
   соединение возвращается в пул чистым):
 
@@ -381,8 +385,8 @@ system. `club_id NULL` — событие платформы (пишет тол�
   `NULLIF(current_setting('app.club_id', true), '')::bigint` (пустая строка остаётся в соединении после транзакции с `SET LOCAL` —
   без `NULLIF` запрос упал бы на приведении типа). Без клуба — NULL → строк нет.
 - Охват: все 28 таблиц 0001 с `club_id NOT NULL` + 6 новых; особые политики: `news` (читаются и платформенные `club_id IS NULL`),
-  `api_request_logs` (запись без клуба допускается), `transfer_codes` (через `friendships`; свои коды пользователя — во всех клубах,
-  лимиты BR-092 на аккаунт), `api_idempotency_keys` (через `api_keys`), `club_memberships` + `member_self_read` (свои членства во
+  `api_request_logs` (запись без клуба допускается), `transfer_codes` и `api_idempotency_keys` (до `0012` — через родителя;
+  с `0012` — свой `club_id` и обычная политика, Q-028), `club_memberships` + `member_self_read` (свои членства во
   всех клубах при `app.user_id` — выбор клуба при входе).
 - Без RLS (не данные клуба): `users`, `clubs`, `saas_plans`, `password_recovery_codes`, `platform_settings`, `languages`,
   `translations`, `server_metrics`, `request_metrics`, `platform_logs`.
@@ -399,3 +403,16 @@ system. `club_id NULL` — событие платформы (пишет тол�
 
 `varchar(8) NULL CHECK IN ('cash','card','qr')` — допущение Q-013: хранится, в остатке смены и X/Z не разделяется; старые строки —
 NULL. Тот же способ — в `ledger_transactions.meta` операции `top_up`.
+
+### 10.10. Ключи образа бездисковых ПК (0013)
+
+Решение Q-037 (docs/DECISIONS.md), протокол — `docs/agent-protocol.md` §12.8. Замена `clubs.installation_key_*` для
+бездисковых ПК (старые колонки не трогаем — нужны переносу данных; ключ установки клуба не переносится).
+
+- `agent_image_keys` — многоразовые ключи образа: `key_hash` (HMAC-SHA256 с секретом сервера, как коды), `key_prefix`
+  (12 символов для показа), `name`, `subnets cidr[]` (1–16), `expires_at`, `revoked_at/by`, `last_used_at`, кто создал.
+  RLS + политика `image_key_lookup` (только SELECT строки с хешем из `app.enroll_code_hash`, как `enroll_code_lookup`).
+- `agent_pending_computers` — ПК с новым MAC, ожидающие подтверждения: MAC, UUID, имя, железо (`device jsonb`), IP,
+  `attempts`, `approved_at/by` + `club_computer_id`, `rejected_at/by`. Одна нерешённая или отклонённая заявка на MAC клуба
+  (частичный уникальный индекс). RLS.
+- `agent_certificates`: `diskless` (сертификат 24 ч, продление тоже 24 ч), `image_key_id`, `issued_via += 'image_key'`.

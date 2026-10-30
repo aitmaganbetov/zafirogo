@@ -237,6 +237,19 @@ func TestPurchase(t *testing.T) {
 		wantFieldError(t, err, "tariff", "Тариф недоступен.")
 	})
 
+	t.Run("SV-2", func(t *testing.T) {
+		// Решение SV-2 (docs/DECISIONS.md): было — выключенный тариф (is_active = false) покупался по id;
+		// стало — «Тариф недоступен.», деньги не списываются.
+		e := newEnv(t, "")
+		pc := e.computer(e.zone("Hall", nil), 1)
+		tr := e.tariff(tariffSpec{name: "Выключен", minutes: 60, price: 10 * tenge})
+		exec(t, "UPDATE tariffs SET is_active = false WHERE id = $1", tr)
+		u := e.customer("Клиент", 100*tenge, 0)
+		_, err := e.buyTariff(u, tr, pc, pricing.ChoiceNone)
+		wantFieldError(t, err, "tariff", "Тариф недоступен.")
+		e.wantBalances(u, 100*tenge, 0)
+	})
+
 	t.Run("GS-060", func(t *testing.T) {
 		// Тариф зоны «Зал» на ПК в VIP — «Тариф недоступен для этого компьютера.»
 		e := newEnv(t, "")
@@ -301,6 +314,44 @@ func TestPurchase(t *testing.T) {
 		e.wantBalances(stranger, 900*tenge, 0)
 		must[service.PurchaseResult](t)(e.buyTariff(booked, tr, pc, pricing.ChoiceNone))
 		eq(t, "arrived", scalar[bool](t, "SELECT arrived_at IS NOT NULL FROM computer_reservations WHERE id = $1", resID), true)
+	})
+
+	t.Run("Q-031", func(t *testing.T) {
+		// Решение Q-031 (docs/DECISIONS.md), миграция 0012: имя мягко удалённого тарифа можно использовать снова;
+		// среди неудалённых имя уникально без учёта регистра (как collation MySQL, Q-025).
+		e := newEnv(t, "")
+		old := e.tariff(tariffSpec{name: "Ночной", minutes: 60, price: 10 * tenge})
+		exec(t, "UPDATE tariffs SET deleted_at = now() WHERE id = $1", old)
+		again := e.tariff(tariffSpec{name: "Ночной", minutes: 60, price: 10 * tenge})
+		eq(t, "new id", again != old, true)
+		if _, err := fixDB.Owner.Exec(t.Context(), `INSERT INTO tariffs (club_id, name, duration_minutes, price, payment_method,
+			is_active, created_at, updated_at) VALUES ($1, 'НОЧНОЙ', 60, 100, 'main_or_bonus', true, now(), now())`, e.club); err == nil {
+			t.Fatal("duplicate active tariff name (case-insensitive) must be rejected")
+		}
+	})
+
+	t.Run("SV-9", func(t *testing.T) {
+		// Решение SV-9 (docs/DECISIONS.md): было — время брони в ошибке в UTC («с 02:30» при брони на 07:30 по Алматы);
+		// стало — в часовом поясе клуба.
+		e := newEnv(t, `{"club": {"booking_interval": 10}}`)
+		exec(t, "UPDATE clubs SET timezone = 'Asia/Almaty' WHERE id = $1", e.club)
+		e.clock.set(time.Date(2026, 10, 15, 2, 0, 0, 0, time.UTC)) // 07:00 по Алматы (UTC+5)
+		pc := e.computer(e.zone("Hall", nil), 1)
+		tr := e.tariff(tariffSpec{name: "Час", minutes: 60, price: 100 * tenge})
+		booked := e.customer("Бронь", 1000*tenge, 0)
+		stranger := e.customer("Чужой", 1000*tenge, 0)
+		exec(t, `INSERT INTO computer_reservations (club_id, club_computer_id, user_id, starts_at, ends_at, created_at, updated_at)
+			VALUES ($1, $2, $3, '2026-10-15 02:30:00+00', '2026-10-15 04:30:00+00', now(), now())`, e.club, pc, booked)
+		_, err := e.buyTariff(stranger, tr, pc, pricing.ChoiceNone)
+		loc, lerr := time.LoadLocation("Asia/Almaty")
+		if lerr != nil {
+			t.Fatal(lerr)
+		}
+		want := time.Date(2026, 10, 15, 2, 30, 0, 0, time.UTC).In(loc).Format("15:04") // 07:30 (UTC+5 с 2024 г.)
+		var ve *service.Error
+		if !asErr(err, &ve) || ve.Field != "computer_id" || ve.Params["time"] != want || want == "02:30" {
+			t.Fatalf("err = %v, want booking error at %s (Asia/Almaty)", err, want)
+		}
 	})
 
 	t.Run("RLS/чужой клуб", func(t *testing.T) {

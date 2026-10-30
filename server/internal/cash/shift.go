@@ -75,39 +75,26 @@ func ComputeTotals(opening money.Tiyn, ops []Operation) Totals {
 // Balance — остаток в кассе: opening + income − expense (точно, в тиынах).
 func (t Totals) Balance() money.Tiyn { return t.Opening + t.Income - t.Expense }
 
-// BalanceFloat — остаток так, как его считал PHP: (float) opening_balance + (float) income − (float) expense,
-// слева направо во float64. С ним старый код сравнивал расход и возврат («В кассе недостаточно средств.»),
-// поэтому сравнение повторяем во float (см. EnoughCash).
-// Laravel: CashRegisterService::totals() — (float) $shift->opening_balance + $income - $expense.
-func (t Totals) BalanceFloat() float64 {
-	return t.Opening.Float() + t.Income.Float() - t.Expense.Float()
-}
-
-// ClosingBalance — closing_balance при закрытии: float-остаток, записанный в decimal(14,2)
-// (строка PHP-float, округление MySQL — money.FromTengeFloatDecimal). Для всех сумм в пределах decimal(14,2)
-// совпадает с Balance() (ошибка float много меньше полутиына); при ошибке преобразования — Balance().
-// Laravel: CashRegisterService::close() — 'closing_balance' => $this->balance($shift).
-func (t Totals) ClosingBalance() money.Tiyn {
-	if v, err := money.FromTengeFloatDecimal(t.BalanceFloat()); err == nil {
-		return v
-	}
-	return t.Balance()
-}
+// ClosingBalance — closing_balance при закрытии: остаток смены точно в тиынах.
+// Laravel: CashRegisterService::close() — 'closing_balance' => $this->balance($shift) (float, записанный в decimal(14,2);
+// для сумм в пределах decimal(14,2) совпадает с точным остатком).
+// Решение Q-002 (docs/DECISIONS.md): остаток кассы считается точно, без float.
+func (t Totals) ClosingBalance() money.Tiyn { return t.Balance() }
 
 // notEnoughCash — PHP: (float) $amount > $this->balance($shift).
 // Laravel: CashRegisterService::transact() (~стр. 236), refund() (~стр. 165).
-// Сравнение во float повторяет старое поведение и на границе: при остатке 0.3 + 0.6 (= 0.8999999999999999 во float)
-// расход 0.90 отклоняется. См. вопрос CQ-3.
-func notEnoughCash(amount float64, t Totals) bool { return amount > t.BalanceFloat() }
+// Решение Q-002, CQ-3 (docs/DECISIONS.md): сравнение точное, в тиынах. Старый код сравнивал во float, и при остатке
+// 0.30 + 0.60 (= 0.8999999999999999 во float) расход 0.90 отклонялся; теперь проходит.
+func notEnoughCash(amount money.Tiyn, t Totals) bool { return amount > t.Balance() }
 
 // CheckExpense — расход из кассы не больше остатка смены (BR-054).
-// amount — TransactionAmount из ParseTransactionAmount; сравнивается (float) $data['amount'] запроса.
+// amount — TransactionAmount из ParseTransactionAmount; сравнение точное (Решение Q-002 (docs/DECISIONS.md)).
 // Laravel: CashRegisterService::transact() — expense && (float) $data['amount'] > $this->balance($shift) → «В кассе недостаточно средств.» (поле amount).
 func CheckExpense(open *Shift, t Totals, amount TransactionAmount) error {
 	if err := RequireOpen(open, "amount"); err != nil {
 		return err
 	}
-	if notEnoughCash(amount.Float, t) {
+	if notEnoughCash(amount.Amount, t) {
 		return msgErr("amount", MsgNotEnoughCash)
 	}
 	return nil

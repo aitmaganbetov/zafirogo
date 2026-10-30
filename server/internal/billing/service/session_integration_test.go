@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/pricing"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/worker"
@@ -38,6 +39,23 @@ func TestSessionEnd(t *testing.T) {
 		e.wantTotalSpent(u, 150*tenge) // 300 − 150 (GAP-002: траты уменьшаются на возврат с основного)
 		eq(t, "audit", scalar[int64](t, "SELECT count(*) FROM audit_log WHERE club_id = $1 AND action = 'money.session_refund'", e.club), 1)
 		e.noDrift()
+	})
+
+	t.Run("Q-012", func(t *testing.T) {
+		// Решение Q-012 (docs/DECISIONS.md). Было (SessionSettlement::settle(), OQ-BR-12): у клиента нет строки
+		// member_balances (перенесённые данные) — возврат за время терялся, траты всё равно уменьшались.
+		// Стало: строка создаётся, возврат зачисляется.
+		e := newEnv(t, "")
+		pc := e.computer(e.zone("Hall", ptr(int64(60000))), 4)
+		u := e.customer("Клиент", 1000*tenge, 0)
+		r := must[service.PurchaseResult](t)(e.buyMinutes(u, pc, 60, pricing.ChoiceMain))
+		exec(t, "DELETE FROM member_balances WHERE club_id = $1 AND user_id = $2", e.club, u)
+		e.clock.travel(30 * time.Minute)
+		res := must[service.EndSessionResult](t)(e.end(pc, r.SessionID, u, false))
+		eq(t, "refunded", res.RefundMain.Tenge(), "300.00")
+		eq(t, "balance known", res.BalanceKnown, true)
+		e.wantBalances(u, 300*tenge, 0) // новая строка: 0 + возврат
+		eq(t, "ledger", scalar[string](t, "SELECT kind FROM ledger_transactions WHERE club_id = $1 AND id = $2", e.club, res.LedgerTransactionID), "session_refund")
 	})
 
 	t.Run("GAP-001", func(t *testing.T) {
@@ -179,14 +197,59 @@ func TestSessionEnd(t *testing.T) {
 		eq(t, "packages", e.count("time_packages"), 0)
 		eq(t, "ledger minutes", e.minutesOf(pkg), -90) // весь остаток (Q-011)
 
-		// Просроченный пакет: «Срок абонемента истёк.», пакет остаётся (удаление откатывалось).
+		// Решение Q-011 (docs/DECISIONS.md). Было: «Срок абонемента истёк.», пакет оставался (удаление откатывалось
+		// вместе с исключением). Стало: та же ошибка, а пакет сгорает отдельной транзакцией — ledger минут
+		// package_expired (−остаток) и журнал time.package_expired; ключ идемпотентности запуска не занят.
 		expired := scalar[int64](t, `INSERT INTO time_packages (club_id, user_id, name, minutes_left, expires_at, created_at, updated_at)
 			VALUES ($1, $2, 'Старый', 30, $3, now(), now()) RETURNING id`, e.club, u, t0.Add(-time.Minute))
-		_, err := e.svc.StartPackage(context.Background(), service.PackageStartRequest{
-			ClubID: e.club, UserID: u, PackageID: expired, ComputerID: pc, IdempotencyKey: key("pkg"),
+		ctx := activity.WithRequestMeta(context.Background(), activity.RequestMeta{IP: "10.0.0.7"})
+		startKey := key("pkg")
+		_, err := e.svc.StartPackage(ctx, service.PackageStartRequest{
+			ClubID: e.club, UserID: u, PackageID: expired, ComputerID: pc, IdempotencyKey: startKey,
+			Actor: service.Actor{UserID: u, Kind: "guest"},
 		})
 		wantFieldError(t, err, "package", "Срок абонемента истёк.")
-		eq(t, "packages", e.count("time_packages"), 1)
+		eq(t, "packages", e.count("time_packages"), 0)
+		eq(t, "ledger minutes", e.minutesOf(expired), -30)
+		eq(t, "ledger kind", scalar[string](t, `SELECT t.kind FROM ledger_transactions t JOIN ledger_minute_entries m
+			ON m.club_id = t.club_id AND m.transaction_id = t.id WHERE t.club_id = $1 AND m.time_package_id = $2`, e.club, expired), "package_expired")
+		eq(t, "journal", scalar[string](t, `SELECT description FROM activity_logs WHERE club_id = $1 AND event = 'time.package_expired'
+			AND user_id = $2 AND ip_address = '10.0.0.7'`, e.club, u), "Абонемент Старый сгорел: 30 мин.")
+		eq(t, "start key free", scalar[int64](t, "SELECT count(*) FROM billing_requests WHERE club_id = $1 AND idempotency_key = $2", e.club, startKey), 0)
+		// Повтор — пакета больше нет (404).
+		_, err = e.svc.StartPackage(ctx, service.PackageStartRequest{
+			ClubID: e.club, UserID: u, PackageID: expired, ComputerID: pc, IdempotencyKey: key("pkg"),
+		})
+		eq(t, "not found", isNotFound(err), true)
+		e.noDrift()
+	})
+
+	t.Run("Q-011/daily", func(t *testing.T) {
+		// Решение Q-011 (docs/DECISIONS.md): суточная задача сжигает просроченные пакеты всех клубов так же
+		// (было: TimePackage::where('expires_at', '<', now())->delete() без записи).
+		e := newEnv(t, "")
+		u := e.customer("Клиент", 0, 0)
+		old := scalar[int64](t, `INSERT INTO time_packages (club_id, user_id, name, minutes_left, expires_at, created_at, updated_at)
+			VALUES ($1, $2, 'Старый', 45, $3, now(), now()) RETURNING id`, e.club, u, t0.Add(-time.Hour))
+		zero := scalar[int64](t, `INSERT INTO time_packages (club_id, user_id, name, minutes_left, expires_at, created_at, updated_at)
+			VALUES ($1, $2, 'Пустой', 0, $3, now(), now()) RETURNING id`, e.club, u, t0.Add(-time.Hour))
+		live := scalar[int64](t, `INSERT INTO time_packages (club_id, user_id, name, minutes_left, expires_at, created_at, updated_at)
+			VALUES ($1, $2, 'Живой', 60, $3, now(), now()) RETURNING id`, e.club, u, t0.Add(time.Hour))
+		w := &worker.BurnPackages{Platform: fixDB.Platform, App: fixDB.App, Now: func() time.Time { return t0 }}
+		ran, _, err := w.Tick(context.Background())
+		if err != nil || !ran {
+			t.Fatalf("tick: ran=%v err=%v", ran, err)
+		}
+		eq(t, "left", scalar[int64](t, "SELECT count(*) FROM time_packages WHERE club_id = $1 AND id IN ($2, $3, $4)", e.club, old, zero, live), 1)
+		eq(t, "live kept", scalar[int64](t, "SELECT count(*) FROM time_packages WHERE id = $1", live), 1)
+		eq(t, "ledger old", e.minutesOf(old), -45)
+		eq(t, "ledger zero", e.minutesOf(zero), 0) // пустой пакет — без проводки, но с журналом
+		eq(t, "journal", scalar[int64](t, `SELECT count(*) FROM activity_logs WHERE club_id = $1 AND event = 'time.package_expired'
+			AND ip_address = '127.0.0.1'`, e.club), 2)
+		// Повторный тик — ничего нового (идемпотентно).
+		must[bool](t)(func() (bool, error) { ran, _, err := w.Tick(context.Background()); return ran, err }())
+		eq(t, "ledger old again", e.minutesOf(old), -45)
+		e.noDrift()
 	})
 
 	t.Run("GS-088", func(t *testing.T) {
@@ -215,10 +278,14 @@ func TestSessionEnd(t *testing.T) {
 		r := must[service.PurchaseResult](t)(e.buyMinutes(u, pc1, 60, pricing.ChoiceMain))
 		e.clock.travel(10 * time.Minute)
 		exec(t, "UPDATE club_computers SET last_seen_at = $2 WHERE id = $1", pc2, e.clock.Now())
+		// Решение Q-016 (docs/DECISIONS.md): был — session_guest не трогался при пересадке; стало — на обоих ПК false.
+		exec(t, "UPDATE club_computers SET session_guest = true WHERE id IN ($1, $2)", pc1, pc2)
 		tr := must[service.TransferResult](t)(e.svc.TransferSeat(context.Background(), service.TransferRequest{
 			ClubID: e.club, UserID: u, FromComputerID: pc1, TargetComputerID: pc2,
 		}))
 		eq(t, "session id", tr.SessionID, r.SessionID)
+		eq(t, "Q-016 source guest reset", e.pc(pc1).Guest, false)
+		eq(t, "Q-016 target guest false", e.pc(pc2).Guest, false)
 		e.clock.travel(20 * time.Minute)
 		res := must[service.EndSessionResult](t)(e.end(pc2, r.SessionID, u, false))
 		eq(t, "refund", res.RefundMain.Tenge(), "300.00")
@@ -319,6 +386,13 @@ func TestExpireSessions(t *testing.T) {
 		// Без расчёта: части остаются, денег не возвращается.
 		eq(t, "parts kept", e.count("session_purchases"), 2)
 		e.wantBalances(u, 600*tenge, 0)
+		// Решение Q-010 (docs/DECISIONS.md): журнал computer.session_expired на каждый ПК, от имени клиента сессии.
+		eq(t, "session_expired events", scalar[int64](t,
+			"SELECT count(*) FROM activity_logs WHERE club_id = $1 AND event = 'computer.session_expired' AND user_id = $2 "+
+				"AND details->>'session_id' <> '' AND subject_id IN ($3, $4)", e.club, u, pc1, pc2), 2)
+		eq(t, "description", scalar[string](t,
+			"SELECT description FROM activity_logs WHERE club_id = $1 AND event = 'computer.session_expired' AND subject_id = $2",
+			e.club, pc1), "Время сессии на ПК PC-01 истекло")
 
 		// Лок держит другой исполнитель — тик пропускается.
 		conn, err := fixDB.Platform.Acquire(context.Background())

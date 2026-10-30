@@ -137,6 +137,14 @@ func TestTariff_UserRolesRestriction(t *testing.T) {
 		_, err := QuoteTariffPurchase(in)
 		assertErr(t, err, nil)
 	})
+	t.Run("SV-2/inactive", func(t *testing.T) {
+		// Решение SV-2 (docs/DECISIONS.md): было — выключенный тариф покупался по id; стало — «Тариф недоступен.».
+		in := base
+		in.Role = "client"
+		in.Tariff.IsActive = false
+		_, err := QuoteTariffPurchase(in)
+		assertErr(t, err, ErrTariffUnavailable)
+	})
 	t.Run("GAP-015/cashier", func(t *testing.T) {
 		in := base
 		in.Role = "cashier"

@@ -17,7 +17,7 @@ type TransferRequest struct {
 	FromComputerID   int64
 	TargetComputerID int64
 	// ActorUserID — кто пересаживает (журнал, команда агенту); 0 — сам клиент (UserID).
-	// Сотрудник пересаживает клиента с панели (новое, open-questions/stage2-rest.md RQ-6): UserID — клиент сессии.
+	// Решение RQ-6 (docs/DECISIONS.md): пересадки сотрудником нет (эндпоинт убран) — пересаживается сам клиент.
 	ActorUserID int64
 }
 
@@ -36,8 +36,8 @@ type TransferResult struct {
 // тот же/несуществующий ПК → своя оплаченная сессия на исходном → свободен ли целевой (не резерв, онлайн,
 // без сессии и сотрудника, без чужой брони до конца сессии + интервал) и подходит ли зона
 // (allowedZoneIds() — последняя покупка сессии; Допущение Этапа 1: Q-007/OQ-BR-04 — из session_purchases,
-// а не из журнала действий) → исходный ПК: id/клиент/конец = NULL (session_guest не трогается) →
-// целевой ПК: те же поля сессии.
+// а не из журнала действий) → исходный ПК: id/клиент/конец = NULL → целевой ПК: те же поля сессии.
+// Решение Q-016 (docs/DECISIONS.md): session_guest = false на обоих ПК (в старом не трогался).
 func (s *Service) TransferSeat(ctx context.Context, req TransferRequest) (TransferResult, error) {
 	var out TransferResult
 	actor := req.ActorUserID

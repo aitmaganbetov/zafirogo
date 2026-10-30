@@ -90,16 +90,20 @@ func TestGoldenTopUpBonus(t *testing.T) {
 		}
 	})
 	t.Run("CQ-4", func(t *testing.T) {
-		// "0.0149999999999999": баланс +0.02 (MySQL по строке PHP-float), бонус — от (int) round(0.0149…×100) = 1 тиын.
+		// Решение Q-002 (docs/DECISIONS.md): было — "0.0149999999999999" давал баланс +0.02 и бонус от 1 тиына;
+		// стало — такой ввод отклоняется (decimal), а для ввода с ≤ 2 знаками база бонуса равна сумме.
+		if _, err := cash.ParseTopUpAmount("0.0149999999999999"); err == nil {
+			t.Fatal("Q-002: > 2 знаков после точки должно отклоняться")
+		}
 		e := newEnv(t)
 		e.topUpBonus(true, [2]float64{0, 100})
 		cashier := e.user("Кассир")
 		c := e.customer("Клиент", 0, 0)
 		e.open(cashier, "0")
-		r := e.mustTopUp(cashier, c, cash.FieldMain, "0.0149999999999999", cash.PayCash)
+		r := e.mustTopUp(cashier, c, cash.FieldMain, "0.02", cash.PayCash)
 		eq(t, "amount", money.Tiyn(r.Transaction.Amount), 2)
-		eq(t, "bonus", r.Bonus, 1)
-		e.wantBalances(c, 2, 1)
+		eq(t, "bonus", r.Bonus, 2)
+		e.wantBalances(c, 2, 2)
 	})
 }
 

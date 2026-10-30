@@ -312,7 +312,8 @@ type PackageStartRequest struct {
 //
 // Laravel: app/Services/AgentTariffPurchaseService.php startPackage() (стр. 171–203): пакет клиента FOR UPDATE →
 // ПК FOR UPDATE → минуты min(остаток, целых минут до срока) (≤ 0 → «Срок абонемента истёк.»; удаление пакета
-// в старом коде откатывалось исключением — пакет остаётся, его чистит суточная задача, GAP-014) →
+// в старом коде откатывалось исключением — пакет оставался до суточной задачи, GAP-014. Решение Q-011
+// (docs/DECISIONS.md): после отката пакет сгорает в отдельной транзакции — ledger package_expired и журнал) →
 // ensureComputerFor → зоны тарифа (withTrashed) → период действия → sell(0, main_balance_only, main) →
 // удаление пакета. Ledger минут: операция package_start, минус весь остаток пакета (пакет удаляется
 // целиком, даже если срок урезал минуты; Допущение Этапа 1: Q-011).
@@ -431,6 +432,13 @@ func (s *Service) StartPackage(ctx context.Context, req PackageStartRequest) (Pu
 		}
 		return remember(ctx, q, req.ClubID, req.IdempotencyKey, out)
 	})
+	if errors.Is(err, pricing.ErrPackageExpired) {
+		// Решение Q-011 (docs/DECISIONS.md): основная транзакция откачена (ключ идемпотентности не занят),
+		// пакет сгорает отдельно. Ошибка сгорания не заменяет ответ клиенту — пакет добьёт суточная задача.
+		if berr := s.burnIfExpired(ctx, req); berr != nil {
+			return out, errors.Join(err, fmt.Errorf("service: burn expired package: %w", berr))
+		}
+	}
 	if err == nil && !out.Replayed {
 		s.notifyPurchase(ctx, req.ClubID, req.UserID, req.ComputerID, out, "", req.Actor.UserID)
 	}
@@ -524,9 +532,9 @@ func (s *Service) sell(ctx context.Context, q *store.Queries, in sale) (Purchase
 		return PurchaseResult{}, err
 	} else if at != nil {
 		// $booking->starts_at->format('H:i'): модель в часовом поясе CurrentClub::timezone(), а для api/* он UTC
-		// (SetCurrentClub::handle() стр. 89–91 → useUtc()). Покупка в агенте — API, поэтому время UTC
-		// (см. open-questions/stage1-service.md SV-9).
-		return PurchaseResult{}, ErrBookedFrom.with(map[string]string{"time": at.UTC().Format("15:04")})
+		// (SetCurrentClub::handle() стр. 89–91 → useUtc()), и клиент в агенте видел время брони в UTC.
+		// Решение SV-9 (docs/DECISIONS.md): время — в часовом поясе клуба (clubs.timezone), как в гостевой продаже.
+		return PurchaseResult{}, ErrBookedFrom.with(map[string]string{"time": at.In(in.club.loc).Format("15:04")})
 	}
 	if err := markArrivedBy(ctx, q, in.clubID, in.computer.ID, in.userID, in.club.gapMinutes, in.now, in.quote.SessionEndsAt); err != nil {
 		return PurchaseResult{}, err

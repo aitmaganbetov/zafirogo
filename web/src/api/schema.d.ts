@@ -732,27 +732,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/club-computers/{computerId}/transfer": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Пересадить клиента на другой ПК (сотрудник)
-         * @description Laravel: SeatTransfers::transfer() (в старом — только сам клиент; сотрудником — новое, право pc_control.update,
-         *     маршрут club-computers.control). Остаток сессии переезжает на свободный ПК, где действует тариф; денег не двигается.
-         */
-        post: operations["transferComputerSession"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/club-map/state": {
         parameters: {
             query?: never;
@@ -1293,17 +1272,6 @@ export interface components {
             refund_bonus_tiyn: number;
             /** Format: int64 */
             kept_minutes: number;
-        };
-        TransferSessionRequest: {
-            /** Format: int64 */
-            target_computer_id: number;
-        };
-        TransferSessionResult: {
-            /** Format: int64 */
-            computer_id: number;
-            session_id: string;
-            /** Format: date-time */
-            session_ends_at: string;
         };
         ComputerState: {
             /** Format: int64 */
@@ -2461,36 +2429,6 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
-            422: components["responses"]["ValidationFailed"];
-        };
-    };
-    transferComputerSession: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                computerId: components["parameters"]["ComputerId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TransferSessionRequest"];
-            };
-        };
-        responses: {
-            /** @description Сессия на новом ПК. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TransferSessionResult"];
-                };
-            };
-            401: components["responses"]["Unauthenticated"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
             422: components["responses"]["ValidationFailed"];
         };
     };

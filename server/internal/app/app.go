@@ -302,13 +302,18 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		return fmt.Errorf("guest api hooks: %w", err)
 	}
 
+	// Решение «Обновления агента» (docs/DECISIONS.md): UpdateAvailable — только с проверенной подписью CI.
+	updateKeys, err := cfg.Agent.Update.UpdatePublicKeys()
+	if err != nil {
+		return fmt.Errorf("agent update keys: %w", err)
+	}
 	a.Stream, err = stream.New(stream.Options{
 		Instance: cfg.Agent.InstanceID, Pool: a.AppPool, Valkey: a.Valkey, NATS: a.NATS,
 		KeyPrefix: cfg.Agent.Stream.KeyPrefix, SubjectPrefix: cfg.Agent.Stream.SubjectPrefix,
 		PresenceTTL: cfg.Agent.Stream.PresenceTTL, OfflineGrace: cfg.Agent.Stream.OfflineGrace,
 		HelloTimeout: cfg.Agent.Stream.HelloTimeout, StatusInterval: cfg.Agent.Stream.StatusInterval,
 		StateDebounce: cfg.Agent.Stream.StateDebounce, AckTimeout: cfg.Agent.Stream.AckTimeout,
-		Events: hooks, Welcome: hooks,
+		Events: hooks, Welcome: hooks, UpdateKeys: updateKeys,
 		// TODO(B2): Results (stream.ResultHandler) и Presence (PresenceListener → outbox/WebSocket карты клуба) —
 		// реализаций пока нет (docs/open-questions/stage2-wiring.md W-1).
 		Log: log,
@@ -331,12 +336,13 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	if a.Enroll, err = enroll.New(enroll.Options{
 		Pool: a.AppPool, CA: a.CA, CodePepper: []byte(cfg.Agent.Enroll.CodePepper.Reveal()),
 		CodeTTL: cfg.Agent.Enroll.CodeTTL, CertLifetime: cfg.Agent.Cert.Lifetime,
-		AgentEndpoint: cfg.Agent.GRPC.Endpoint,
-		Limiter:       &valkeyLimiter{c: a.Valkey, prefix: "zafiro:enroll-rl:"},
-		Cache:         a.CertCache,
-		OnRevoked:     publishRevoked(a.NATS, revSubject, log),
-		Activity:      enrollActivity(log),
-		Logger:        log,
+		DisklessCertLifetime: cfg.Agent.Enroll.DisklessCertLifetime,
+		AgentEndpoint:        cfg.Agent.GRPC.Endpoint,
+		Limiter:              &valkeyLimiter{c: a.Valkey, prefix: "zafiro:enroll-rl:"},
+		Cache:                a.CertCache,
+		OnRevoked:            publishRevoked(a.NATS, revSubject, log),
+		Activity:             enrollActivity(log),
+		Logger:               log,
 	}); err != nil {
 		return fmt.Errorf("agent enroll: %w", err)
 	}
@@ -398,6 +404,8 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		Pool: a.PlatformPool, Interval: cfg.Workers.ExpireSessions.Interval, Log: log,
 		OnExpired: notifyExpired(a.Stream, log),
 	}
+	// Решение Q-011 (docs/DECISIONS.md): суточное сгорание просроченных пакетов времени (ledger + журнал).
+	burnPackages := &worker.BurnPackages{Platform: a.PlatformPool, App: a.AppPool, Log: log}
 	partitions := &partitionsWorker{
 		pool: a.PlatformPool, interval: cfg.Workers.Partitions.Interval, months: cfg.Workers.Partitions.Months, log: log,
 	}
@@ -410,6 +418,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		{"webhook-deliverer", deliverer.Run},
 		{"realtime-hub", a.Realtime.Run},
 		{"expire-sessions", expire.Run},
+		{"burn-expired-packages", burnPackages.Run},
 		{"ensure-partitions", partitions.Run},
 	}
 

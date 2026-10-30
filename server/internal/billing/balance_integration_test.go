@@ -170,9 +170,14 @@ func TestOwnerAdjust(t *testing.T) {
 		}
 	})
 	t.Run("BR-058/rounding", func(t *testing.T) {
+		// Решение Q-002 (docs/DECISIONS.md): было — "1234.565" округлялось до 1234.57; стало — 422, баланс не меняется.
 		club := fixDB.Club(t, "br-058")
 		arman := customer(t, club, "Арман", 0, 0)
-		if err := ownerAdjust(t, club, arman, billing.FieldMain, false, "1234.565"); err != nil {
+		if err := ownerAdjust(t, club, arman, billing.FieldMain, false, "1234.565"); !errors.Is(err, billing.ErrBalanceAmountDecimals) {
+			t.Fatalf("err = %v, want ErrBalanceAmountDecimals", err)
+		}
+		wantBalances(t, club, arman, 0, 0)
+		if err := ownerAdjust(t, club, arman, billing.FieldMain, false, "1234.57"); err != nil {
 			t.Fatal(err)
 		}
 		wantBalances(t, club, arman, 123457, 0)
@@ -569,9 +574,9 @@ func TestConfirmFriendTransferCode(t *testing.T) {
 	newCode := func(friendship int64, cents int64, code string, expiresIn time.Duration) int64 {
 		var id int64
 		if err := fixDB.Owner.QueryRow(context.Background(),
-			`INSERT INTO transfer_codes (user_id, friendship_id, amount_cents, code_hash, expires_at, created_at, updated_at)
-			 VALUES ($1, $2, $3, $4, now() + $5::interval, now(), now()) RETURNING id`,
-			arman, friendship, cents, "hash:"+code, fmt.Sprintf("%d seconds", int(expiresIn.Seconds()))).Scan(&id); err != nil {
+			`INSERT INTO transfer_codes (club_id, user_id, friendship_id, amount_cents, code_hash, expires_at, created_at, updated_at)
+			 VALUES ($6, $1, $2, $3, $4, now() + $5::interval, now(), now()) RETURNING id`,
+			arman, friendship, cents, "hash:"+code, fmt.Sprintf("%d seconds", int(expiresIn.Seconds())), club).Scan(&id); err != nil {
 			t.Fatal(err)
 		}
 		return id
@@ -643,6 +648,31 @@ func TestConfirmFriendTransferCode(t *testing.T) {
 		wantBalanceError(t, confirm(f, "10", "555555"), "code", wrong)
 		wantBalances(t, club, arman, 10000, 0)
 	})
+	// Решение Q-028/L-1 (docs/DECISIONS.md): у кода свой club_id; код того же пользователя в другом клубе (новее по id)
+	// не перекрывает код этого клуба и не удаляется переводом здесь. Клуб кода не может разойтись с клубом дружбы (FK).
+	club2 := fixDB.Club(t, "gap-034-other")
+	fixDB.Join(t, club2, arman)
+	fixDB.Join(t, club2, dana)
+	f2 := fixDB.Friendship(t, club2, arman, dana, true)
+	var otherClubCode int64
+	t.Run("Q-028/other-club-code", func(t *testing.T) {
+		own := newCode(f, 1000, "777777", 5*time.Minute)
+		if err := fixDB.Owner.QueryRow(context.Background(),
+			`INSERT INTO transfer_codes (club_id, user_id, friendship_id, amount_cents, code_hash, expires_at, created_at, updated_at)
+			 VALUES ($1, $2, $3, 1000, 'hash:888888', now() + interval '5 minutes', now(), now()) RETURNING id`,
+			club2, arman, f2).Scan(&otherClubCode); err != nil {
+			t.Fatal(err)
+		}
+		var mismatch *billing.TransferCodeMismatchError
+		if err := confirm(f, "10", "888888"); !errors.As(err, &mismatch) || mismatch.CodeID != own {
+			t.Fatalf("err = %v, want mismatch on this club's code %d", err, own)
+		}
+		if _, err := fixDB.Owner.Exec(context.Background(),
+			`INSERT INTO transfer_codes (club_id, user_id, friendship_id, amount_cents, code_hash, expires_at, created_at, updated_at)
+			 VALUES ($1, $2, $3, 1000, 'x', now(), now(), now())`, club2, arman, f); err == nil {
+			t.Fatal("code with club_id of another club than its friendship must violate FK")
+		}
+	})
 	t.Run("BR-092/success", func(t *testing.T) {
 		newCode(f, 2550, "666666", 5*time.Minute)
 		if err := confirm(f, "25,5", "666666"); err != nil {
@@ -651,11 +681,15 @@ func TestConfirmFriendTransferCode(t *testing.T) {
 		wantBalances(t, club, arman, 7450, 0)
 		wantBalances(t, club, dana, 2550, 0)
 		var left int
-		if err := fixDB.Owner.QueryRow(context.Background(), "SELECT count(*) FROM transfer_codes WHERE user_id = $1", arman).Scan(&left); err != nil {
+		if err := fixDB.Owner.QueryRow(context.Background(), "SELECT count(*) FROM transfer_codes WHERE user_id = $1 AND club_id = $2", arman, club).Scan(&left); err != nil {
 			t.Fatal(err)
 		}
 		if left != 0 {
 			t.Fatalf("codes left = %d, want 0", left)
+		}
+		var kept int
+		if err := fixDB.Owner.QueryRow(context.Background(), "SELECT count(*) FROM transfer_codes WHERE id = $1", otherClubCode).Scan(&kept); err != nil || kept != 1 {
+			t.Fatalf("other club code kept = %d, %v", kept, err)
 		}
 		wantBalanceError(t, confirm(f, "25,5", "666666"), "code", wrong) // код израсходован
 	})

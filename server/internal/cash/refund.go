@@ -28,7 +28,7 @@ func CheckRefund(income Operation, open *Shift, alreadyRefunded bool, t Totals) 
 	if alreadyRefunded {
 		return kind, msgErr("refund", MsgAlreadyRefunded)
 	}
-	if notEnoughCash(income.Amount.Float(), t) {
+	if notEnoughCash(income.Amount, t) { // Решение Q-002 (docs/DECISIONS.md): точно, в тиынах
 		return kind, msgErr("refund", MsgNotEnoughCash)
 	}
 	return kind, nil

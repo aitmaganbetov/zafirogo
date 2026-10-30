@@ -369,10 +369,12 @@ func notifyExpired(svc *stream.Service, log *slog.Logger) func(context.Context, 
 	n := svc.Notifier()
 	return func(ctx context.Context, sessions []billingsvc.ExpiredSession) {
 		for _, s := range sessions {
-			// TODO(B2): ExpiredSession пока без id сессии — берём сессию, о которой сообщил агент.
-			end := &agentv1.EndSession{Reason: agentv1.SessionEndReason_SESSION_END_REASON_EXPIRED}
-			if st, ok, err := svc.Presence().Get(ctx, s.ClubID, s.ComputerID); err == nil && ok {
-				end.SessionId = st.SessionID
+			end := &agentv1.EndSession{Reason: agentv1.SessionEndReason_SESSION_END_REASON_EXPIRED, SessionId: s.SessionID}
+			if end.SessionId == "" {
+				// Сессия без id (старые агенты) — берём сессию, о которой сообщил агент.
+				if st, ok, err := svc.Presence().Get(ctx, s.ClubID, s.ComputerID); err == nil && ok {
+					end.SessionId = st.SessionID
+				}
 			}
 			if err := n.SessionEnded(ctx, s.ClubID, s.ComputerID, end, 0); err != nil {
 				log.WarnContext(ctx, "notify agent about expired session failed",

@@ -54,7 +54,8 @@ type EndSessionResult struct {
 //	ПК FOR UPDATE → session_id не совпадает → «На компьютере нет такой активной сессии.» →
 //	не сотрудник и не владелец → 403 → обнулить сессию ПК →
 //	клиент есть: части по id desc → Settle → пакеты → удалить все части →
-//	возврат > 0: баланс FOR UPDATE (нет строки — деньги не начисляются, OQ-BR-12) → траты −= возврат с основного.
+//	возврат > 0: баланс FOR UPDATE (нет строки — в старом деньги не начислялись, OQ-BR-12; Решение Q-012: строка
+//	создаётся и возврат зачисляется) → траты −= возврат с основного.
 //
 // Ledger: одна операция session_refund (деньги назад: revenue_time → member_main, bonus_fund → member_bonus,
 // и минуты сохранённых пакетов) или package_kept (только минуты); ключ "session_end:<session_id>".
@@ -185,8 +186,16 @@ func (s *Service) settle(ctx context.Context, q *store.Queries, req EndSessionRe
 
 	var entries []ledger.Entry
 	if st.RefundMain+st.RefundBonus > 0 {
-		// $balance = MemberBalance::where('user_id')->lockForUpdate()->first(); null — деньги не начисляются.
+		// $balance = MemberBalance::where('user_id')->lockForUpdate()->first(); в старом коде null — деньги не
+		// начислялись (OQ-BR-12). Решение Q-012 (docs/DECISIONS.md): строка баланса создаётся (нулевая), и возврат
+		// зачисляется — деньги клиента не теряются.
 		_, err := ledger.LockBalances(ctx, q, req.ClubID, customer)
+		if errors.Is(err, ledger.ErrBalanceNotFound) {
+			if err = q.EnsureMemberBalance(ctx, store.EnsureMemberBalanceParams{ClubID: req.ClubID, UserID: customer}); err != nil {
+				return err
+			}
+			_, err = ledger.LockBalances(ctx, q, req.ClubID, customer)
+		}
 		switch {
 		case err == nil:
 			out.RefundMain, out.RefundBonus = st.RefundMain, st.RefundBonus
@@ -261,7 +270,7 @@ func (s *Service) settle(ctx context.Context, q *store.Queries, req EndSessionRe
 		}
 	}
 	// Laravel: SessionSettlement::settle() (стр. 63–76) — журнал time.refunded и time.package_kept от того, кто
-	// завершил, предмет — клиент. Суммы — расчётные (refund_main/refund_bonus), даже если строки баланса не было.
+	// завершил, предмет — клиент. Суммы — расчётные (refund_main/refund_bonus).
 	if st.RefundMain+st.RefundBonus > 0 {
 		if err := RecordActivity(ctx, q, activity.Entry{
 			ClubID: req.ClubID, Event: "time.refunded",

@@ -1,7 +1,7 @@
 package cash
 
 import (
-	"math/big"
+	"errors"
 	"strings"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
@@ -17,191 +17,106 @@ const (
 	MaxShiftAmount money.Tiyn = 99_999_999_999_999
 )
 
-var (
-	ratMaxTopUp      = big.NewRat(int64(MaxTopUp), 100)
-	ratMaxShiftValue = big.NewRat(int64(MaxShiftAmount), 100)
-)
-
-// numericRat — значение строки, прошедшей правило Laravel `numeric` (PHP is_numeric), как точное десятичное число.
-// Так Laravel 10+ сравнивает числа в правилах min/max/gt (Illuminate\Validation\Concerns\ValidatesAttributes:
-// BigNumber::of($this->getSize(...)) — brick/math, без float). Экспонента вне ±1000 — ошибка
-// (ensureExponentWithinAllowedRange()); ok = false.
-func numericRat(s string) (*big.Rat, bool) {
-	if !money.PHPIsNumeric(s) {
-		return nil, false
-	}
-	s = strings.Trim(s, " \t\n\r\v\f")
-	neg := false
-	if s != "" && (s[0] == '+' || s[0] == '-') {
-		neg = s[0] == '-'
-		s = s[1:]
-	}
-	exp := 0
-	if i := strings.IndexAny(s, "eE"); i >= 0 {
-		e, ok := parseSmallInt(s[i+1:])
-		if !ok || e > 1000 || e < -1000 {
-			return nil, false
-		}
-		exp = e
-		s = s[:i]
-	}
-	whole, frac, _ := strings.Cut(s, ".")
-	digits := new(big.Int)
-	if _, ok := digits.SetString("0"+whole+frac, 10); !ok {
-		return nil, false
-	}
-	if neg {
-		digits.Neg(digits)
-	}
-	r := new(big.Rat).SetInt(digits)
-	scale := exp - len(frac)
-	p := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(abs(scale))), nil)
-	if scale >= 0 {
-		r.Mul(r, new(big.Rat).SetInt(p))
-	} else {
-		r.Quo(r, new(big.Rat).SetInt(p))
-	}
-	return r, true
-}
-
-func parseSmallInt(s string) (int, bool) {
-	neg := false
-	if s != "" && (s[0] == '+' || s[0] == '-') {
-		neg = s[0] == '-'
-		s = s[1:]
-	}
+// parseAmount — строгий разбор суммы из формы (Решение Q-002 (docs/DECISIONS.md)): цифры, необязательная точка и
+// не более двух знаков после неё (money.ParseTenge). Пробелы по краям обрезаются, как middleware TrimStrings
+// Laravel. Неоднозначный ввод не округляется, а отклоняется: > 2 знаков после точки — правило decimal (422,
+// «Поле … должно содержать 0-2 знаков после запятой.», как 'decimal:0,2' в старом StoreClubZoneRequest);
+// экспонента, запятая, «.5», «+5» и т. п. — numeric; |сумма| > money.MaxAmount — max.
+// Раньше (Laravel 'numeric' + округление MySQL decimal(…,2)) "100.005" записывалось как 100.01.
+func parseAmount(field, s string) (money.Tiyn, error) {
+	s = strings.TrimSpace(s)
 	if s == "" {
-		return 0, false
+		return 0, ruleErr(field, RuleRequired)
 	}
-	v := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return 0, false
-		}
-		if v < 1_000_000 {
-			v = v*10 + int(s[i]-'0')
-		}
+	t, err := money.ParseTenge(s)
+	switch {
+	case errors.Is(err, money.ErrTooManyDecimals):
+		return 0, ruleErr(field, RuleDecimal)
+	case errors.Is(err, money.ErrOutOfRange):
+		return 0, ruleErr(field, RuleMax)
+	case err != nil:
+		return 0, ruleErr(field, RuleNumeric)
 	}
-	if neg {
-		v = -v
-	}
-	return v, true
-}
-
-func abs(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
+	return t, nil
 }
 
 // ParseOpeningBalance — начальный остаток смены (BR-050).
 //
 // Laravel: app/Http/Requests/OpenCashShiftRequest.php rules() — 'opening_balance' => required|numeric|min:0;
-// app/Http/Controllers/CashRegisterController.php open() — $this->cash->open((float) $request->validated('opening_balance'));
-// CashRegisterService::open() пишет float в decimal(14,2) — округление MySQL по строке PHP-float (money.ParseTengeViaFloat).
-// Допущение Этапа 1: Q-002.
+// app/Http/Controllers/CashRegisterController.php open() — $this->cash->open((float) $request->validated('opening_balance')).
+// Решение Q-002 (docs/DECISIONS.md): > 2 знаков после точки — ошибка decimal (в старом — округление MySQL).
 func ParseOpeningBalance(s string) (money.Tiyn, error) {
 	const field = "opening_balance"
-	if strings.TrimSpace(s) == "" {
-		return 0, ruleErr(field, RuleRequired)
+	t, err := parseAmount(field, s)
+	if err != nil {
+		return 0, err
 	}
-	r, ok := numericRat(s)
-	if !ok {
-		return 0, ruleErr(field, RuleNumeric)
-	}
-	if r.Sign() < 0 {
+	if t < 0 {
 		return 0, ruleErr(field, RuleMin)
 	}
-	t, err := money.ParseTengeViaFloat(s)
-	if err != nil || t > MaxShiftAmount {
+	if t > MaxShiftAmount {
 		return 0, ruleErr(field, RuleMax)
 	}
 	return t, nil
 }
 
-// TopUpAmount — сумма пополнения на кассе в двух видах, как её видел старый код.
+// TopUpAmount — сумма пополнения на кассе.
 type TopUpAmount struct {
-	// Amount — что легло в member_balances и в cash_transactions.amount: (float) → decimal(…,2) MySQL.
+	// Amount — что ложится в member_balances и в cash_transactions.amount.
 	// Laravel: CashRegisterService::topUpBalance() — $balance->increment($balanceType, $amount), create(['amount' => $amount]).
 	Amount money.Tiyn
 	// BonusBase — от чего считается бонус за пополнение: (int) round($amount * 100) (PHP 8.4+).
 	// Laravel: app/Services/TopUpBonus.php TopUpBonus::for() — $cents = (int) round($amount * 100) (BR-041).
-	// Почти всегда равно Amount; расходится только на вводе с > 14 значащими цифрами
-	// (например "0.0149999999999999": Amount = 2 тиына, BonusBase = 1 тиын) — поэтому передаём оба.
+	// Решение Q-002 (docs/DECISIONS.md): ввод не больше двух знаков после точки, и для него round($amount * 100)
+	// равен Amount точно (|сумма| ≤ MaxTopUp, ошибка float много меньше полутиына) — расхождение CQ-4 больше
+	// невозможно. Поле оставлено, чтобы источник базы бонуса был виден в типе.
 	BonusBase money.Tiyn
 }
 
 // ParseTopUpAmount — сумма пополнения баланса клиента на кассе (BR-053).
 //
-// Laravel: app/Http/Requests/StoreBalanceTopUpRequest.php rules() — 'amount' => required|numeric|gt:0|max:9999999999.99
-// (сравнения точные, brick/math); CashRegisterController::topUpBalance() и Api/Staff/CashController::topUp() —
-// (float) $data['amount'] в CashRegisterService::topUpBalance(float $amount).
-// Отступление: ввод, который проходит gt:0, но округляется MySQL до 0.00 ("0.001"), старый код записывал как
-// пополнение на 0.00; ledger не принимает нулевых проводок, поэтому здесь — ошибка gt (вопрос CQ-1).
-// Допущение Этапа 1: Q-002.
+// Laravel: app/Http/Requests/StoreBalanceTopUpRequest.php rules() — 'amount' => required|numeric|gt:0|max:9999999999.99;
+// CashRegisterController::topUpBalance() и Api/Staff/CashController::topUp() — (float) $data['amount'] в
+// CashRegisterService::topUpBalance(float $amount).
+// Решение Q-002 (docs/DECISIONS.md): > 2 знаков после точки — ошибка decimal (в старом — округление MySQL).
 func ParseTopUpAmount(s string) (TopUpAmount, error) {
 	const field = "amount"
-	if strings.TrimSpace(s) == "" {
-		return TopUpAmount{}, ruleErr(field, RuleRequired)
+	t, err := parseAmount(field, s)
+	if err != nil {
+		return TopUpAmount{}, err
 	}
-	r, ok := numericRat(s)
-	if !ok {
-		return TopUpAmount{}, ruleErr(field, RuleNumeric)
-	}
-	if r.Sign() <= 0 {
+	if t <= 0 {
 		return TopUpAmount{}, ruleErr(field, RuleGt)
 	}
-	if r.Cmp(ratMaxTopUp) > 0 {
+	if t > MaxTopUp {
 		return TopUpAmount{}, ruleErr(field, RuleMax)
 	}
-	amount, err := money.ParseTengeViaFloat(s)
-	if err != nil || amount > MaxTopUp {
-		return TopUpAmount{}, ruleErr(field, RuleMax)
-	}
-	if amount <= 0 {
-		return TopUpAmount{}, ruleErr(field, RuleGt) // CQ-1
-	}
-	// Laravel: TopUpBonus::for(float $amount) — $cents = (int) round($amount * 100).
-	base := money.FromTengeFloat(money.PHPStringToFloat(s))
-	return TopUpAmount{Amount: amount, BonusBase: base}, nil
+	return TopUpAmount{Amount: t, BonusBase: t}, nil
 }
 
 // TransactionAmount — сумма прихода/расхода кассы (transact()).
 type TransactionAmount struct {
-	// Amount — что легло в cash_transactions.amount: строка запроса как есть → decimal(14,2) MySQL
-	// (money.ParseTengeRounded). Laravel: CashRegisterService::transact() — $shift->transactions()->create($data + …).
+	// Amount — что ложится в cash_transactions.amount. Laravel: CashRegisterService::transact() —
+	// $shift->transactions()->create($data + …).
 	Amount money.Tiyn
-	// Float — (float) $data['amount']: с ним старый код сравнивал остаток смены («В кассе недостаточно средств.»).
-	Float float64
 }
 
 // ParseTransactionAmount — сумма прихода/расхода (BR-054).
 //
 // Laravel: app/Http/Requests/StoreCashTransactionRequest.php rules() — 'amount' => required|numeric|gt:0 (без верхней
-// границы; выход за decimal(14,2) — ошибка MySQL, здесь — ошибка max, CQ-2). Нулевая после округления сумма — ошибка gt (CQ-1).
-// Допущение Этапа 1: Q-002.
+// границы; выход за decimal(14,2) — ошибка MySQL, здесь — ошибка max, CQ-2).
+// Решение Q-002 (docs/DECISIONS.md): > 2 знаков после точки — ошибка decimal (в старом — округление MySQL).
 func ParseTransactionAmount(s string) (TransactionAmount, error) {
 	const field = "amount"
-	if strings.TrimSpace(s) == "" {
-		return TransactionAmount{}, ruleErr(field, RuleRequired)
+	t, err := parseAmount(field, s)
+	if err != nil {
+		return TransactionAmount{}, err
 	}
-	r, ok := numericRat(s)
-	if !ok {
-		return TransactionAmount{}, ruleErr(field, RuleNumeric)
-	}
-	if r.Sign() <= 0 {
+	if t <= 0 {
 		return TransactionAmount{}, ruleErr(field, RuleGt)
 	}
-	if r.Cmp(ratMaxShiftValue) > 0 {
+	if t > MaxShiftAmount {
 		return TransactionAmount{}, ruleErr(field, RuleMax)
 	}
-	amount, err := money.ParseTengeRounded(s)
-	if err != nil || amount > MaxShiftAmount {
-		return TransactionAmount{}, ruleErr(field, RuleMax)
-	}
-	if amount <= 0 {
-		return TransactionAmount{}, ruleErr(field, RuleGt) // CQ-1
-	}
-	return TransactionAmount{Amount: amount, Float: money.PHPStringToFloat(s)}, nil
+	return TransactionAmount{Amount: t}, nil
 }

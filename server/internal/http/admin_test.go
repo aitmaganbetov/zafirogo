@@ -38,6 +38,8 @@ func TestRuleMessage(t *testing.T) {
 		{"sku", "max", "", "The sku field must not be greater than 100 characters."},
 		{"quantity", "min", "0", "The quantity field must be at least 0."},
 		{"user_id", "in", "", "The selected user id is invalid."},
+		// Решение Q-002 (docs/DECISIONS.md): > 2 знаков после точки.
+		{"top_up_amount", "decimal", "", "The top up amount field must have 0-2 decimal places."},
 	}
 	for _, c := range cases {
 		if got := ruleMessage(c.field, c.rule, c.param); got != c.want {

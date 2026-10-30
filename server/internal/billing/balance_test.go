@@ -8,6 +8,15 @@ import (
 )
 
 // BR-058: round((float) top_up_amount, 2) и правило numeric|min:0.01|max:10000000.
+// Решение Q-002 (docs/DECISIONS.md): > 2 знаков после точки — ErrBalanceAmountDecimals (было: round(…, 2)).
+func TestParseOwnerAdjustmentAmountDecimals(t *testing.T) {
+	for _, in := range []string{"1234.565", "0.009", "10000000.001", "1.000"} {
+		if _, err := ParseOwnerAdjustmentAmount(in); !errors.Is(err, ErrBalanceAmountDecimals) {
+			t.Errorf("Q-002/%s: err = %v, want ErrBalanceAmountDecimals", in, err)
+		}
+	}
+}
+
 func TestParseOwnerAdjustmentAmount(t *testing.T) {
 	cases := []struct {
 		name string
@@ -15,17 +24,18 @@ func TestParseOwnerAdjustmentAmount(t *testing.T) {
 		want money.Tiyn
 		err  bool
 	}{
-		{"BR-058/1234.565", "1234.565", 123457, false},
+		{"BR-058/1234.56", "1234.56", 123456, false},
 		{"GS-018/500", "500", 50000, false},
 		{"GS-018/40.5", "40.5", 4050, false},
 		{"GS-024/30", "30", 3000, false},
 		{"BR-058/min", "0.01", 1, false},
 		{"BR-058/max", "10000000", 1_000_000_000, false},
-		{"BR-058/below-min", "0.009", 0, true},
+		{"BR-058/below-min", "0.00", 0, true},
 		{"BR-058/above-max", "10000000.01", 0, true},
 		{"BR-058/zero", "0", 0, true},
 		{"BR-058/not-numeric", "12abc", 0, true},
 		{"BR-058/comma", "1,5", 0, true},
+		{"BR-058/exponent", "1e3", 0, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

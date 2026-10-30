@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 )
 
@@ -25,7 +26,8 @@ const ExpireSessionsInterval = time.Minute
 // не взяла (идёт на другом инстансе) — пропускает тик. Лок снимается в конце тика, а при падении
 // процесса — вместе с соединением.
 //
-// Тик — service.ExpireDueSessions: только снять истёкшие сессии, без расчёта (GAP-005, Q-010).
+// Тик — service.ExpireDueSessions: снять истёкшие сессии без расчёта (GAP-005) и записать журнал
+// computer.session_expired в той же транзакции (Решение Q-010 (docs/DECISIONS.md)).
 type ExpireSessions struct {
 	// Pool — пул логина zafiro_platform (задача обходит все клубы).
 	Pool *pgxpool.Pool
@@ -91,7 +93,8 @@ func (w *ExpireSessions) Tick(ctx context.Context) (ran bool, n int, err error) 
 		now = w.Now
 	}
 	// Тик выполняется на том же соединении, что держит лок.
-	expired, err := service.ExpireDueSessions(ctx, conn, now())
+	// Системное действие: журнал computer.session_expired (Решение Q-010) требует IP.
+	expired, err := service.ExpireDueSessions(ctx, conn, now(), activity.RequestMeta{IP: "127.0.0.1"})
 	if err != nil {
 		return true, 0, err
 	}

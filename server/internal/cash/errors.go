@@ -33,6 +33,8 @@ const (
 	RuleGt       = "gt"
 	RuleIn       = "in"
 	RuleDistinct = "distinct"
+	// RuleDecimal — больше двух знаков после точки ('decimal:0,2' Laravel). Решение Q-002 (docs/DECISIONS.md).
+	RuleDecimal = "decimal"
 )
 
 // Error — ошибка правила кассы с полем формы, как ValidationException::withMessages([field => …]) в Laravel.

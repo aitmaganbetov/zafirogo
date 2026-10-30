@@ -28,12 +28,14 @@ SET current_session_id = NULL, current_session_user_id = NULL, session_guest = f
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);
 
 -- name: MoveComputerSession :exec
--- SeatTransfers::transfer(): на исходном ПК обнуляются id, клиент и конец; session_guest не трогается.
--- На целевом ПК ставятся те же три поля (session_guest тоже не трогается).
+-- SeatTransfers::transfer(): на исходном ПК обнуляются id, клиент и конец; на целевом ставятся те же три поля.
+-- Решение Q-016 (docs/DECISIONS.md): session_guest = false на обоих ПК (пересаживается только оплаченная сессия
+-- клиента). В старом коде session_guest не трогался: целевой ПК мог остаться «гостевым», исходный — тоже.
 UPDATE club_computers
 SET current_session_id = sqlc.narg(session_id),
     current_session_user_id = sqlc.narg(session_user_id),
     session_ends_at = sqlc.narg(session_ends_at),
+    session_guest = false,
     updated_at = sqlc.arg(now)
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);
 
@@ -54,8 +56,20 @@ ORDER BY sp.id;
 -- Платформенный запрос (пул zafiro_platform, все клубы): ClubComputerSessions::expireAll() —
 -- UPDATE … WHERE session_ends_at <= now() по всем клубам, без расчёта возврата (GAP-005, Q-010).
 -- now передаётся из Go (часы сервиса), усечённым до секунды, как строка Y-m-d H:i:s в старом коде.
-UPDATE club_computers
+-- Возвращает и снятую сессию (значения до UPDATE) — для журнала computer.session_expired в той же транзакции
+-- (Решение Q-010, docs/DECISIONS.md).
+WITH due AS (
+    SELECT d.club_id, d.id, d.current_session_id, d.current_session_user_id, d.session_guest, d.session_ends_at
+    FROM club_computers d
+    WHERE d.session_ends_at IS NOT NULL AND d.session_ends_at <= sqlc.arg(now)::timestamptz
+    ORDER BY d.club_id, d.id
+    FOR UPDATE
+)
+UPDATE club_computers c
 SET current_session_id = NULL, current_session_user_id = NULL, session_guest = false, session_ends_at = NULL,
     updated_at = sqlc.arg(now)
-WHERE session_ends_at IS NOT NULL AND session_ends_at <= sqlc.arg(now)::timestamptz
-RETURNING club_id, id;
+FROM due
+WHERE c.club_id = due.club_id AND c.id = due.id
+RETURNING c.club_id, c.id, c.display_name, c.device_name, c.number,
+    due.current_session_id AS session_id, due.current_session_user_id AS session_user_id,
+    due.session_guest AS session_guest, due.session_ends_at::timestamptz AS session_ends_at;

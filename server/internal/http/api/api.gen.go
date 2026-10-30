@@ -857,18 +857,6 @@ type TopUpResult struct {
 	Transaction         CashTransaction `json:"transaction"`
 }
 
-// TransferSessionRequest defines model for TransferSessionRequest.
-type TransferSessionRequest struct {
-	TargetComputerId int64 `json:"target_computer_id"`
-}
-
-// TransferSessionResult defines model for TransferSessionResult.
-type TransferSessionResult struct {
-	ComputerId    int64     `json:"computer_id"`
-	SessionEndsAt time.Time `json:"session_ends_at"`
-	SessionId     string    `json:"session_id"`
-}
-
 // UpdateProductRequest defines model for UpdateProductRequest.
 type UpdateProductRequest struct {
 	Name              *string `json:"name,omitempty"`
@@ -1117,9 +1105,6 @@ type SellGuestSessionJSONRequestBody = GuestSessionRequest
 // EndComputerSessionJSONRequestBody defines body for EndComputerSession for application/json ContentType.
 type EndComputerSessionJSONRequestBody = EndSessionRequest
 
-// TransferComputerSessionJSONRequestBody defines body for TransferComputerSession for application/json ContentType.
-type TransferComputerSessionJSONRequestBody = TransferSessionRequest
-
 // AdjustCustomerBalanceJSONRequestBody defines body for AdjustCustomerBalance for application/json ContentType.
 type AdjustCustomerBalanceJSONRequestBody = BalanceAdjustmentRequest
 
@@ -1200,9 +1185,6 @@ type ServerInterface interface {
 	// EndComputerSession Завершить сессию ПК (сотрудник)
 	// (POST /api/club-computers/{computerId}/end-session)
 	EndComputerSession(w http.ResponseWriter, r *http.Request, computerId ComputerId, params EndComputerSessionParams)
-	// TransferComputerSession Пересадить клиента на другой ПК (сотрудник)
-	// (POST /api/club-computers/{computerId}/transfer)
-	TransferComputerSession(w http.ResponseWriter, r *http.Request, computerId ComputerId)
 	// GetClubMapState Состояние ПК на карте клуба
 	// (GET /api/club-map/state)
 	GetClubMapState(w http.ResponseWriter, r *http.Request)
@@ -1380,12 +1362,6 @@ func (_ Unimplemented) SellGuestSession(w http.ResponseWriter, r *http.Request, 
 // EndComputerSession Завершить сессию ПК (сотрудник)
 // (POST /api/club-computers/{computerId}/end-session)
 func (_ Unimplemented) EndComputerSession(w http.ResponseWriter, r *http.Request, computerId ComputerId, params EndComputerSessionParams) {
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-// TransferComputerSession Пересадить клиента на другой ПК (сотрудник)
-// (POST /api/club-computers/{computerId}/transfer)
-func (_ Unimplemented) TransferComputerSession(w http.ResponseWriter, r *http.Request, computerId ComputerId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2201,32 +2177,6 @@ func (siw *ServerInterfaceWrapper) EndComputerSession(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
-// TransferComputerSession operation middleware
-func (siw *ServerInterfaceWrapper) TransferComputerSession(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "computerId" -------------
-	var computerId ComputerId
-
-	err = runtime.BindStyledParameterWithOptions("simple", "computerId", chi.URLParam(r, "computerId"), &computerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "computerId", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.TransferComputerSession(w, r, computerId)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 // GetClubMapState operation middleware
 func (siw *ServerInterfaceWrapper) GetClubMapState(w http.ResponseWriter, r *http.Request) {
 
@@ -2918,9 +2868,6 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/club-computers/{computerId}/end-session", wrapper.EndComputerSession)
-	})
-	r.Group(func(r chi.Router) {
-		r.Post(options.BaseURL+"/api/club-computers/{computerId}/transfer", wrapper.TransferComputerSession)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/club-map/state", wrapper.GetClubMapState)
@@ -4406,85 +4353,6 @@ func (response EndComputerSession422JSONResponse) VisitEndComputerSessionRespons
 	return err
 }
 
-type TransferComputerSessionRequestObject struct {
-	ComputerId ComputerId `json:"computerId"`
-	Body       *TransferComputerSessionJSONRequestBody
-}
-
-type TransferComputerSessionResponseObject interface {
-	VisitTransferComputerSessionResponse(w http.ResponseWriter) error
-}
-
-type TransferComputerSession200JSONResponse TransferSessionResult
-
-func (response TransferComputerSession200JSONResponse) VisitTransferComputerSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type TransferComputerSession401JSONResponse struct{ UnauthenticatedJSONResponse }
-
-func (response TransferComputerSession401JSONResponse) VisitTransferComputerSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(401)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type TransferComputerSession403JSONResponse struct{ ForbiddenJSONResponse }
-
-func (response TransferComputerSession403JSONResponse) VisitTransferComputerSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(403)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type TransferComputerSession404JSONResponse struct{ NotFoundJSONResponse }
-
-func (response TransferComputerSession404JSONResponse) VisitTransferComputerSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type TransferComputerSession422JSONResponse struct{ ValidationFailedJSONResponse }
-
-func (response TransferComputerSession422JSONResponse) VisitTransferComputerSessionResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(422)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type GetClubMapStateRequestObject struct {
 }
 
@@ -5518,9 +5386,6 @@ type StrictServerInterface interface {
 	// EndComputerSession Завершить сессию ПК (сотрудник)
 	// (POST /api/club-computers/{computerId}/end-session)
 	EndComputerSession(ctx context.Context, request EndComputerSessionRequestObject) (EndComputerSessionResponseObject, error)
-	// TransferComputerSession Пересадить клиента на другой ПК (сотрудник)
-	// (POST /api/club-computers/{computerId}/transfer)
-	TransferComputerSession(ctx context.Context, request TransferComputerSessionRequestObject) (TransferComputerSessionResponseObject, error)
 	// GetClubMapState Состояние ПК на карте клуба
 	// (GET /api/club-map/state)
 	GetClubMapState(ctx context.Context, request GetClubMapStateRequestObject) (GetClubMapStateResponseObject, error)
@@ -6203,39 +6068,6 @@ func (sh *strictHandler) EndComputerSession(w http.ResponseWriter, r *http.Reque
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(EndComputerSessionResponseObject); ok {
 		if err := validResponse.VisitEndComputerSessionResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// TransferComputerSession operation middleware
-func (sh *strictHandler) TransferComputerSession(w http.ResponseWriter, r *http.Request, computerId ComputerId) {
-	var request TransferComputerSessionRequestObject
-
-	request.ComputerId = computerId
-
-	var body TransferComputerSessionJSONRequestBody
-	if err := runtime.BindJSONBody(r, &body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.TransferComputerSession(ctx, request.(TransferComputerSessionRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "TransferComputerSession")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(TransferComputerSessionResponseObject); ok {
-		if err := validResponse.VisitTransferComputerSessionResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

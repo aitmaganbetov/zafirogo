@@ -2,6 +2,8 @@ package config
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -312,5 +314,38 @@ func TestSecretFormatting(t *testing.T) {
 	}
 	if s.Reveal() != "hunter2" || Secret("").String() != "" {
 		t.Error("Reveal/String")
+	}
+}
+
+// Решения Q-037 и «Обновления агента» (docs/DECISIONS.md): срок сертификата бездискового ПК и открытые ключи
+// подписи обновлений агента.
+func TestAgentUpdateKeysAndDiskless(t *testing.T) {
+	cfg, err := Load("", environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Agent.Enroll.DisklessCertLifetime != 24*time.Hour || len(cfg.Agent.Update.PublicKeys) != 0 {
+		t.Fatalf("defaults: %v %v", cfg.Agent.Enroll.DisklessCertLifetime, cfg.Agent.Update.PublicKeys)
+	}
+	pub := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, ed25519.PublicKeySize))
+	cfg, err = Load("", environ("ZAFIRO_AGENT_UPDATE_PUBLIC_KEYS=2026-10:"+pub+", 2027-01:"+pub,
+		"ZAFIRO_AGENT_ENROLL_DISKLESS_CERT_LIFETIME=12h"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := cfg.Agent.Update.UpdatePublicKeys()
+	if err != nil || len(keys) != 2 || len(keys["2026-10"]) != ed25519.PublicKeySize || cfg.Agent.Enroll.DisklessCertLifetime != 12*time.Hour {
+		t.Fatalf("keys = %v, %v; diskless = %v", keys, err, cfg.Agent.Enroll.DisklessCertLifetime)
+	}
+	for _, bad := range []string{
+		"ZAFIRO_AGENT_UPDATE_PUBLIC_KEYS=" + pub,                 // без key_id
+		"ZAFIRO_AGENT_UPDATE_PUBLIC_KEYS=k:AAAA",                 // не 32 байта
+		"ZAFIRO_AGENT_UPDATE_PUBLIC_KEYS=k:" + pub + ",k:" + pub, // повтор
+		"ZAFIRO_AGENT_ENROLL_DISKLESS_CERT_LIFETIME=0s",          // ≤ 0
+		"ZAFIRO_AGENT_ENROLL_DISKLESS_CERT_LIFETIME=1000h",       // больше agent.cert.lifetime
+	} {
+		if _, err := Load("", environ(bad)); err == nil {
+			t.Errorf("%s: expected validation error", bad)
+		}
 	}
 }

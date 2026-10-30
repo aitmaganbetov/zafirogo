@@ -15,6 +15,8 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -164,6 +166,36 @@ type Agent struct {
 	Stream     AgentStream `koanf:"stream"`
 	Sweeper    Sweeper     `koanf:"sweeper"`
 	Guest      AgentGuest  `koanf:"guest"`
+	Update     AgentUpdate `koanf:"update"`
+}
+
+// AgentUpdate — обновления агента. Решение «Обновления агента» (docs/DECISIONS.md): подпись Ed25519 обязательна,
+// ключ подписи — только в CI-секретах. Серверу нужен лишь открытый ключ: перед рассылкой UpdateAvailable сервер
+// проверяет подпись CI и не отправляет на ПК неподписанное (agent/commands.VerifyUpdate).
+type AgentUpdate struct {
+	// PublicKeys — открытые ключи Ed25519 "key_id:base64(32 байта)" (не секрет). Несколько — на время ротации.
+	// Пусто — обновления не рассылаются. В env — через запятую: ZAFIRO_AGENT_UPDATE_PUBLIC_KEYS=2026-10:MCowBQ….
+	PublicKeys []string `koanf:"public_keys"`
+}
+
+// UpdatePublicKeys разбирает agent.update.public_keys: key_id → открытый ключ Ed25519.
+func (u AgentUpdate) UpdatePublicKeys() (map[string]ed25519.PublicKey, error) {
+	out := make(map[string]ed25519.PublicKey, len(u.PublicKeys))
+	for i, item := range u.PublicKeys {
+		id, b64, ok := strings.Cut(strings.TrimSpace(item), ":")
+		if !ok || !updateKeyIDRe.MatchString(id) {
+			return nil, fmt.Errorf("agent.update.public_keys[%d]: ожидается key_id:base64", i)
+		}
+		raw, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil || len(raw) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("agent.update.public_keys[%d]: нужен открытый ключ Ed25519 (32 байта в base64)", i)
+		}
+		if _, dup := out[id]; dup {
+			return nil, fmt.Errorf("agent.update.public_keys[%d]: повтор key_id %q", i, id)
+		}
+		out[id] = ed25519.PublicKey(raw)
+	}
+	return out, nil
 }
 
 // AgentGuest — API гостя на ПК (agent/guestapi). Нули и пустые строки — значения пакета по умолчанию.
@@ -205,6 +237,8 @@ type AgentEnroll struct {
 	// CodePepper — секрет HMAC кодов (≥ 32 байт), общий для всех инстансов.
 	CodePepper Secret        `koanf:"code_pepper"`
 	CodeTTL    time.Duration `koanf:"code_ttl"`
+	// DisklessCertLifetime — срок сертификата бездискового ПК по ключу образа и его продлений (решение Q-037: 24 ч).
+	DisklessCertLifetime time.Duration `koanf:"diskless_cert_lifetime"`
 }
 
 // AgentCert — клиентские сертификаты агентов.
@@ -337,37 +371,39 @@ func Defaults() map[string]any {
 		"ratelimit.disable":   []string{},
 		"ratelimit.fail_open": false,
 
-		"agent.instance_id":               "",
-		"agent.grpc.listen":               ":8443",
-		"agent.grpc.endpoint":             "localhost:8443",
-		"agent.pki.ca_cert_file":          "",
-		"agent.pki.ca_key_file":           "",
-		"agent.pki.server_cert_file":      "",
-		"agent.pki.server_key_file":       "",
-		"agent.pki.dev_dir":               "",
-		"agent.pki.dev_hosts":             []string{},
-		"agent.enroll.code_pepper":        "",
-		"agent.enroll.code_ttl":           "15m",
-		"agent.cert.lifetime":             "720h",
-		"agent.cert_cache.refresh":        "5s",
-		"agent.cert_cache.full_reload":    "10m",
-		"agent.stream.presence_ttl":       "90s",
-		"agent.stream.offline_grace":      "15s",
-		"agent.stream.hello_timeout":      "10s",
-		"agent.stream.status_interval":    "60s",
-		"agent.stream.state_debounce":     "5s",
-		"agent.stream.ack_timeout":        "30s",
-		"agent.stream.key_prefix":         "zafiro:agent:",
-		"agent.stream.subject_prefix":     "zafiro.agent",
-		"agent.stream.drain_within":       "10s",
-		"agent.guest.token_ttl":           "0s",
-		"agent.guest.idempotency_ttl":     "0s",
-		"agent.guest.qr_base_url":         "",
-		"agent.guest.public_base_url":     "",
-		"agent.guest.qr_poll_every":       "0s",
-		"agent.sweeper.interval":          "5s",
-		"agent.sweeper.reconcile_every":   "5m",
-		"agent.sweeper.command_retention": "168h",
+		"agent.instance_id":                   "",
+		"agent.grpc.listen":                   ":8443",
+		"agent.grpc.endpoint":                 "localhost:8443",
+		"agent.pki.ca_cert_file":              "",
+		"agent.pki.ca_key_file":               "",
+		"agent.pki.server_cert_file":          "",
+		"agent.pki.server_key_file":           "",
+		"agent.pki.dev_dir":                   "",
+		"agent.pki.dev_hosts":                 []string{},
+		"agent.enroll.code_pepper":            "",
+		"agent.enroll.code_ttl":               "15m",
+		"agent.enroll.diskless_cert_lifetime": "24h",
+		"agent.update.public_keys":            []string{},
+		"agent.cert.lifetime":                 "720h",
+		"agent.cert_cache.refresh":            "5s",
+		"agent.cert_cache.full_reload":        "10m",
+		"agent.stream.presence_ttl":           "90s",
+		"agent.stream.offline_grace":          "15s",
+		"agent.stream.hello_timeout":          "10s",
+		"agent.stream.status_interval":        "60s",
+		"agent.stream.state_debounce":         "5s",
+		"agent.stream.ack_timeout":            "30s",
+		"agent.stream.key_prefix":             "zafiro:agent:",
+		"agent.stream.subject_prefix":         "zafiro.agent",
+		"agent.stream.drain_within":           "10s",
+		"agent.guest.token_ttl":               "0s",
+		"agent.guest.idempotency_ttl":         "0s",
+		"agent.guest.qr_base_url":             "",
+		"agent.guest.public_base_url":         "",
+		"agent.guest.qr_poll_every":           "0s",
+		"agent.sweeper.interval":              "5s",
+		"agent.sweeper.reconcile_every":       "5m",
+		"agent.sweeper.command_retention":     "168h",
 
 		"events.stream.max_age":    "72h",
 		"events.stream.duplicates": "10m",
@@ -518,6 +554,9 @@ var instanceRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 var keyIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,16}$`)
 
+// updateKeyIDRe — key_id ключа подписи обновлений агента (UpdateAvailable.key_id, например "2026-10").
+var updateKeyIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,32}$`)
+
 // defaultInstanceID — имя хоста, приведённое к [A-Za-z0-9_-]{1,64}.
 func defaultInstanceID() string {
 	h, err := os.Hostname()
@@ -579,41 +618,42 @@ func (c *Config) Validate() error {
 		add("http.addr: %w", err)
 	}
 	positive := map[string]time.Duration{
-		"http.read_header_timeout":         c.HTTP.ReadHeaderTimeout,
-		"http.read_timeout":                c.HTTP.ReadTimeout,
-		"http.write_timeout":               c.HTTP.WriteTimeout,
-		"http.idle_timeout":                c.HTTP.IdleTimeout,
-		"http.request_timeout":             c.HTTP.RequestTimeout,
-		"auth.access_ttl":                  c.Auth.AccessTTL,
-		"auth.idle_ttl":                    c.Auth.IdleTTL,
-		"auth.remember_ttl":                c.Auth.RememberTTL,
-		"auth.max_lifetime":                c.Auth.MaxLifetime,
-		"auth.refresh_reuse_grace":         c.Auth.RefreshReuseGrace,
-		"auth.touch_every":                 c.Auth.TouchEvery,
-		"agent.enroll.code_ttl":            c.Agent.Enroll.CodeTTL,
-		"agent.cert.lifetime":              c.Agent.Cert.Lifetime,
-		"agent.cert_cache.refresh":         c.Agent.CertCache.Refresh,
-		"agent.cert_cache.full_reload":     c.Agent.CertCache.FullReload,
-		"agent.stream.presence_ttl":        c.Agent.Stream.PresenceTTL,
-		"agent.stream.offline_grace":       c.Agent.Stream.OfflineGrace,
-		"agent.stream.hello_timeout":       c.Agent.Stream.HelloTimeout,
-		"agent.stream.status_interval":     c.Agent.Stream.StatusInterval,
-		"agent.stream.state_debounce":      c.Agent.Stream.StateDebounce,
-		"agent.stream.ack_timeout":         c.Agent.Stream.AckTimeout,
-		"agent.sweeper.interval":           c.Agent.Sweeper.Interval,
-		"agent.sweeper.reconcile_every":    c.Agent.Sweeper.ReconcileEvery,
-		"agent.sweeper.command_retention":  c.Agent.Sweeper.CommandRetention,
-		"events.stream.max_age":            c.Events.Stream.MaxAge,
-		"events.stream.duplicates":         c.Events.Stream.Duplicates,
-		"outbox.interval":                  c.Outbox.Interval,
-		"outbox.retention":                 c.Outbox.Retention,
-		"webhooks.timeout":                 c.Webhooks.Timeout,
-		"webhooks.connect_timeout":         c.Webhooks.ConnectTimeout,
-		"webhooks.poll_interval":           c.Webhooks.PollInterval,
-		"realtime.ping_interval":           c.Realtime.PingInterval,
-		"realtime.ping_timeout":            c.Realtime.PingTimeout,
-		"workers.expire_sessions.interval": c.Workers.ExpireSessions.Interval,
-		"workers.partitions.interval":      c.Workers.Partitions.Interval,
+		"http.read_header_timeout":            c.HTTP.ReadHeaderTimeout,
+		"http.read_timeout":                   c.HTTP.ReadTimeout,
+		"http.write_timeout":                  c.HTTP.WriteTimeout,
+		"http.idle_timeout":                   c.HTTP.IdleTimeout,
+		"http.request_timeout":                c.HTTP.RequestTimeout,
+		"auth.access_ttl":                     c.Auth.AccessTTL,
+		"auth.idle_ttl":                       c.Auth.IdleTTL,
+		"auth.remember_ttl":                   c.Auth.RememberTTL,
+		"auth.max_lifetime":                   c.Auth.MaxLifetime,
+		"auth.refresh_reuse_grace":            c.Auth.RefreshReuseGrace,
+		"auth.touch_every":                    c.Auth.TouchEvery,
+		"agent.enroll.code_ttl":               c.Agent.Enroll.CodeTTL,
+		"agent.enroll.diskless_cert_lifetime": c.Agent.Enroll.DisklessCertLifetime,
+		"agent.cert.lifetime":                 c.Agent.Cert.Lifetime,
+		"agent.cert_cache.refresh":            c.Agent.CertCache.Refresh,
+		"agent.cert_cache.full_reload":        c.Agent.CertCache.FullReload,
+		"agent.stream.presence_ttl":           c.Agent.Stream.PresenceTTL,
+		"agent.stream.offline_grace":          c.Agent.Stream.OfflineGrace,
+		"agent.stream.hello_timeout":          c.Agent.Stream.HelloTimeout,
+		"agent.stream.status_interval":        c.Agent.Stream.StatusInterval,
+		"agent.stream.state_debounce":         c.Agent.Stream.StateDebounce,
+		"agent.stream.ack_timeout":            c.Agent.Stream.AckTimeout,
+		"agent.sweeper.interval":              c.Agent.Sweeper.Interval,
+		"agent.sweeper.reconcile_every":       c.Agent.Sweeper.ReconcileEvery,
+		"agent.sweeper.command_retention":     c.Agent.Sweeper.CommandRetention,
+		"events.stream.max_age":               c.Events.Stream.MaxAge,
+		"events.stream.duplicates":            c.Events.Stream.Duplicates,
+		"outbox.interval":                     c.Outbox.Interval,
+		"outbox.retention":                    c.Outbox.Retention,
+		"webhooks.timeout":                    c.Webhooks.Timeout,
+		"webhooks.connect_timeout":            c.Webhooks.ConnectTimeout,
+		"webhooks.poll_interval":              c.Webhooks.PollInterval,
+		"realtime.ping_interval":              c.Realtime.PingInterval,
+		"realtime.ping_timeout":               c.Realtime.PingTimeout,
+		"workers.expire_sessions.interval":    c.Workers.ExpireSessions.Interval,
+		"workers.partitions.interval":         c.Workers.Partitions.Interval,
 	}
 	for name, d := range positive {
 		if d <= 0 {
@@ -732,6 +772,12 @@ func (c *Config) Validate() error {
 	}
 	if len(c.Agent.Enroll.CodePepper.Reveal()) < 32 {
 		add("agent.enroll.code_pepper: нужно не меньше 32 байт")
+	}
+	if c.Agent.Enroll.DisklessCertLifetime > 0 && c.Agent.Cert.Lifetime > 0 && c.Agent.Enroll.DisklessCertLifetime > c.Agent.Cert.Lifetime {
+		add("agent.enroll.diskless_cert_lifetime: должен быть ≤ agent.cert.lifetime")
+	}
+	if _, err := c.Agent.Update.UpdatePublicKeys(); err != nil {
+		errs = append(errs, err)
 	}
 	if c.Agent.Guest.TokenTTL < 0 || c.Agent.Guest.IdempotencyTTL < 0 || c.Agent.Guest.QRPollEvery < 0 {
 		add("agent.guest.*: длительности должны быть ≥ 0")

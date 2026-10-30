@@ -49,6 +49,9 @@ type AgentCertificate struct {
 	RevokeReason     *string    `json:"revoke_reason"`
 	RevokedByUserID  *int64     `json:"revoked_by_user_id"`
 	ChangedAt        time.Time  `json:"changed_at"`
+	// Выпущен по ключу образа (бездисковый ПК): срок 24 ч, продление — тоже 24 ч
+	Diskless   bool   `json:"diskless"`
+	ImageKeyID *int64 `json:"image_key_id"`
 }
 
 // Долговременные команды агенту (seq > 0): хранятся до expires_at, досылаются после reconnect по Hello.last_command_seq
@@ -93,6 +96,42 @@ type AgentEnrollmentCode struct {
 	CanceledAt      *time.Time  `json:"canceled_at"`
 }
 
+// Ключи образа бездисковых ПК (Q-037). Ключ не хранится — только HMAC-SHA256
+type AgentImageKey struct {
+	ID              int64          `json:"id"`
+	ClubID          int64          `json:"club_id"`
+	KeyHash         []byte         `json:"key_hash"`
+	KeyPrefix       string         `json:"key_prefix"`
+	Name            string         `json:"name"`
+	Subnets         []netip.Prefix `json:"subnets"`
+	CreatedByUserID *int64         `json:"created_by_user_id"`
+	CreatedAt       time.Time      `json:"created_at"`
+	ExpiresAt       *time.Time     `json:"expires_at"`
+	RevokedAt       *time.Time     `json:"revoked_at"`
+	RevokedByUserID *int64         `json:"revoked_by_user_id"`
+	LastUsedAt      *time.Time     `json:"last_used_at"`
+}
+
+// Бездисковые ПК с новым MAC, ожидающие подтверждения сотрудником (Q-037)
+type AgentPendingComputer struct {
+	ID               int64           `json:"id"`
+	ClubID           int64           `json:"club_id"`
+	ImageKeyID       *int64          `json:"image_key_id"`
+	MacAddress       string          `json:"mac_address"`
+	HardwareUuid     *string         `json:"hardware_uuid"`
+	Hostname         *string         `json:"hostname"`
+	Device           json.RawMessage `json:"device"`
+	Ip               *netip.Addr     `json:"ip"`
+	CreatedAt        time.Time       `json:"created_at"`
+	LastSeenAt       time.Time       `json:"last_seen_at"`
+	Attempts         int32           `json:"attempts"`
+	ApprovedAt       *time.Time      `json:"approved_at"`
+	ApprovedByUserID *int64          `json:"approved_by_user_id"`
+	ClubComputerID   *int64          `json:"club_computer_id"`
+	RejectedAt       *time.Time      `json:"rejected_at"`
+	RejectedByUserID *int64          `json:"rejected_by_user_id"`
+}
+
 type AgentQrLogin struct {
 	ID             pgtype.UUID `json:"id"`
 	ClubID         int64       `json:"club_id"`
@@ -114,6 +153,7 @@ type ApiIdempotencyKey struct {
 	Status         *int32    `json:"status"`
 	Response       *string   `json:"response"`
 	CreatedAt      time.Time `json:"created_at"`
+	ClubID         int64     `json:"club_id"`
 }
 
 type ApiKey struct {
@@ -769,6 +809,7 @@ type TransferCode struct {
 	ExpiresAt   time.Time  `json:"expires_at"`
 	CreatedAt   *time.Time `json:"created_at"`
 	UpdatedAt   *time.Time `json:"updated_at"`
+	ClubID      int64      `json:"club_id"`
 }
 
 type Translation struct {
