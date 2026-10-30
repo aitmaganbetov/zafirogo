@@ -1,0 +1,518 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — settings
+  version: 0.1.0
+  description: |
+    Настройки клуба: «Настройка клуба», «Языки», «Финансы», «Гости» (SettingsController, LanguageController,
+    ClubLogoController, ClubSignInImageController). Конвенции — api/README.md.
+    Настройки — JSON clubs.settings (секции club, finances, guests) и колонки clubs (timezone, locale, PIN выхода,
+    agent_staff_minutes, логотип, картинка экрана входа). Уровни бонуса и накопительной скидки пишутся в формате v2
+    (решение Q-003): пороги — тиыны, проценты — базисные пункты.
+    Логотип и картинка экрана входа — публичные GET /club-logos/{club}/{file} и /club-signin-images/{club}/{file}
+    (вне /api, без токена: агент грузит их по URL из ClubConfig).
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/settings:
+    get:
+      operationId: getClubSettings
+      tags: [settings]
+      summary: Настройки клуба для экранов настроек
+      description: |
+        Laravel: SettingsController::club(), finances(), guests() (settings.club, settings.view): loadSettings() —
+        значения по умолчанию defaultSettings() поверх сохранённых, «минутные» поля нормализованы minutes().
+        Плюс часовой пояс и список зон (timezoneOptions()), PIN выхода (дата смены), минуты обслуживания ПК,
+        логотип и картинка экрана входа.
+      responses:
+        "200":
+          description: Настройки клуба.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClubSettingsPage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/settings/sections/{section}:
+    put:
+      operationId: saveClubSettings
+      tags: [settings]
+      summary: Сохранить секцию настроек
+      description: |
+        Laravel: SettingsController::save() (settings.save, settings.update), SaveSettingsRequest. Меняются только
+        поля секции, присутствующие в теле (`$request->has()`); значения — как поля формы (строки, "0"/"1" для
+        флажков) или JSON-числа и логические значения. Уровни — список {spent|amount, percent}; пороги — сумма в
+        тенге (не больше 2 знаков после точки, решение Q-002), хранятся в формате v2 (Q-003). Журнал
+        settings.updated (что было → что стало), аудит категории settings, ConfigChanged агентам клуба.
+      parameters:
+        - name: section
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [club, finances, guests]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SettingsSaveRequest"
+      responses:
+        "200":
+          description: Настройки сохранены.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/settings/timezone:
+    put:
+      operationId: saveClubTimezone
+      tags: [settings]
+      summary: Часовой пояс клуба
+      description: |
+        Laravel: SettingsController::timezone() (settings.timezone): `required|string|timezone:all`; журнал
+        club.timezone_changed, если пояс другой.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TimezoneRequest"
+      responses:
+        "200":
+          description: Часовой пояс сохранён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/settings/languages:
+    get:
+      operationId: getClubLanguages
+      tags: [settings]
+      summary: Языки и язык клуба
+      description: |
+        Laravel: SettingsController::languages() (settings.languages): все языки платформы по sort_order, id и
+        язык клуба (LocaleResolver::forClub()).
+      responses:
+        "200":
+          description: Языки.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LanguagesPage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/settings/language:
+    put:
+      operationId: saveClubLanguage
+      tags: [settings]
+      summary: Язык интерфейса клуба
+      description: |
+        Laravel: LanguageController::select() (settings.language): `required|string|in:<включённые языки>`;
+        журнал club.language_changed. Язык клуба виден в /api/auth/me (club.locale) сразу.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LanguageRequest"
+      responses:
+        "200":
+          description: Язык изменён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/settings/agent-pin:
+    put:
+      operationId: saveAgentPin
+      tags: [settings]
+      summary: PIN выхода из агента
+      description: |
+        Laravel: SettingsController::agentPin() (settings.agent-pin, workers.update): `nullable|string|regex:/^\d{4,8}$/|confirmed`;
+        пустой PIN удаляет его. Хранится хэшем (Argon2id). Журнал club.agent_pin_changed, ConfigChanged агентам.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentPinRequest"
+      responses:
+        "200":
+          description: PIN сохранён или удалён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/settings/agent-staff-time:
+    put:
+      operationId: saveAgentStaffTime
+      tags: [settings]
+      summary: Время обслуживания ПК
+      description: |
+        Laravel: SettingsController::agentStaffTime() (settings.agent-staff-time, workers.update):
+        `required|integer|min:1|max:240`; журнал club.agent_staff_time_changed, ConfigChanged агентам.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffTimeRequest"
+      responses:
+        "200":
+          description: Время сохранено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/settings/logo:
+    post:
+      operationId: uploadClubLogo
+      tags: [settings]
+      summary: Загрузить логотип клуба
+      description: |
+        Laravel: ClubLogoController::update() (settings.logo): `required|file|mimes:png,jpg,jpeg|max:1024|dimensions:min 32×32, max 4096×4096`.
+        Журнал club.logo_changed, ConfigChanged агентам (новый URL).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                logo:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Логотип сохранён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+    delete:
+      operationId: deleteClubLogo
+      tags: [settings]
+      summary: Удалить логотип клуба
+      description: Laravel — ClubLogoController::destroy() (settings.logo.destroy).
+      responses:
+        "200":
+          description: Логотип удалён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/settings/signin-image:
+    post:
+      operationId: uploadSigninImage
+      tags: [settings]
+      summary: Загрузить картинку экрана входа агента
+      description: |
+        Laravel: ClubSignInImageController::update() (settings.signin-image): `required|file|mimes:png,jpg,jpeg|max:3072|dimensions:min 640×360, max 4096×4096`.
+        Журнал club.signin_image_changed, ConfigChanged агентам.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                image:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Картинка сохранена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+    delete:
+      operationId: deleteSigninImage
+      tags: [settings]
+      summary: Вернуть стандартную картинку экрана входа
+      description: Laravel — ClubSignInImageController::destroy() (settings.signin-image.destroy).
+      responses:
+        "200":
+          description: Картинка удалена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    SettingsMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: Текст ->with('status', …) на языке клуба.
+    SettingsSaveRequest:
+      type: object
+      description: Поля секции (как поля формы settings.save). Неизвестные поля игнорируются.
+      additionalProperties: true
+    TimezoneRequest:
+      type: object
+      properties:
+        timezone:
+          type: string
+          nullable: true
+    LanguageRequest:
+      type: object
+      properties:
+        locale:
+          type: string
+          nullable: true
+    AgentPinRequest:
+      type: object
+      properties:
+        pin:
+          type: string
+          nullable: true
+        pin_confirmation:
+          type: string
+          nullable: true
+    StaffTimeRequest:
+      type: object
+      properties:
+        minutes:
+          description: Минуты (строка поля формы или число).
+          nullable: true
+          oneOf:
+            - type: string
+            - type: integer
+    PercentLevel:
+      type: object
+      required: [threshold_tiyn, percent_bp]
+      properties:
+        threshold_tiyn:
+          type: integer
+          format: int64
+          description: Порог уровня в тиынах (траты — spent, пополнение — amount).
+        percent_bp:
+          type: integer
+          format: int64
+          description: Процент в базисных пунктах (5.5 % = 550).
+    SettingsClubSection:
+      type: object
+      required: [session_idle_timeout, pc_action_after_session_end, pc_restart_after_session_end,
+        session_auto_terminate_when_pc_unavailable, booking_interval, max_cashiers_on_shift, max_operators_on_shift,
+        agent_idle_logout_minutes, agent_shop_enabled, agent_auto_update]
+      properties:
+        session_idle_timeout:
+          type: number
+          format: double
+          description: Минуты (не деньги).
+        pc_action_after_session_end:
+          type: string
+        pc_restart_after_session_end:
+          type: number
+          format: double
+        session_auto_terminate_when_pc_unavailable:
+          type: number
+          format: double
+        booking_interval:
+          type: number
+          format: double
+        max_cashiers_on_shift:
+          type: number
+          format: double
+        max_operators_on_shift:
+          type: number
+          format: double
+        agent_idle_logout_minutes:
+          type: number
+          format: double
+        agent_shop_enabled:
+          type: boolean
+        agent_auto_update:
+          type: boolean
+    SettingsFinancesSection:
+      type: object
+      required: [currency, loyalty_enabled, loyalty_levels, topup_bonus_enabled, topup_bonus_levels, discount_scope,
+        bonus_max_percent, allow_mixed_payment, allow_whole_balance, auto_billing, auto_billing_pause_minutes]
+      properties:
+        currency:
+          type: string
+        loyalty_enabled:
+          type: boolean
+        loyalty_levels:
+          type: array
+          items:
+            $ref: "#/components/schemas/PercentLevel"
+        topup_bonus_enabled:
+          type: boolean
+        topup_bonus_levels:
+          type: array
+          items:
+            $ref: "#/components/schemas/PercentLevel"
+        discount_scope:
+          type: string
+        bonus_max_percent:
+          type: number
+          format: double
+        allow_mixed_payment:
+          type: boolean
+        allow_whole_balance:
+          type: boolean
+        auto_billing:
+          type: boolean
+        auto_billing_pause_minutes:
+          type: number
+          format: double
+    SettingsGuestsSection:
+      type: object
+      required: [show_qr_code_on_login, allow_guest_self_transfer, allow_adding_friends,
+        allow_balance_transfer_to_friends, guest_mode_enabled]
+      properties:
+        show_qr_code_on_login:
+          type: boolean
+        allow_guest_self_transfer:
+          type: boolean
+        allow_adding_friends:
+          type: boolean
+        allow_balance_transfer_to_friends:
+          type: boolean
+        guest_mode_enabled:
+          type: boolean
+    ClubSettings:
+      type: object
+      required: [club, finances, guests]
+      properties:
+        club:
+          $ref: "#/components/schemas/SettingsClubSection"
+        finances:
+          $ref: "#/components/schemas/SettingsFinancesSection"
+        guests:
+          $ref: "#/components/schemas/SettingsGuestsSection"
+    TimezoneOption:
+      type: object
+      required: [id, label]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+          description: "(UTC+05:00) Asia/Almaty"
+    ClubSettingsPage:
+      type: object
+      required: [club_name, settings, timezone, timezones_kazakhstan, timezones_all, club_time, agent_pin_set_at,
+        agent_staff_minutes, can_manage_agent_pin, logo_url, signin_image_url]
+      properties:
+        club_name:
+          type: string
+        settings:
+          $ref: "#/components/schemas/ClubSettings"
+        timezone:
+          type: string
+        timezones_kazakhstan:
+          type: array
+          description: Пояса Казахстана (группа «Казахстан»).
+          items:
+            $ref: "#/components/schemas/TimezoneOption"
+        timezones_all:
+          type: array
+          description: Все пояса по смещению (группа «Все часовые пояса»).
+          items:
+            $ref: "#/components/schemas/TimezoneOption"
+        club_time:
+          type: string
+          description: «Сейчас в клубе» — d.m.Y H:i в поясе клуба.
+        agent_pin_set_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Когда задан PIN выхода (null — не задан).
+        agent_staff_minutes:
+          type: integer
+          format: int32
+        can_manage_agent_pin:
+          type: boolean
+          description: Право workers.update (PIN и время обслуживания).
+        logo_url:
+          type: string
+          nullable: true
+        signin_image_url:
+          type: string
+          nullable: true
+    LanguageItem:
+      type: object
+      required: [code, name, is_enabled]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        is_enabled:
+          type: boolean
+    LanguagesPage:
+      type: object
+      required: [languages, locale]
+      properties:
+        languages:
+          type: array
+          items:
+            $ref: "#/components/schemas/LanguageItem"
+        locale:
+          type: string
+          description: Язык клуба (LocaleResolver::forClub()).
