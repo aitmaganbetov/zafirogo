@@ -1,0 +1,142 @@
+// Регистрация ПК клуба и выпуск клиентского сертификата (mTLS).
+//
+// Заменяет старые маршруты (routes/api.php в Laravel):
+//   POST /api/clubs/resolve           (ключ установки → клуб)
+//   POST /api/club-computers/resolve  (вход сотрудника на ПК → токен ПК, claim)
+//   POST /api/club-computers/register (вход сотрудника → новая карточка ПК + токен)
+//   POST /api/agent/enroll            (ключ клуба + UUID/MAC → токен ПК; бездисковые ПК)
+//   POST /api/agent/token/rotate      (служба меняет токен ПК на новый)
+// Вместо долгоживущего токена `zag_…` (X-Agent-Token, sha256 в club_computers.agent_token_hash)
+// ПК получает клиентский X.509-сертификат, а приватный ключ не покидает ПК.
+syntax = "proto3";
+
+package zafiro.agent.v1;
+
+option csharp_namespace = "Zafiro.Agent.V1";
+option go_package = "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1;agentv1";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Регистрация ПК.
+//
+// Транспорт: TLS с проверкой сервера, БЕЗ клиентского сертификата (отдельный порт/хост
+// enroll.zafiro.kz или тот же listener с `tls.VerifyClientCertIfGiven`).
+// Лимиты: Enroll — 5 в минуту на (IP, hardware_uuid) и 300 в минуту на IP (как
+// RateLimiter `agent-enroll` в AppServiceProvider), неверный код — +1 к счётчику
+// неудачных попыток IP (после 20 в минуту — RESOURCE_EXHAUSTED на 1 минуту).
+service EnrollmentService {
+  // Регистрирует ПК по одноразовому коду из панели клуба и выпускает сертификат.
+  //
+  // Код создаёт сотрудник с правом управления ПК в панели клуба («Подключить ПК»):
+  // 8 символов из алфавита без похожих символов (A–Z без I/O, 2–9), срок 15 минут,
+  // одноразовый, привязан к клубу и (опционально) к зоне / карточке ПК.
+  // Повторный Enroll того же ПК (тот же hardware_uuid + MAC) с новым кодом выпускает
+  // новый сертификат и отзывает прежний (как issueAgentToken в Laravel отзывал старый токен).
+  //
+  // Ошибки: ENROLLMENT_CODE_INVALID, ENROLLMENT_CODE_EXPIRED, CSR_INVALID,
+  // COMPUTER_LIMIT_REACHED, SUBSCRIPTION_INACTIVE, RATE_LIMITED, VALIDATION_FAILED.
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+
+  // Продлевает сертификат. Вызывается ПОД mTLS текущим (ещё действующим) сертификатом.
+  // Агент генерирует НОВУЮ пару ключей и шлёт новый CSR. Прежний сертификат остаётся
+  // действительным до not_after (нужен, чтобы не рвать открытый стрим), после первого
+  // подключения с новым сертификатом сервер помечает прежний как superseded.
+  // Агент продлевает, когда прошло 2/3 срока (renew_after) — с jitter до 24 часов.
+  //
+  // Ошибки: CERTIFICATE_REVOKED, CERTIFICATE_EXPIRED, DEVICE_MISMATCH, CSR_INVALID,
+  // SUBSCRIPTION_INACTIVE (продление разрешено и при неактивной подписке, чтобы ПК
+  // не терял регистрацию, — см. docs/open-questions/api.md), RATE_LIMITED (10 в минуту на ПК).
+  rpc RenewCertificate(RenewCertificateRequest) returns (RenewCertificateResponse);
+}
+
+// Сведения о ПК, которые агент сообщает при регистрации (аналог полей HeartbeatClubComputerRequest
+// и AgentEnrollController: device_id, device_name, mac_address, cpu_model ...).
+message DeviceInfo {
+  // SMBIOS UUID материнской платы (старое device_id / DeviceInfo.StableId).
+  // У ПК, загруженных с одного образа, бывает одинаковым — поэтому ключ карточки ПК — MAC.
+  string hardware_uuid = 1;
+  // MAC активного сетевого адаптера, "AA:BB:CC:DD:EE:FF" (верхний регистр). Основной ключ
+  // поиска карточки ПК в клубе (ClubComputerRegistrar::find, MacAddress::normalize).
+  string mac_address = 2;
+  // Имя Windows (Environment.MachineName), ≤ 255 символов.
+  string hostname = 3;
+  // Версия агента (SemVer, например "2.0.0").
+  string agent_version = 4;
+  // Версия Windows ("Windows 11 Pro 23H2 (26100.1)").
+  string os_version = 5;
+  // Модель процессора.
+  string cpu_model = 6;
+  // Число логических ядер (1..1024).
+  int32 cpu_cores = 7;
+  // Объём ОЗУ, МБ.
+  int64 ram_total_mb = 8;
+  // Модель видеокарты.
+  string gpu_model = 9;
+  // Локальный IPv4/IPv6 адрес активного адаптера.
+  string local_ip = 10;
+  // true — ПК бездисковый (загружается по сети, локальное хранилище не переживает перезагрузку).
+  // Сервер может выдать сертификат короче и разрешить повторную регистрацию по коду образа
+  // (см. open-questions/api.md, «Бездисковые ПК»).
+  bool diskless = 11;
+}
+
+// Запрос регистрации.
+message EnrollRequest {
+  // Одноразовый код регистрации, введённый сотрудником на экране агента.
+  string enrollment_code = 1;
+  // PKCS#10 CSR в PEM. Ключ ECDSA P-256 (предпочтительно) или RSA ≥ 3072, сгенерирован на ПК
+  // как неэкспортируемый машинный ключ CNG (TPM, если есть). Subject в CSR сервер игнорирует
+  // и пишет свой (см. EnrollResponse.certificate_pem).
+  string csr_pem = 2;
+  // Сведения о ПК.
+  DeviceInfo device = 3;
+}
+
+// Ответ регистрации.
+message EnrollResponse {
+  // Клиентский сертификат (PEM). Subject: CN=pc-<computer_id>, O=club-<club_id>;
+  // SAN URI: zafiro://club/<club_id>/computer/<computer_id>. ExtKeyUsage: clientAuth.
+  string certificate_pem = 1;
+  // Цепочка CA (промежуточный → корневой), PEM. Корень агент также держит встроенным
+  // (pinning): чужая цепочка в ответе не принимается.
+  repeated string ca_chain_pem = 2;
+  // ID карточки ПК (club_computers.id).
+  int64 computer_id = 3;
+  // ID клуба (clubs.id).
+  int64 club_id = 4;
+  // Название клуба (для экрана агента).
+  string club_name = 5;
+  // Номер ПК в клубе.
+  string computer_number = 6;
+  // Срок действия сертификата (по умолчанию 30 дней).
+  google.protobuf.Timestamp not_after = 7;
+  // Когда начинать продление (2/3 срока).
+  google.protobuf.Timestamp renew_after = 8;
+  // Адрес gRPC-сервера для AgentService (например "agent.zafiro.kz:443").
+  string agent_endpoint = 9;
+  // true — карточка создана этой регистрацией (зона «Не назначена»), false — найдена по MAC/UUID.
+  bool computer_created = 10;
+}
+
+// Запрос продления сертификата (под mTLS).
+message RenewCertificateRequest {
+  // Новый CSR (новая пара ключей).
+  string csr_pem = 1;
+  // Актуальные сведения о ПК (MAC и UUID сверяются с карточкой).
+  DeviceInfo device = 2;
+}
+
+// Ответ продления.
+message RenewCertificateResponse {
+  // Новый сертификат (PEM).
+  string certificate_pem = 1;
+  // Цепочка CA (PEM).
+  repeated string ca_chain_pem = 2;
+  // Срок действия нового сертификата.
+  google.protobuf.Timestamp not_after = 3;
+  // Когда продлевать снова.
+  google.protobuf.Timestamp renew_after = 4;
+  // Сколько ещё действует прежний сертификат (обычно до своего not_after).
+  google.protobuf.Duration previous_valid_for = 5;
+}

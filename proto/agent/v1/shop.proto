@@ -1,0 +1,125 @@
+// Магазин клуба в агенте: товары и заказ к ПК с оплатой с основного баланса.
+//
+// Под mTLS ПК. ListProducts можно вызывать и без токена гостя (витрина на экране входа,
+// как GET /api/products, куда агент шёл с токеном гостя, если он был — HttpApiService.GetProductsAsync);
+// PlaceOrder требует токен гостя.
+syntax = "proto3";
+
+package zafiro.agent.v1;
+
+option csharp_namespace = "Zafiro.Agent.V1";
+option go_package = "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1;agentv1";
+
+import "agent/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// Магазин.
+service ShopService {
+  // Товары клуба, по названию, страницами по 50.
+  // Заменяет GET /api/products (ProductController; throttle 60/мин).
+  rpc ListProducts(ListProductsRequest) returns (ListProductsResponse);
+
+  // Заказ товаров к этому ПК, оплата с основного баланса. idempotency_key ОБЯЗАТЕЛЕН.
+  // Заменяет POST /api/guest/shop/purchase (GuestShopController → AgentShop::purchase; 10/мин).
+  // До 30 строк (AgentShop::MAX_LINES), до 50 штук в строке (AgentShop::MAX_QUANTITY),
+  // одинаковые product_id складываются.
+  // Ошибки: FEATURE_DISABLED (магазин выключен), OUT_OF_STOCK, INSUFFICIENT_FUNDS,
+  // VALIDATION_FAILED, IDEMPOTENCY_*.
+  rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse);
+}
+
+// Запрос товаров.
+message ListProductsRequest {
+  // Размер страницы (1..100, по умолчанию 50).
+  int32 page_size = 1;
+  // Курсор (пусто — первая страница).
+  string page_token = 2;
+}
+
+// Товар (ProductResource в Laravel).
+message Product {
+  // ID товара.
+  int64 product_id = 1;
+  // Артикул.
+  string sku = 2;
+  // Название.
+  string name = 3;
+  // Категория.
+  string category = 4;
+  // Цена, тиыны.
+  int64 price_tiyn = 5;
+  // Валюта.
+  string currency = 6;
+  // Остаток, шт.
+  int32 quantity = 7;
+  // Есть в наличии (quantity > 0).
+  bool in_stock = 8;
+  // Фото (HTTPS URL) или пусто.
+  string image_url = 9;
+}
+
+// Страница товаров.
+message ListProductsResponse {
+  // Товары.
+  repeated Product products = 1;
+  // Курсор следующей страницы (пусто — конец).
+  string next_page_token = 2;
+}
+
+// Строка заказа.
+message OrderItem {
+  // ID товара.
+  int64 product_id = 1;
+  // Количество (1..50).
+  int32 quantity = 2;
+}
+
+// Запрос заказа.
+message PlaceOrderRequest {
+  // UUID идемпотентности (обязателен).
+  string idempotency_key = 1;
+  // Строки (1..30).
+  repeated OrderItem items = 2;
+}
+
+// Строка оформленного заказа.
+message OrderLine {
+  // ID товара.
+  int64 product_id = 1;
+  // Название.
+  string name = 2;
+  // Количество.
+  int32 quantity = 3;
+  // Цена за штуку, тиыны.
+  int64 price_tiyn = 4;
+  // Сумма строки, тиыны.
+  int64 total_tiyn = 5;
+}
+
+// Статус заказа (shop_orders.status).
+enum OrderStatus {
+  // Не задано.
+  ORDER_STATUS_UNSPECIFIED = 0;
+  // Новый: ждёт сотрудника.
+  ORDER_STATUS_NEW = 1;
+  // Выдан.
+  ORDER_STATUS_DONE = 2;
+  // Отменён (деньги вернулись на баланс).
+  ORDER_STATUS_CANCELLED = 3;
+}
+
+// Ответ заказа.
+message PlaceOrderResponse {
+  // ID заказа (shop_orders.id).
+  int64 order_id = 1;
+  // Строки.
+  repeated OrderLine lines = 2;
+  // Сумма заказа, тиыны.
+  int64 amount_tiyn = 3;
+  // Балансы после оплаты.
+  Balance balance = 4;
+  // Статус.
+  OrderStatus status = 5;
+  // Когда создан.
+  google.protobuf.Timestamp created_at = 6;
+}

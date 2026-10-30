@@ -1,0 +1,788 @@
+// Контракт агента ПК Zafiro ↔ сервер zafirogo. Пакет zafiro.agent.v1.
+//
+// =====================================================================================
+// ОБЩИЕ ПРАВИЛА (действуют для всех файлов пакета: common, enrollment, agent, guest,
+// shop, social). Подробности и схемы — docs/agent-protocol.md.
+// =====================================================================================
+//
+// 1. Транспорт и аутентификация
+//    * gRPC поверх HTTP/2 + TLS 1.3. Сервер проверяется по встроенному в агент корню CA
+//      Zafiro (pinning), а не по системному хранилищу Windows.
+//    * EnrollmentService.Enroll — без клиентского сертификата (одноразовый код).
+//    * Все остальные сервисы — mTLS: клиентский сертификат, выпущенный Enroll/RenewCertificate.
+//      ПК (computer_id, club_id) сервер берёт ТОЛЬКО из сертификата; в сообщениях computer_id
+//      «своего» ПК не передаётся (в старом API агент слал computer_id и X-Agent-Token, а
+//      контроллеры сверяли их — GuestShopController, AgentTariffController::purchase и т.п.).
+//    * Отозванный сертификат (панель клуба: «Отключить ПК», удаление карточки, повторный Enroll)
+//      отклоняется при рукопожатии, открытый стрим сервер закрывает со статусом
+//      UNAUTHENTICATED + ERROR_CODE_CERTIFICATE_REVOKED.
+//    * Действия гостя (GuestService, ShopService, SocialService, GuestAuthService.Logout) —
+//      дополнительно токен гостя в метаданных: `authorization: Bearer <access_token>`.
+//      Токен выдаётся GuestAuthService.Login/Register/WatchQrLogin, привязан к ПК (к серийному
+//      номеру сертификата) и на другом ПК недействителен. Срок — до 12 часов, продление не нужно:
+//      токен живёт, пока гость сидит за ПК (см. open-questions/api.md про срок).
+//
+// 2. Метаданные запроса
+//    * `zafiro-protocol-version: 1` — в каждом запросе (в стриме — также поле Hello.protocol_version).
+//    * `zafiro-agent-version: 2.0.0` — версия агента.
+//    * `zafiro-locale: ru|kk|en` — язык текстов ошибок (google.rpc.LocalizedMessage).
+//      Старый аналог: LocaleResolver::forAgentRequest.
+//
+// 3. Версионирование
+//    * Пакет zafiro.agent.v1 меняется только обратно совместимо: новые поля, новые значения
+//      enum в конец, новые RPC и команды. Номера полей не переиспользуются (reserved).
+//    * protocol_version (uint32) — минорная версия протокола внутри v1. Сервер в Welcome
+//      сообщает min/max поддерживаемые; агент ниже min получает
+//      ERROR_CODE_PROTOCOL_VERSION_UNSUPPORTED и ждёт обновления.
+//    * Несовместимые изменения — новый пакет zafiro.agent.v2; сервер держит v1 и v2
+//      параллельно, пока все агенты не обновятся.
+//
+// 4. Ошибки
+//    * unary: gRPC-статус + google.rpc.ErrorInfo{reason = имя ErrorCode, domain =
+//      "agent.zafiro.kz"} (+ BadRequest / RetryInfo / LocalizedMessage). См. enum ErrorCode
+//      в common.proto — там же соответствие gRPC-кодам.
+//    * стрим: ошибки выполнения команд — CommandResult.error_code; фатальные ошибки стрима —
+//      закрытие стрима gRPC-статусом с ErrorInfo.
+//
+// 5. Идемпотентность
+//    * Команды сервера: у каждой Command есть command_id (UUID v7, уникален глобально).
+//      Агент хранит на диске (ProgramData, служба) id последних 256 выполненных команд и
+//      их результаты: повтор команды с тем же command_id НЕ выполняется второй раз — агент
+//      повторно отправляет сохранённый CommandResult.
+//    * Unary-RPC, двигающие деньги или состояние ПК (покупка тарифа/минут/пакета,
+//      завершение сессии, пересадка, заказ в магазине, перевод другу, сообщение в чат),
+//      ОБЯЗАТЕЛЬНО несут idempotency_key (UUID v4/v7, генерирует агент на одно действие
+//      пользователя, при повторе по сети — тот же ключ). Сервер хранит
+//      (computer_id, idempotency_key) → хеш запроса + ответ 24 часа (как /api/v1:
+//      app/Http/Middleware/Api/ApiIdempotency.php, config integrations.idempotency_retention_hours):
+//        - тот же ключ и тот же запрос — возвращается сохранённый ответ, действие не повторяется;
+//        - тот же ключ, другой запрос — ERROR_CODE_IDEMPOTENCY_KEY_REUSED;
+//        - запрос ещё выполняется — ERROR_CODE_IDEMPOTENCY_IN_PROGRESS (ABORTED);
+//        - ответы INTERNAL/UNAVAILABLE не сохраняются (можно повторить).
+//      Ключ идемпотентности становится ключом записи в журнале денег (ledger).
+//    * События агента (AgentEvent) несут event_id (UUID); сервер дедуплицирует их
+//      по (computer_id, event_id) и подтверждает EventAck.
+//
+// 6. Доставка команд и reconnect (seq)
+//    * У каждой «долговременной» команды есть seq — монотонно растущий номер в рамках ПК
+//      (uint64, пропуски допустимы). Сервер хранит невыполненные команды до expires_at.
+//    * Агент после выполнения команды сохраняет last_command_seq на диск (атомарно, до
+//      отправки CommandResult) и шлёт его в Hello при каждом подключении.
+//    * После Hello сервер отвечает Welcome (полный снимок: конфигурация клуба, активная
+//      сессия, балансы, версия переводов), затем досылает все неистёкшие команды с
+//      seq > last_command_seq по возрастанию seq. Команда с seq ≤ last_command_seq —
+//      дубль: агент не выполняет, но отвечает сохранённым результатом (или DUPLICATE).
+//    * «Мгновенные» команды (Ping, BalanceChanged, GuestCountersChanged, ChatMessageReceived,
+//      TranslationsChanged, ConfigChanged) имеют seq = 0, не досылаются после reconnect —
+//      их состояние приходит снимком в Welcome.
+//    * Агент выполняет долговременные команды строго по возрастанию seq.
+//
+// 7. Heartbeat / Status
+//    * Агент шлёт Status сразу после Welcome, при любом изменении состояния (вход/выход гостя,
+//      начало/конец сессии, блокировка) и не реже Welcome.status_interval (по умолчанию 60 с;
+//      в Laravel heartbeat шёл каждые 30 с — config club.computer_heartbeat_interval_seconds).
+//    * Не чаще 1 Status в 2 секунды (сервер отбрасывает лишние, стрим не закрывает).
+//    * ПК считается в сети, пока открыт стрим (а не по last_seen_at; в Laravel —
+//      ClubComputer::HEARTBEAT_TIMEOUT_SECONDS = 90). Сервер держит статус в памяти/Valkey,
+//      в Postgres пишет только изменения состояния (правило из CLAUDE.md).
+//    * Живость соединения — HTTP/2 keepalive: клиент PING каждые 30 с, таймаут 10 с;
+//      сервер разрешает PING не чаще раза в 20 с (EnforcementPolicy.MinTime).
+//
+// 8. Reconnect и backoff
+//    * При разрыве агент переподключается с экспоненциальной задержкой и full jitter:
+//      delay = random(0, min(60 с, 1 с * 2^attempt)); attempt сбрасывается после стрима,
+//      прожившего ≥ 60 с. Если сервер вернул google.rpc.RetryInfo — не раньше retry_delay.
+//    * UNAVAILABLE / RESOURCE_EXHAUSTED / ABORTED / DEADLINE_EXCEEDED — повторяемые.
+//      UNAUTHENTICATED с CERTIFICATE_REVOKED / CERTIFICATE_EXPIRED — без повторов (нужна
+//      новая регистрация). PROTOCOL_VERSION_UNSUPPORTED — повтор не чаще раза в 10 минут.
+//    * При плановом перезапуске сервер шлёт Command.drain (GOAWAY на уровне HTTP/2):
+//      агент переподключается со случайной задержкой 0–30 с (растягивает нагрузку 50 000 ПК).
+//
+// 9. Лимиты
+//    * Максимальный размер сообщения — 1 МиБ в обе стороны (переводы агента — до 1 МиБ, как
+//      проверка Content-Length в ZafiroApiClient.GetAgentTranslationsAsync).
+//    * Одновременно один стрим Connect на сертификат: новый стрим закрывает прежний
+//      (ABORTED, reason "replaced").
+//    * Deadline unary-вызовов по умолчанию 15 с (вход/покупки), 5 с (чтение).
+//    * Лимиты частоты unary-RPC повторяют throttle:* старого API — указаны у каждого RPC.
+//
+// 10. Деньги и время: суммы int64 в тиынах (`*_tiyn`), время — google.protobuf.Timestamp UTC.
+//     Агент считает конец сессии по часам сервера (Welcome.server_time, Ping), как сейчас
+//     server_time в ответе heartbeat.
+syntax = "proto3";
+
+package zafiro.agent.v1;
+
+option csharp_namespace = "Zafiro.Agent.V1";
+option go_package = "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1;agentv1";
+
+import "agent/v1/common.proto";
+import "agent/v1/enrollment.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Основной канал ПК ↔ сервер (под mTLS).
+service AgentService {
+  // Двунаправленный стрим на всё время работы службы агента.
+  // Агент первым сообщением шлёт Hello, сервер отвечает Welcome; дальше — Status/события
+  // от агента и команды от сервера. Порядок и повторная доставка — см. шапку файла (п. 6).
+  //
+  // Заменяет: POST /api/agent/heartbeat, POST /api/club-computers/{id}/heartbeat, ответы
+  // heartbeat с командами (power_command, staff_message, wake_macs, agent_update, customer,
+  // session, club), опрос QR-входа, опрос счётчиков чата/друзей и баланса.
+  //
+  // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc Connect(stream AgentMessage) returns (stream ServerMessage);
+
+  // Тексты интерфейса агента на одном языке с правками суперадмина.
+  // Заменяет GET /api/agent/translations/{locale} (AgentTranslationController,
+  // throttle agent-translations: 600/мин на IP). Теперь под mTLS, лимит 30/мин на ПК.
+  // Агент запрашивает, когда версия в Welcome/TranslationsChanged новее своей.
+  rpc GetTranslations(GetTranslationsRequest) returns (GetTranslationsResponse);
+
+  // Проверка PIN сотрудника для выхода из агента (Ctrl+Alt+P) / техрежима.
+  // Заменяет POST /api/agent/exit-pin (AgentExitPinController). Лимиты как
+  // RateLimiter `agent-exit-pin`: 5 попыток за 5 минут на ПК и 100 в час на клуб.
+  // Если в метаданных есть токен гостя — сервер пишет в журнал, при ком закрыли агент.
+  // Ошибки: PIN_NOT_CONFIGURED, INVALID_PIN, RATE_LIMITED.
+  rpc VerifyStaffPin(VerifyStaffPinRequest) returns (VerifyStaffPinResponse);
+}
+
+// ---------------------------------------------------------------------------------------
+// Сообщения стрима: агент → сервер
+// ---------------------------------------------------------------------------------------
+
+// Сообщение агента в стриме Connect.
+message AgentMessage {
+  // Содержимое (ровно одно).
+  oneof payload {
+    // Первое сообщение стрима (обязательно, ровно один раз).
+    Hello hello = 1;
+    // Статус ПК (heartbeat).
+    Status status = 2;
+    // Событие на ПК.
+    AgentEvent event = 3;
+    // Результат (ack) команды сервера.
+    CommandResult command_result = 4;
+  }
+}
+
+// Приветствие при открытии стрима.
+message Hello {
+  // Версия протокола внутри v1. Текущая — 1.
+  uint32 protocol_version = 1;
+  // Версия агента (SemVer).
+  string agent_version = 2;
+  // seq последней ВЫПОЛНЕННОЙ долговременной команды (0 — ни одной). По нему сервер
+  // досылает пропущенные команды.
+  uint64 last_command_seq = 3;
+  // UUID текущей загрузки Windows (новый после каждой перезагрузки). Новый boot_id сервер
+  // трактует как «свежую загрузку»: сбрасывает гостевую сессию с кассы, если она была
+  // (старый аналог — fresh_boot в heartbeat, ClubComputerSessions::resetGuestSession).
+  string boot_id = 4;
+  // Сведения о железе: обязательно в первом Hello после загрузки, дальше — если изменились.
+  DeviceInfo device = 5;
+  // Что умеет этот агент.
+  AgentCapabilities capabilities = 6;
+  // Текущее состояние (то же, что первый Status).
+  Status status = 7;
+  // Версия переводов, которая уже есть у агента (0 — только встроенные).
+  int64 translations_version = 8;
+  // Язык интерфейса, выбранный на ПК (ru | kk | en ...).
+  string locale = 9;
+}
+
+// Возможности агента: сервер не шлёт команды, которых агент не умеет
+// (в Laravel то же решалось версией агента: ComputerPower::AGENT_VERSION / MESSAGE_AGENT_VERSION
+// и флагами commands / can_update в heartbeat).
+message AgentCapabilities {
+  // Служба может сама установить обновление (UpdateAvailable).
+  bool self_update = 1;
+  // Агент может разбудить другие ПК (Wake-on-LAN).
+  bool wake_on_lan = 2;
+  // Агент выполняет Reboot/Shutdown.
+  bool power_control = 3;
+  // Агент показывает ShowMessage.
+  bool show_message = 4;
+  // Агент поддерживает техрежим (EnterServiceMode).
+  bool service_mode = 5;
+}
+
+// Статус ПК (сжатый heartbeat).
+message Status {
+  // Состояние агента.
+  ComputerState state = 1;
+  // ID сессии, которую агент сейчас показывает (только при IN_SESSION).
+  string session_id = 2;
+  // Кто вошёл на ПК (0 — никто).
+  int64 signed_in_user_id = 3;
+  // Загрузка ПК (для карты клуба и диагностики).
+  ComputerLoad load = 4;
+  // Время на ПК в момент отправки (для оценки рассинхрона часов).
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+// Загрузка ПК. Значения в процентах * 100 (0..10000), чтобы не использовать float.
+message ComputerLoad {
+  // Загрузка CPU за последний интервал, сотые доли процента.
+  uint32 cpu_basis_points = 1;
+  // Занятая ОЗУ, сотые доли процента.
+  uint32 ram_basis_points = 2;
+  // Сколько секунд нет ввода с клавиатуры/мыши (для выхода по бездействию).
+  uint32 idle_seconds = 3;
+  // Процессы агента: суммарная память (рабочий набор), МБ — контроль требования
+  // «минимальная нагрузка агента».
+  uint32 agent_memory_mb = 4;
+}
+
+// Событие на ПК. Доставляется «как минимум один раз»: агент хранит неподтверждённые
+// события на диске и повторяет их после reconnect, пока не получит EventAck.
+message AgentEvent {
+  // UUID события (дедупликация на сервере).
+  string event_id = 1;
+  // Когда произошло (часы ПК, скорректированные по server_time).
+  google.protobuf.Timestamp occurred_at = 2;
+  // Тип события (ровно один).
+  oneof kind {
+    // Сессия закончилась на ПК (время вышло, гость завершил, ПК выключили).
+    SessionEnded session_ended = 3;
+    // Гость вошёл на ПК.
+    GuestSignedIn guest_signed_in = 4;
+    // Гость вышел (сам, по бездействию, по команде).
+    GuestSignedOut guest_signed_out = 5;
+    // Ошибка агента, которую стоит показать в панели/логах.
+    AgentError error = 6;
+    // Результат установки обновления.
+    UpdateResult update_result = 7;
+    // Агент закрыт по PIN сотрудника / вернулся из техрежима.
+    ServiceModeChanged service_mode_changed = 8;
+  }
+}
+
+// Причина окончания сессии.
+enum SessionEndReason {
+  // Не задано.
+  SESSION_END_REASON_UNSPECIFIED = 0;
+  // Оплаченное время вышло.
+  SESSION_END_REASON_EXPIRED = 1;
+  // Гость завершил досрочно (GuestService.EndSession).
+  SESSION_END_REASON_GUEST = 2;
+  // Сотрудник завершил (панель, приложение сотрудника).
+  SESSION_END_REASON_STAFF = 3;
+  // Гость пересел на другой ПК (GuestService.TransferSeat).
+  SESSION_END_REASON_SEAT_TRANSFER = 4;
+  // ПК выключили или перезагрузили.
+  SESSION_END_REASON_POWER = 5;
+}
+
+// Событие: сессия закончилась на ПК.
+message SessionEnded {
+  // ID сессии.
+  string session_id = 1;
+  // Причина (как её видит агент).
+  SessionEndReason reason = 2;
+}
+
+// Способ входа гостя.
+enum SignInMethod {
+  // Не задано.
+  SIGN_IN_METHOD_UNSPECIFIED = 0;
+  // Телефон и пароль.
+  SIGN_IN_METHOD_PASSWORD = 1;
+  // QR-код с телефона.
+  SIGN_IN_METHOD_QR = 2;
+  // Регистрация на ПК.
+  SIGN_IN_METHOD_REGISTRATION = 3;
+  // Гостевая сессия с кассы без аккаунта.
+  SIGN_IN_METHOD_CASH_DESK = 4;
+}
+
+// Событие: гость вошёл на ПК.
+message GuestSignedIn {
+  // ID пользователя (0 для гостевой сессии с кассы).
+  int64 user_id = 1;
+  // Способ входа.
+  SignInMethod method = 2;
+}
+
+// Причина выхода гостя.
+enum SignOutReason {
+  // Не задано.
+  SIGN_OUT_REASON_UNSPECIFIED = 0;
+  // Гость нажал «Выйти».
+  SIGN_OUT_REASON_USER = 1;
+  // Бездействие без оплаченной сессии (club idle_logout_minutes, GuestFeatures::idleLogoutMinutes).
+  SIGN_OUT_REASON_IDLE = 2;
+  // По команде сервера (SignOutGuest).
+  SIGN_OUT_REASON_SERVER = 3;
+  // Токен гостя отклонён сервером.
+  SIGN_OUT_REASON_TOKEN_INVALID = 4;
+}
+
+// Событие: гость вышел.
+message GuestSignedOut {
+  // ID пользователя.
+  int64 user_id = 1;
+  // Причина.
+  SignOutReason reason = 2;
+}
+
+// Событие: ошибка на ПК.
+message AgentError {
+  // Код, если ошибка относится к контракту (иначе UNSPECIFIED).
+  ErrorCode error_code = 1;
+  // Короткий машиночитаемый идентификатор компонента ("webview", "kiosk", "update", ...).
+  string component = 2;
+  // Описание без персональных данных и секретов (≤ 500 символов).
+  string message = 3;
+}
+
+// Событие: результат обновления агента.
+message UpdateResult {
+  // Версия, которую пытались установить.
+  string version = 1;
+  // true — установлено и агент перезапущен на новой версии.
+  bool success = 2;
+  // Код ошибки при неудаче (например UPDATE_VERIFICATION_FAILED).
+  ErrorCode error_code = 3;
+}
+
+// Событие: агент закрыт сотрудником (техрежим) или вернулся.
+message ServiceModeChanged {
+  // true — техрежим начался, false — закончился.
+  bool active = 1;
+  // До какого времени агент закрыт.
+  google.protobuf.Timestamp until = 2;
+}
+
+// Итог выполнения команды.
+enum CommandStatus {
+  // Не задано.
+  COMMAND_STATUS_UNSPECIFIED = 0;
+  // Команда принята, выполнение займёт время (например, загрузка обновления). Итог придёт
+  // вторым CommandResult с тем же command_id.
+  COMMAND_STATUS_ACCEPTED = 1;
+  // Выполнена.
+  COMMAND_STATUS_SUCCEEDED = 2;
+  // Не выполнена (см. error_code).
+  COMMAND_STATUS_FAILED = 3;
+  // Повтор уже выполненной команды: не выполнялась второй раз.
+  COMMAND_STATUS_DUPLICATE = 4;
+}
+
+// Ack/результат команды сервера.
+message CommandResult {
+  // command_id из Command.
+  string command_id = 1;
+  // seq из Command (0 для мгновенных команд).
+  uint64 seq = 2;
+  // Итог.
+  CommandStatus status = 3;
+  // Код ошибки при FAILED.
+  ErrorCode error_code = 4;
+  // Пояснение (≤ 500 символов, без секретов).
+  string message = 5;
+  // Когда выполнена.
+  google.protobuf.Timestamp completed_at = 6;
+  // Для Ping: время ПК в момент ответа (оценка рассинхрона часов).
+  google.protobuf.Timestamp agent_time = 7;
+}
+
+// ---------------------------------------------------------------------------------------
+// Сообщения стрима: сервер → агент
+// ---------------------------------------------------------------------------------------
+
+// Сообщение сервера в стриме Connect.
+message ServerMessage {
+  // Содержимое (ровно одно).
+  oneof payload {
+    // Ответ на Hello (первое сообщение сервера).
+    Welcome welcome = 1;
+    // Команда.
+    Command command = 2;
+    // Подтверждение события агента.
+    EventAck event_ack = 3;
+  }
+}
+
+// Ответ на Hello: полный снимок, после которого агенту не нужны отдельные запросы.
+message Welcome {
+  // ID ПК (из сертификата).
+  int64 computer_id = 1;
+  // ID клуба.
+  int64 club_id = 2;
+  // Номер ПК и зона.
+  ComputerRef computer = 3;
+  // Время сервера (агент считает конец сессии по нему).
+  google.protobuf.Timestamp server_time = 4;
+  // Как часто слать Status без изменений.
+  google.protobuf.Duration status_interval = 5;
+  // Настройки клуба для агента.
+  ClubConfig config = 6;
+  // Активная сессия ПК (нет — сессии нет).
+  ActiveSession session = 7;
+  // Актуальная версия переводов агента (TranslationCatalog::version в Laravel).
+  int64 translations_version = 8;
+  // Поддерживаемые сервером версии протокола.
+  uint32 min_protocol_version = 9;
+  // Максимальная поддерживаемая версия протокола.
+  uint32 max_protocol_version = 10;
+  // Последний seq, который сервер уже выдал этому ПК (агент может понять, сколько команд
+  // будет дослано).
+  uint64 latest_command_seq = 11;
+  // Когда продлевать сертификат (дублирует EnrollResponse.renew_after; если сервер решил
+  // перевыпустить раньше, например после смены CA).
+  google.protobuf.Timestamp certificate_renew_after = 12;
+}
+
+// Действие после окончания сессии (настройка клуба). Старый аналог:
+// ClubComputerController::afterSessionAction() → {action: none|restart|shutdown, delay_seconds}.
+enum AfterSessionAction {
+  // Не задано (= ничего не делать).
+  AFTER_SESSION_ACTION_UNSPECIFIED = 0;
+  // Ничего.
+  AFTER_SESSION_ACTION_NONE = 1;
+  // Перезагрузить ПК.
+  AFTER_SESSION_ACTION_RESTART = 2;
+  // Выключить ПК.
+  AFTER_SESSION_ACTION_SHUTDOWN = 3;
+}
+
+// Возможности гостя, включаемые в настройках клуба «Гости».
+// Старый аналог: GuestFeatures::SETTINGS + shopEnabled() (app/Services/GuestFeatures.php).
+message GuestFeatures {
+  // QR-вход с телефона (show_qr_code_on_login).
+  bool qr_login = 1;
+  // Пересадка на другой ПК самим гостем (allow_guest_self_transfer).
+  bool self_transfer = 2;
+  // Друзья (allow_adding_friends).
+  bool friends = 3;
+  // Перевод баланса друзьям (allow_balance_transfer_to_friends).
+  bool balance_transfer = 4;
+  // Магазин в агенте.
+  bool shop = 5;
+}
+
+// Язык интерфейса, включённый на платформе.
+message Language {
+  // Код (ru, kk, en, ...).
+  string code = 1;
+  // Название на самом языке ("Қазақша").
+  string name = 2;
+}
+
+// Настройки клуба для агента. Старый аналог: блок `club` в ответе heartbeat
+// (ClubComputerController::heartbeatResponse).
+message ClubConfig {
+  // Название клуба.
+  string club_name = 1;
+  // Логотип (HTTPS URL) или пусто.
+  string logo_url = 2;
+  // Картинка экрана входа (HTTPS URL) или пусто — стандартная.
+  string signin_image_url = 3;
+  // Язык клуба по умолчанию.
+  string default_locale = 4;
+  // Доступные языки.
+  repeated Language languages = 5;
+  // Что делать после окончания сессии.
+  AfterSessionAction after_session_action = 6;
+  // Через сколько выполнить after_session_action, если гость не купил новое время.
+  google.protobuf.Duration after_session_delay = 7;
+  // Возможности гостя.
+  GuestFeatures guest_features = 8;
+  // Выход гостя без оплаченной сессии через столько минут бездействия (0 — не выходить).
+  // По умолчанию 5 (GuestFeatures::DEFAULT_IDLE_LOGOUT_MINUTES).
+  uint32 idle_logout_minutes = 9;
+  // Валюта клуба (finances.currency, по умолчанию KZT).
+  string currency = 10;
+  // Сколько минут длится техрежим сотрудника (clubs.agent_staff_minutes, по умолчанию 15 —
+  // ClubComputerSessions::DEFAULT_STAFF_MINUTES).
+  uint32 staff_minutes = 11;
+  // Автобиллинг (поминутная оплата стартует сама) — настройка finances.auto_billing.
+  bool auto_billing = 12;
+  // Пауза после входа до старта автобиллинга, минуты (PaymentRules::autoBillingPauseMinutes).
+  uint32 auto_billing_pause_minutes = 13;
+}
+
+// Подтверждение события агента.
+message EventAck {
+  // event_id подтверждённого события.
+  string event_id = 1;
+}
+
+// Команда сервера.
+message Command {
+  // UUID v7 команды (идемпотентность, см. шапку п. 5).
+  string command_id = 1;
+  // Номер долговременной команды в рамках ПК (> 0) или 0 для мгновенной (шапка п. 6).
+  uint64 seq = 2;
+  // Когда создана.
+  google.protobuf.Timestamp issued_at = 3;
+  // После этого момента не выполнять (ответ FAILED + COMMAND_EXPIRED). Пусто — без срока.
+  // Старые TTL: команды питания 120 с (ComputerPower::COMMAND_TTL_SECONDS),
+  // сообщения 300 с (ComputerPower::MESSAGE_TTL_SECONDS).
+  google.protobuf.Timestamp expires_at = 4;
+  // Кто инициировал (для журнала на ПК): user_id сотрудника или 0 — система.
+  int64 issued_by_user_id = 5;
+  // Сама команда (ровно одна).
+  oneof kind {
+    // Начать (или продлить) оплаченную сессию.
+    StartSession start_session = 10;
+    // Завершить сессию.
+    EndSession end_session = 11;
+    // Заблокировать ПК (экран входа/блокировки).
+    Lock lock = 12;
+    // Разблокировать ПК.
+    Unlock unlock = 13;
+    // Перезагрузить ПК.
+    Reboot reboot = 14;
+    // Выключить ПК.
+    Shutdown shutdown = 15;
+    // Показать сообщение сотрудника.
+    ShowMessage show_message = 16;
+    // Изменился баланс вошедшего гостя.
+    BalanceChanged balance_changed = 17;
+    // Доступно обновление агента.
+    UpdateAvailable update_available = 18;
+    // Изменились переводы.
+    TranslationsChanged translations_changed = 19;
+    // Изменились настройки клуба.
+    ConfigChanged config_changed = 20;
+    // Проверка связи / синхронизация часов.
+    Ping ping = 21;
+    // Техрежим сотрудника (закрыть агент на staff_minutes).
+    EnterServiceMode enter_service_mode = 22;
+    // Разбудить другие ПК клуба (Wake-on-LAN).
+    WakeOnLan wake_on_lan = 23;
+    // Выйти из аккаунта гостя.
+    SignOutGuest sign_out_guest = 24;
+    // Изменились счётчики гостя (заявки в друзья, чат).
+    GuestCountersChanged guest_counters_changed = 25;
+    // Новое сообщение чата от сотрудника.
+    ChatMessageReceived chat_message_received = 26;
+    // QR-вход подтверждён на телефоне (подсказка: агент сразу вызывает WatchQrLogin/получает
+    // токен; сам токен по стриму НЕ передаётся).
+    QrLoginApproved qr_login_approved = 27;
+    // Сервер просит переподключиться (плановый перезапуск).
+    Drain drain = 28;
+  }
+}
+
+// Начать или продлить сессию (оплата на кассе, в панели, покупка с телефона, пересадка).
+// Долговременная. Старый аналог: поле session в ответе heartbeat.
+message StartSession {
+  // Сессия целиком (если session_id совпадает с текущей — это продление: новый ends_at).
+  ActiveSession session = 1;
+}
+
+// Завершить сессию. Долговременная.
+message EndSession {
+  // Какую сессию завершить (если на ПК другая — FAILED + SESSION_MISMATCH).
+  string session_id = 1;
+  // Причина (для текста на экране).
+  SessionEndReason reason = 2;
+  // Возвращено на основной баланс, тиыны (если завершили с возвратом).
+  int64 refunded_main_tiyn = 3;
+  // Возвращено на бонусный баланс, тиыны.
+  int64 refunded_bonus_tiyn = 4;
+  // Минут сохранено пакетом (TimePackage).
+  int32 kept_minutes = 5;
+}
+
+// Заблокировать ПК. Долговременная.
+message Lock {
+  // Текст на экране блокировки (пусто — стандартный).
+  string reason = 1;
+}
+
+// Разблокировать ПК. Долговременная.
+message Unlock {}
+
+// Перезагрузка. Долговременная. Старый аналог: power_command = "restart".
+message Reboot {
+  // Задержка перед перезагрузкой (агент показывает обратный отсчёт).
+  google.protobuf.Duration delay = 1;
+}
+
+// Выключение. Долговременная. Старый аналог: power_command = "shutdown".
+message Shutdown {
+  // Задержка перед выключением.
+  google.protobuf.Duration delay = 1;
+}
+
+// Техрежим (агент закрывается, служба возвращает его через staff_minutes).
+// Долговременная. Старый аналог: power_command = "service" + staff_minutes.
+message EnterServiceMode {
+  // На сколько минут закрыть агент.
+  uint32 staff_minutes = 1;
+}
+
+// Сообщение сотрудника в углу экрана. Долговременная (с expires_at).
+// Старый аналог: staff_message (≤ 300 символов, StaffCommands.MaxMessageLength).
+message ShowMessage {
+  // Текст (≤ 300 символов; агент обрезает длиннее).
+  string text = 1;
+  // Сколько показывать (пусто — пока не закроют).
+  google.protobuf.Duration display_for = 2;
+}
+
+// Баланс вошедшего гостя изменился (пополнение на кассе, перевод, возврат). Мгновенная.
+// Заменяет опрос GET /api/me каждые 20 с (MainWindow.BalanceRefreshInterval) и
+// customer.balance в ответе heartbeat.
+message BalanceChanged {
+  // Чей баланс (агент игнорирует, если вошёл другой гость).
+  int64 user_id = 1;
+  // Новые балансы.
+  Balance balance = 2;
+}
+
+// Счётчики гостя. Мгновенная. Старый аналог: customer.friend_requests / chat_last_staff_id.
+message GuestCountersChanged {
+  // Чьи счётчики.
+  int64 user_id = 1;
+  // Входящие заявки в друзья.
+  uint32 pending_friend_requests = 2;
+  // ID последнего сообщения сотрудника в чате.
+  int64 last_staff_chat_message_id = 3;
+}
+
+// Новое сообщение чата от сотрудника. Мгновенная. Заменяет опрос GET /api/guest/chat
+// каждые 5 с (WindowsAgent/Frontend/main.js, setInterval 5000).
+message ChatMessageReceived {
+  // Кому (агент игнорирует, если вошёл другой гость).
+  int64 user_id = 1;
+  // Сообщение.
+  ChatMessage message = 2;
+}
+
+// Сообщение чата гостя с клубом.
+message ChatMessage {
+  // ID (chat_messages.id).
+  int64 message_id = 1;
+  // true — написал сотрудник клуба.
+  bool from_staff = 2;
+  // Имя автора.
+  string author_name = 3;
+  // Текст (≤ 1000 символов, ChatMessage::MAX_LENGTH).
+  string body = 4;
+  // Когда отправлено.
+  google.protobuf.Timestamp sent_at = 5;
+  // Когда прочитано получателем (пусто — не прочитано).
+  google.protobuf.Timestamp read_at = 6;
+}
+
+// Обновление агента. Долговременная (с expires_at). Старый аналог: agent_update
+// {version, url, sha256} в heartbeat (AgentUpdate::offerFor), которое предлагалось, только
+// когда ПК свободен и служба сообщила can_update.
+//
+// Проверка (агент, служба SYSTEM):
+//   1. Подпись: Ed25519 (RFC 8032) по байтам UTF-8 строки
+//        "zafiro-agent-update/v1\n" + version + "\n" + sha256 + "\n" + size_bytes + "\n" + channel
+//      открытым ключом key_id из списка ключей, ВСТРОЕННЫХ в агент (ротация — новый ключ
+//      приходит с обновлением, подписанным старым). Неизвестный key_id — отказ.
+//   2. Скачать url (только HTTPS, хост из списка разрешённых), проверить size_bytes и sha256.
+//   3. Любое несовпадение — удалить файл, CommandResult FAILED + UPDATE_VERIFICATION_FAILED.
+//   4. Устанавливать только когда на ПК нет сессии (state IDLE), если install_now = false.
+message UpdateAvailable {
+  // Версия (SemVer).
+  string version = 1;
+  // HTTPS-адрес установщика.
+  string url = 2;
+  // SHA-256 установщика, 64 hex-символа в нижнем регистре.
+  string sha256 = 3;
+  // Размер установщика, байты.
+  int64 size_bytes = 4;
+  // Подпись Ed25519 (64 байта) по строке, описанной выше.
+  bytes signature_ed25519 = 5;
+  // Идентификатор ключа подписи (например "2026-10").
+  string key_id = 6;
+  // Канал выпуска ("stable", "beta").
+  string channel = 7;
+  // true — ставить сразу (критическое исправление), иначе — когда ПК свободен.
+  bool install_now = 8;
+}
+
+// Переводы изменились (правка суперадмина). Мгновенная.
+message TranslationsChanged {
+  // Новая версия; агент вызывает GetTranslations, если она больше его.
+  int64 version = 1;
+}
+
+// Настройки клуба изменились. Мгновенная (снимок всегда приходит в Welcome).
+message ConfigChanged {
+  // Новые настройки целиком.
+  ClubConfig config = 1;
+}
+
+// Проверка связи. Мгновенная. Агент отвечает CommandResult(SUCCEEDED, agent_time).
+message Ping {
+  // Время сервера (синхронизация часов для отсчёта сессии).
+  google.protobuf.Timestamp server_time = 1;
+}
+
+// Разбудить выключенные ПК клуба по Wake-on-LAN. Долговременная (короткий expires_at).
+// Старый аналог: wake_macs в heartbeat (≤ 50 адресов, StaffCommands.MaxWakeTargets).
+message WakeOnLan {
+  // MAC-адреса "AA:BB:CC:DD:EE:FF", не больше 50.
+  repeated string mac_addresses = 1;
+}
+
+// Выйти из аккаунта гостя (пароль сменён на другом устройстве, аккаунт заблокирован,
+// сотрудник принудительно вывел). Долговременная.
+message SignOutGuest {
+  // Кого выводить (агент игнорирует, если вошёл другой).
+  int64 user_id = 1;
+  // Текст для гостя.
+  string reason = 2;
+}
+
+// QR-вход подтверждён. Мгновенная.
+message QrLoginApproved {
+  // ID QR-входа (CreateQrLoginResponse.login_id).
+  string login_id = 1;
+}
+
+// Сервер просит переподключиться (плановый перезапуск инстанса). Мгновенная.
+message Drain {
+  // Переподключиться через случайное время в [0, reconnect_within).
+  google.protobuf.Duration reconnect_within = 1;
+}
+
+// ---------------------------------------------------------------------------------------
+// Unary AgentService
+// ---------------------------------------------------------------------------------------
+
+// Запрос переводов.
+message GetTranslationsRequest {
+  // Язык (ru, kk, en, ...).
+  string locale = 1;
+  // Версия, которая уже есть у агента: если не изменилась — not_modified = true без строк.
+  int64 known_version = 2;
+}
+
+// Ответ с переводами.
+message GetTranslationsResponse {
+  // Язык.
+  string locale = 1;
+  // Версия переводов.
+  int64 version = 2;
+  // true — known_version актуальна, lines пусто.
+  bool not_modified = 3;
+  // Строки группы `agent`: ключ → текст.
+  map<string, string> lines = 4;
+}
+
+// Запрос проверки PIN сотрудника.
+message VerifyStaffPinRequest {
+  // PIN (≤ 16 символов).
+  string pin = 1;
+}
+
+// Ответ: PIN верный.
+message VerifyStaffPinResponse {
+  // На сколько минут служба закрывает агент (техрежим).
+  uint32 staff_minutes = 1;
+  // До какого времени.
+  google.protobuf.Timestamp until = 2;
+}

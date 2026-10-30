@@ -1,0 +1,181 @@
+// Друзья, перевод баланса другу и чат гостя с клубом.
+//
+// Под mTLS ПК + токен гостя (`authorization: Bearer ...`).
+syntax = "proto3";
+
+package zafiro.agent.v1;
+
+option csharp_namespace = "Zafiro.Agent.V1";
+option go_package = "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1;agentv1";
+
+import "agent/v1/agent.proto";
+import "agent/v1/common.proto";
+import "google/protobuf/duration.proto";
+
+// Друзья и переводы.
+service SocialService {
+  // Друзья, входящие и исходящие заявки. Заменяет GET /api/guest/friends
+  // (GuestFriendController::index → Friends::overview; 60/мин).
+  rpc ListFriends(ListFriendsRequest) returns (ListFriendsResponse);
+
+  // Заявка в друзья по телефону (встречная заявка сразу делает друзьями).
+  // Заменяет POST /api/guest/friends (10/мин). Ошибки: FEATURE_DISABLED, USER_NOT_FOUND.
+  rpc AddFriend(AddFriendRequest) returns (AddFriendResponse);
+
+  // Принять заявку. Заменяет POST /api/guest/friends/{friendship}/accept (30/мин).
+  rpc AcceptFriend(AcceptFriendRequest) returns (AcceptFriendResponse);
+
+  // Удалить друга / отклонить или отозвать заявку.
+  // Заменяет POST /api/guest/friends/{friendship}/remove (30/мин).
+  rpc RemoveFriend(RemoveFriendRequest) returns (RemoveFriendResponse);
+
+  // Код подтверждения перевода в Telegram (вместо пароля).
+  // Заменяет POST /api/guest/friends/{friendship}/transfer/code (мобильное приложение, 5/мин;
+  // FriendTransferCodes: 5 кодов в час, повтор через 60 с, код 5 минут).
+  rpc RequestTransferCode(RequestTransferCodeRequest) returns (RequestTransferCodeResponse);
+
+  // Перевод с основного баланса другу. idempotency_key ОБЯЗАТЕЛЕН. Подтверждение — пароль
+  // аккаунта (как в агенте сейчас) или код из Telegram (как в мобильном приложении).
+  // Заменяет POST /api/guest/friends/{friendship}/transfer (10/мин) и
+  // .../transfer/confirm (10/мин). Логика — Friends::transfer, FriendTransferCodes::confirm.
+  // Ошибки: FEATURE_DISABLED, WRONG_PASSWORD, CONFIRMATION_CODE_*, INSUFFICIENT_FUNDS,
+  // TRANSFER_LIMIT, FRIENDSHIP_NOT_FOUND, IDEMPOTENCY_*.
+  rpc TransferBalance(TransferBalanceRequest) returns (TransferBalanceResponse);
+
+  // Сообщения чата с клубом (последние 100 или после after_message_id); помечает ответы
+  // сотрудников прочитанными. Заменяет GET /api/guest/chat (60/мин). Новые сообщения
+  // приходят командой ChatMessageReceived — опрос не нужен.
+  rpc ListChatMessages(ListChatMessagesRequest) returns (ListChatMessagesResponse);
+
+  // Сообщение клубу (≤ 1000 символов) с этого ПК. idempotency_key ОБЯЗАТЕЛЕН (защита от
+  // двойной отправки). Заменяет POST /api/guest/chat (20/мин).
+  rpc SendChatMessage(SendChatMessageRequest) returns (SendChatMessageResponse);
+}
+
+// Друг или заявка.
+message Friend {
+  // ID дружбы (friendships.id).
+  int64 friendship_id = 1;
+  // Имя друга.
+  string name = 2;
+  // Телефон в маске (Friends::maskPhone).
+  string masked_phone = 3;
+}
+
+// Запрос друзей.
+message ListFriendsRequest {}
+
+// Друзья и заявки.
+message ListFriendsResponse {
+  // Друзья.
+  repeated Friend friends = 1;
+  // Входящие заявки.
+  repeated Friend incoming = 2;
+  // Исходящие заявки.
+  repeated Friend outgoing = 3;
+}
+
+// Запрос заявки в друзья.
+message AddFriendRequest {
+  // Телефон друга.
+  string phone = 1;
+}
+
+// Ответ заявки.
+message AddFriendResponse {
+  // true — сразу друзья (была встречная заявка), false — заявка отправлена.
+  bool accepted = 1;
+  // Обновлённый список.
+  ListFriendsResponse friends = 2;
+}
+
+// Запрос принятия заявки.
+message AcceptFriendRequest {
+  // ID дружбы.
+  int64 friendship_id = 1;
+}
+
+// Ответ принятия заявки.
+message AcceptFriendResponse {
+  // Обновлённый список.
+  ListFriendsResponse friends = 1;
+}
+
+// Запрос удаления.
+message RemoveFriendRequest {
+  // ID дружбы.
+  int64 friendship_id = 1;
+}
+
+// Ответ удаления.
+message RemoveFriendResponse {
+  // Обновлённый список.
+  ListFriendsResponse friends = 1;
+}
+
+// Запрос кода перевода.
+message RequestTransferCodeRequest {
+  // ID дружбы.
+  int64 friendship_id = 1;
+  // Сумма, тиыны (код привязан к сумме).
+  int64 amount_tiyn = 2;
+}
+
+// Ответ: код отправлен в Telegram.
+message RequestTransferCodeResponse {
+  // Срок действия кода.
+  google.protobuf.Duration code_valid_for = 1;
+  // Через сколько можно запросить новый.
+  google.protobuf.Duration resend_after = 2;
+}
+
+// Запрос перевода.
+message TransferBalanceRequest {
+  // UUID идемпотентности (обязателен).
+  string idempotency_key = 1;
+  // ID дружбы.
+  int64 friendship_id = 2;
+  // Сумма, тиыны (> 0, ≤ 1 000 000 тенге = 100 000 000 тиынов, Friends::MAX_TRANSFER_CENTS).
+  int64 amount_tiyn = 3;
+  // Подтверждение (ровно одно).
+  oneof confirmation {
+    // Пароль аккаунта гостя.
+    string password = 4;
+    // Код из Telegram (6 цифр), полученный RequestTransferCode.
+    string telegram_code = 5;
+  }
+}
+
+// Ответ перевода.
+message TransferBalanceResponse {
+  // Переведено, тиыны.
+  int64 amount_tiyn = 1;
+  // Балансы отправителя после перевода.
+  Balance balance = 2;
+}
+
+// Запрос сообщений чата.
+message ListChatMessagesRequest {
+  // Только сообщения с id больше этого (0 — последние 100).
+  int64 after_message_id = 1;
+}
+
+// Сообщения чата.
+message ListChatMessagesResponse {
+  // Сообщения по возрастанию id (не больше 100).
+  repeated ChatMessage messages = 1;
+}
+
+// Запрос отправки сообщения.
+message SendChatMessageRequest {
+  // UUID идемпотентности (обязателен).
+  string idempotency_key = 1;
+  // Текст (1..1000 символов).
+  string body = 2;
+}
+
+// Ответ отправки.
+message SendChatMessageResponse {
+  // Сохранённое сообщение.
+  ChatMessage message = 1;
+}
