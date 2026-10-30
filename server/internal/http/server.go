@@ -15,6 +15,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/ratelimit"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/api"
 )
 
@@ -47,6 +49,37 @@ type Options struct {
 	CheckTimeout time.Duration
 	// Frontend — обработчик SPA (webui.Handler). nil — 404 для всего, кроме API.
 	Frontend http.Handler
+	// Auth — вход, сессии, Principal (auth.Service). nil — эндпоинты /api/auth/* отвечают 500,
+	// Principal в контекст не ставится.
+	Auth *auth.Service
+	// Limiter — именованные лимиты (ratelimit). nil — без лимитов.
+	Limiter *ratelimit.Limiter
+}
+
+// routeLimits — лимиты эндпоинтов этого роутера: «МЕТОД путь» → правило ratelimit.
+// Вход в панель — web-login (в старом лимита не было, правило выключено по умолчанию).
+var routeLimits = map[string]string{
+	http.MethodPost + " /api/auth/login": ratelimit.WebLogin,
+}
+
+// limitRoutes применяет routeLimits (до разбора тела strict-обработчиком).
+func limitRoutes(l *ratelimit.Limiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if l == nil {
+			return next
+		}
+		wrapped := make(map[string]http.Handler, len(routeLimits))
+		for route, rule := range routeLimits {
+			wrapped[route] = l.Middleware(rule)(next)
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if h, ok := wrapped[r.Method+" "+r.URL.Path]; ok {
+				h.ServeHTTP(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // NewRouter собирает корневой обработчик.
@@ -70,8 +103,13 @@ func NewRouter(o Options) http.Handler {
 		SecurityHeaders,
 		middleware.Timeout(o.RequestTimeout),
 	)
+	if o.Auth != nil {
+		// Principal из Authorization: Bearer — до лимитов (ключ «пользователь») и обработчиков.
+		r.Use(o.Auth.Middleware)
+	}
+	r.Use(limitRoutes(o.Limiter))
 
-	strict := api.NewStrictHandlerWithOptions(&handlers{opts: o}, nil, api.StrictHTTPServerOptions{
+	strict := api.NewStrictHandlerWithOptions(&handlers{opts: o}, []api.StrictMiddlewareFunc{withHTTP}, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			o.Logger.WarnContext(r.Context(), "bad request", slog.String("err", err.Error()))
 			writeError(w, http.StatusBadRequest, "bad_request")

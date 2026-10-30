@@ -8,7 +8,7 @@
 export type ClubRole = 'owner' | 'admin' | 'manager' | 'cashier' | 'operator';
 
 /** Роль клиента (не сотрудник) — у клиентов нет панели клуба. */
-export type MembershipRole = ClubRole | 'customer';
+export type MembershipRole = ClubRole | 'client';
 
 /** Права, выданные/снятые владельцем конкретному сотруднику: club_memberships.permissions {"section.action": bool}. */
 export type PermissionOverrides = Readonly<Record<string, boolean>>;

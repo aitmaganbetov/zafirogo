@@ -20,7 +20,7 @@ export interface SidebarProps {
 }
 
 function isClubRole(role: MembershipRole): role is ClubRole {
-  return role !== 'customer';
+  return role !== 'client';
 }
 
 export function Sidebar({ open, rail, onClose }: SidebarProps) {

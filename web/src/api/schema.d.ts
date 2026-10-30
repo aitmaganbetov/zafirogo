@@ -45,10 +45,248 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Вход по телефону и паролю
+         * @description Laravel: AuthController::login(). Телефон нормализуется (+7 и 10 цифр), сначала выбирается клуб,
+         *     где пользователь — сотрудник. Ставит cookie refresh-токена и CSRF. Ошибки — 422 с полем формы
+         *     и текстом старого кода («Неверные учетные данные.» и т. п.). Лимит web-login выключен по умолчанию
+         *     (в старом его не было).
+         */
+        post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Новый access-токен по refresh-cookie (ротация)
+         * @description Refresh-токен из cookie заменяется новым. Повтор уже использованного токена отзывает всю сессию (401).
+         *     Повтор только что заменённого токена в течение нескольких секунд (две вкладки) — 409, сессия жива:
+         *     повторите запрос.
+         */
+        post: operations["refreshSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Выход (текущая сессия)
+         * @description Laravel: AuthController::logout(). По access-токену или по refresh-cookie (с X-CSRF-Token).
+         *     Cookie удаляются. Отсутствующая сессия — тоже 204.
+         */
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/logout-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Выход на всех устройствах */
+        post: operations["logoutAll"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Текущий пользователь, клуб, роль и права */
+        get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/club": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Перейти в другой клуб пользователя
+         * @description Laravel: ClubController::switch() — нужен клуб, где у пользователя есть членство, иначе 404.
+         */
+        put: operations["selectClub"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/superadmin/clubs/{clubId}/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Открыть клуб на просмотр (только чтение)
+         * @description Laravel: Superadmin\ClubController::view(). Панель клуба как у владельца, но любые изменения
+         *     (не GET/HEAD) — 403 «Режим просмотра: суперадмин не может ничего менять в клубе.».
+         */
+        post: operations["superadminViewClub"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/superadmin/leave-club": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Выйти из режима просмотра клуба
+         * @description Laravel: Superadmin\ClubController::leave().
+         */
+        post: operations["superadminLeaveClub"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        Error: {
+            /** @description Машинный код (unauthenticated, forbidden, read_only, not_found, too_many_requests, …). */
+            error: string;
+            /** @description Текст для пользователя (русский текст = ключ перевода). */
+            message?: string;
+        };
+        ValidationError: {
+            /** @enum {string} */
+            error: "validation_failed";
+            /** @description Первая ошибка. */
+            message: string;
+            /** @description Поле формы → тексты ошибок (как Laravel withErrors). */
+            errors: {
+                [key: string]: string[];
+            };
+        };
+        LoginRequest: {
+            /** @description Телефон в любом виде (8 701…, +7 (701)…); нормализуется к +7XXXXXXXXXX. */
+            phone: string;
+            password: string;
+            /**
+             * @description Флаг «Запомнить меня» — сессия живёт дольше без активности.
+             * @default false
+             */
+            remember: boolean;
+            /**
+             * @description Вход ради подтверждения входа на ПК по QR (/pc-login/{code}) — разрешён и клиентам.
+             * @default false
+             */
+            pc_login: boolean;
+        };
+        SelectClubRequest: {
+            /** Format: int64 */
+            club_id: number;
+        };
+        AuthSession: {
+            /** @description Держать только в памяти SPA. */
+            access_token: string;
+            /** @enum {string} */
+            token_type: "Bearer";
+            /** @description Срок access-токена, секунды. */
+            expires_in: number;
+            /** @description То же значение, что в cookie __Host-zafiro_csrf (для X-CSRF-Token). */
+            csrf_token: string;
+            me: components["schemas"]["Me"];
+        };
+        MeUser: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            phone: string;
+            is_superadmin: boolean;
+        };
+        MeClub: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+        };
+        MembershipItem: {
+            /** Format: int64 */
+            club_id: number;
+            club_name: string;
+            role: string;
+        };
+        Me: {
+            user: components["schemas"]["MeUser"];
+            /** @description Выбранный клуб; null — не выбран (суперадмин без клуба). */
+            club: components["schemas"]["MeClub"] | null;
+            /** @description Роль в клубе (owner, admin, manager, cashier, operator, client, …). */
+            role: string | null;
+            /** @description Права «раздел.действие» в клубе (ClubPermissions::allows), уже с выбором владельца. */
+            permissions: string[];
+            /** @description Суперадмин смотрит клуб — изменения запрещены. */
+            read_only: boolean;
+            /** @description Клубы пользователя для переключения (в режиме просмотра — пусто). */
+            clubs: components["schemas"]["MembershipItem"][];
+        };
         Health: {
             /** @enum {string} */
             status: "ok";
@@ -62,8 +300,60 @@ export interface components {
             };
         };
     };
-    responses: never;
-    parameters: never;
+    responses: {
+        /** @description Нет действующей сессии. */
+        Unauthenticated: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Нет прав (текст — как в старом коде). */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Не найдено. */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Ошибка в полях формы. */
+        ValidationFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ValidationError"];
+            };
+        };
+        /** @description Превышен лимит (throttle). Заголовки Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset. */
+        TooManyRequests: {
+            headers: {
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+    };
+    parameters: {
+        /** @description Значение cookie __Host-zafiro_csrf. */
+        CSRFToken: string;
+        /** @description Обязателен при выходе по refresh-cookie (без access-токена). */
+        CSRFTokenOptional: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -117,6 +407,203 @@ export interface operations {
                     "application/json": components["schemas"]["Readiness"];
                 };
             };
+        };
+    };
+    login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Вход выполнен. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthSession"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    refreshSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Значение cookie __Host-zafiro_csrf. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Сессия обновлена. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthSession"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description Токен уже обновлён параллельным запросом; повторите. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Обязателен при выходе по refresh-cookie (без access-токена). */
+                "X-CSRF-Token"?: components["parameters"]["CSRFTokenOptional"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Сессия завершена. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    logoutAll: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Все сессии пользователя завершены. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
+    getMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Текущий пользователь. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+        };
+    };
+    selectClub: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelectClubRequest"];
+            };
+        };
+        responses: {
+            /** @description Клуб выбран. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    superadminViewClub: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clubId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Режим просмотра включён. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    superadminLeaveClub: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Режим просмотра выключен. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
         };
     };
 }

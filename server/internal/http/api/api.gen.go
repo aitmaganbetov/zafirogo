@@ -11,7 +11,23 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/oapi-codegen/runtime"
 )
+
+// Defines values for AuthSessionTokenType.
+const (
+	Bearer AuthSessionTokenType = "Bearer"
+)
+
+// Valid indicates whether the value is a known member of the AuthSessionTokenType enum.
+func (e AuthSessionTokenType) Valid() bool {
+	switch e {
+	case Bearer:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for HealthStatus.
 const (
@@ -64,6 +80,47 @@ func (e ReadinessStatus) Valid() bool {
 	}
 }
 
+// Defines values for ValidationErrorError.
+const (
+	ValidationErrorErrorValidationFailed ValidationErrorError = "validation_failed"
+)
+
+// Valid indicates whether the value is a known member of the ValidationErrorError enum.
+func (e ValidationErrorError) Valid() bool {
+	switch e {
+	case ValidationErrorErrorValidationFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// AuthSession defines model for AuthSession.
+type AuthSession struct {
+	// AccessToken Держать только в памяти SPA.
+	AccessToken string `json:"access_token"`
+
+	// CsrfToken То же значение, что в cookie __Host-zafiro_csrf (для X-CSRF-Token).
+	CsrfToken string `json:"csrf_token"`
+
+	// ExpiresIn Срок access-токена, секунды.
+	ExpiresIn int                  `json:"expires_in"`
+	Me        Me                   `json:"me"`
+	TokenType AuthSessionTokenType `json:"token_type"`
+}
+
+// AuthSessionTokenType defines model for AuthSession.TokenType.
+type AuthSessionTokenType string
+
+// Error defines model for Error.
+type Error struct {
+	// Error Машинный код (unauthenticated, forbidden, read_only, not_found, too_many_requests, …).
+	Error string `json:"error"`
+
+	// Message Текст для пользователя (русский текст = ключ перевода).
+	Message *string `json:"message,omitempty"`
+}
+
 // Health defines model for Health.
 type Health struct {
 	Status HealthStatus `json:"status"`
@@ -71,6 +128,60 @@ type Health struct {
 
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
+
+// LoginRequest defines model for LoginRequest.
+type LoginRequest struct {
+	Password string `json:"password"`
+
+	// PcLogin Вход ради подтверждения входа на ПК по QR (/pc-login/{code}) — разрешён и клиентам.
+	PcLogin *bool `json:"pc_login,omitempty"`
+
+	// Phone Телефон в любом виде (8 701…, +7 (701)…); нормализуется к +7XXXXXXXXXX.
+	Phone string `json:"phone"`
+
+	// Remember Флаг «Запомнить меня» — сессия живёт дольше без активности.
+	Remember *bool `json:"remember,omitempty"`
+}
+
+// Me defines model for Me.
+type Me struct {
+	// Club Выбранный клуб; null — не выбран (суперадмин без клуба).
+	Club *MeClub `json:"club"`
+
+	// Clubs Клубы пользователя для переключения (в режиме просмотра — пусто).
+	Clubs []MembershipItem `json:"clubs"`
+
+	// Permissions Права «раздел.действие» в клубе (ClubPermissions::allows), уже с выбором владельца.
+	Permissions []string `json:"permissions"`
+
+	// ReadOnly Суперадмин смотрит клуб — изменения запрещены.
+	ReadOnly bool `json:"read_only"`
+
+	// Role Роль в клубе (owner, admin, manager, cashier, operator, client, …).
+	Role *string `json:"role"`
+	User MeUser  `json:"user"`
+}
+
+// MeClub defines model for MeClub.
+type MeClub struct {
+	Id   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// MeUser defines model for MeUser.
+type MeUser struct {
+	Id           int64  `json:"id"`
+	IsSuperadmin bool   `json:"is_superadmin"`
+	Name         string `json:"name"`
+	Phone        string `json:"phone"`
+}
+
+// MembershipItem defines model for MembershipItem.
+type MembershipItem struct {
+	ClubId   int64  `json:"club_id"`
+	ClubName string `json:"club_name"`
+	Role     string `json:"role"`
+}
 
 // Readiness defines model for Readiness.
 type Readiness struct {
@@ -85,8 +196,90 @@ type ReadinessChecks string
 // ReadinessStatus defines model for Readiness.Status.
 type ReadinessStatus string
 
+// SelectClubRequest defines model for SelectClubRequest.
+type SelectClubRequest struct {
+	ClubId int64 `json:"club_id"`
+}
+
+// ValidationError defines model for ValidationError.
+type ValidationError struct {
+	Error ValidationErrorError `json:"error"`
+
+	// Errors Поле формы → тексты ошибок (как Laravel withErrors).
+	Errors map[string][]string `json:"errors"`
+
+	// Message Первая ошибка.
+	Message string `json:"message"`
+}
+
+// ValidationErrorError defines model for ValidationError.Error.
+type ValidationErrorError string
+
+// CSRFToken defines model for CSRFToken.
+type CSRFToken = string
+
+// CSRFTokenOptional defines model for CSRFTokenOptional.
+type CSRFTokenOptional = string
+
+// Forbidden defines model for Forbidden.
+type Forbidden = Error
+
+// NotFound defines model for NotFound.
+type NotFound = Error
+
+// TooManyRequests defines model for TooManyRequests.
+type TooManyRequests = Error
+
+// Unauthenticated defines model for Unauthenticated.
+type Unauthenticated = Error
+
+// ValidationFailed defines model for ValidationFailed.
+type ValidationFailed = ValidationError
+
+// LogoutParams defines parameters for Logout.
+type LogoutParams struct {
+	// XCSRFToken Обязателен при выходе по refresh-cookie (без access-токена).
+	XCSRFToken *CSRFTokenOptional `json:"X-CSRF-Token,omitempty"`
+}
+
+// RefreshSessionParams defines parameters for RefreshSession.
+type RefreshSessionParams struct {
+	// XCSRFToken Значение cookie __Host-zafiro_csrf.
+	XCSRFToken CSRFToken `json:"X-CSRF-Token"`
+}
+
+// SelectClubJSONRequestBody defines body for SelectClub for application/json ContentType.
+type SelectClubJSONRequestBody = SelectClubRequest
+
+// LoginJSONRequestBody defines body for Login for application/json ContentType.
+type LoginJSONRequestBody = LoginRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// SelectClub Перейти в другой клуб пользователя
+	// (PUT /api/auth/club)
+	SelectClub(w http.ResponseWriter, r *http.Request)
+	// Login Вход по телефону и паролю
+	// (POST /api/auth/login)
+	Login(w http.ResponseWriter, r *http.Request)
+	// Logout Выход (текущая сессия)
+	// (POST /api/auth/logout)
+	Logout(w http.ResponseWriter, r *http.Request, params LogoutParams)
+	// LogoutAll Выход на всех устройствах
+	// (POST /api/auth/logout-all)
+	LogoutAll(w http.ResponseWriter, r *http.Request)
+	// GetMe Текущий пользователь, клуб, роль и права
+	// (GET /api/auth/me)
+	GetMe(w http.ResponseWriter, r *http.Request)
+	// RefreshSession Новый access-токен по refresh-cookie (ротация)
+	// (POST /api/auth/refresh)
+	RefreshSession(w http.ResponseWriter, r *http.Request, params RefreshSessionParams)
+	// SuperadminViewClub Открыть клуб на просмотр (только чтение)
+	// (POST /api/superadmin/clubs/{clubId}/view)
+	SuperadminViewClub(w http.ResponseWriter, r *http.Request, clubId int64)
+	// SuperadminLeaveClub Выйти из режима просмотра клуба
+	// (POST /api/superadmin/leave-club)
+	SuperadminLeaveClub(w http.ResponseWriter, r *http.Request)
 	// GetHealthz Liveness-проверка
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
@@ -98,6 +291,54 @@ type ServerInterface interface {
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// SelectClub Перейти в другой клуб пользователя
+// (PUT /api/auth/club)
+func (_ Unimplemented) SelectClub(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Login Вход по телефону и паролю
+// (POST /api/auth/login)
+func (_ Unimplemented) Login(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Logout Выход (текущая сессия)
+// (POST /api/auth/logout)
+func (_ Unimplemented) Logout(w http.ResponseWriter, r *http.Request, params LogoutParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// LogoutAll Выход на всех устройствах
+// (POST /api/auth/logout-all)
+func (_ Unimplemented) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetMe Текущий пользователь, клуб, роль и права
+// (GET /api/auth/me)
+func (_ Unimplemented) GetMe(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// RefreshSession Новый access-токен по refresh-cookie (ротация)
+// (POST /api/auth/refresh)
+func (_ Unimplemented) RefreshSession(w http.ResponseWriter, r *http.Request, params RefreshSessionParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SuperadminViewClub Открыть клуб на просмотр (только чтение)
+// (POST /api/superadmin/clubs/{clubId}/view)
+func (_ Unimplemented) SuperadminViewClub(w http.ResponseWriter, r *http.Request, clubId int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SuperadminLeaveClub Выйти из режима просмотра клуба
+// (POST /api/superadmin/leave-club)
+func (_ Unimplemented) SuperadminLeaveClub(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // GetHealthz Liveness-проверка
 // (GET /healthz)
@@ -119,6 +360,188 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// SelectClub operation middleware
+func (siw *ServerInterfaceWrapper) SelectClub(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SelectClub(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Login operation middleware
+func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Login(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Logout operation middleware
+func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params LogoutParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFTokenOptional
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Logout(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LogoutAll operation middleware
+func (siw *ServerInterfaceWrapper) LogoutAll(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LogoutAll(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMe operation middleware
+func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RefreshSession operation middleware
+func (siw *ServerInterfaceWrapper) RefreshSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RefreshSessionParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-CSRF-Token", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-CSRF-Token", Err: err})
+			return
+		}
+
+		params.XCSRFToken = XCSRFToken
+
+	} else {
+		err := fmt.Errorf("Header parameter X-CSRF-Token is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-CSRF-Token", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RefreshSession(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SuperadminViewClub operation middleware
+func (siw *ServerInterfaceWrapper) SuperadminViewClub(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clubId" -------------
+	var clubId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clubId", chi.URLParam(r, "clubId"), &clubId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "clubId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SuperadminViewClub(w, r, clubId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SuperadminLeaveClub operation middleware
+func (siw *ServerInterfaceWrapper) SuperadminLeaveClub(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SuperadminLeaveClub(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetHealthz operation middleware
 func (siw *ServerInterfaceWrapper) GetHealthz(w http.ResponseWriter, r *http.Request) {
@@ -267,8 +690,451 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/readyz", wrapper.GetReadyz)
 	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/auth/login", wrapper.Login)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/auth/refresh", wrapper.RefreshSession)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/auth/logout", wrapper.Logout)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/auth/logout-all", wrapper.LogoutAll)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/auth/me", wrapper.GetMe)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/auth/club", wrapper.SelectClub)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/superadmin/clubs/{clubId}/view", wrapper.SuperadminViewClub)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/superadmin/leave-club", wrapper.SuperadminLeaveClub)
+	})
 
 	return r
+}
+
+type ForbiddenJSONResponse Error
+
+type NotFoundJSONResponse Error
+
+type TooManyRequestsResponseHeaders struct {
+	RetryAfter *int
+}
+type TooManyRequestsJSONResponse struct {
+	Body Error
+
+	Headers TooManyRequestsResponseHeaders
+}
+
+type UnauthenticatedJSONResponse Error
+
+type ValidationFailedJSONResponse ValidationError
+
+type SelectClubRequestObject struct {
+	Body *SelectClubJSONRequestBody
+}
+
+type SelectClubResponseObject interface {
+	VisitSelectClubResponse(w http.ResponseWriter) error
+}
+
+type SelectClub200JSONResponse Me
+
+func (response SelectClub200JSONResponse) VisitSelectClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectClub401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response SelectClub401JSONResponse) VisitSelectClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectClub403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response SelectClub403JSONResponse) VisitSelectClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectClub404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response SelectClub404JSONResponse) VisitSelectClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginRequestObject struct {
+	Body *LoginJSONRequestBody
+}
+
+type LoginResponseObject interface {
+	VisitLoginResponse(w http.ResponseWriter) error
+}
+
+type Login200JSONResponse AuthSession
+
+func (response Login200JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Login403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response Login403JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Login422JSONResponse struct{ ValidationFailedJSONResponse }
+
+func (response Login422JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Login429JSONResponse struct{ TooManyRequestsJSONResponse }
+
+func (response Login429JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LogoutRequestObject struct {
+	Params LogoutParams
+}
+
+type LogoutResponseObject interface {
+	VisitLogoutResponse(w http.ResponseWriter) error
+}
+
+type Logout204Response struct {
+}
+
+func (response Logout204Response) VisitLogoutResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type Logout403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response Logout403JSONResponse) VisitLogoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LogoutAllRequestObject struct {
+}
+
+type LogoutAllResponseObject interface {
+	VisitLogoutAllResponse(w http.ResponseWriter) error
+}
+
+type LogoutAll204Response struct {
+}
+
+func (response LogoutAll204Response) VisitLogoutAllResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type LogoutAll401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response LogoutAll401JSONResponse) VisitLogoutAllResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMeRequestObject struct {
+}
+
+type GetMeResponseObject interface {
+	VisitGetMeResponse(w http.ResponseWriter) error
+}
+
+type GetMe200JSONResponse Me
+
+func (response GetMe200JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMe401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response GetMe401JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshSessionRequestObject struct {
+	Params RefreshSessionParams
+}
+
+type RefreshSessionResponseObject interface {
+	VisitRefreshSessionResponse(w http.ResponseWriter) error
+}
+
+type RefreshSession200JSONResponse AuthSession
+
+func (response RefreshSession200JSONResponse) VisitRefreshSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshSession401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response RefreshSession401JSONResponse) VisitRefreshSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshSession403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response RefreshSession403JSONResponse) VisitRefreshSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RefreshSession409JSONResponse Error
+
+func (response RefreshSession409JSONResponse) VisitRefreshSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SuperadminViewClubRequestObject struct {
+	ClubId int64 `json:"clubId"`
+}
+
+type SuperadminViewClubResponseObject interface {
+	VisitSuperadminViewClubResponse(w http.ResponseWriter) error
+}
+
+type SuperadminViewClub200JSONResponse Me
+
+func (response SuperadminViewClub200JSONResponse) VisitSuperadminViewClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SuperadminViewClub401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response SuperadminViewClub401JSONResponse) VisitSuperadminViewClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SuperadminViewClub403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response SuperadminViewClub403JSONResponse) VisitSuperadminViewClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SuperadminViewClub404JSONResponse struct{ NotFoundJSONResponse }
+
+func (response SuperadminViewClub404JSONResponse) VisitSuperadminViewClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SuperadminLeaveClubRequestObject struct {
+}
+
+type SuperadminLeaveClubResponseObject interface {
+	VisitSuperadminLeaveClubResponse(w http.ResponseWriter) error
+}
+
+type SuperadminLeaveClub200JSONResponse Me
+
+func (response SuperadminLeaveClub200JSONResponse) VisitSuperadminLeaveClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SuperadminLeaveClub401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response SuperadminLeaveClub401JSONResponse) VisitSuperadminLeaveClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SuperadminLeaveClub403JSONResponse struct{ ForbiddenJSONResponse }
+
+func (response SuperadminLeaveClub403JSONResponse) VisitSuperadminLeaveClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type GetHealthzRequestObject struct {
@@ -329,6 +1195,30 @@ func (response GetReadyz503JSONResponse) VisitGetReadyzResponse(w http.ResponseW
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// SelectClub Перейти в другой клуб пользователя
+	// (PUT /api/auth/club)
+	SelectClub(ctx context.Context, request SelectClubRequestObject) (SelectClubResponseObject, error)
+	// Login Вход по телефону и паролю
+	// (POST /api/auth/login)
+	Login(ctx context.Context, request LoginRequestObject) (LoginResponseObject, error)
+	// Logout Выход (текущая сессия)
+	// (POST /api/auth/logout)
+	Logout(ctx context.Context, request LogoutRequestObject) (LogoutResponseObject, error)
+	// LogoutAll Выход на всех устройствах
+	// (POST /api/auth/logout-all)
+	LogoutAll(ctx context.Context, request LogoutAllRequestObject) (LogoutAllResponseObject, error)
+	// GetMe Текущий пользователь, клуб, роль и права
+	// (GET /api/auth/me)
+	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
+	// RefreshSession Новый access-токен по refresh-cookie (ротация)
+	// (POST /api/auth/refresh)
+	RefreshSession(ctx context.Context, request RefreshSessionRequestObject) (RefreshSessionResponseObject, error)
+	// SuperadminViewClub Открыть клуб на просмотр (только чтение)
+	// (POST /api/superadmin/clubs/{clubId}/view)
+	SuperadminViewClub(ctx context.Context, request SuperadminViewClubRequestObject) (SuperadminViewClubResponseObject, error)
+	// SuperadminLeaveClub Выйти из режима просмотра клуба
+	// (POST /api/superadmin/leave-club)
+	SuperadminLeaveClub(ctx context.Context, request SuperadminLeaveClubRequestObject) (SuperadminLeaveClubResponseObject, error)
 	// GetHealthz Liveness-проверка
 	// (GET /healthz)
 	GetHealthz(ctx context.Context, request GetHealthzRequestObject) (GetHealthzResponseObject, error)
@@ -374,6 +1264,218 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// SelectClub operation middleware
+func (sh *strictHandler) SelectClub(w http.ResponseWriter, r *http.Request) {
+	var request SelectClubRequestObject
+
+	var body SelectClubJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SelectClub(ctx, request.(SelectClubRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SelectClub")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SelectClubResponseObject); ok {
+		if err := validResponse.VisitSelectClubResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// Login operation middleware
+func (sh *strictHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var request LoginRequestObject
+
+	var body LoginJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Login(ctx, request.(LoginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Login")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LoginResponseObject); ok {
+		if err := validResponse.VisitLoginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// Logout operation middleware
+func (sh *strictHandler) Logout(w http.ResponseWriter, r *http.Request, params LogoutParams) {
+	var request LogoutRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Logout(ctx, request.(LogoutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Logout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LogoutResponseObject); ok {
+		if err := validResponse.VisitLogoutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// LogoutAll operation middleware
+func (sh *strictHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	var request LogoutAllRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.LogoutAll(ctx, request.(LogoutAllRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "LogoutAll")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LogoutAllResponseObject); ok {
+		if err := validResponse.VisitLogoutAllResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMe operation middleware
+func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	var request GetMeRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMe(ctx, request.(GetMeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMe")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMeResponseObject); ok {
+		if err := validResponse.VisitGetMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RefreshSession operation middleware
+func (sh *strictHandler) RefreshSession(w http.ResponseWriter, r *http.Request, params RefreshSessionParams) {
+	var request RefreshSessionRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RefreshSession(ctx, request.(RefreshSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RefreshSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RefreshSessionResponseObject); ok {
+		if err := validResponse.VisitRefreshSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SuperadminViewClub operation middleware
+func (sh *strictHandler) SuperadminViewClub(w http.ResponseWriter, r *http.Request, clubId int64) {
+	var request SuperadminViewClubRequestObject
+
+	request.ClubId = clubId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SuperadminViewClub(ctx, request.(SuperadminViewClubRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SuperadminViewClub")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SuperadminViewClubResponseObject); ok {
+		if err := validResponse.VisitSuperadminViewClubResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SuperadminLeaveClub operation middleware
+func (sh *strictHandler) SuperadminLeaveClub(w http.ResponseWriter, r *http.Request) {
+	var request SuperadminLeaveClubRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SuperadminLeaveClub(ctx, request.(SuperadminLeaveClubRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SuperadminLeaveClub")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SuperadminLeaveClubResponseObject); ok {
+		if err := validResponse.VisitSuperadminLeaveClubResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // GetHealthz operation middleware

@@ -12,6 +12,16 @@ servers:
 tags:
   - name: system
     description: Служебные эндпоинты (проверки живости и готовности).
+  - name: auth
+    description: |
+      Вход сотрудника, сессия, выбор клуба (Laravel: AuthController, ClubController::switch, SetCurrentClub).
+      Access-токен — в памяти SPA (заголовок Authorization: Bearer), срок ~10 мин. Refresh-токен — только в cookie
+      `__Secure-zafiro_rt` (HttpOnly, Secure, SameSite=Strict, Path=/api/auth), ротация при каждом обновлении.
+      Эндпоинты с cookie (refresh, logout) требуют заголовок X-CSRF-Token со значением cookie `__Host-zafiro_csrf`.
+  - name: superadmin
+    description: Кабинет суперадмина — режим просмотра клуба только для чтения.
+security:
+  - bearerAuth: []
 paths:
   /healthz:
     get:
@@ -49,8 +59,381 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Readiness"
+  /api/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Вход по телефону и паролю
+      description: |
+        Laravel: AuthController::login(). Телефон нормализуется (+7 и 10 цифр), сначала выбирается клуб,
+        где пользователь — сотрудник. Ставит cookie refresh-токена и CSRF. Ошибки — 422 с полем формы
+        и текстом старого кода («Неверные учетные данные.» и т. п.). Лимит web-login выключен по умолчанию
+        (в старом его не было).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Вход выполнен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/auth/refresh:
+    post:
+      operationId: refreshSession
+      tags: [auth]
+      summary: Новый access-токен по refresh-cookie (ротация)
+      description: |
+        Refresh-токен из cookie заменяется новым. Повтор уже использованного токена отзывает всю сессию (401).
+        Повтор только что заменённого токена в течение нескольких секунд (две вкладки) — 409, сессия жива:
+        повторите запрос.
+      security:
+        - refreshCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "200":
+          description: Сессия обновлена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Токен уже обновлён параллельным запросом; повторите.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Выход (текущая сессия)
+      description: |
+        Laravel: AuthController::logout(). По access-токену или по refresh-cookie (с X-CSRF-Token).
+        Cookie удаляются. Отсутствующая сессия — тоже 204.
+      security:
+        - bearerAuth: []
+        - refreshCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFTokenOptional"
+      responses:
+        "204":
+          description: Сессия завершена.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/auth/logout-all:
+    post:
+      operationId: logoutAll
+      tags: [auth]
+      summary: Выход на всех устройствах
+      responses:
+        "204":
+          description: Все сессии пользователя завершены.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+  /api/auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Текущий пользователь, клуб, роль и права
+      responses:
+        "200":
+          description: Текущий пользователь.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+  /api/auth/club:
+    put:
+      operationId: selectClub
+      tags: [auth]
+      summary: Перейти в другой клуб пользователя
+      description: |
+        Laravel: ClubController::switch() — нужен клуб, где у пользователя есть членство, иначе 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SelectClubRequest"
+      responses:
+        "200":
+          description: Клуб выбран.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/superadmin/clubs/{clubId}/view:
+    post:
+      operationId: superadminViewClub
+      tags: [superadmin]
+      summary: Открыть клуб на просмотр (только чтение)
+      description: |
+        Laravel: Superadmin\ClubController::view(). Панель клуба как у владельца, но любые изменения
+        (не GET/HEAD) — 403 «Режим просмотра: суперадмин не может ничего менять в клубе.».
+      parameters:
+        - name: clubId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Режим просмотра включён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/superadmin/leave-club:
+    post:
+      operationId: superadminLeaveClub
+      tags: [superadmin]
+      summary: Выйти из режима просмотра клуба
+      description: |
+        Laravel: Superadmin\ClubController::leave().
+      responses:
+        "200":
+          description: Режим просмотра выключен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  parameters:
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Значение cookie __Host-zafiro_csrf.
+      schema:
+        type: string
+        maxLength: 128
+    CSRFTokenOptional:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Обязателен при выходе по refresh-cookie (без access-токена).
+      schema:
+        type: string
+        maxLength: 128
+  responses:
+    Unauthenticated:
+      description: Нет действующей сессии.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Нет прав (текст — как в старом коде).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Не найдено.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ValidationFailed:
+      description: Ошибка в полях формы.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ValidationError"
+    TooManyRequests:
+      description: |
+        Превышен лимит (throttle). Заголовки Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Машинный код (unauthenticated, forbidden, read_only, not_found, too_many_requests, …).
+        message:
+          type: string
+          description: Текст для пользователя (русский текст = ключ перевода).
+    ValidationError:
+      type: object
+      required: [error, message, errors]
+      properties:
+        error:
+          type: string
+          enum: [validation_failed]
+        message:
+          type: string
+          description: Первая ошибка.
+        errors:
+          type: object
+          description: Поле формы → тексты ошибок (как Laravel withErrors).
+          additionalProperties:
+            type: array
+            items:
+              type: string
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [phone, password]
+      properties:
+        phone:
+          type: string
+          maxLength: 64
+          description: Телефон в любом виде (8 701…, +7 (701)…); нормализуется к +7XXXXXXXXXX.
+        password:
+          type: string
+          maxLength: 4096
+        remember:
+          type: boolean
+          default: false
+          description: Флаг «Запомнить меня» — сессия живёт дольше без активности.
+        pc_login:
+          type: boolean
+          default: false
+          description: Вход ради подтверждения входа на ПК по QR (/pc-login/{code}) — разрешён и клиентам.
+    SelectClubRequest:
+      type: object
+      additionalProperties: false
+      required: [club_id]
+      properties:
+        club_id:
+          type: integer
+          format: int64
+          minimum: 1
+    AuthSession:
+      type: object
+      required: [access_token, token_type, expires_in, csrf_token, me]
+      properties:
+        access_token:
+          type: string
+          description: Держать только в памяти SPA.
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          description: Срок access-токена, секунды.
+        csrf_token:
+          type: string
+          description: То же значение, что в cookie __Host-zafiro_csrf (для X-CSRF-Token).
+        me:
+          $ref: "#/components/schemas/Me"
+    MeUser:
+      type: object
+      required: [id, name, phone, is_superadmin]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        phone:
+          type: string
+        is_superadmin:
+          type: boolean
+    MeClub:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+    MembershipItem:
+      type: object
+      required: [club_id, club_name, role]
+      properties:
+        club_id:
+          type: integer
+          format: int64
+        club_name:
+          type: string
+        role:
+          type: string
+    Me:
+      type: object
+      required: [user, club, role, permissions, read_only, clubs]
+      properties:
+        user:
+          $ref: "#/components/schemas/MeUser"
+        club:
+          description: Выбранный клуб; null — не выбран (суперадмин без клуба).
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/MeClub"
+        role:
+          type: string
+          nullable: true
+          description: Роль в клубе (owner, admin, manager, cashier, operator, client, …).
+        permissions:
+          type: array
+          description: Права «раздел.действие» в клубе (ClubPermissions::allows), уже с выбором владельца.
+          items:
+            type: string
+        read_only:
+          type: boolean
+          description: Суперадмин смотрит клуб — изменения запрещены.
+        clubs:
+          type: array
+          description: Клубы пользователя для переключения (в режиме просмотра — пусто).
+          items:
+            $ref: "#/components/schemas/MembershipItem"
     Health:
       type: object
       additionalProperties: false
