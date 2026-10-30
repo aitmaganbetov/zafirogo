@@ -72,7 +72,7 @@ ON CONFLICT (club_id, tariff_id) DO UPDATE SET sold = tariff_sales.sold + 1, upd
 -- name: LockComputer :one
 -- ClubComputer::query()->lockForUpdate()->findOrFail().
 SELECT id, club_zone_id, number, display_name, device_name, is_reserved, last_seen_at,
-       current_session_id, current_session_user_id, session_guest, session_ends_at, staff_until
+       current_session_id, current_session_user_id, session_guest, session_ends_at, staff_until, status
 FROM club_computers
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id)
 FOR UPDATE;
@@ -81,7 +81,7 @@ FOR UPDATE;
 -- Несколько ПК в одном порядке (по id), чтобы две операции не взаимоблокировались
 -- (SeatTransfers::transfer(), GuestSessions::sell()).
 SELECT id, club_zone_id, number, display_name, device_name, is_reserved, last_seen_at,
-       current_session_id, current_session_user_id, session_guest, session_ends_at, staff_until
+       current_session_id, current_session_user_id, session_guest, session_ends_at, staff_until, status
 FROM club_computers
 WHERE club_id = sqlc.arg(club_id) AND id = ANY(sqlc.arg(ids)::bigint[])
 ORDER BY id

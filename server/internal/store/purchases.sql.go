@@ -455,7 +455,7 @@ func (q *Queries) ListZonesByIDs(ctx context.Context, arg ListZonesByIDsParams) 
 
 const lockComputer = `-- name: LockComputer :one
 SELECT id, club_zone_id, number, display_name, device_name, is_reserved, last_seen_at,
-       current_session_id, current_session_user_id, session_guest, session_ends_at, staff_until
+       current_session_id, current_session_user_id, session_guest, session_ends_at, staff_until, status
 FROM club_computers
 WHERE club_id = $1 AND id = $2
 FOR UPDATE
@@ -479,6 +479,7 @@ type LockComputerRow struct {
 	SessionGuest         bool       `json:"session_guest"`
 	SessionEndsAt        *time.Time `json:"session_ends_at"`
 	StaffUntil           *time.Time `json:"staff_until"`
+	Status               string     `json:"status"`
 }
 
 // ClubComputer::query()->lockForUpdate()->findOrFail().
@@ -498,13 +499,14 @@ func (q *Queries) LockComputer(ctx context.Context, arg LockComputerParams) (Loc
 		&i.SessionGuest,
 		&i.SessionEndsAt,
 		&i.StaffUntil,
+		&i.Status,
 	)
 	return i, err
 }
 
 const lockComputers = `-- name: LockComputers :many
 SELECT id, club_zone_id, number, display_name, device_name, is_reserved, last_seen_at,
-       current_session_id, current_session_user_id, session_guest, session_ends_at, staff_until
+       current_session_id, current_session_user_id, session_guest, session_ends_at, staff_until, status
 FROM club_computers
 WHERE club_id = $1 AND id = ANY($2::bigint[])
 ORDER BY id
@@ -529,6 +531,7 @@ type LockComputersRow struct {
 	SessionGuest         bool       `json:"session_guest"`
 	SessionEndsAt        *time.Time `json:"session_ends_at"`
 	StaffUntil           *time.Time `json:"staff_until"`
+	Status               string     `json:"status"`
 }
 
 // Несколько ПК в одном порядке (по id), чтобы две операции не взаимоблокировались
@@ -555,6 +558,7 @@ func (q *Queries) LockComputers(ctx context.Context, arg LockComputersParams) ([
 			&i.SessionGuest,
 			&i.SessionEndsAt,
 			&i.StaffUntil,
+			&i.Status,
 		); err != nil {
 			return nil, err
 		}

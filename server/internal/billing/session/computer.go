@@ -20,6 +20,10 @@ type Computer struct {
 	SessionGuest  bool
 	SessionEndsAt *time.Time
 	StaffUntil    *time.Time
+	// Connected — признак «в сети» из присутствия агента (club_computers.status = 'online', его ведёт
+	// server/internal/agent/presence). Агент шлёт статус в поток, а last_seen_at пишется только при
+	// смене состояния (AS-2), поэтому при Connected != nil оно заменяет проверку по last_seen_at.
+	Connected *bool
 }
 
 // HasPaidSession — оплаченная и ещё не истёкшая сессия.
@@ -38,6 +42,9 @@ func (c Computer) HasStaffVisit(now time.Time) bool {
 // Online — connectionStatus() === 'online': last_seen_at >= now − 90 с (с микросекундами now).
 // Laravel: app/Models/ClubComputer.php connectionStatus() (стр. 88–94).
 func (c Computer) Online(now time.Time) bool {
+	if c.Connected != nil {
+		return *c.Connected
+	}
 	return c.LastSeenAt != nil && !c.LastSeenAt.Before(now.Add(-HeartbeatTimeout))
 }
 
