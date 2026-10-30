@@ -5,12 +5,13 @@
 //  2. необязательный YAML-файл (путь из флага -config или ZAFIRO_CONFIG_FILE);
 //  3. переменные окружения с префиксом ZAFIRO_.
 //
-// Имена переменных: ZAFIRO_<СЕКЦИЯ>_<КЛЮЧ>, например ZAFIRO_HTTP_ADDR → http.addr,
-// ZAFIRO_DATABASE_URL → database.url. Ключи верхнего уровня без секции
-// (ZAFIRO_ENV, ZAFIRO_SHUTDOWN_TIMEOUT) отображаются как есть.
+// Имя переменной — ключ в верхнем регистре, точки заменены на "_": agent.grpc.listen →
+// ZAFIRO_AGENT_GRPC_LISTEN, database.platform_url → ZAFIRO_DATABASE_PLATFORM_URL. Переменные, которым
+// не соответствует ни один ключ из Defaults, игнорируются. Списки в окружении — через запятую;
+// auth.signing_keys — "kid:секрет,kid2:секрет2".
 //
-// Секреты (пароль в DATABASE_URL, пароль Valkey) никогда не попадают в логи:
-// Config реализует slog.LogValuer и отдаёт только замаскированные значения.
+// Секреты (DSN, пароли, ключи подписи, перец кодов, ключ CA) имеют тип Secret и никогда не попадают в
+// логи: Secret и Config маскируют их в fmt и slog.
 package config
 
 import (
@@ -21,6 +22,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -39,19 +41,34 @@ const FileEnv = EnvPrefix + "CONFIG_FILE"
 
 const redacted = "[REDACTED]"
 
-// sections — секции, у которых первый "_" в имени переменной окружения означает вложенность.
-var sections = []string{"http", "database", "valkey", "nats", "log"}
+// DevPKIDir — каталог dev-PKI по умолчанию (env dev/test, если файлы CA не заданы).
+const DevPKIDir = ".dev/pki"
 
 // Config — полная конфигурация процесса.
 type Config struct {
 	// Env — окружение: dev | test | prod.
-	Env             string        `koanf:"env"`
+	Env string `koanf:"env"`
+	// ShutdownTimeout — общий бюджет graceful shutdown (перестать принимать → Drain агентов →
+	// закрыть gRPC/HTTP → дождаться воркеров → закрыть NATS/Valkey/пулы).
 	ShutdownTimeout time.Duration `koanf:"shutdown_timeout"`
 	HTTP            HTTP          `koanf:"http"`
 	Database        Database      `koanf:"database"`
 	Valkey          Valkey        `koanf:"valkey"`
 	NATS            NATS          `koanf:"nats"`
 	Log             Log           `koanf:"log"`
+	Auth            Auth          `koanf:"auth"`
+	Password        Password      `koanf:"password"`
+	RateLimit       RateLimit     `koanf:"ratelimit"`
+	Agent           Agent         `koanf:"agent"`
+	Events          Events        `koanf:"events"`
+	Outbox          Outbox        `koanf:"outbox"`
+	Webhooks        Webhooks      `koanf:"webhooks"`
+	Realtime        Realtime      `koanf:"realtime"`
+	Workers         Workers       `koanf:"workers"`
+
+	// Generated — ключи, для которых в dev/test сгенерирован случайный секрет (не заданы явно).
+	// Такие секреты живут до перезапуска процесса. Не из конфигурации.
+	Generated []string `koanf:"-"`
 }
 
 // HTTP — настройки HTTP-сервера.
@@ -70,22 +87,27 @@ type HTTP struct {
 	TrustedProxies []string `koanf:"trusted_proxies"`
 }
 
-// Database — подключение к PostgreSQL.
+// Database — подключения к PostgreSQL. Два логина (db/migrations/0004_rls.sql):
+// URL — член роли zafiro_app (RLS по клубу), PlatformURL — член роли zafiro_platform
+// (фоновые задачи и суперадминка по всем клубам). Владелец схемы (миграции) серверу не нужен.
 type Database struct {
-	// URL — DSN pgx, например postgres://user:pass@localhost:5432/zafiro?sslmode=disable.
-	// Пусто — база не используется (readyz её не проверяет).
-	URL string `koanf:"url"`
+	// URL — DSN pgx логина zafiro_app. Пусто — режим без зависимостей (только /healthz и фронт;
+	// не для prod).
+	URL Secret `koanf:"url"`
+	// PlatformURL — DSN pgx логина zafiro_platform. Обязателен, если задан URL.
+	PlatformURL Secret `koanf:"platform_url"`
 }
 
 // Valkey — подключение к Valkey.
 type Valkey struct {
 	Addr     string `koanf:"addr"`
-	Password string `koanf:"password"`
+	Password Secret `koanf:"password"`
 }
 
 // NATS — подключение к NATS JetStream.
 type NATS struct {
-	URL string `koanf:"url"`
+	// URL может содержать учётные данные (nats://user:pass@host:4222) — поэтому Secret.
+	URL Secret `koanf:"url"`
 }
 
 // Log — настройки журналирования.
@@ -96,11 +118,192 @@ type Log struct {
 	Format string `koanf:"format"`
 }
 
-// Defaults возвращает значения по умолчанию (плоские ключи koanf).
+// SigningKey — ключ подписи access-токенов (auth/session.Key).
+type SigningKey struct {
+	ID     string `koanf:"id"`
+	Secret Secret `koanf:"secret"`
+}
+
+// Auth — сессии и токены админки (server/internal/auth/session).
+type Auth struct {
+	// SigningKeys — первый подписывает, остальные только проверяют (ротация). Секрет ≥ 32 байт.
+	SigningKeys       []SigningKey  `koanf:"signing_keys"`
+	AccessTTL         time.Duration `koanf:"access_ttl"`
+	IdleTTL           time.Duration `koanf:"idle_ttl"`
+	RememberTTL       time.Duration `koanf:"remember_ttl"`
+	MaxLifetime       time.Duration `koanf:"max_lifetime"`
+	RefreshReuseGrace time.Duration `koanf:"refresh_reuse_grace"`
+	TouchEvery        time.Duration `koanf:"touch_every"`
+}
+
+// Password — параметры Argon2id новых хэшей (server/internal/auth/password).
+type Password struct {
+	MemoryKiB   uint32 `koanf:"memory_kib"`
+	Iterations  uint32 `koanf:"iterations"`
+	Parallelism uint8  `koanf:"parallelism"`
+	// MaxConcurrent — одновременных хэшей; 0 — 2 × GOMAXPROCS.
+	MaxConcurrent int `koanf:"max_concurrent"`
+}
+
+// RateLimit — именованные лимиты (server/internal/auth/ratelimit).
+type RateLimit struct {
+	Enable   []string `koanf:"enable"`
+	Disable  []string `koanf:"disable"`
+	FailOpen bool     `koanf:"fail_open"`
+}
+
+// Agent — всё, что связано с агентами ПК.
+type Agent struct {
+	// InstanceID — id инстанса в кластере ([A-Za-z0-9_-]{1,64}); пусто — имя хоста.
+	InstanceID string      `koanf:"instance_id"`
+	GRPC       AgentGRPC   `koanf:"grpc"`
+	PKI        AgentPKI    `koanf:"pki"`
+	Enroll     AgentEnroll `koanf:"enroll"`
+	Cert       AgentCert   `koanf:"cert"`
+	CertCache  CertCache   `koanf:"cert_cache"`
+	Stream     AgentStream `koanf:"stream"`
+	Sweeper    Sweeper     `koanf:"sweeper"`
+	Guest      AgentGuest  `koanf:"guest"`
+}
+
+// AgentGuest — API гостя на ПК (agent/guestapi). Нули и пустые строки — значения пакета по умолчанию.
+type AgentGuest struct {
+	// TokenTTL — срок токена гостя (0 — 12 ч).
+	TokenTTL time.Duration `koanf:"token_ttl"`
+	// IdempotencyTTL — хранение ответов по ключу идемпотентности (0 — 24 ч).
+	IdempotencyTTL time.Duration `koanf:"idempotency_ttl"`
+	// QRBaseURL — сайт для ссылки QR-входа (пусто — https://zafiro.kz).
+	QRBaseURL string `koanf:"qr_base_url"`
+	// PublicBaseURL — адрес картинок (логотип, новости); пусто — QRBaseURL.
+	PublicBaseURL string `koanf:"public_base_url"`
+	// QRPollEvery — период проверки статуса QR-входа (0 — 3 с).
+	QRPollEvery time.Duration `koanf:"qr_poll_every"`
+}
+
+// AgentGRPC — gRPC-сервер агентов (mTLS).
+type AgentGRPC struct {
+	Listen string `koanf:"listen"`
+	// Endpoint — публичный адрес AgentService, который получает агент в ответе Enroll.
+	Endpoint string `koanf:"endpoint"`
+}
+
+// AgentPKI — CA агентов и серверный сертификат gRPC (server/internal/pki).
+type AgentPKI struct {
+	CACertFile string `koanf:"ca_cert_file"`
+	// CAKeyFile — путь к ключу CA (сам путь не секрет, файл — секрет вне репозитория).
+	CAKeyFile      string `koanf:"ca_key_file"`
+	ServerCertFile string `koanf:"server_cert_file"`
+	ServerKeyFile  string `koanf:"server_key_file"`
+	// DevDir — только dev/test: PKI генерируется в этой папке при первом запуске.
+	DevDir string `koanf:"dev_dir"`
+	// DevHosts — имена/IP dev-сертификата сервера (пусто — localhost, 127.0.0.1, ::1).
+	DevHosts []string `koanf:"dev_hosts"`
+}
+
+// AgentEnroll — коды регистрации ПК.
+type AgentEnroll struct {
+	// CodePepper — секрет HMAC кодов (≥ 32 байт), общий для всех инстансов.
+	CodePepper Secret        `koanf:"code_pepper"`
+	CodeTTL    time.Duration `koanf:"code_ttl"`
+}
+
+// AgentCert — клиентские сертификаты агентов.
+type AgentCert struct {
+	Lifetime time.Duration `koanf:"lifetime"`
+}
+
+// CertCache — кэш действующих сертификатов (enroll.CertCache).
+type CertCache struct {
+	Refresh    time.Duration `koanf:"refresh"`
+	FullReload time.Duration `koanf:"full_reload"`
+}
+
+// AgentStream — поток Connect (agent/stream), docs/open-questions/stage2-agent-stream.md AS-12.
+type AgentStream struct {
+	PresenceTTL    time.Duration `koanf:"presence_ttl"`
+	OfflineGrace   time.Duration `koanf:"offline_grace"`
+	HelloTimeout   time.Duration `koanf:"hello_timeout"`
+	StatusInterval time.Duration `koanf:"status_interval"`
+	StateDebounce  time.Duration `koanf:"state_debounce"`
+	AckTimeout     time.Duration `koanf:"ack_timeout"`
+	KeyPrefix      string        `koanf:"key_prefix"`
+	SubjectPrefix  string        `koanf:"subject_prefix"`
+	// DrainWithin — окно, в котором агенты переподключаются при плановой остановке (Drain).
+	DrainWithin time.Duration `koanf:"drain_within"`
+}
+
+// Sweeper — фоновая проверка присутствия (presence.Sweeper).
+type Sweeper struct {
+	Interval         time.Duration `koanf:"interval"`
+	ReconcileEvery   time.Duration `koanf:"reconcile_every"`
+	CommandRetention time.Duration `koanf:"command_retention"`
+}
+
+// Events — поток событий JetStream.
+type Events struct {
+	Stream EventsStream `koanf:"stream"`
+}
+
+// EventsStream — outbox.StreamOptions.
+type EventsStream struct {
+	MaxAge     time.Duration `koanf:"max_age"`
+	Duplicates time.Duration `koanf:"duplicates"`
+	Replicas   int           `koanf:"replicas"`
+}
+
+// Outbox — публикатор outbox → JetStream.
+type Outbox struct {
+	BatchSize int           `koanf:"batch_size"`
+	Interval  time.Duration `koanf:"interval"`
+	Retention time.Duration `koanf:"retention"`
+}
+
+// Webhooks — доставка вебхуков.
+type Webhooks struct {
+	RequireHTTPS      bool            `koanf:"require_https"`
+	AllowPrivateHosts bool            `koanf:"allow_private_hosts"`
+	Timeout           time.Duration   `koanf:"timeout"`
+	ConnectTimeout    time.Duration   `koanf:"connect_timeout"`
+	Backoff           []time.Duration `koanf:"backoff"`
+	DisableAfter      int             `koanf:"disable_after"`
+	Workers           int             `koanf:"workers"`
+	PollInterval      time.Duration   `koanf:"poll_interval"`
+}
+
+// Realtime — WebSocket админки (/ws).
+type Realtime struct {
+	MaxConnsPerUser int           `koanf:"max_conns_per_user"`
+	SendBuffer      int           `koanf:"send_buffer"`
+	PingInterval    time.Duration `koanf:"ping_interval"`
+	PingTimeout     time.Duration `koanf:"ping_timeout"`
+	MaxLifetime     time.Duration `koanf:"max_lifetime"`
+	OriginPatterns  []string      `koanf:"origin_patterns"`
+}
+
+// Workers — периодические задачи.
+type Workers struct {
+	ExpireSessions ExpireSessions `koanf:"expire_sessions"`
+	Partitions     Partitions     `koanf:"partitions"`
+}
+
+// ExpireSessions — снятие истёкших сессий ПК (worker.ExpireSessions).
+type ExpireSessions struct {
+	Interval time.Duration `koanf:"interval"`
+}
+
+// Partitions — создание месячных партиций (db.EnsurePartitions, Q-081).
+type Partitions struct {
+	Interval time.Duration `koanf:"interval"`
+	// Months — на сколько месяцев вперёд (включая текущий) должны существовать партиции.
+	Months int `koanf:"months"`
+}
+
+// Defaults возвращает значения по умолчанию (плоские ключи koanf). Каждый ключ конфигурации обязан быть
+// здесь: по этому списку имена переменных окружения сопоставляются ключам.
 func Defaults() map[string]any {
 	return map[string]any{
 		"env":                      "dev",
-		"shutdown_timeout":         "15s",
+		"shutdown_timeout":         "30s",
 		"http.addr":                ":8080",
 		"http.read_header_timeout": "5s",
 		"http.read_timeout":        "30s",
@@ -110,12 +313,106 @@ func Defaults() map[string]any {
 		"http.max_header_bytes":    1 << 20,
 		"http.trusted_proxies":     []string{},
 		"database.url":             "",
+		"database.platform_url":    "",
 		"valkey.addr":              "localhost:6379",
 		"valkey.password":          "",
 		"nats.url":                 "nats://localhost:4222",
 		"log.level":                "info",
 		"log.format":               "json",
+
+		"auth.signing_keys":        []any{},
+		"auth.access_ttl":          "10m",
+		"auth.idle_ttl":            "120m",
+		"auth.remember_ttl":        "720h",
+		"auth.max_lifetime":        "720h",
+		"auth.refresh_reuse_grace": "10s",
+		"auth.touch_every":         "1m",
+
+		"password.memory_kib":     19456,
+		"password.iterations":     2,
+		"password.parallelism":    1,
+		"password.max_concurrent": 0,
+
+		"ratelimit.enable":    []string{},
+		"ratelimit.disable":   []string{},
+		"ratelimit.fail_open": false,
+
+		"agent.instance_id":               "",
+		"agent.grpc.listen":               ":8443",
+		"agent.grpc.endpoint":             "localhost:8443",
+		"agent.pki.ca_cert_file":          "",
+		"agent.pki.ca_key_file":           "",
+		"agent.pki.server_cert_file":      "",
+		"agent.pki.server_key_file":       "",
+		"agent.pki.dev_dir":               "",
+		"agent.pki.dev_hosts":             []string{},
+		"agent.enroll.code_pepper":        "",
+		"agent.enroll.code_ttl":           "15m",
+		"agent.cert.lifetime":             "720h",
+		"agent.cert_cache.refresh":        "5s",
+		"agent.cert_cache.full_reload":    "10m",
+		"agent.stream.presence_ttl":       "90s",
+		"agent.stream.offline_grace":      "15s",
+		"agent.stream.hello_timeout":      "10s",
+		"agent.stream.status_interval":    "60s",
+		"agent.stream.state_debounce":     "5s",
+		"agent.stream.ack_timeout":        "30s",
+		"agent.stream.key_prefix":         "zafiro:agent:",
+		"agent.stream.subject_prefix":     "zafiro.agent",
+		"agent.stream.drain_within":       "10s",
+		"agent.guest.token_ttl":           "0s",
+		"agent.guest.idempotency_ttl":     "0s",
+		"agent.guest.qr_base_url":         "",
+		"agent.guest.public_base_url":     "",
+		"agent.guest.qr_poll_every":       "0s",
+		"agent.sweeper.interval":          "5s",
+		"agent.sweeper.reconcile_every":   "5m",
+		"agent.sweeper.command_retention": "168h",
+
+		"events.stream.max_age":    "72h",
+		"events.stream.duplicates": "10m",
+		"events.stream.replicas":   1,
+
+		"outbox.batch_size": 100,
+		"outbox.interval":   "2s",
+		"outbox.retention":  "24h",
+
+		"webhooks.require_https":       true,
+		"webhooks.allow_private_hosts": false,
+		"webhooks.timeout":             "5s",
+		"webhooks.connect_timeout":     "3s",
+		"webhooks.backoff":             []string{"10s", "60s", "300s", "1800s", "7200s"},
+		"webhooks.disable_after":       20,
+		"webhooks.workers":             8,
+		"webhooks.poll_interval":       "5s",
+
+		"realtime.max_conns_per_user": 5,
+		"realtime.send_buffer":        64,
+		"realtime.ping_interval":      "25s",
+		"realtime.ping_timeout":       "10s",
+		"realtime.max_lifetime":       "0s",
+		"realtime.origin_patterns":    []string{},
+
+		"workers.expire_sessions.interval": "1m",
+		"workers.partitions.interval":      "24h",
+		"workers.partitions.months":        3,
 	}
+}
+
+// envKeys — ZAFIRO_<КЛЮЧ> → ключ koanf и признак списка.
+type envKey struct {
+	key  string
+	list bool
+}
+
+func envIndex() map[string]envKey {
+	idx := map[string]envKey{}
+	for k, v := range Defaults() {
+		name := strings.ToUpper(strings.ReplaceAll(k, ".", "_"))
+		_, list := v.([]string)
+		idx[name] = envKey{key: k, list: list}
+	}
+	return idx
 }
 
 // Load собирает конфигурацию. path — необязательный путь к YAML-файлу
@@ -140,23 +437,104 @@ func Load(path string, environ func() []string) (*Config, error) {
 		}
 	}
 
+	idx := envIndex()
+	var envErr error
 	envProvider := env.Provider(".", env.Opt{
-		Prefix:        EnvPrefix,
-		TransformFunc: transformEnv,
-		EnvironFunc:   environ,
+		Prefix: EnvPrefix,
+		TransformFunc: func(name, v string) (string, any) {
+			e, ok := idx[strings.TrimPrefix(name, EnvPrefix)]
+			if !ok {
+				return "", nil // неизвестная переменная (в т.ч. ZAFIRO_CONFIG_FILE, ZAFIRO_TEST_*)
+			}
+			if e.key == "auth.signing_keys" {
+				keys, err := parseSigningKeys(v)
+				if err != nil {
+					envErr = err
+					return "", nil
+				}
+				return e.key, keys
+			}
+			if e.list {
+				return e.key, splitList(v)
+			}
+			return e.key, v
+		},
+		EnvironFunc: environ,
 	})
 	if err := k.Load(envProvider, nil); err != nil {
 		return nil, fmt.Errorf("config: env: %w", err)
+	}
+	if envErr != nil {
+		return nil, fmt.Errorf("config: %w", envErr)
 	}
 
 	var cfg Config
 	if err := k.Unmarshal("", &cfg); err != nil {
 		return nil, fmt.Errorf("config: decode: %w", err)
 	}
+	cfg.applyDerived()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// parseSigningKeys разбирает "kid:секрет,kid2:секрет2". Текст ошибки не содержит секретов.
+func parseSigningKeys(v string) ([]any, error) {
+	out := []any{}
+	for i, part := range splitList(v) {
+		id, secret, ok := strings.Cut(part, ":")
+		if !ok || id == "" || secret == "" {
+			return nil, fmt.Errorf("auth.signing_keys: элемент %d: ожидается kid:секрет", i+1)
+		}
+		out = append(out, map[string]any{"id": id, "secret": secret})
+	}
+	return out, nil
+}
+
+// applyDerived заполняет значения, зависящие от окружения: id инстанса, dev-PKI и случайные секреты
+// для dev/test.
+func (c *Config) applyDerived() {
+	if c.Agent.InstanceID == "" {
+		c.Agent.InstanceID = defaultInstanceID()
+	}
+	if c.Env == "prod" {
+		return
+	}
+	if c.Agent.PKI.DevDir == "" && c.Agent.PKI.CACertFile == "" && c.Agent.PKI.ServerCertFile == "" {
+		c.Agent.PKI.DevDir = DevPKIDir
+	}
+	if len(c.Auth.SigningKeys) == 0 {
+		c.Auth.SigningKeys = []SigningKey{{ID: "dev", Secret: randomSecret(32)}}
+		c.Generated = append(c.Generated, "auth.signing_keys")
+	}
+	if c.Agent.Enroll.CodePepper.IsZero() {
+		c.Agent.Enroll.CodePepper = randomSecret(32)
+		c.Generated = append(c.Generated, "agent.enroll.code_pepper")
+	}
+}
+
+var instanceRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+var keyIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,16}$`)
+
+// defaultInstanceID — имя хоста, приведённое к [A-Za-z0-9_-]{1,64}.
+func defaultInstanceID() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		h = "zafiro"
+	}
+	b := []byte(h)
+	for i, ch := range b {
+		ok := ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_' || ch == '-'
+		if !ok {
+			b[i] = '-'
+		}
+	}
+	if len(b) > 64 {
+		b = b[:64]
+	}
+	return string(b)
 }
 
 func lookup(environ func() []string, key string) string {
@@ -166,24 +544,6 @@ func lookup(environ func() []string, key string) string {
 		}
 	}
 	return ""
-}
-
-// transformEnv переводит ZAFIRO_HTTP_READ_TIMEOUT → http.read_timeout.
-func transformEnv(k, v string) (string, any) {
-	key := strings.ToLower(strings.TrimPrefix(k, EnvPrefix))
-	if key == "config_file" {
-		return "", nil
-	}
-	for _, s := range sections {
-		if rest, ok := strings.CutPrefix(key, s+"_"); ok {
-			key = s + "." + rest
-			break
-		}
-	}
-	if key == "http.trusted_proxies" {
-		return key, splitList(v)
-	}
-	return key, v
 }
 
 func splitList(v string) []string {
@@ -196,65 +556,232 @@ func splitList(v string) []string {
 	return out
 }
 
+// Standalone — режим без зависимостей: не задан database.url, работают только /healthz, /readyz и фронт.
+// Для смоук-теста собранного бинарника в CI; в prod запрещён валидацией.
+func (c *Config) Standalone() bool { return c.Database.URL.IsZero() }
+
 // Validate проверяет значения. Сообщения об ошибках не содержат секретов.
 func (c *Config) Validate() error {
 	var errs []error
+	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
+	prod := c.Env == "prod"
 	switch c.Env {
 	case "dev", "test", "prod":
 	default:
-		errs = append(errs, fmt.Errorf("env: ожидается dev|test|prod, получено %q", c.Env))
+		add("env: ожидается dev|test|prod, получено %q", c.Env)
 	}
 	if c.ShutdownTimeout <= 0 {
-		errs = append(errs, errors.New("shutdown_timeout: должен быть > 0"))
+		add("shutdown_timeout: должен быть > 0")
 	}
 	if c.HTTP.Addr == "" {
-		errs = append(errs, errors.New("http.addr: пусто"))
+		add("http.addr: пусто")
 	} else if _, _, err := net.SplitHostPort(c.HTTP.Addr); err != nil {
-		errs = append(errs, fmt.Errorf("http.addr: %w", err))
+		add("http.addr: %w", err)
 	}
-	for name, d := range map[string]time.Duration{
-		"http.read_header_timeout": c.HTTP.ReadHeaderTimeout,
-		"http.read_timeout":        c.HTTP.ReadTimeout,
-		"http.write_timeout":       c.HTTP.WriteTimeout,
-		"http.idle_timeout":        c.HTTP.IdleTimeout,
-		"http.request_timeout":     c.HTTP.RequestTimeout,
-	} {
+	positive := map[string]time.Duration{
+		"http.read_header_timeout":         c.HTTP.ReadHeaderTimeout,
+		"http.read_timeout":                c.HTTP.ReadTimeout,
+		"http.write_timeout":               c.HTTP.WriteTimeout,
+		"http.idle_timeout":                c.HTTP.IdleTimeout,
+		"http.request_timeout":             c.HTTP.RequestTimeout,
+		"auth.access_ttl":                  c.Auth.AccessTTL,
+		"auth.idle_ttl":                    c.Auth.IdleTTL,
+		"auth.remember_ttl":                c.Auth.RememberTTL,
+		"auth.max_lifetime":                c.Auth.MaxLifetime,
+		"auth.refresh_reuse_grace":         c.Auth.RefreshReuseGrace,
+		"auth.touch_every":                 c.Auth.TouchEvery,
+		"agent.enroll.code_ttl":            c.Agent.Enroll.CodeTTL,
+		"agent.cert.lifetime":              c.Agent.Cert.Lifetime,
+		"agent.cert_cache.refresh":         c.Agent.CertCache.Refresh,
+		"agent.cert_cache.full_reload":     c.Agent.CertCache.FullReload,
+		"agent.stream.presence_ttl":        c.Agent.Stream.PresenceTTL,
+		"agent.stream.offline_grace":       c.Agent.Stream.OfflineGrace,
+		"agent.stream.hello_timeout":       c.Agent.Stream.HelloTimeout,
+		"agent.stream.status_interval":     c.Agent.Stream.StatusInterval,
+		"agent.stream.state_debounce":      c.Agent.Stream.StateDebounce,
+		"agent.stream.ack_timeout":         c.Agent.Stream.AckTimeout,
+		"agent.sweeper.interval":           c.Agent.Sweeper.Interval,
+		"agent.sweeper.reconcile_every":    c.Agent.Sweeper.ReconcileEvery,
+		"agent.sweeper.command_retention":  c.Agent.Sweeper.CommandRetention,
+		"events.stream.max_age":            c.Events.Stream.MaxAge,
+		"events.stream.duplicates":         c.Events.Stream.Duplicates,
+		"outbox.interval":                  c.Outbox.Interval,
+		"outbox.retention":                 c.Outbox.Retention,
+		"webhooks.timeout":                 c.Webhooks.Timeout,
+		"webhooks.connect_timeout":         c.Webhooks.ConnectTimeout,
+		"webhooks.poll_interval":           c.Webhooks.PollInterval,
+		"realtime.ping_interval":           c.Realtime.PingInterval,
+		"realtime.ping_timeout":            c.Realtime.PingTimeout,
+		"workers.expire_sessions.interval": c.Workers.ExpireSessions.Interval,
+		"workers.partitions.interval":      c.Workers.Partitions.Interval,
+	}
+	for name, d := range positive {
 		if d <= 0 {
-			errs = append(errs, fmt.Errorf("%s: должен быть > 0", name))
+			add("%s: должен быть > 0", name)
 		}
 	}
+	if c.Agent.Stream.DrainWithin < 0 {
+		add("agent.stream.drain_within: должен быть ≥ 0")
+	}
+	if c.Realtime.MaxLifetime < 0 {
+		add("realtime.max_lifetime: должен быть ≥ 0")
+	}
+	if c.Auth.AccessTTL > 0 && c.Auth.IdleTTL > 0 && c.Auth.AccessTTL > c.Auth.IdleTTL {
+		add("auth.access_ttl: должен быть ≤ auth.idle_ttl")
+	}
 	if c.HTTP.MaxHeaderBytes <= 0 {
-		errs = append(errs, errors.New("http.max_header_bytes: должен быть > 0"))
+		add("http.max_header_bytes: должен быть > 0")
 	}
 	if _, err := c.HTTP.TrustedPrefixes(); err != nil {
 		errs = append(errs, err)
 	}
-	if c.Database.URL != "" {
-		u, err := url.Parse(c.Database.URL)
-		if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
-			// Не включаем err: он может содержать DSN с паролем.
-			errs = append(errs, errors.New("database.url: ожидается postgres://… или postgresql://…"))
+
+	// База: два DSN (zafiro_app и zafiro_platform).
+	if c.Database.URL.IsZero() {
+		if prod {
+			add("database.url: обязателен в prod")
+		}
+	} else {
+		if !validPostgresURL(c.Database.URL) {
+			// Не включаем ошибку разбора: она может содержать DSN с паролем.
+			add("database.url: ожидается postgres://… или postgresql://…")
+		}
+		if c.Database.PlatformURL.IsZero() {
+			add("database.platform_url: обязателен вместе с database.url (логин роли zafiro_platform)")
+		} else if !validPostgresURL(c.Database.PlatformURL) {
+			add("database.platform_url: ожидается postgres://… или postgresql://…")
+		} else if c.Database.PlatformURL == c.Database.URL {
+			add("database.platform_url: должен быть другим логином, чем database.url (роли zafiro_platform и zafiro_app)")
 		}
 	}
-	if c.NATS.URL != "" {
-		if u, err := url.Parse(c.NATS.URL); err != nil || u.Host == "" {
-			errs = append(errs, errors.New("nats.url: некорректный URL"))
+	if c.Valkey.Addr == "" {
+		add("valkey.addr: пусто")
+	} else if _, _, err := net.SplitHostPort(c.Valkey.Addr); err != nil {
+		add("valkey.addr: %w", err)
+	}
+	if !c.NATS.URL.IsZero() {
+		if u, err := url.Parse(c.NATS.URL.Reveal()); err != nil || u.Host == "" {
+			add("nats.url: некорректный URL")
 		}
+	} else if !c.Standalone() {
+		add("nats.url: пусто")
 	}
 	switch c.Log.Level {
 	case "debug", "info", "warn", "error":
 	default:
-		errs = append(errs, fmt.Errorf("log.level: ожидается debug|info|warn|error, получено %q", c.Log.Level))
+		add("log.level: ожидается debug|info|warn|error, получено %q", c.Log.Level)
 	}
 	switch c.Log.Format {
 	case "json", "text":
 	default:
-		errs = append(errs, fmt.Errorf("log.format: ожидается json|text, получено %q", c.Log.Format))
+		add("log.format: ожидается json|text, получено %q", c.Log.Format)
 	}
+
+	// Авторизация.
+	if len(c.Auth.SigningKeys) == 0 {
+		add("auth.signing_keys: нужен хотя бы один ключ (ZAFIRO_AUTH_SIGNING_KEYS=kid:секрет)")
+	}
+	seen := map[string]bool{}
+	for i, k := range c.Auth.SigningKeys {
+		if !keyIDRe.MatchString(k.ID) {
+			add("auth.signing_keys[%d].id: ожидается [A-Za-z0-9_-]{1,16}", i)
+		}
+		if seen[k.ID] {
+			add("auth.signing_keys[%d].id: повтор %q", i, k.ID)
+		}
+		seen[k.ID] = true
+		if len(k.Secret.Reveal()) < 32 {
+			add("auth.signing_keys[%d].secret: нужно не меньше 32 байт", i)
+		}
+	}
+	if c.Password.Iterations < 1 {
+		add("password.iterations: должен быть ≥ 1")
+	}
+	if c.Password.Parallelism < 1 {
+		add("password.parallelism: должен быть ≥ 1")
+	}
+	if c.Password.MemoryKiB < 8*uint32(c.Password.Parallelism) {
+		add("password.memory_kib: должен быть ≥ 8 × parallelism")
+	}
+	if c.Password.MaxConcurrent < 0 {
+		add("password.max_concurrent: должен быть ≥ 0")
+	}
+
+	// Агент.
+	if !instanceRe.MatchString(c.Agent.InstanceID) {
+		add("agent.instance_id: ожидается [A-Za-z0-9_-]{1,64}, получено %q", c.Agent.InstanceID)
+	}
+	if c.Agent.GRPC.Listen == "" {
+		add("agent.grpc.listen: пусто")
+	} else if _, _, err := net.SplitHostPort(c.Agent.GRPC.Listen); err != nil {
+		add("agent.grpc.listen: %w", err)
+	}
+	if c.Agent.GRPC.Endpoint == "" {
+		add("agent.grpc.endpoint: пусто")
+	}
+	pki := c.Agent.PKI
+	files := pki.CACertFile != "" || pki.CAKeyFile != "" || pki.ServerCertFile != "" || pki.ServerKeyFile != ""
+	if files && (pki.CACertFile == "" || pki.CAKeyFile == "" || pki.ServerCertFile == "" || pki.ServerKeyFile == "") {
+		add("agent.pki: нужны все четыре файла: ca_cert_file, ca_key_file, server_cert_file, server_key_file")
+	}
+	if prod && pki.DevDir != "" {
+		add("agent.pki.dev_dir: запрещён в prod — задайте файлы CA и серверного сертификата")
+	}
+	if prod && !files {
+		add("agent.pki: в prod нужны ca_cert_file, ca_key_file, server_cert_file, server_key_file")
+	}
+	if len(c.Agent.Enroll.CodePepper.Reveal()) < 32 {
+		add("agent.enroll.code_pepper: нужно не меньше 32 байт")
+	}
+	if c.Agent.Guest.TokenTTL < 0 || c.Agent.Guest.IdempotencyTTL < 0 || c.Agent.Guest.QRPollEvery < 0 {
+		add("agent.guest.*: длительности должны быть ≥ 0")
+	}
+	for name, raw := range map[string]string{"agent.guest.qr_base_url": c.Agent.Guest.QRBaseURL, "agent.guest.public_base_url": c.Agent.Guest.PublicBaseURL} {
+		if raw == "" {
+			continue
+		}
+		if u, err := url.Parse(raw); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			add("%s: ожидается http(s)://хост", name)
+		}
+	}
+	if c.Agent.Stream.KeyPrefix == "" || c.Agent.Stream.SubjectPrefix == "" {
+		add("agent.stream.key_prefix и agent.stream.subject_prefix: не должны быть пустыми")
+	}
+
+	// События и вебхуки.
+	if c.Events.Stream.Replicas < 1 || c.Events.Stream.Replicas > 5 {
+		add("events.stream.replicas: ожидается 1..5")
+	}
+	if c.Outbox.BatchSize < 1 {
+		add("outbox.batch_size: должен быть ≥ 1")
+	}
+	if len(c.Webhooks.Backoff) == 0 {
+		add("webhooks.backoff: пусто")
+	}
+	for i, d := range c.Webhooks.Backoff {
+		if d <= 0 {
+			add("webhooks.backoff[%d]: должен быть > 0", i)
+		}
+	}
+	if c.Webhooks.DisableAfter < 1 || c.Webhooks.Workers < 1 {
+		add("webhooks.disable_after и webhooks.workers: должны быть ≥ 1")
+	}
+	if c.Realtime.MaxConnsPerUser < 1 || c.Realtime.SendBuffer < 1 {
+		add("realtime.max_conns_per_user и realtime.send_buffer: должны быть ≥ 1")
+	}
+	if c.Workers.Partitions.Months < 1 || c.Workers.Partitions.Months > 24 {
+		add("workers.partitions.months: ожидается 1..24")
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("config: %w", errors.Join(errs...))
 	}
 	return nil
+}
+
+func validPostgresURL(s Secret) bool {
+	u, err := url.Parse(s.Reveal())
+	return err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql")
 }
 
 // TrustedPrefixes разбирает TrustedProxies (IP или CIDR) в netip.Prefix.
@@ -291,15 +818,12 @@ func RedactURL(raw string) string {
 	return u.Redacted()
 }
 
-func redactSecret(s string) string {
-	if s == "" {
-		return ""
-	}
-	return redacted
-}
-
-// LogValue реализует slog.LogValuer: секреты замаскированы.
+// LogValue реализует slog.LogValuer: секреты замаскированы, у DSN виден только хост и база.
 func (c *Config) LogValue() slog.Value {
+	keyIDs := make([]string, 0, len(c.Auth.SigningKeys))
+	for _, k := range c.Auth.SigningKeys {
+		keyIDs = append(keyIDs, k.ID)
+	}
 	return slog.GroupValue(
 		slog.String("env", c.Env),
 		slog.Duration("shutdown_timeout", c.ShutdownTimeout),
@@ -309,12 +833,24 @@ func (c *Config) LogValue() slog.Value {
 			slog.Duration("request_timeout", c.HTTP.RequestTimeout),
 			slog.Any("trusted_proxies", c.HTTP.TrustedProxies),
 		),
-		slog.String("database_url", RedactURL(c.Database.URL)),
+		slog.String("database_url", RedactURL(c.Database.URL.Reveal())),
+		slog.String("database_platform_url", RedactURL(c.Database.PlatformURL.Reveal())),
 		slog.String("valkey_addr", c.Valkey.Addr),
-		slog.String("valkey_password", redactSecret(c.Valkey.Password)),
-		slog.String("nats_url", RedactURL(c.NATS.URL)),
+		slog.Any("valkey_password", c.Valkey.Password),
+		slog.String("nats_url", RedactURL(c.NATS.URL.Reveal())),
 		slog.String("log_level", c.Log.Level),
 		slog.String("log_format", c.Log.Format),
+		slog.Any("auth_signing_key_ids", keyIDs),
+		slog.Group("agent",
+			slog.String("instance_id", c.Agent.InstanceID),
+			slog.String("grpc_listen", c.Agent.GRPC.Listen),
+			slog.String("grpc_endpoint", c.Agent.GRPC.Endpoint),
+			slog.String("pki_ca_cert_file", c.Agent.PKI.CACertFile),
+			slog.String("pki_server_cert_file", c.Agent.PKI.ServerCertFile),
+			slog.String("pki_dev_dir", c.Agent.PKI.DevDir),
+			slog.Any("enroll_code_pepper", c.Agent.Enroll.CodePepper),
+		),
+		slog.Any("generated_secrets", c.Generated),
 	)
 }
 

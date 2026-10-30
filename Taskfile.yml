@@ -63,11 +63,17 @@ tasks:
       - "{{.COMPOSE}} down"
 
   db:migrate:
-    desc: Применить миграции goose (db/migrations) к GOOSE_DBSTRING из .env
+    desc: Применить миграции goose (db/migrations) под владельцем схемы (GOOSE_DBSTRING из .env, не логин сервера)
     env:
       GOOSE_DRIVER: postgres
     cmds:
       - goose -dir db/migrations up
+
+  db:logins:
+    desc: Создать/обновить логины сервера (члены zafiro_app и zafiro_platform) в Postgres из compose — для тома, созданного до db/init
+    deps: [env]
+    cmds:
+      - "{{.COMPOSE}} exec -T postgres /docker-entrypoint-initdb.d/10-zafiro-logins.sh"
 
   db:status:
     desc: Статус миграций goose
@@ -89,8 +95,10 @@ tasks:
     deps: [dev:server, dev:web]
 
   dev:server:
-    desc: Только сервер Go (go run)
+    desc: Только сервер Go (go run); HTTP :8080, gRPC агентов :8443 (dev-PKI в .dev/pki)
     dir: server
+    env:
+      ZAFIRO_AGENT_PKI_DEV_DIR: "{{.ROOT_DIR}}/.dev/pki"
     cmds:
       - go run ./cmd/zafiro
 
