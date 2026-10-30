@@ -1,0 +1,39 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — public
+  version: 0.1.0
+  description: |
+    Публичные страницы без входа: лендинг (LandingController). Остальное публичное — не JSON и не в этом файле:
+    /offline (PwaController::offline, HTML), /manifest.webmanifest (PwaController::manifest), /docs/api/openapi.yaml
+    (спецификация Integration API v1) — server/internal/http/sections/public; /wiki — server/internal/webui/wiki.go.
+    Конвенции — api/README.md.
+servers:
+  - url: /
+security: []
+paths:
+  /api/landing:
+    get:
+      operationId: getLanding
+      tags: [public]
+      summary: Данные лендинга
+      description: |
+        LandingController: наибольший пробный период активных планов (SaasPlan::max('trial_days') ?: 14) и ссылка на
+        установщик агента (AgentUpdate::downloadUrl() ?? AGENT_DOWNLOAD — последний релиз на GitHub).
+      responses:
+        "200":
+          description: Данные.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Landing"
+components:
+  schemas:
+    Landing:
+      type: object
+      required: [trial_days, download_url]
+      properties:
+        trial_days:
+          type: integer
+          format: int64
+        download_url:
+          type: string

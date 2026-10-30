@@ -1,26 +1,30 @@
 /*
- * Zafiro service worker.
- * - Pages are never cached: they hold live club data, CSRF tokens and differ per user
- *   and club. Without a network a navigation gets the offline page instead.
- * - Built assets (/build/*, file names change with every build) are cache-first.
- * - Icons, images and fonts are served from cache and refreshed in the background.
- * - API calls, form posts and everything else go straight to the network.
+ * Zafiro service worker (перенос public/sw.js старого проекта под сборку Vite; решение Q-068).
+ * - Страницы не кэшируются (как в старом): index.html ссылается на ассеты текущей сборки, данные клуба живые.
+ *   Без сети переход (navigate) получает офлайн-страницу /offline (её HTML с текстами на всех языках отдаёт сервер).
+ * - Ассеты сборки Vite (/assets/*: JS, CSS, шрифты из npm — имя меняется с каждой сборкой) — сначала из кэша.
+ * - Иконки и картинки (/icons/*, /images/*) — из кэша с обновлением в фоне.
+ * - API (/api/*), WebSocket (/ws), отправка форм и всё остальное — сразу в сеть.
+ * - Внешних источников нет (шрифты и иконки — из npm в сборке, Q-064), поэтому правил для CDN нет.
  */
-const VERSION = 'v2';
+const VERSION = 'v3';
 const OFFLINE_URL = '/offline';
 const PAGES = `zafiro-pages-${VERSION}`;
-const ASSETS = 'zafiro-assets';
+const ASSETS = `zafiro-assets-${VERSION}`;
 const STATIC = 'zafiro-static';
-const MAX_ASSETS = 60;
+// Сборка Vite делится на чанки по страницам: держим больше файлов, чем 60 у старой (/build/* — несколько файлов).
+const MAX_ASSETS = 200;
+const KEEP = [PAGES, ASSETS, STATIC];
 
 self.addEventListener('install', (event) => {
     event.waitUntil(caches.open(PAGES).then((cache) => cache.addAll([OFFLINE_URL, '/icons/icon-192.png'])).then(() => self.skipWaiting()));
 });
 
+// Удаляем кэши прежних версий, в том числе старого Laravel (zafiro-pages-v2, zafiro-assets с /build/*).
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys()
-            .then((keys) => Promise.all(keys.filter((key) => key.startsWith('zafiro-pages-') && key !== PAGES).map((key) => caches.delete(key))))
+            .then((keys) => Promise.all(keys.filter((key) => key.startsWith('zafiro-') && !KEEP.includes(key)).map((key) => caches.delete(key))))
             .then(() => self.clients.claim()),
     );
 });
@@ -45,9 +49,9 @@ const cacheFirst = async (request) => {
 
 const staleWhileRevalidate = async (event, request) => {
     const cache = await caches.open(STATIC);
-    const cached = await caches.match(request); // any cache: the offline page's icon is precached
+    const cached = await caches.match(request); // любой кэш: иконка офлайн-страницы закэширована при установке
     const network = fetch(request).then((response) => {
-        if (response.ok || response.type === 'opaque') cache.put(request, response.clone());
+        if (response.ok) cache.put(request, response.clone());
         return response;
     });
     if (cached) {
@@ -61,19 +65,13 @@ self.addEventListener('fetch', (event) => {
     const request = event.request;
     if (request.method !== 'GET') return;
     const url = new URL(request.url);
+    if (url.origin !== self.location.origin) return;
 
     if (request.mode === 'navigate') {
         event.respondWith(fetch(request).catch(() => caches.match(OFFLINE_URL)));
         return;
     }
 
-    if (url.origin === self.location.origin) {
-        if (url.pathname.startsWith('/build/')) event.respondWith(cacheFirst(request));
-        else if (/^\/(icons|images)\//.test(url.pathname)) event.respondWith(staleWhileRevalidate(event, request));
-        return;
-    }
-
-    if (['cdnjs.cloudflare.com', 'fonts.googleapis.com', 'fonts.gstatic.com'].includes(url.hostname)) {
-        event.respondWith(staleWhileRevalidate(event, request));
-    }
+    if (url.pathname.startsWith('/assets/')) event.respondWith(cacheFirst(request));
+    else if (/^\/(icons|images)\//.test(url.pathname)) event.respondWith(staleWhileRevalidate(event, request));
 });

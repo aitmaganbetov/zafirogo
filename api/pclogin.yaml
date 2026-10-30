@@ -1,0 +1,96 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — pclogin
+  version: 0.1.0
+  description: |
+    Вход на ПК по QR-коду с телефона (QrLoginController, QrLogins). ПК показывает QR со ссылкой /pc-login/{code}
+    (gRPC GuestAuthService.CreateQrLogin); гость открывает её на телефоне, входит на сайте (вход с pc_login: true
+    разрешён и клиентам) и подтверждает. ПК узнаёт об одобрении из стрима (WatchQrLogin). Клуб — клуб кода (любой
+    клуб, где гость состоит), не выбранный клуб сессии. Конвенции — api/README.md.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/pc-login/{code}:
+    parameters:
+      - $ref: "#/components/parameters/QrCode"
+    get:
+      operationId: getPcLogin
+      tags: [pclogin]
+      summary: Открытый QR-вход по коду
+      description: |
+        QrLoginController::show() (middleware auth): QrLogins::findOpen() — не подтверждённый, не использованный и не
+        истёкший (5 минут) вход в любом клубе. Нет — open: false («QR-код устарел»).
+      responses:
+        "200":
+          description: Вход и кто подтверждает.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PcLogin"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+    post:
+      operationId: approvePcLogin
+      tags: [pclogin]
+      summary: Войти на ПК
+      description: |
+        QrLoginController::approve() → QrLogins::approve() (throttle:10,1,pc-login.approve). Вход уже не открыт —
+        open: false (в старом — редирект обратно на страницу кода). Ошибки (аккаунт заблокирован, не состоит в
+        клубе, вошёл на другом ПК, подписка клуба не активна, код устарел) — 422 с полем code.
+      responses:
+        "200":
+          description: Подтверждено (approved true) или вход уже не открыт (approved false).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PcLoginApproval"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+        "429":
+          $ref: "common.yaml#/components/responses/TooManyRequests"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+  parameters:
+    QrCode:
+      name: code
+      in: path
+      required: true
+      description: Код из QR — 40 символов [A-Za-z0-9] (routes/web.php where('code', '[A-Za-z0-9]{40}')).
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9]{40}$"
+  schemas:
+    PcLogin:
+      type: object
+      required: [open, user_name]
+      properties:
+        open:
+          type: boolean
+        club_name:
+          type: string
+          nullable: true
+        computer_name:
+          type: string
+          nullable: true
+          description: ClubComputer::displayName().
+        user_name:
+          type: string
+          description: Имя вошедшего (auth()->user()->name).
+    PcLoginApproval:
+      type: object
+      required: [approved]
+      properties:
+        approved:
+          type: boolean

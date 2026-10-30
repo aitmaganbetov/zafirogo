@@ -1,0 +1,69 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — billing
+  version: 0.1.0
+  description: |
+    Экран «Подписка» (BillingController::show, billing/index.blade.php). Право billing.view (club-area), без проверки
+    подписки — сюда ведёт 402 «Подписка клуба не активна.». Конвенции — api/README.md.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/billing:
+    get:
+      operationId: getBilling
+      tags: [billing]
+      summary: Подписка клуба
+      description: |
+        ClubSubscription клуба с планом; нет подписки — subscription: null («Для клуба ещё не оформлена подписка.»).
+      responses:
+        "200":
+          description: Подписка.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Billing"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+  schemas:
+    Billing:
+      type: object
+      required: [subscription]
+      properties:
+        subscription:
+          allOf:
+            - $ref: "#/components/schemas/BillingSubscription"
+          nullable: true
+    BillingSubscription:
+      type: object
+      required: [plan_name, status, state]
+      properties:
+        plan_name:
+          type: string
+          description: SaasPlan.name (шаблон показывает его через __(), как и новый экран).
+        status:
+          type: string
+          enum: [trialing, active, expired, suspended]
+        state:
+          type: string
+          enum: [active, trialing, expired, inactive]
+          description: |
+            Строка «Статус» шаблона: не isActive() — isPastPaidPeriod() ? expired («Истекла») : inactive («Не активна»);
+            иначе trialing («Пробный период») или active («Активна»).
+        trial_ends_at:
+          type: string
+          format: date-time
+          nullable: true
+        current_period_ends_at:
+          type: string
+          format: date-time
+          nullable: true
