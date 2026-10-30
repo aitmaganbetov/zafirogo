@@ -267,3 +267,135 @@ func (s *Store) InClub(ctx context.Context, clubID int64, fn func(q *Queries) er
 - [ ] `agent_certificates` / `agent_enrollment_codes` (одноразовые коды регистрации ПК, серийный номер сертификата, отзыв) —
   вместо `club_computers.agent_token_hash` и ключа установки клуба (решение — в документах API агента).
 - [ ] Outbox событий для NATS (или переиспользование `webhook_deliveries`) — запись события в той же транзакции, что и изменение.
+
+---
+
+## 10. Как реализовано (Этап 1): ledger, аудит, RLS, партиции
+
+Миграции: `0002_ledger.sql`, `0003_audit.sql`, `0004_rls.sql`, `0005_cash_payment_method.sql` (goose up/down/up проверен на
+`postgres:18.6`). Go: `server/internal/db` (пул, `InTenantTx`, партиции), `server/internal/ledger` (`Begin`/`Post`),
+`server/internal/billing/balance*.go` (операции верхнего уровня). Запросы: `db/queries/ledger.sql`, `balances.sql`,
+`transfers.sql`, `audit.sql`. Вопросы — `docs/open-questions/stage1-ledger.md`.
+
+Отличия от плана выше (§4–§7): партиционирование существующих журналов (`activity_logs`, `api_request_logs` и др., §7) **не**
+сделано — только новые таблицы ledger и аудита; номер `0005` занят способом оплаты (Q-013), партиции старых журналов — отдельной
+миграцией. Таблицы `ledger_transactions.cash_transaction_id`/`session_id`/… — ссылки без FK (документы чистятся).
+
+### 10.1. Счета и знак суммы
+
+`ledger_entries.amount` — тиыны со знаком: **> 0 кредит, < 0 дебет**; сумма проводок операции = 0. Для счетов клиента, выручки и
+фондов остаток = `SUM(amount)`; для кассы (актив) остаток = `−SUM(amount)`.
+
+| Счёт (`ledger_accounts.kind`) | Владелец | Смысл | Проекция |
+|---|---|---|---|
+| `member_main` | клиент (`user_id`) | основной баланс | `member_balances.balance` |
+| `member_bonus` | клиент | бонусный баланс | `member_balances.bonus_balance` |
+| `cash_drawer` | клуб | касса (наличные/карта/QR — один остаток, BR-051) | — |
+| `revenue_time` / `revenue_shop` / `revenue_pos` | клуб | выручка: время / магазин агента / POS | — |
+| `bonus_fund` | клуб | бонусный фонд: выпуск бонусов (дебет), их расход и возврат (кредит) | — |
+| `cash_other` | клуб | прочие приходы/расходы кассы (BR-054) | — |
+| `owner_adjustment` | клуб | корректировки владельцем (BR-058), начальный баланс (BR-059) | — |
+| `opening_balance` | клуб | входящие остатки переноса из MySQL | — |
+
+Счета создаются лениво (`UpsertLedgerAccounts`), уникальность — `UNIQUE NULLS NOT DISTINCT (club_id, kind, user_id)`.
+
+Типовые проводки (реализованы в `billing/balance*.go`; остальные — по тому же образцу у владельцев пакетов):
+
+| Операция (`kind`) | Проводки |
+|---|---|
+| `top_up` (BR-053) | счёт клиента +X, `cash_drawer` −X; бонус (BR-041, хук `TopUpBonusFunc`): `member_bonus` +B, `bonus_fund` −B |
+| `top_up_refund` (BR-055) | счёт клиента −X, `cash_drawer` +X; бонус назад `min(B, бонусы)`: `member_bonus` −b, `bonus_fund` +b |
+| `owner_top_up` / `owner_write_off` (BR-058) | счёт клиента ±X, `owner_adjustment` ∓X |
+| `initial_balance` (BR-059) | `member_main` +M, `member_bonus` +B, `owner_adjustment` −(M+B) |
+| `friend_transfer` (BR-091/092) | `member_main` отправителя −X, `member_main` друга +X |
+| покупки `tariff_purchase`, `minutes_purchase`, `shop_order` (`billing.Charge`) | `member_main` −m → выручка +m; `member_bonus` −b → `bonus_fund` +b |
+| возвраты `session_refund`, `shop_order_cancel` (`billing.Credit`) | обратные проводки покупки |
+| `migration_opening_balance` | `member_main`/`member_bonus` ±, `opening_balance` ∓ (может быть < 0, Q-004) |
+| `pos_sale`, `cash_income`, `cash_expense`, `guest_session` (пакет cash) | `cash_drawer` −/+, `revenue_pos` / `cash_other` / `revenue_time` +/− |
+
+### 10.2. Ledger минут — отдельная таблица в той же операции
+
+`ledger_minute_entries` (`user_id`, `time_package_id`, `tariff_id`, `minutes` со знаком) пишется в рамках той же
+`ledger_transactions` (тот же ключ идемпотентности и та же транзакция, что и деньги — например, `session_refund` с возвратом денег и
+сохранённым пакетом). Почему не вид счёта: минуты — другая единица (сумма по клубу смешала бы тиыны и минуты), у них нет второй
+стороны, и инвариант «сумма = 0» к ним неприменим. Проекция — `time_packages.minutes_left` (меняет пакет сессий).
+
+### 10.3. Идемпотентность
+
+- `ledger_idempotency (club_id, idempotency_key)` — PK, **не** партиционирована (глобальная уникальность ключа в клубе невозможна в
+  партиционированной таблице без `created_at`). Хранит `fingerprint` = sha256 канонического JSON `{kind, request}`.
+- `ledger.Begin` захватывает ключ **до** блокировок и проверок (`INSERT … ON CONFLICT DO NOTHING`; параллельный запрос с тем же ключом
+  ждёт COMMIT первого): повтор с тем же телом → прежний результат (`Replayed`), с другим → `ErrIdempotencyConflict`. Поэтому повтор
+  перевода «на весь баланс» получает прежний ответ, а не «Недостаточно средств».
+- id операции выдаётся из `ledger_transaction_id_seq` при захвате ключа — без UPDATE (таблицы только дополняются).
+- Естественные ключи: `top_up_refund:<id прихода>`, `transfer_code:<id кода>`, `initial_balance:<user_id>`,
+  `opening_balance:<user_id>`; для запросов кассы/агента — ключ запроса клиента.
+
+### 10.4. Проекция `member_balances` и запрет «просто обновить поле»
+
+- Баланс меняет **только** BEFORE INSERT-триггер `ledger_apply_member_entry()` на `ledger_entries` (SECURITY DEFINER): сдвигает
+  `balance`/`bonus_balance` и пишет `balance_after` в проводку.
+- Дебет, после которого баланс < 0, — ошибка (`ledger_member_balance_non_negative`), кроме `migration_opening_balance`
+  (старые данные могут быть < 0, Q-004). Старый код всегда проверял достаточность перед списанием, поэтому поведение то же; в Go та
+  же проверка под `FOR UPDATE` возвращает `*ledger.InsufficientFundsError`, а операции верхнего уровня — тексты старого кода.
+- Предел `999 999 999 999` тиынов (`decimal(12,2)` старой схемы, BR-001/053) — `ErrBalanceOverflow`.
+- Защита: роль `zafiro_app`/`zafiro_platform` имеет `INSERT (club_id, user_id, created_at, updated_at)` и
+  `UPDATE (created_at, updated_at)` на `member_balances` — колонки баланса недоступны; триггер-сторож `member_balances_guard`
+  (`pg_trigger_depth() = 1` → исключение) останавливает и владельца схемы; новая строка — только с нулями.
+- Сверка: `ListMemberBalanceDrift` (агрегат в SQL) — для ночной фоновой задачи.
+- **Перенос данных (ETL):** строки `member_balances` вставляются с нулями, остатки — `billing.MigrateOpeningBalance`.
+
+### 10.5. Только добавление
+
+`ledger_*` и `audit_log`: триггеры `BEFORE UPDATE OR DELETE` (строка) и `BEFORE TRUNCATE` (оператор) →
+`zafiro_forbid_change()`; плюс `REVOKE UPDATE, DELETE, TRUNCATE` у ролей приложения. Нет FK с `ON DELETE CASCADE` к клубам/пользователям
+(клубы и членства в старом коде не удаляются; у `audit_log` FK нет вовсе).
+
+### 10.6. Партиции
+
+`ledger_transactions`, `ledger_entries`, `ledger_minute_entries`, `audit_log` — `PARTITION BY RANGE (created_at)`, месяцы по **UTC**,
+имена `<таблица>_YYYY_MM`. PK включает `created_at`: `(club_id, id, created_at)` у ledger, `(id, created_at)` у аудита; проводки
+ссылаются на операцию составным FK `(club_id, transaction_id, created_at)`. Функция `zafiro_create_monthly_partitions(parent, from,
+months)` (SECURITY DEFINER, белый список таблиц, EXECUTE — только `zafiro_platform`) создаёт недостающие партиции и отзывает права на
+них (читать можно только через родителя, где действуют политики). Миграция создаёт текущий месяц + 3; дальше —
+`db.EnsurePartitions` из фоновой задачи раз в сутки (Q-081). DEFAULT-партиции нет: если задача стоит больше 3 месяцев, запись денег
+упадёт явно, а не уйдёт молча в «свалку».
+
+Индексы с `club_id` первым: `ledger_transactions (club_id, created_at)`, `(club_id, kind, created_at)`, частичные по
+`cash_shift_id`/`session_id`; `ledger_entries (club_id, account_id, created_at, id)` (история счёта, keyset), `(club_id, transaction_id,
+created_at)`; `audit_log (club_id, created_at)`, `(club_id, category, created_at)`, `(club_id, subject_type, subject_id, created_at)`.
+
+### 10.7. Аудит (`audit_log`)
+
+Категории: `money` (пишут операции `billing`: `money.top_up`, `money.owner_write_off`, `money.friend_transfer`, …, со ссылкой на
+`ledger_transaction_id`), `tariff`, `permission`, `settings`, `security`. `actor_kind`: staff, guest, agent, api_key, superadmin,
+system. `club_id NULL` — событие платформы (пишет только `zafiro_platform`). Колонка `hash` заложена под хэш-цепочку (Q-053).
+`activity_logs` остаётся журналом интерфейса.
+
+### 10.8. RLS и роли
+
+- `zafiro_app` (сервер, без BYPASSRLS, не владелец) и `zafiro_platform` (суперадминка и фоновые задачи; политика
+  `platform_access USING (true)` — BYPASSRLS не нужен, работает на управляемом Postgres). Роли — NOLOGIN; логины создаются при
+  развёртывании (`CREATE ROLE … LOGIN IN ROLE zafiro_app`). Миграции запускает владелец схемы (нужен CREATEROLE для первой установки).
+- Политика `tenant_isolation` (для всех, включая владельца — FORCE): `club_id = zafiro_current_club_id()`, где функция =
+  `NULLIF(current_setting('app.club_id', true), '')::bigint` (пустая строка остаётся в соединении после транзакции с `SET LOCAL` —
+  без `NULLIF` запрос упал бы на приведении типа). Без клуба — NULL → строк нет.
+- Охват: все 28 таблиц 0001 с `club_id NOT NULL` + 6 новых; особые политики: `news` (читаются и платформенные `club_id IS NULL`),
+  `api_request_logs` (запись без клуба допускается), `transfer_codes` (через `friendships`; свои коды пользователя — во всех клубах,
+  лимиты BR-092 на аккаунт), `api_idempotency_keys` (через `api_keys`), `club_memberships` + `member_self_read` (свои членства во
+  всех клубах при `app.user_id` — выбор клуба при входе).
+- Без RLS (не данные клуба): `users`, `clubs`, `saas_plans`, `password_recovery_codes`, `platform_settings`, `languages`,
+  `translations`, `server_metrics`, `request_metrics`, `platform_logs`.
+- `zafiro_tables_without_rls()` — проверка в тестах: таблицы с `club_id` без включённого и принудительного RLS (новые миграции
+  обязаны включать RLS сами; права на новые таблицы роли получают через `ALTER DEFAULT PRIVILEGES`).
+- Go: `db.InTenantTx(ctx, pool, clubID, fn)` — `BEGIN; SELECT set_config('app.club_id', $1, true), set_config('app.user_id', …),
+  set_config('lock_timeout', '5000ms', true)`; повтор всей транзакции при `40001`/`40P01` (до 3 раз). `db.InPlatformTx` — для пула
+  логина `zafiro_platform`. Конкурентные списания сериализуются `SELECT … FOR UPDATE` по `member_balances` в порядке `user_id`
+  (`ledger.LockBalances`, как `lockForUpdate()` в `Friends::transfer()` и др., BR-005).
+- Аутентификация до выбора клуба (вход по телефону, API-ключ, сертификат ПК) не видит тенантных строк под `zafiro_app` — нужны
+  `app.user_id` (членства) или узкие запросы через `zafiro_platform` (см. `open-questions/stage1-ledger.md`).
+
+### 10.9. `cash_transactions.payment_method` (0005)
+
+`varchar(8) NULL CHECK IN ('cash','card','qr')` — допущение Q-013: хранится, в остатке смены и X/Z не разделяется; старые строки —
+NULL. Тот же способ — в `ledger_transactions.meta` операции `top_up`.

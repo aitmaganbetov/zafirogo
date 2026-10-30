@@ -6,6 +6,7 @@ package store
 
 import (
 	"encoding/json"
+	"net/netip"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -84,6 +85,26 @@ type ApiRequestLog struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// Аудит действий с деньгами, тарифами, правами (только добавление). club_id NULL — событие платформы
+type AuditLog struct {
+	ID                  int64           `json:"id"`
+	ClubID              *int64          `json:"club_id"`
+	ActorUserID         *int64          `json:"actor_user_id"`
+	ActorKind           string          `json:"actor_kind"`
+	Category            string          `json:"category"`
+	Action              string          `json:"action"`
+	SubjectType         *string         `json:"subject_type"`
+	SubjectID           *int64          `json:"subject_id"`
+	LedgerTransactionID *int64          `json:"ledger_transaction_id"`
+	Before              json.RawMessage `json:"before"`
+	After               json.RawMessage `json:"after"`
+	Ip                  *netip.Addr     `json:"ip"`
+	RequestID           *string         `json:"request_id"`
+	// Зарезервировано под хэш-цепочку (Q-053), пока не заполняется
+	Hash      []byte    `json:"hash"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type CashShift struct {
 	ID       int64  `json:"id"`
 	OpenedBy *int64 `json:"opened_by"`
@@ -117,6 +138,8 @@ type CashTransaction struct {
 	CreatedAt   *time.Time      `json:"created_at"`
 	UpdatedAt   *time.Time      `json:"updated_at"`
 	ClubID      int64           `json:"club_id"`
+	// cash/card/qr (Q-013); NULL — не указан (POS-продажа, старые данные). В остатке смены не разделяется
+	PaymentMethod *string `json:"payment_method"`
 }
 
 type ChatMessage struct {
@@ -343,6 +366,65 @@ type Language struct {
 	SortOrder int32      `json:"sort_order"`
 	CreatedAt *time.Time `json:"created_at"`
 	UpdatedAt *time.Time `json:"updated_at"`
+}
+
+// Счета ledger: по два на клиента клуба (member_main/member_bonus) и по одному каждого вида на клуб
+type LedgerAccount struct {
+	ID        int64     `json:"id"`
+	ClubID    int64     `json:"club_id"`
+	Kind      string    `json:"kind"`
+	UserID    *int64    `json:"user_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type LedgerEntry struct {
+	ID            int64 `json:"id"`
+	ClubID        int64 `json:"club_id"`
+	TransactionID int64 `json:"transaction_id"`
+	AccountID     int64 `json:"account_id"`
+	// Тиыны со знаком: > 0 кредит, < 0 дебет. Для счетов клиента: + баланс растёт
+	Amount int64 `json:"amount"`
+	// Баланс счёта клиента после проводки (тиыны); NULL у счетов клуба
+	BalanceAfter *int64    `json:"balance_after"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+// Ключи идемпотентности операций: повтор с тем же ключом и тем же отпечатком (sha256 запроса) возвращает прежнюю операцию, с другим — ошибка
+type LedgerIdempotency struct {
+	ClubID               int64     `json:"club_id"`
+	IdempotencyKey       string    `json:"idempotency_key"`
+	Fingerprint          []byte    `json:"fingerprint"`
+	TransactionID        int64     `json:"transaction_id"`
+	TransactionCreatedAt time.Time `json:"transaction_created_at"`
+}
+
+type LedgerMinuteEntry struct {
+	ID            int64  `json:"id"`
+	ClubID        int64  `json:"club_id"`
+	TransactionID int64  `json:"transaction_id"`
+	UserID        int64  `json:"user_id"`
+	TimePackageID *int64 `json:"time_package_id"`
+	TariffID      *int64 `json:"tariff_id"`
+	// Минуты пакета со знаком: + сохранено/начислено, − запущено/сгорело
+	Minutes   int64     `json:"minutes"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Денежная операция (только добавление). Ссылки на документы — без FK: документы чистятся (session_purchases, transfer_codes)
+type LedgerTransaction struct {
+	ID     int64  `json:"id"`
+	ClubID int64  `json:"club_id"`
+	Kind   string `json:"kind"`
+	// Уникальность в клубе — ledger_idempotency (PK club_id, idempotency_key)
+	IdempotencyKey        string          `json:"idempotency_key"`
+	ActorUserID           *int64          `json:"actor_user_id"`
+	CashShiftID           *int64          `json:"cash_shift_id"`
+	CashTransactionID     *int64          `json:"cash_transaction_id"`
+	SessionID             *string         `json:"session_id"`
+	ShopOrderID           *int64          `json:"shop_order_id"`
+	ReversesTransactionID *int64          `json:"reverses_transaction_id"`
+	Meta                  json.RawMessage `json:"meta"`
+	CreatedAt             time.Time       `json:"created_at"`
 }
 
 type MemberBalance struct {
