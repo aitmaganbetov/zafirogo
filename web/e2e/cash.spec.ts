@@ -138,9 +138,11 @@ test('Z-отчёт: закрыть смену можно только после
     },
   });
   await page.addInitScript({ content: "window.print = () => window.dispatchEvent(new Event('afterprint'));" });
+  // Ожидание регистрируется до перехода: nonce запрашивается сразу при показе отчёта и может прийти раньше.
+  const nonce = page.waitForResponse('**/z-report/nonce');
   await page.goto('/cash-register/shifts/3/z-report');
   await expect(page.locator('#close-shift')).toBeDisabled();
-  await page.waitForResponse('**/z-report/nonce');
+  await nonce;
   await page.locator('#print-report').click();
   await expect(page.locator('#close-shift')).toBeEnabled();
   await expect(page.locator('#print-report')).toHaveText('Z-отчёт распечатан');
