@@ -28,6 +28,7 @@ type Fixture struct {
 	ChatMessages      []ChatMessage     `json:"chat_messages"`
 	ActivityLogs      []ActivityLog     `json:"activity_logs"`
 	QrLogins          []QrLogin         `json:"qr_logins"`
+	PlatformLogs      []PlatformLog     `json:"platform_logs"`
 }
 
 type SaasPlan struct {
@@ -266,6 +267,16 @@ type ActivityLog struct {
 	SubjectUserID *int64          `json:"subject_user_id"`
 	Details       json.RawMessage `json:"details"`
 	CreatedAt     string          `json:"created_at"`
+}
+
+// PlatformLog — запись журнала платформы (platform_logs, кабинет суперадмина); club_id null — событие платформы.
+type PlatformLog struct {
+	ID          int64  `json:"id"`
+	UserID      *int64 `json:"user_id"`
+	ClubID      *int64 `json:"club_id"`
+	Event       string `json:"event"`
+	Description string `json:"description"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // QrLogin — открытый QR-вход на ПК (страница /pc-login/{code}): код хранится хэшем sha256, как AgentQrLogin::hashCode().

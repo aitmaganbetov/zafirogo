@@ -325,6 +325,10 @@ type Dev struct {
 	// визуальное сравнение со старым Laravel на одних демо-данных (tools/visual). Пусто — системные часы.
 	// Время в SQL (now() в запросах), сроки токенов и сессий не меняются.
 	FixedNow string `koanf:"fixed_now"`
+	// DisableWorkers — фоновые задачи, которые этот инстанс не запускает (имена — app.workers, например
+	// monitoring-flush). Только dev/test: в стенде tools/visual у старого Laravel нет планировщика, и экраны «Сервер»
+	// и карточки клуба не должны набирать метрики запросов самого прогона снимков.
+	DisableWorkers []string `koanf:"disable_workers"`
 }
 
 // Now — часы приложения: фиксированное время dev.fixed_now или time.Now. Вызывать после Validate.
@@ -478,7 +482,8 @@ func Defaults() map[string]any {
 		"superadmin.backup_path": "",
 		"superadmin.ssl_hosts":   []string{},
 
-		"dev.fixed_now": "",
+		"dev.fixed_now":       "",
+		"dev.disable_workers": []string{},
 	}
 }
 
@@ -822,6 +827,9 @@ func (c *Config) Validate() error {
 			add("dev.fixed_now: ожидается RFC 3339 (2026-10-15T12:00:00+05:00), получено %q", c.Dev.FixedNow)
 		}
 	}
+	if prod && len(c.Dev.DisableWorkers) > 0 {
+		add("dev.disable_workers: запрещён в prod")
+	}
 	if prod && pki.DevDir != "" {
 		add("agent.pki.dev_dir: запрещён в prod — задайте файлы CA и серверного сертификата")
 	}
@@ -962,6 +970,7 @@ func (c *Config) LogValue() slog.Value {
 		),
 		slog.Any("generated_secrets", c.Generated),
 		slog.String("dev_fixed_now", c.Dev.FixedNow),
+		slog.Any("dev_disable_workers", c.Dev.DisableWorkers),
 	)
 }
 

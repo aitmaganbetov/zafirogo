@@ -27,6 +27,11 @@ export interface PageSpec {
   viewports?: string[];
   themes?: Theme[];
   mask?: Masks;
+  /**
+   * Блоки, которые убираются из раскладки в обоих снимках (display: none): содержимое и высота зависят от окружения
+   * стенда (СУБД, журнал ошибок машины), и маска не выравнивает остаток страницы. Наборы и {old, new} — как у mask.
+   */
+  hide?: Masks;
   waitFor?: string;
   /** false — только окно (каркас страницы), без растягивания под содержимое. По умолчанию true. */
   fullPage?: boolean;
@@ -99,7 +104,15 @@ export function resolved(p: PageSpec) {
 
 /** Селекторы масок для приложения: наборы @имя раскрываются из maskSets. */
 export function masksFor(p: PageSpec, app: AppName): string[] {
-  const raw = p.mask ?? pagesFile.defaults.mask;
+  return selectorsFor(p.mask ?? pagesFile.defaults.mask, app);
+}
+
+/** Селекторы скрываемых блоков (hide) для приложения. */
+export function hiddenFor(p: PageSpec, app: AppName): string[] {
+  return selectorsFor(p.hide ?? [], app);
+}
+
+function selectorsFor(raw: Masks, app: AppName): string[] {
   const list = Array.isArray(raw) ? raw : (raw[app] ?? []);
   return list.flatMap((s) => (s.startsWith('@') ? (pagesFile.maskSets[s] ?? []) : [s]));
 }
@@ -271,13 +284,14 @@ const SCROLL_OVERFLOW = `(() => {
 const SETTLE_CLOCK_MS = Number(process.env.VISUAL_SETTLE_MS ?? 3_000);
 
 /** После перехода: сеть, анимации (часы страницы вперёд), шрифты, картинки. */
-export async function settle(page: Page, waitFor?: string): Promise<void> {
+export async function settle(page: Page, waitFor?: string, hide: string[] = []): Promise<void> {
   await page.waitForLoadState('load');
   await page.clock.runFor(SETTLE_CLOCK_MS);
   // Опросы старого JS и WebSocket нового не дают «тишины» навсегда: ждём её не дольше 5 с.
   await page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => undefined);
   if (waitFor) await page.locator(waitFor).first().waitFor({ timeout: 10_000 }).catch(() => undefined);
   await page.addStyleTag({ content: STABILIZE_CSS });
+  if (hide.length > 0) await page.addStyleTag({ content: `${hide.join(',\n')} { display: none !important; }` });
   await page.evaluate(WAIT_FONTS_AND_IMAGES);
   // Кадры после стилей и шрифтов (requestAnimationFrame — на управляемых часах страницы).
   await page.clock.runFor(100);

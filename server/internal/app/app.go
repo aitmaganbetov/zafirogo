@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -96,6 +97,35 @@ type App struct {
 type namedWorker struct {
 	name string
 	run  func(ctx context.Context) error
+}
+
+// withoutWorkers убирает фоновые задачи dev.disable_workers (только dev/test — проверяет config.Validate).
+// Неизвестное имя — ошибка запуска: опечатка не должна молча оставлять задачу включённой.
+func withoutWorkers(all []namedWorker, disable []string) ([]namedWorker, error) {
+	if len(disable) == 0 {
+		return all, nil
+	}
+	off := make(map[string]bool, len(disable))
+	for _, name := range disable {
+		off[name] = true
+	}
+	kept := make([]namedWorker, 0, len(all))
+	for _, w := range all {
+		if off[w.name] {
+			delete(off, w.name)
+			continue
+		}
+		kept = append(kept, w)
+	}
+	if len(off) > 0 {
+		unknown := make([]string, 0, len(off))
+		for name := range off {
+			unknown = append(unknown, name)
+		}
+		slices.Sort(unknown)
+		return nil, fmt.Errorf("dev.disable_workers: неизвестные фоновые задачи %v", unknown)
+	}
+	return kept, nil
 }
 
 // HTTPAddr — адрес, который слушает HTTP (полезно при ":0").
@@ -447,6 +477,9 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		{"expire-sessions", expire.Run},
 		{"burn-expired-packages", burnPackages.Run},
 		{"ensure-partitions", partitions.Run},
+	}
+	if a.workers, err = withoutWorkers(a.workers, cfg.Dev.DisableWorkers); err != nil {
+		return err
 	}
 
 	ro.Auth = a.Auth

@@ -86,9 +86,11 @@ func (p Probe) Snapshot(ctx context.Context, pool db.Beginner) Snapshot {
 	}
 	var st syscall.Statfs_t
 	if syscall.Statfs(root, &st) == nil && st.Blocks > 0 {
-		bs := uint64(st.Bsize)                               // #nosec G115 -- размер блока положителен
-		total := int64(st.Blocks * bs / 1048576)             // #nosec G115
-		used := int64((st.Blocks - st.Bfree) * bs / 1048576) // #nosec G115 -- disk_total_space − disk_free_space
+		// PHP (statvfs): disk_free_space = f_bavail × размер блока — свободное для непривилегированного процесса,
+		// без резерва root (с Bfree диск с резервом выглядел бы менее заполненным, чем в старом).
+		bs := uint64(st.Bsize)                                // #nosec G115 -- размер блока положителен
+		total := int64(st.Blocks * bs / 1048576)              // #nosec G115
+		used := int64((st.Blocks - st.Bavail) * bs / 1048576) // #nosec G115 -- disk_total_space − disk_free_space
 		s.DiskTotalMB, s.DiskUsedMB = &total, &used
 	}
 	if up := p.proc("uptime"); len(up) > 0 {

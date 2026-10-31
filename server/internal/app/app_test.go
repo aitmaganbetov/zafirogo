@@ -68,3 +68,20 @@ func TestStandalone(t *testing.T) {
 		t.Error("second Run must fail")
 	}
 }
+
+func TestWithoutWorkers(t *testing.T) {
+	noop := func(context.Context) error { return nil }
+	all := []namedWorker{{"monitoring-flush", noop}, {"monitoring-clubs", noop}, {"outbox-publisher", noop}}
+
+	got, err := withoutWorkers(all, nil)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("no disable: got %d workers, err %v", len(got), err)
+	}
+	got, err = withoutWorkers(all, []string{"monitoring-clubs", "monitoring-flush"})
+	if err != nil || len(got) != 1 || got[0].name != "outbox-publisher" {
+		t.Fatalf("disable monitoring: got %v, err %v", got, err)
+	}
+	if _, err = withoutWorkers(all, []string{"monitoring-flsh"}); err == nil {
+		t.Fatal("unknown worker name must fail")
+	}
+}

@@ -279,6 +279,7 @@ func TestValidateProd(t *testing.T) {
 		"same dsn":           append(drop("ZAFIRO_DATABASE_PLATFORM_URL="), "ZAFIRO_DATABASE_PLATFORM_URL=postgres://app:topsecret@db/zafiro"),
 		"bad instance":       append(base, "ZAFIRO_AGENT_INSTANCE_ID=node.1"),
 		"fixed now in prod":  append(base, "ZAFIRO_DEV_FIXED_NOW=2026-10-15T12:00:00+05:00"),
+		"disable workers":    append(base, "ZAFIRO_DEV_DISABLE_WORKERS=monitoring-flush"),
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -372,5 +373,13 @@ func TestDevFixedNow(t *testing.T) {
 	if _, err := Load("", environ("ZAFIRO_DEV_FIXED_NOW=15.10.2026 12:00")); err == nil ||
 		!strings.Contains(err.Error(), "dev.fixed_now") {
 		t.Errorf("bad dev.fixed_now must fail validation, got %v", err)
+	}
+
+	cfg, err = Load("", environ("ZAFIRO_DEV_DISABLE_WORKERS=monitoring-flush,monitoring-clubs"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Dev.DisableWorkers; len(got) != 2 || got[0] != "monitoring-flush" || got[1] != "monitoring-clubs" {
+		t.Errorf("dev.disable_workers = %v", got)
 	}
 }

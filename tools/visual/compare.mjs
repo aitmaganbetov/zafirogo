@@ -131,6 +131,9 @@ function metaBlock(m) {
     <dt>URL</dt><dd>${esc(m.finalUrl || m.url)}${m.status ? ` · HTTP ${m.status}` : ''}</dd>
     <dt>Вход</dt><dd>${esc(m.login ?? 'без входа')}</dd>
     <dt>Маски</dt><dd>${m.masks?.length ? esc(m.masks.join(', ')) : '—'}</dd>
+    ${m.hidden?.length ? `<dt>Скрыто</dt><dd>${esc(m.hidden.join(', '))}</dd>` : ''}
+    ${m.retriedAfter ? `<dt>Повтор</dt><dd>первая попытка упала: ${esc(m.retriedAfter)}</dd>` : ''}
+    ${m.truncatedFrom ? `<dt>Обрезано</dt><dd>снят верх страницы высотой ${esc(m.truncatedFrom)} px</dd>` : ''}
   </dl>${m.error ? `<p class="err">${esc(m.error)}</p>` : ''}${list('Ошибки консоли', m.consoleErrors)}${list(
     'Внешние запросы заблокированы',
     m.network?.blocked,

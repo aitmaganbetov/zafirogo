@@ -264,6 +264,14 @@ DB::transaction(function () use ($data, $created): void {
             'created_at' => $created($l), 'updated_at' => $created($l),
         ]);
     }
+    // Журнал платформы (PlatformLogger): вход суперадмина и т. п., club_id null — событие платформы.
+    foreach ($data['platform_logs'] ?? [] as $l) {
+        DB::table('platform_logs')->insert([
+            'id' => $l['id'], 'user_id' => $l['user_id'] ?? null, 'club_id' => $l['club_id'] ?? null, 'event' => $l['event'],
+            'description' => $l['description'], 'ip_address' => '127.0.0.1', 'user_agent' => 'Zafiro visual seed',
+            'created_at' => $created($l), 'updated_at' => $created($l),
+        ]);
+    }
 });
 
 $counts = [];

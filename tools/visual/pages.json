@@ -564,17 +564,14 @@
       "new": "/",
       "host": "admin.localhost",
       "role": "superadmin",
-      "mask": [
-        "@clock",
-        "[data-live]",
-        "section[aria-labelledby=\"scheduler-title\"]",
+      "hide": [
+        "section[aria-labelledby=\"scheduler-title\"] + div",
         "section[aria-labelledby=\"database-title\"]",
         "section[aria-labelledby=\"errors-title\"]"
       ],
       "waitFor": "#history-title",
       "status": "ported",
-      "note": "Кабинет суперадмина: Сервер (superadmin/dashboard.blade.php). Живые показатели машины, планировщик, база и журнал ошибок зависят от окружения стенда (старый — sqlite и свой laravel.log с ошибками, новый — Postgres): маски; разная высота блока «Последние ошибки в логе» и перенос строк живых карточек на мобильном сдвигают низ страницы — порог 20 % (docs/open-questions/stage3-superadmin.md SA-8).",
-      "maxDiffPercent": 20
+      "note": "Кабинет суперадмина: Сервер (superadmin/dashboard.blade.php). Карточки живых показателей машины (load average, память, диск, uptime), «База данных» и «Последние ошибки в логе» скрыты в обоих (hide): значения снимаются в разные моменты и переносятся по-разному (высота карточек плавает на 20 px), старый — sqlite без размеров таблиц и свой laravel.log, новый — Postgres; маска высоту не выравнивает. Задачи мониторинга нового в стенде выключены (dev.disable_workers), как планировщик старого (docs/open-questions/stage3-superadmin.md SA-8)."
     },
     {
       "id": "superadmin-clubs",

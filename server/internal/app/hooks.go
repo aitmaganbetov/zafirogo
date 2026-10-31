@@ -77,6 +77,7 @@ var _ auth.Events = (*authEvents)(nil)
 
 func (e *authEvents) record(ctx context.Context, clubID int64, entry activity.Entry) {
 	entry.ClubID = clubID
+	entry.At = e.at()
 	err := db.InTenantTx(ctx, e.app, clubID, func(q *store.Queries) error {
 		_, err := activity.Record(ctx, q, entry)
 		return err
@@ -133,7 +134,7 @@ func (e *authEvents) LoginFailed(ctx context.Context, phone, reason string) {
 			Event:       "auth.login_failed",
 			Description: substitute("Неудачный вход: :user", map[string]string{"user": userName}),
 			UserID:      userID, SubjectType: morphUser, SubjectID: userID,
-			Details: map[string]any{"reason": reason},
+			Details: map[string]any{"reason": reason}, At: e.at(),
 		})
 	})
 	if err != nil {
@@ -194,14 +195,21 @@ func (e *authEvents) ClubViewed(ctx context.Context, userID, clubID int64) {
 		Params: map[string]string{"club": name}, UserID: userID, ClubID: clubID})
 }
 
+// at — время записи журнала: часы приложения (dev.fixed_now в tools/visual — записи входа на снимках с тем же
+// «сейчас», что у старого под Carbon::setTestNow); нулевое (now nil) — activity возьмёт time.Now().
+func (e *authEvents) at() time.Time {
+	if e.now == nil {
+		return time.Time{}
+	}
+	return e.now()
+}
+
 // platformLog — запись журнала платформы своей транзакцией; ошибка — только предупреждение (вход не ломается).
 func (e *authEvents) platformLog(ctx context.Context, entry activity.PlatformEntry) {
 	if e.platform == nil {
 		return
 	}
-	if e.now != nil {
-		entry.At = e.now()
-	}
+	entry.At = e.at()
 	err := db.InPlatformTx(ctx, e.platform, func(q *store.Queries) error {
 		_, err := activity.RecordPlatform(ctx, q, entry)
 		return err

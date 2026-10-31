@@ -18,6 +18,9 @@ export default defineConfig({
     ...devices['Desktop Chrome'],
     launchOptions: {
       ...(executablePath ? { executablePath } : {}),
+      // Общая память рендерера — в /dev/shm (tmpfs), а не во временных файлах на диске (умолчание Playwright в Linux):
+      // полностраничные снимки — десятки МБ, и при почти полном диске вкладка падала («Target crashed»).
+      ignoreDefaultArgs: ['--disable-dev-shm-usage'],
       // Одинаковый рендеринг шрифтов и цветов в обоих снимках.
       args: ['--font-render-hinting=none', '--disable-skia-runtime-opts', '--force-color-profile=srgb'],
     },

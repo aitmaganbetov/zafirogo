@@ -96,7 +96,7 @@ export function DashboardPage({ search }: { readonly search: DashboardSearch }) 
         )}
       </section>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" data-live>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className={CARD}>
           <p className="text-sm text-gray-500">{t('Нагрузка CPU (load average)')}</p>
           <p className={`mt-1 text-3xl font-bold tabular-nums ${live.load_alert ? BAD : NORMAL}`}>{live.load_1 ?? '—'}</p>
@@ -259,7 +259,7 @@ export function DashboardPage({ search }: { readonly search: DashboardSearch }) 
                 <th className="py-2 text-right">{t('Ошибки 5xx')}</th>
               </tr>
             </thead>
-            <tbody data-live>
+            <tbody>
               {data.channels.map((row) => (
                 <tr key={row.channel} className="border-t border-gray-100 tabular-nums dark:border-gray-800">
                   <td className="py-2 text-gray-800 dark:text-gray-200">{t(row.label)}</td>
@@ -322,7 +322,7 @@ export function DashboardPage({ search }: { readonly search: DashboardSearch }) 
           <h3 id="database-title" className="mb-1 font-semibold text-gray-900 dark:text-white">
             {t('База данных')}
           </h3>
-          <p className="mb-3 text-sm text-gray-600 dark:text-gray-400" data-live>
+          <p className="mb-3 text-sm text-gray-600 dark:text-gray-400">
             {live.database_mb != null ? t('Размер: {{size}} МБ', { size: live.database_mb }) : t('Размер недоступен')}
           </p>
           {data.tables.map((table) => (

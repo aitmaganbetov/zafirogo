@@ -577,6 +577,14 @@ func (s *seeder) rest(ctx context.Context) error {
 				return fmt.Errorf("новость %d: %w", n.ID, err)
 			}
 		}
+		// Журнал платформы (PlatformLogger): вне клуба, как новости платформы.
+		for _, l := range s.f.PlatformLogs {
+			if _, err := tx.Exec(ctx, `INSERT INTO platform_logs (id, user_id, club_id, event, description, ip_address, user_agent,
+				created_at, updated_at) VALUES ($1, $2, $3, $4, $5, '127.0.0.1', 'Zafiro visual seed', $6, $6)`,
+				l.ID, l.UserID, l.ClubID, l.Event, l.Description, s.created(l.CreatedAt)); err != nil {
+				return fmt.Errorf("журнал платформы %d: %w", l.ID, err)
+			}
+		}
 		return nil
 	})
 }

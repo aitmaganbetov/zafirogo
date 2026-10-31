@@ -91,7 +91,9 @@ start() {
   if [ "$BUILD" = 1 ] || [ ! -x "$BIN" ]; then build; fi
   local now; now="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["now"])' "$FIXTURE")"
   # Сервер: dev, фиксированное «сейчас», сверка присутствия ПК раз в сутки (статусы ПК из демо-данных не сбрасываются),
-  # без лимита входа в панель (каждый снимок входит заново).
+  # без лимита входа в панель (каждый снимок входит заново), без задач мониторинга (снимок машины, метрики запросов,
+  # загрузка клубов): у старого в стенде нет планировщика — «Сервер» и карточка клуба в обоих показывают «планировщик
+  # ещё не запускался» и пустые графики, а не трафик самого прогона снимков.
   env -i PATH="$PATH" HOME="$HOME" \
     ZAFIRO_ENV=dev ZAFIRO_HTTP_ADDR="127.0.0.1:$PORT" \
     ZAFIRO_DATABASE_URL="$APP_DSN" ZAFIRO_DATABASE_PLATFORM_URL="$PLATFORM_DSN" \
@@ -100,6 +102,7 @@ start() {
     ZAFIRO_AUTH_SIGNING_KEYS="$VISUAL_SIGNING_KEY" \
     ZAFIRO_AGENT_GRPC_LISTEN="127.0.0.1:0" ZAFIRO_AGENT_PKI_DEV_DIR="$WORK/pki" \
     ZAFIRO_AGENT_SWEEPER_RECONCILE_EVERY=24h ZAFIRO_RATELIMIT_DISABLE=web-login \
+    ZAFIRO_DEV_DISABLE_WORKERS=monitoring-collect,monitoring-flush,monitoring-clubs \
     ZAFIRO_DEV_FIXED_NOW="$now" ZAFIRO_LOG_LEVEL=warn ZAFIRO_LOG_FORMAT=text \
     ZAFIRO_SUPERADMIN_DOMAIN="${VISUAL_SUPERADMIN_HOST:-admin.localhost}" \
     nohup "$BIN" > "$WORK/zafiro.log" 2>&1 &
