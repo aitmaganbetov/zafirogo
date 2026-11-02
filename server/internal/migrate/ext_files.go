@@ -126,12 +126,20 @@ func loadImage(root, rel string, maxBytes int) (loadedImage, error) {
 	if clean != "/"+rel || strings.Contains(rel, "..") {
 		return loadedImage{}, errImage{"путь вне каталога storage — не переносится"}
 	}
-	fsys := os.DirFS(root)
-	f, err := fsys.Open(strings.TrimPrefix(clean, "/"))
+	// os.Root, а не os.DirFS: символическая ссылка в storage, ведущая наружу (../../.env, /etc/…), не читается (SEC-017).
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return loadedImage{}, fmt.Errorf("open storage: %w", err)
+	}
+	defer dir.Close()
+	f, err := dir.Open(strings.TrimPrefix(clean, "/"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return loadedImage{}, errImage{"файл не найден на диске старого сервера — картинка не перенесена"}
 	}
 	if err != nil {
+		if strings.Contains(err.Error(), "path escapes from parent") {
+			return loadedImage{}, errImage{"путь вне каталога storage — не переносится"}
+		}
 		return loadedImage{}, fmt.Errorf("open %s: %w", filepath.Base(rel), err)
 	}
 	defer f.Close()
