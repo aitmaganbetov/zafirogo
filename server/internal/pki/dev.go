@@ -32,6 +32,10 @@ type Options struct {
 	// CACertFile, CAKeyFile — выпускающий CA агентов (PEM; ключ — секрет вне репозитория).
 	CACertFile string
 	CAKeyFile  string
+	// ExtraTrustFiles — сертификаты прежних выпускающих CA (PEM; берётся первый сертификат файла — тот же формат,
+	// что CACertFile). Клиентские сертификаты, выпущенные ими, принимаются, пока не истекут; новые выпускает
+	// только текущий CA (ротация CA, docs/deploy.md «Ротация CA агентов»).
+	ExtraTrustFiles []string
 	// ServerCertFile, ServerKeyFile — серверный TLS-сертификат gRPC (полная цепочка) и ключ.
 	ServerCertFile string
 	ServerKeyFile  string
@@ -49,12 +53,12 @@ func LoadCA(opts Options) (*CA, error) {
 		if opts.CACertFile == "" || opts.CAKeyFile == "" {
 			return nil, errors.New("pki: both CA certificate and key files are required")
 		}
-		return LoadCAFiles(opts.CACertFile, opts.CAKeyFile)
+		return LoadCAFiles(opts.CACertFile, opts.CAKeyFile, opts.ExtraTrustFiles...)
 	case opts.DevDir != "":
 		if err := EnsureDevPKI(opts.DevDir, opts.DevHosts); err != nil {
 			return nil, err
 		}
-		return LoadCAFiles(filepath.Join(opts.DevDir, DevCACertFile), filepath.Join(opts.DevDir, DevCAKeyFile))
+		return LoadCAFiles(filepath.Join(opts.DevDir, DevCACertFile), filepath.Join(opts.DevDir, DevCAKeyFile), opts.ExtraTrustFiles...)
 	default:
 		return nil, errors.New("pki: CA is not configured (set CA certificate/key files or a dev directory)")
 	}
@@ -169,6 +173,59 @@ func EnsureDevPKI(dir string, hosts []string) error {
 		}
 	}
 	return nil
+}
+
+// NewDevIssuingCA выпускает в dir (созданном EnsureDevPKI) новый выпускающий CA агентов под тем же dev-корнем
+// и пишет его в name.pem (сертификат + корень) и name.key — как при ротации CA в production (там это делает
+// офлайн-церемония с ключом корня). Только для разработки и тестов ротации (S6-O1-1).
+func NewDevIssuingCA(dir, name string) (certFile, keyFile string, err error) {
+	rootCert, err := os.ReadFile(filepath.Clean(filepath.Join(dir, DevRootCertFile)))
+	if err != nil {
+		return "", "", fmt.Errorf("pki: dev root: %w", err)
+	}
+	rootKeyPEM, err := os.ReadFile(filepath.Clean(filepath.Join(dir, DevRootKeyFile)))
+	if err != nil {
+		return "", "", fmt.Errorf("pki: dev root key: %w", err)
+	}
+	root, err := ParseCertificatePEM(rootCert)
+	if err != nil {
+		return "", "", fmt.Errorf("pki: dev root: %w", err)
+	}
+	rootKey, err := parsePrivateKey(rootKeyPEM)
+	if err != nil {
+		return "", "", fmt.Errorf("pki: dev root key: %w", err)
+	}
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return "", "", err
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	ca, err := selfSign(&x509.Certificate{
+		Subject:               pkix.Name{CommonName: "Zafiro Dev Agent Issuing CA " + name, Organization: []string{"Zafiro (dev)"}},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.AddDate(5, 0, 0),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLenZero:        true,
+	}, root, caKey, rootKey)
+	if err != nil {
+		return "", "", err
+	}
+	k := keyPEM(caKey)
+	if k == nil {
+		return "", "", errors.New("pki: dev: encode key")
+	}
+	certFile, keyFile = filepath.Clean(filepath.Join(dir, name+".pem")), filepath.Clean(filepath.Join(dir, name+".key"))
+	// #nosec G703 -- только dev/тесты: каталог и имя задаёт вызывающий код, не ввод пользователя
+	if err := os.WriteFile(certFile, append(certPEM(ca), certPEM(root)...), 0o600); err != nil {
+		return "", "", err
+	}
+	if err := os.WriteFile(keyFile, k, 0o600); err != nil {
+		return "", "", err
+	}
+	return certFile, keyFile, nil
 }
 
 func selfSign(tmpl, parent *x509.Certificate, key *ecdsa.PrivateKey, signer crypto.Signer) (*x509.Certificate, error) {

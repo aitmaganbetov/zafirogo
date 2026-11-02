@@ -246,6 +246,10 @@ type AgentPKI struct {
 	CAKeyFile      string `koanf:"ca_key_file"`
 	ServerCertFile string `koanf:"server_cert_file"`
 	ServerKeyFile  string `koanf:"server_key_file"`
+	// ExtraTrustFiles — прежние выпускающие CA агентов (PEM, первый сертификат файла) на время ротации CA
+	// (S6-O1-1): их клиентские сертификаты принимаются, пока не истекут (≤ agent.cert.lifetime); выпускает и
+	// продлевает только ca_cert_file. Порядок — docs/deploy.md «Ротация CA агентов».
+	ExtraTrustFiles []string `koanf:"extra_trust_files"`
 	// DevDir — только dev/test: PKI генерируется в этой папке при первом запуске.
 	DevDir string `koanf:"dev_dir"`
 	// DevHosts — имена/IP dev-сертификата сервера (пусто — localhost, 127.0.0.1, ::1).
@@ -343,6 +347,25 @@ type Integrations struct {
 	// RequestLogRetention — срок хранения журнала запросов api_request_logs (request_log_retention_days, 90 дней);
 	// удаляет фоновая задача logs:retention целыми месячными партициями (worker.LogRetention).
 	RequestLogRetention time.Duration `koanf:"request_log_retention"`
+	// LegacyUpstream — старый Laravel на время поклубного перехода (S6-O1-4): запрос /api/v1 с ключом, префикса
+	// которого нет на этом сервере, уходит туда без изменений; свой ключ (даже отозванный) обслуживается здесь.
+	// Пусто — берётся mobile.upstream (тот же Laravel); оба пусты — прокси нет, все ключи здесь.
+	LegacyUpstream string `koanf:"legacy_upstream"`
+	// LegacyUpstreamHost — заголовок Host для LegacyUpstream (пусто — mobile.upstream_host, затем Host запроса).
+	LegacyUpstreamHost string `koanf:"legacy_upstream_host"`
+}
+
+// IntegrationsUpstream — адрес и Host старого Laravel для неизвестных ключей /api/v1 ("" — прокси нет):
+// integrations.legacy_upstream, иначе mobile.upstream (S6-O1-4).
+func (c *Config) IntegrationsUpstream() (upstream, host string) {
+	upstream, host = c.Integrations.LegacyUpstream, c.Integrations.LegacyUpstreamHost
+	if upstream == "" {
+		upstream = c.Mobile.Upstream
+	}
+	if host == "" {
+		host = c.Mobile.UpstreamHost
+	}
+	return upstream, host
 }
 
 // Realtime — WebSocket админки (/ws).
@@ -510,6 +533,7 @@ func Defaults() map[string]any {
 		"agent.pki.ca_key_file":               "",
 		"agent.pki.server_cert_file":          "",
 		"agent.pki.server_key_file":           "",
+		"agent.pki.extra_trust_files":         []string{},
 		"agent.pki.dev_dir":                   "",
 		"agent.pki.dev_hosts":                 []string{},
 		"agent.enroll.code_pepper":            "",
@@ -562,6 +586,8 @@ func Defaults() map[string]any {
 		"integrations.max_bulk_items":         50,
 		"integrations.idempotency_retention":  "24h",
 		"integrations.request_log_retention":  "2160h",
+		"integrations.legacy_upstream":        "",
+		"integrations.legacy_upstream_host":   "",
 
 		"realtime.max_conns_per_user": 5,
 		"realtime.send_buffer":        64,
@@ -937,6 +963,13 @@ func (c *Config) Validate() error {
 	if files && (pki.CACertFile == "" || pki.CAKeyFile == "" || pki.ServerCertFile == "" || pki.ServerKeyFile == "") {
 		add("agent.pki: нужны все четыре файла: ca_cert_file, ca_key_file, server_cert_file, server_key_file")
 	}
+	for _, f := range pki.ExtraTrustFiles {
+		if strings.TrimSpace(f) == "" {
+			add("agent.pki.extra_trust_files: пустой путь")
+		} else if f == pki.CACertFile {
+			add("agent.pki.extra_trust_files: совпадает с ca_cert_file (там прежний CA, а не текущий)")
+		}
+	}
 	if c.Dev.FixedNow != "" {
 		if prod {
 			add("dev.fixed_now: запрещён в prod")
@@ -995,9 +1028,12 @@ func (c *Config) Validate() error {
 			add("%s: ожидается http(s)://хост", name)
 		}
 	}
-	if raw := c.Mobile.Upstream; raw != "" {
+	for name, raw := range map[string]string{"mobile.upstream": c.Mobile.Upstream, "integrations.legacy_upstream": c.Integrations.LegacyUpstream} {
+		if raw == "" {
+			continue
+		}
 		if u, err := url.Parse(raw); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			add("mobile.upstream: ожидается http(s)://хост")
+			add("%s: ожидается http(s)://хост", name)
 		}
 	}
 	if c.Mobile.TokenTTL <= 0 {
@@ -1154,6 +1190,7 @@ func (c *Config) LogValue() slog.Value {
 			slog.Any("grpc_proxy_trusted", c.Agent.GRPC.ProxyTrusted),
 			slog.String("pki_ca_cert_file", c.Agent.PKI.CACertFile),
 			slog.String("pki_server_cert_file", c.Agent.PKI.ServerCertFile),
+			slog.Any("pki_extra_trust_files", c.Agent.PKI.ExtraTrustFiles),
 			slog.String("pki_dev_dir", c.Agent.PKI.DevDir),
 			slog.Any("enroll_code_pepper", c.Agent.Enroll.CodePepper),
 		),

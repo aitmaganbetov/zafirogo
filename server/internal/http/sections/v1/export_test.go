@@ -18,3 +18,6 @@ var (
 	EncodeCursor = encodeCursor
 	DecodeCursor = decodeCursor
 )
+
+// UpstreamMiddleware — решение «здесь или в Laravel» без базы (тесты).
+var UpstreamMiddleware = upstreamMiddleware

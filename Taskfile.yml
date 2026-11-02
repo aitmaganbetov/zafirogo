@@ -312,7 +312,7 @@ tasks:
       - "{{.STAGING_COMPOSE}} run --rm migrate up"
 
   staging:reload-lb:
-    desc: Проверить и перечитать конфигурацию nginx (карта /api/v1 при go-live клуба) без разрыва соединений
+    desc: Проверить и перечитать конфигурацию nginx без разрыва соединений
     cmds:
       - "{{.STAGING_COMPOSE}} exec lb nginx -t"
       - "{{.STAGING_COMPOSE}} exec lb nginx -s reload"

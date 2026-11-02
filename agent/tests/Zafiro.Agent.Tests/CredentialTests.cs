@@ -55,6 +55,31 @@ public sealed class CredentialTests : IDisposable
     }
 
     [Fact]
+    public void Несколько_закреплённых_корней_на_время_ротации_корня()
+    {
+        // S6-O1-1: RootCaPem/RootCaFile — список корней; сертификат и сервер под любым из них принимаются.
+        using var next = new TestPki("Next Zafiro Root");
+        // Склейка без перевода строки (cat файлов, где в конце первого нет \n) — тоже два корня.
+        using (var glued = Zafiro.Agent.Core.Transport.TrustAnchors.FromPem(_pki.RootPem + next.RootPem))
+            Assert.Equal(2, glued.Roots.Count);
+        using var anchors = Zafiro.Agent.Core.Transport.TrustAnchors.FromPem(_pki.RootPem + "\n" + next.RootPem);
+        Assert.Equal(2, anchors.Roots.Count);
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        foreach (var pki in new[] { _pki, next })
+        {
+            using var leaf = X509Certificate2.CreateFromPem(pki.IssueClientPem(key));
+            Assert.Single(anchors.ValidateIssued(leaf, [pki.IssuingPem, pki.RootPem], key, DateTimeOffset.UtcNow));
+        }
+
+        var policy = anchors.ServerPolicy();
+        Assert.Equal(2, policy.CustomTrustStore.Count);
+
+        using var evil = new TestPki("Evil Root");
+        using var foreign = X509Certificate2.CreateFromPem(evil.IssueClientPem(key));
+        Assert.Throws<CryptographicException>(() => anchors.ValidateIssued(foreign, [evil.IssuingPem, evil.RootPem], key, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
     public void Корень_должен_быть_самоподписанным()
     {
         Assert.Throws<InvalidOperationException>(() => Zafiro.Agent.Core.Transport.TrustAnchors.FromPem(_pki.IssuingPem));

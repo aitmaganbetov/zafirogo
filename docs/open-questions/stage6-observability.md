@@ -62,7 +62,11 @@
 
 ## OBS-9. Заметка для O5: closers в app.Build
 
-- [ ] Замыкания `func() { _ = a.httpLis.Close() }` и `a.grpcLis` в `Build` обращаются к именованному результату `a`,
+- [x] **Исправлено (O1-доделка):** в `Build` `a` — локальная переменная, а не именованный результат (`return nil, err`
+  её не обнуляет), замыкания `httpLis`/`grpcLis` захватывают свои listener'ы локально. Тесты: `TestBuildErrorClosesResources`
+  (ошибка HTTP listen и metrics listen после открытого HTTP — до исправления паника nil pointer; порт HTTP освобождён),
+  интеграционный `TestBuildErrorAfterListeners` (занят порт gRPC; неверный `agent.grpc.proxy_trusted` после открытия gRPC).
+- Было: замыкания `func() { _ = a.httpLis.Close() }` и `a.grpcLis` в `Build` обращаются к именованному результату `a`,
   который при `return nil, err` уже nil: если ошибка случится после их регистрации (например, `grpc listen` или
   `ProxyTrustedPrefixes`), `closeResources` разыменует nil. Свои замыкания O3 захватывает локальными переменными
   (`obs`, `mlis`). Рекомендация — так же для остальных.

@@ -48,6 +48,7 @@ import (
 	httpserver "github.com/aitmaganbetov/zafirogo/server/internal/http"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/legacy"
+	v1 "github.com/aitmaganbetov/zafirogo/server/internal/http/sections/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
 	"github.com/aitmaganbetov/zafirogo/server/internal/monitoring"
 	"github.com/aitmaganbetov/zafirogo/server/internal/observability"
@@ -158,19 +159,20 @@ func (a *App) GRPCAddr() string {
 
 // Build создаёт все подсистемы и открывает порты, но ничего не запускает. При ошибке всё уже созданное
 // закрывается. После успешного Build вызывающий обязан вызвать Run (или Close).
-func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (a *App, err error) {
+func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (_ *App, err error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	baseCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	built := &App{cfg: cfg, log: log, baseCtx: baseCtx, cancel: cancel}
-	built.closers = append(built.closers, cancel)
+	// a — локальная переменная, а не именованный результат: `return nil, err` не обнуляет её, и замыкания
+	// closers при ошибке Build видят собранное (OBS-9). Ресурсы замыкания всё равно захватывают локально.
+	a := &App{cfg: cfg, log: log, baseCtx: baseCtx, cancel: cancel}
+	a.closers = append(a.closers, cancel)
 	defer func() {
 		if err != nil {
-			built.closeResources()
+			a.closeResources()
 		}
 	}()
-	a = built
 
 	// Наблюдаемость (Этап 6 O3) — первой: обёртка журнала (request_id, trace_id, маскирование, выборка) действует
 	// на все подсистемы ниже.
@@ -180,7 +182,6 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (a *App, e
 	}); err != nil {
 		return nil, err
 	}
-	// Замыкания closers не обращаются к a: при ошибке Build именованный результат a уже nil.
 	obs := a.Obs
 	a.closers = append(a.closers, func() {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -229,7 +230,8 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (a *App, e
 	if a.httpLis, err = lc.Listen(ctx, "tcp", cfg.HTTP.Addr); err != nil {
 		return nil, fmt.Errorf("http listen: %w", err)
 	}
-	a.closers = append(a.closers, func() { _ = a.httpLis.Close() })
+	hlis := a.httpLis
+	a.closers = append(a.closers, func() { _ = hlis.Close() })
 	if addr := cfg.Observability.MetricsListen; addr != "" {
 		if a.metricsLis, err = lc.Listen(ctx, "tcp", addr); err != nil {
 			return nil, fmt.Errorf("observability.metrics_listen: %w", err)
@@ -242,7 +244,8 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (a *App, e
 		if a.grpcLis, err = lc.Listen(ctx, "tcp", cfg.Agent.GRPC.Listen); err != nil {
 			return nil, fmt.Errorf("grpc listen: %w", err)
 		}
-		a.closers = append(a.closers, func() { _ = a.grpcLis.Close() })
+		glis := a.grpcLis // сам TCP-listener; обёртка PROXY ниже закрывает его же
+		a.closers = append(a.closers, func() { _ = glis.Close() })
 		// За L4-балансировщиком адрес ПК приходит заголовком PROXY (docs/deploy.md): лимиты по IP и подсети ключа образа.
 		proxyTrusted, err := cfg.Agent.GRPC.ProxyTrustedPrefixes()
 		if err != nil {
@@ -369,12 +372,17 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		CACertFile: cfg.Agent.PKI.CACertFile, CAKeyFile: cfg.Agent.PKI.CAKeyFile,
 		ServerCertFile: cfg.Agent.PKI.ServerCertFile, ServerKeyFile: cfg.Agent.PKI.ServerKeyFile,
 		DevDir: cfg.Agent.PKI.DevDir, DevHosts: cfg.Agent.PKI.DevHosts,
+		ExtraTrustFiles: cfg.Agent.PKI.ExtraTrustFiles, // ротация CA (S6-O1-1)
 	}
 	if popts.DevDir != "" {
 		log.Warn("agent PKI: development CA in use (never in prod)", "dir", popts.DevDir)
 	}
 	if a.CA, err = pki.LoadCA(popts); err != nil {
 		return fmt.Errorf("agent pki: %w", err)
+	}
+	for _, c := range a.CA.ExtraTrust() {
+		// Прежний выпускающий CA убирают из extra_trust_files, когда истекли его сертификаты (docs/deploy.md).
+		log.Info("agent PKI: previous issuing CA is still trusted (rotation)", "subject", c.Subject.String(), "not_after", c.NotAfter)
 	}
 	serverCert, err := pki.LoadServerCertificate(popts)
 	if err != nil {
@@ -607,6 +615,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		ro.ApproveQrLogin = guestSrv.ApproveQrLogin // страница /pc-login/{code} (тот же Server, что будит WatchQrLogin)
 	}
 	ro.PasswordRecovery = tg.recovery
+	var mobileMW func(d *httpx.Deps, root http.Handler) func(http.Handler) http.Handler
 	if cfg.Mobile.Enabled {
 		// Старый REST мобильных приложений (Q-058, docs/mobile-compat.md).
 		lo := legacy.Options{Limiter: a.Limiter, Passwords: hasher, UpstreamHost: cfg.Mobile.UpstreamHost,
@@ -617,8 +626,26 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 				return fmt.Errorf("mobile.upstream: %w", err)
 			}
 		}
-		ro.Legacy = func(d *httpx.Deps, root http.Handler) func(http.Handler) http.Handler {
+		mobileMW = func(d *httpx.Deps, root http.Handler) func(http.Handler) http.Handler {
 			return legacy.New(lo, d, root).Middleware
+		}
+	}
+	// /api/v1: ключи клубов, ещё работающих в Laravel, — туда (S6-O1-4, integrations.legacy_upstream).
+	var v1Upstream *url.URL
+	upRaw, upHost := cfg.IntegrationsUpstream()
+	if upRaw != "" {
+		if v1Upstream, err = url.Parse(upRaw); err != nil {
+			return fmt.Errorf("integrations.legacy_upstream: %w", err)
+		}
+	}
+	if mobileMW != nil || v1Upstream != nil {
+		ro.Legacy = func(d *httpx.Deps, root http.Handler) func(http.Handler) http.Handler {
+			v1mw := v1.LegacyUpstream(d, v1Upstream, upHost)
+			if mobileMW == nil {
+				return v1mw
+			}
+			mmw := mobileMW(d, root)
+			return func(next http.Handler) http.Handler { return v1mw(mmw(next)) }
 		}
 	}
 	ro.Mounts = map[string]http.Handler{"/ws": a.Realtime}

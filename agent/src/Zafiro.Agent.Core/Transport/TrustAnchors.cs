@@ -31,10 +31,16 @@ public sealed class TrustAnchors : IDisposable
         return FromPem(pem);
     }
 
+    /// <summary>
+    /// Корни из PEM (один или несколько — на время ротации корня). Склейка файлов без перевода строки
+    /// (<c>cat old.pem new.pem</c>, когда в конце первого нет \n) тоже читается: иначе ImportFromPem не видит ни одного
+    /// сертификата.
+    /// </summary>
     public static TrustAnchors FromPem(string pem)
     {
+        ArgumentNullException.ThrowIfNull(pem);
         var roots = new X509Certificate2Collection();
-        roots.ImportFromPem(pem);
+        roots.ImportFromPem(pem.Replace("-----END CERTIFICATE----------BEGIN", "-----END CERTIFICATE-----\n-----BEGIN", StringComparison.Ordinal));
         foreach (var r in roots)
         {
             if (!string.Equals(r.Subject, r.Issuer, StringComparison.Ordinal))

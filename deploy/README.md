@@ -28,7 +28,7 @@ wiki.staging.zafiro.test staging.zafiro.test agent.staging.zafiro.test`, дов�
 `agent.staging.zafiro.test:8443`.
 
 Прочее: `task staging:ps`, `task staging:logs -- app1`, `task staging:migrate` (job миграций повторно),
-`task staging:reload-lb` (после правки карты `/api/v1`), `task staging:down` (graceful, тома сохраняются),
+`task staging:reload-lb` (после правки конфигурации nginx), `task staging:down` (graceful, тома сохраняются),
 `task staging:destroy` (с томами).
 
 ## Что где в `staging/`
@@ -39,9 +39,8 @@ wiki.staging.zafiro.test staging.zafiro.test agent.staging.zafiro.test`, дов�
 | `init.sh` | генерация `.env.staging` и `secrets/` (идемпотентно; в git не попадают) |
 | `.env.staging.example` | шаблон переменных (`STG_*`: образы с digest, порты, имена логинов) |
 | `postgres-init/20-zafiro-owner.sh` | роль-владелец схемы без SUPERUSER для миграций (PD-9); логины — `db/init/10-zafiro-logins.sh` |
-| `nginx/nginx.conf`, `nginx/http.d/zafiro.conf` | HTTPS: домены, мобильные пути, `/api/v1` по карте, WebSocket, HSTS |
+| `nginx/nginx.conf`, `nginx/http.d/zafiro.conf` | HTTPS: домены, мобильные пути и `/api/v1` → zafirogo (чужие токены/ключи он проксирует в Laravel), WebSocket, HSTS |
 | `nginx/stream.d/agents.conf` | L4-проброс gRPC агентов + `proxy_protocol on` |
-| `nginx/maps/api-v1-clubs.map` | карта переходного периода: префиксы API-ключей переведённых клубов → zafirogo |
 | `legacy/default.conf` | заглушка старого Laravel (отвечает `laravel <путь>`) |
 
 При 429 Docker Hub — в `staging/.env.staging` образы зависимостей с `mirror.gcr.io/library/…` (тот же digest).

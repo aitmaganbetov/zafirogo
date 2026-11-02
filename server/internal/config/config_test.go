@@ -417,3 +417,47 @@ func TestDevFixedNow(t *testing.T) {
 		t.Errorf("dev.disable_workers = %v", got)
 	}
 }
+
+// S6-O1-1: прежние выпускающие CA агентов на время ротации.
+func TestAgentPKIExtraTrustFiles(t *testing.T) {
+	cfg, err := Load("", environ("ZAFIRO_AGENT_PKI_EXTRA_TRUST_FILES=/run/secrets/agent-ca-2025.pem, /run/secrets/agent-ca-2024.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Agent.PKI.ExtraTrustFiles; len(got) != 2 || got[0] != "/run/secrets/agent-ca-2025.pem" || got[1] != "/run/secrets/agent-ca-2024.pem" {
+		t.Fatalf("extra_trust_files = %q", got)
+	}
+	if def, err := Load("", environ()); err != nil || len(def.Agent.PKI.ExtraTrustFiles) != 0 {
+		t.Fatalf("default extra_trust_files = %v, %v", def.Agent.PKI.ExtraTrustFiles, err)
+	}
+	_, err = Load("", environ("ZAFIRO_AGENT_PKI_CA_CERT_FILE=/s/ca.pem", "ZAFIRO_AGENT_PKI_CA_KEY_FILE=/s/ca.key",
+		"ZAFIRO_AGENT_PKI_SERVER_CERT_FILE=/s/srv.pem", "ZAFIRO_AGENT_PKI_SERVER_KEY_FILE=/s/srv.key",
+		"ZAFIRO_AGENT_PKI_EXTRA_TRUST_FILES=/s/ca.pem"))
+	if err == nil || !strings.Contains(err.Error(), "agent.pki.extra_trust_files") {
+		t.Fatalf("extra_trust_files = ca_cert_file: %v", err)
+	}
+}
+
+// S6-O1-4: адрес Laravel для неизвестных ключей /api/v1 — integrations.legacy_upstream, иначе mobile.upstream.
+func TestIntegrationsUpstream(t *testing.T) {
+	for _, tc := range []struct {
+		env              []string
+		wantURL, wantHst string
+	}{
+		{nil, "", ""},
+		{[]string{"ZAFIRO_MOBILE_UPSTREAM=http://laravel.internal", "ZAFIRO_MOBILE_UPSTREAM_HOST=zafiro.kz"}, "http://laravel.internal", "zafiro.kz"},
+		{[]string{"ZAFIRO_MOBILE_UPSTREAM=http://laravel.internal", "ZAFIRO_INTEGRATIONS_LEGACY_UPSTREAM=http://laravel-api.internal",
+			"ZAFIRO_INTEGRATIONS_LEGACY_UPSTREAM_HOST=api.zafiro.kz"}, "http://laravel-api.internal", "api.zafiro.kz"},
+	} {
+		cfg, err := Load("", environ(tc.env...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u, h := cfg.IntegrationsUpstream(); u != tc.wantURL || h != tc.wantHst {
+			t.Errorf("%v: IntegrationsUpstream = %q, %q", tc.env, u, h)
+		}
+	}
+	if _, err := Load("", environ("ZAFIRO_INTEGRATIONS_LEGACY_UPSTREAM=laravel")); err == nil || !strings.Contains(err.Error(), "integrations.legacy_upstream") {
+		t.Errorf("invalid legacy_upstream: %v", err)
+	}
+}

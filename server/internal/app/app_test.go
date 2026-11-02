@@ -4,7 +4,9 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,5 +85,59 @@ func TestWithoutWorkers(t *testing.T) {
 	}
 	if _, err = withoutWorkers(all, []string{"monitoring-flsh"}); err == nil {
 		t.Fatal("unknown worker name must fail")
+	}
+}
+
+// OBS-9: ошибка Build на любом шаге после открытия портов закрывает уже созданное и не паникует
+// (замыкания closers не должны обращаться к именованному результату a — он уже nil).
+func TestBuildErrorClosesResources(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = busy.Close() }()
+	free := func(t *testing.T) string {
+		t.Helper()
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr := l.Addr().String()
+		_ = l.Close()
+		return addr
+	}
+	cases := []struct {
+		name    string
+		env     func(httpAddr string) []string
+		wantErr string
+	}{
+		{"http listen", func(string) []string {
+			return []string{"ZAFIRO_HTTP_ADDR=" + busy.Addr().String()}
+		}, "http listen"},
+		{"metrics listen после http", func(h string) []string {
+			return []string{"ZAFIRO_HTTP_ADDR=" + h, "ZAFIRO_OBSERVABILITY_METRICS_LISTEN=" + busy.Addr().String()}
+		}, "observability.metrics_listen"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			httpAddr := free(t)
+			env := append([]string{"ZAFIRO_ENV=test"}, tc.env(httpAddr)...)
+			cfg, err := config.Load("", func() []string { return env })
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, err := Build(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			if err == nil || a != nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Build = %v, %v; want error %q", a, err, tc.wantErr)
+			}
+			// Порт HTTP, открытый до ошибки, освобождён.
+			if httpAddr != busy.Addr().String() {
+				l, err := net.Listen("tcp", httpAddr)
+				if err != nil {
+					t.Fatalf("http port not released: %v", err)
+				}
+				_ = l.Close()
+			}
+		})
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -507,5 +508,46 @@ func TestBuildRejectsSuperuserDSN(t *testing.T) {
 	_, err := Build(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err == nil || !strings.Contains(err.Error(), "обходит RLS") {
 		t.Fatalf("Build with superuser DSN: %v", err)
+	}
+}
+
+// OBS-9: ошибка Build после открытия HTTP и пулов (занят порт gRPC; неверный agent.grpc.proxy_trusted после
+// открытия gRPC) — всё созданное закрыто, без паники; порт HTTP освобождён.
+func TestBuildErrorAfterListeners(t *testing.T) {
+	e := startEnv(t)
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = busy.Close() }()
+	for _, tc := range []struct {
+		name, want string
+		env        []string
+		mutate     func(*config.Config)
+	}{
+		{name: "grpc listen", want: "grpc listen", env: []string{"ZAFIRO_AGENT_GRPC_LISTEN=" + busy.Addr().String()}},
+		{name: "proxy_trusted", want: "proxy_trusted", mutate: func(c *config.Config) { c.Agent.GRPC.ProxyTrusted = []string{"не-подсеть"} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			httpAddr := l.Addr().String()
+			_ = l.Close()
+			cfg := e.config(t, filepath.Join(t.TempDir(), "pki"), append([]string{"ZAFIRO_HTTP_ADDR=" + httpAddr}, tc.env...)...)
+			if tc.mutate != nil {
+				tc.mutate(cfg)
+			}
+			a, err := Build(context.Background(), cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			if err == nil || a != nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Build = %v, %v; want error %q", a, err, tc.want)
+			}
+			l, err = net.Listen("tcp", httpAddr)
+			if err != nil {
+				t.Fatalf("http port not released: %v", err)
+			}
+			_ = l.Close()
+		})
 	}
 }

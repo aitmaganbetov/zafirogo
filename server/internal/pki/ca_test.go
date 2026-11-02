@@ -1,6 +1,7 @@
 package pki
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -8,11 +9,14 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
 	"errors"
+	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -284,4 +288,119 @@ func TestSamePublicKey(t *testing.T) {
 	if SamePublicKey(csr2, iss.Cert) {
 		t.Error("different keys reported equal")
 	}
+}
+
+// S6-O1-1: ротация выпускающего CA. Новый CA выпускает; сертификаты прежнего принимаются (и на TLS-рукопожатии
+// по ClientCAs, и в Verify), пока он в ExtraTrustFiles; без него — отказ. Корень в доверие не попадает.
+func TestRotateIssuingCA(t *testing.T) {
+	oldCA, dir := devCA(t)
+	oldIss, oldKey := issueFor(t, oldCA, 3)
+
+	certFile, keyFile, err := NewDevIssuingCA(dir, "agent-ca-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{CACertFile: certFile, CAKeyFile: keyFile, ExtraTrustFiles: []string{filepath.Join(dir, DevCACertFile)}}
+	newCA, err := LoadCA(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(newCA.ExtraTrust()) != 1 || !newCA.ExtraTrust()[0].Equal(oldCA.Certificate()) {
+		t.Fatalf("extra trust = %v", newCA.ExtraTrust())
+	}
+	newIss, newKey := issueFor(t, newCA, 3)
+	if !bytes.Equal(newIss.Cert.RawIssuer, newCA.Certificate().RawSubject) || newCA.Certificate().Equal(oldCA.Certificate()) {
+		t.Fatal("new certificates must be issued by the new CA")
+	}
+	if len(newCA.ChainPEM()) != 2 || !strings.Contains(newCA.ChainPEM()[0], strings.TrimSpace(string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: newCA.Certificate().Raw})))) {
+		t.Error("ca_chain_pem must be the new CA chain")
+	}
+	for name, c := range map[string]struct {
+		iss Issued
+		key *ecdsa.PrivateKey
+	}{"old": {oldIss, oldKey}, "new": {newIss, newKey}} {
+		if _, pc, err := newCA.Verify(c.iss.Cert); err != nil || pc != 3 {
+			t.Errorf("Verify(%s) = %d, %v", name, pc, err)
+		}
+		if err := handshake(t, newCA, c.iss.Cert, c.key); err != nil {
+			t.Errorf("TLS handshake with %s certificate: %v", name, err)
+		}
+	}
+
+	// Без прежнего CA в доверенных — сертификаты прежнего не принимаются.
+	opts.ExtraTrustFiles = nil
+	strict, err := LoadCA(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := strict.Verify(oldIss.Cert); !errors.Is(err, ErrCertificateInvalid) {
+		t.Errorf("Verify(old) without extra trust = %v", err)
+	}
+	if err := handshake(t, strict, oldIss.Cert, oldKey); err == nil {
+		t.Error("TLS handshake with old certificate must fail without extra trust")
+	}
+	// Сертификат того же корня, но выпущенный третьим CA, не принимается: доверие — выпускающим CA, не корню.
+	f3, k3, err := NewDevIssuingCA(dir, "agent-ca-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := LoadCA(Options{CACertFile: f3, CAKeyFile: k3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sib, sibKey := issueFor(t, third, 3)
+	if _, _, err := newCA.Verify(sib.Cert); !errors.Is(err, ErrCertificateInvalid) {
+		t.Errorf("Verify(sibling CA) = %v", err)
+	}
+	if err := handshake(t, newCA, sib.Cert, sibKey); err == nil {
+		t.Error("TLS handshake with sibling CA certificate must fail")
+	}
+	// Не CA в extra_trust_files — ошибка загрузки.
+	if _, err := LoadCA(Options{CACertFile: certFile, CAKeyFile: keyFile, ExtraTrustFiles: []string{filepath.Join(dir, DevServerCertFile)}}); err == nil {
+		t.Error("server certificate in extra_trust_files must be rejected")
+	}
+}
+
+func issueFor(t *testing.T, ca *CA, computerID int64) (Issued, *ecdsa.PrivateKey) {
+	t.Helper()
+	key := p256(t)
+	csr, err := ParseCSR(makeCSR(t, key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, err := ca.Issue(IssueRequest{CSR: csr, ClubID: 1, ComputerID: computerID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return iss, key
+}
+
+// handshake — mTLS по net.Pipe: сервер требует клиентский сертификат и проверяет его по ca.ClientCAs()
+// (как grpcserver.TLSConfig); клиент шлёт только свой сертификат, без цепочки (как агент).
+func handshake(t *testing.T, ca *CA, client *x509.Certificate, clientKey *ecdsa.PrivateKey) error {
+	t.Helper()
+	srvKey := p256(t)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, DNSNames: []string{"localhost"}}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &srvKey.PublicKey, srvKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srvCert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(srvCert)
+	sc, cc := net.Pipe()
+	defer func() { _ = sc.Close(); _ = cc.Close() }()
+	srv := tls.Server(sc, &tls.Config{MinVersion: tls.VersionTLS13, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: ca.ClientCAs(),
+		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: srvKey, Leaf: srvCert}}})
+	cli := tls.Client(cc, &tls.Config{MinVersion: tls.VersionTLS13, ServerName: "localhost", RootCAs: roots,
+		Certificates: []tls.Certificate{{Certificate: [][]byte{client.Raw}, PrivateKey: clientKey, Leaf: client}}})
+	errc := make(chan error, 1)
+	go func() { errc <- srv.Handshake() }()
+	_ = cli.Handshake() // TLS 1.3: отказ сервера по клиентскому сертификату клиент видит позже — берём ошибку сервера
+	_ = cc.Close()
+	return <-errc
 }

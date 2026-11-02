@@ -48,7 +48,8 @@ x-app: &app
     ZAFIRO_AGENT_GUEST_QR_BASE_URL: https://app.staging.zafiro.test
     ZAFIRO_SUPERADMIN_DOMAIN: superadmin.staging.zafiro.test
     ZAFIRO_HTTP_WIKI_HOST: wiki.staging.zafiro.test
-    # Мобильные запросы клубов, которых здесь нет, — в старый Laravel (docs/mobile-compat.md §3).
+    # Мобильные запросы и ключи /api/v1 клубов, которых здесь нет, — в старый Laravel (docs/mobile-compat.md §3,
+    # S6-O1-4; integrations.legacy_upstream не задан — берётся mobile.upstream).
     ZAFIRO_MOBILE_UPSTREAM: http://legacy:80
     ZAFIRO_MOBILE_UPSTREAM_HOST: staging.zafiro.test
     # Метрики Prometheus — отдельный внутренний порт (O3, docs/observability.md); наружу не публикуется.
@@ -182,7 +183,6 @@ services:
       - ./nginx/http.d:/etc/nginx/http.d:ro
       - ./nginx/stream.d:/etc/nginx/stream.d:ro
       - ./nginx/snippets:/etc/nginx/snippets:ro
-      - ./nginx/maps:/etc/nginx/maps:ro
     tmpfs:
       - /tmp
     # Прод: лимит дескрипторов ≥ 2 × соединений агентов на балансировщик (ulimits: nofile: 131072 или LimitNOFILE

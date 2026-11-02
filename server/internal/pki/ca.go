@@ -51,7 +51,8 @@ type CA struct {
 	cert  *x509.Certificate
 	key   crypto.Signer
 	chain []*x509.Certificate // выпускающий → … → корень (корень может отсутствовать)
-	pool  *x509.CertPool      // якоря проверки клиентских сертификатов
+	pool  *x509.CertPool      // якоря проверки клиентских сертификатов: текущий выпускающий CA + extra
+	extra []*x509.Certificate // прежние выпускающие CA (ротация): только проверка, не выпуск
 	now   func() time.Time
 }
 
@@ -80,13 +81,33 @@ func LoadCAFromPEM(certPEM, keyPEM []byte, extraTrust ...*x509.Certificate) (*CA
 	pool := x509.NewCertPool()
 	pool.AddCert(issuing)
 	for _, c := range extraTrust {
+		if c == nil || !c.IsCA || !c.BasicConstraintsValid {
+			return nil, errors.New("pki: extra trusted certificate is not a CA")
+		}
 		pool.AddCert(c)
 	}
-	return &CA{cert: issuing, key: key, chain: certs, pool: pool, now: time.Now}, nil
+	return &CA{cert: issuing, key: key, chain: certs, pool: pool, extra: extraTrust, now: time.Now}, nil
 }
 
-// LoadCAFiles читает выпускающий CA из файлов (секреты смонтированы вне репозитория).
-func LoadCAFiles(certFile, keyFile string) (*CA, error) {
+// LoadCAFiles читает выпускающий CA из файлов (секреты смонтированы вне репозитория). extraTrustFiles —
+// сертификаты прежних выпускающих CA (из каждого файла берётся первый сертификат, как из certFile; корень из
+// хвоста цепочки в доверие не добавляется — иначе принимались бы сертификаты любого CA под ним).
+func LoadCAFiles(certFile, keyFile string, extraTrustFiles ...string) (*CA, error) {
+	extra := make([]*x509.Certificate, 0, len(extraTrustFiles))
+	for _, f := range extraTrustFiles {
+		data, err := os.ReadFile(filepath.Clean(f))
+		if err != nil {
+			return nil, fmt.Errorf("pki: read extra trusted CA: %w", err)
+		}
+		certs, err := parseCertificates(data)
+		if err != nil {
+			return nil, fmt.Errorf("pki: extra trusted CA %s: %w", filepath.Base(f), err)
+		}
+		if len(certs) == 0 {
+			return nil, fmt.Errorf("pki: extra trusted CA %s: no CERTIFICATE block", filepath.Base(f))
+		}
+		extra = append(extra, certs[0])
+	}
 	certPEM, err := os.ReadFile(filepath.Clean(certFile))
 	if err != nil {
 		return nil, fmt.Errorf("pki: read CA certificate: %w", err)
@@ -95,8 +116,11 @@ func LoadCAFiles(certFile, keyFile string) (*CA, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pki: read CA key: %w", err)
 	}
-	return LoadCAFromPEM(certPEM, keyPEM)
+	return LoadCAFromPEM(certPEM, keyPEM, extra...)
 }
+
+// ExtraTrust — прежние выпускающие CA, которым ещё доверяем (ротация CA).
+func (ca *CA) ExtraTrust() []*x509.Certificate { return ca.extra }
 
 // Certificate — сертификат выпускающего CA.
 func (ca *CA) Certificate() *x509.Certificate { return ca.cert }

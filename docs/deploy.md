@@ -69,12 +69,16 @@ job миграций (goose, роль-владелец схемы) ──► Pos
 | `wiki.zafiro.kz` | zafirogo: wiki с корня | `http.wiki_host` (Q-069) |
 | `zafiro.kz` | старый Laravel, пока не переведены все клубы, кроме путей ниже | — |
 | `zafiro.kz/api/(auth\|guest\|staff)/` | zafirogo; чужие токены и телефоны он сам проксирует в Laravel | `mobile.upstream`, `mobile.upstream_host` (`docs/mobile-compat.md` §3) |
-| `zafiro.kz/api/v1/` | по префиксу API-ключа: карта `deploy/staging/nginx/maps/api-v1-clubs.map` | — |
+| `zafiro.kz/api/v1/` | zafirogo; ключи, которых нет в его базе, он сам проксирует в Laravel | `integrations.legacy_upstream`, `integrations.legacy_upstream_host` (пусто — `mobile.upstream`, `mobile.upstream_host`; S6-O1-4) |
 | `agent.zafiro.kz:8443` | zafirogo, gRPC агентов | `agent.grpc.endpoint` (уходит агенту в ответе Enroll) |
 
-Карта `/api/v1` при go-live клуба: префиксы из отчёта `apply` («nginx: префиксы ключей /api/v1») → строки в
-`api-v1-clubs.map` → `nginx -t && nginx -s reload` (`task staging:reload-lb`; соединения агентов на L4 не рвутся).
-Откат клуба до первой операции — удалить строки и снова reload (`tools/migrate-from-mysql/README.md`, п. 8–10).
+Go-live клуба не меняет балансировщик: `/api/(auth|guest|staff|v1)/` всегда идут в zafirogo, и он решает сам —
+токен или ключ клуба есть в его базе (в том числе выпущенный уже в zafirogo) → ответ здесь, нет → обратный прокси
+в Laravel без изменений (`server/internal/http/sections/v1/upstream.go`, `server/internal/http/legacy`). Свой ключ,
+даже отозванный или с неверным секретом, обслуживается здесь (401, как ответил бы Laravel); лимит неудачных проверок
+по IP для проксируемых ключей считает Laravel. Когда переведены все клубы — `mobile.upstream` и
+`integrations.legacy_upstream` очистить (прокси выключится). Откат клуба до первой операции —
+`tools/migrate-from-mysql/README.md`, п. 10.
 
 ## 4. TLS
 
@@ -112,10 +116,39 @@ job миграций (goose, роль-владелец схемы) ──► Pos
 | Перец кодов регистрации | `agent.enroll.code_pepper` | секрет-менеджер, общий | смена обнуляет выданные коды (живут 15 мин) — менять в тихое окно |
 | Устаревший ключ Этапа 3 | `superadmin.secret_key` | — | только расшифровка; после `reencrypt-secrets` убрать |
 | Корень CA агентов | — (на серверах **нет**) | офлайн (HSM/сейф), ключ не на серверах | 10 лет; смена корня = переустановка агентов (корень вшит в установщик) |
-| Выпускающий CA агентов | `agent.pki.ca_cert_file` (+ цепочка до корня), `ca_key_file` | секрет (файл), только инстансы | 5 лет; ротация — вопрос S6-O1-1 (прежний CA должен оставаться в доверенных до истечения его сертификатов ≤ 30 дней) |
+| Выпускающий CA агентов | `agent.pki.ca_cert_file` (+ цепочка до корня), `ca_key_file`; прежний — `agent.pki.extra_trust_files` | секрет (файл), только инстансы | 5 лет (менять за ≥ 60 дней до конца); без обрыва ПК — «Ротация CA агентов» ниже |
 | Серверный сертификат gRPC | `agent.pki.server_cert_file`, `server_key_file` | секрет (файл) | ≤ 397 дней, подписывает корень (офлайн-церемония); rolling restart |
 | TLS веба | балансировщик | секрет балансировщика | ACME, автоматически |
 | Ключ подписи обновлений агента (Ed25519) | серверу — только открытый `agent.update.public_keys` | закрытый — только в секретах CI (`agent-release`) | новый key_id добавить в `public_keys` до выпуска, старый убрать после |
+
+### Ротация CA агентов
+
+Агент закрепляет **корень** CA (`RootCaPem`/`RootCaFile` в настройках агента, `docs/agent-protocol.md` §12), а не
+выпускающий CA: цепочку до корня он получает в `ca_chain_pem` ответа Enroll/RenewCertificate и проверяет по
+закреплённому корню. Поэтому смена выпускающего CA под тем же корнем не требует ничего от агентов.
+Сервер доверяет клиентским сертификатам по выпускающим CA (не по корню): текущий + `agent.pki.extra_trust_files`.
+
+1. [ ] Офлайн-церемония с ключом корня: новый выпускающий CA (ECDSA P-256, `CA:TRUE, pathlen:0`, EKU clientAuth,
+       5 лет) — сертификат + цепочка до корня (тот же формат, что текущий `ca_cert_file`) и ключ.
+2. [ ] Секреты инстансов: новый CA → `agent.pki.ca_cert_file`/`ca_key_file`; прежний файл сертификата (без ключа) →
+       `agent.pki.extra_trust_files` (`ZAFIRO_AGENT_PKI_EXTRA_TRUST_FILES`, список через запятую). Ключ прежнего CA
+       серверам больше не нужен — убрать из секретов.
+3. [ ] Rolling restart. В журнале старта — `agent PKI: previous issuing CA is still trusted (rotation)`. Новые
+       регистрации и продления выдаёт новый CA; ПК с сертификатами прежнего подключаются как раньше и на продлении
+       (в первой трети срока до конца, `renew_after`) получают сертификат нового CA и его цепочку.
+4. [ ] Через `agent.cert.lifetime` (30 дней) + запас на выключенные ПК: проверить, что сертификатов прежнего CA не
+       осталось (`SELECT count(*) FROM agent_certificates WHERE revoked_at IS NULL AND not_after > now() AND
+       issued_at < <дата шага 3>` — 0; бездисковые живут 24 ч). ПК, выключенный дольше срока сертификата, всё равно
+       регистрируется заново (сертификат истёк) — это не связано с ротацией.
+5. [ ] Убрать прежний CA из `extra_trust_files` → rolling restart.
+
+Смена **корня** (10 лет): агент принимает несколько корней (PEM-список в `RootCaPem`/`RootCaFile`; склейка файлов
+без перевода строки между ними тоже читается). Сначала новый
+корень добавляется агентам вторым в список (подписанное обновление агента/установщик), затем выпускающий CA и
+серверный сертификат gRPC переводятся на новый корень (как выше), затем старый корень убирается из агентов.
+Проверено тестами: `server/internal/pki` `TestRotateIssuingCA`, `server/internal/app` `TestAgentCARotation`
+(интеграционный: ПК со старым сертификатом подключается и продлевается на новый CA; без `extra_trust_files` — отказ),
+агент `CredentialTests` (несколько закреплённых корней).
 
 Staging: `deploy/staging/init.sh` генерирует всё это локально (`deploy/staging/secrets/`, `.env.staging` — вне git).
 

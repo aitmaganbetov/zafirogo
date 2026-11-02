@@ -83,16 +83,26 @@ type seeded struct {
 
 func newEnv(t *testing.T, limits apikey.Limits) *env {
 	t.Helper()
+	return newEnvWith(t, limits, nil)
+}
+
+// newEnvWith — newEnv с правкой опций роутера (например, Legacy для прокси в Laravel).
+func newEnvWith(t *testing.T, limits apikey.Limits, mutate func(*httpserver.Options)) *env {
+	t.Helper()
 	if specNew == nil {
 		specNew, specLegacy = loadSpec(t, "api/v1.yaml", specPath), loadSpec(t, "legacy openapi-v1.yaml", legacyPath)
 	}
 	ck := &clock{t: time.Now().UTC().Truncate(time.Minute).Add(5 * time.Second)}
-	srv := httptest.NewServer(httpserver.NewRouter(httpserver.Options{
+	opts := httpserver.Options{
 		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
 		Pool:           shared.App, PlatformPool: shared.Platform, Presence: fakePresence{}, Now: ck.now,
 		APILimits: limits, APICounter: &apikey.MemoryCounter{Now: ck.now},
-	}))
+	}
+	if mutate != nil {
+		mutate(&opts)
+	}
+	srv := httptest.NewServer(httpserver.NewRouter(opts))
 	t.Cleanup(srv.Close)
 	n := sharedSeq.Add(1)
 	e := &env{t: t, srv: srv, clock: ck, ip: fmt.Sprintf("10.%d.%d.%d", 100+n/65536%100, n/256%256, n%256)}
