@@ -77,7 +77,7 @@ jobs:
         run: tools/visual/run.sh ${PAGES:+--page "$PAGES"}
       - name: Отчёт
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-report
           path: tools/visual/report/
