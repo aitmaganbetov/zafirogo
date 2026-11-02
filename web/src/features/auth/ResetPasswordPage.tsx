@@ -1,21 +1,55 @@
+import { useNavigate } from '@tanstack/react-router';
+import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AuthLayout } from '../../layouts/AuthLayout';
-import { recoveryPhone } from './recovery';
+import { setFlash, useFlash } from '../../lib/flash';
+import { recoveryPhone, resetPassword, setRecoveryPhone } from './recovery';
+import { serverErrors } from './serverErrors';
 
 /*
- * Новый пароль по коду — перенос resources/views/auth/reset-password.blade.php. Смена пароля по коду из
- * Telegram — Этап 4 (без телефона маршрут уводит на /forgot-password, как PasswordRecoveryController::edit()).
+ * Новый пароль по коду — перенос resources/views/auth/reset-password.blade.php (PasswordRecoveryController::edit/update).
+ * Без телефона маршрут уводит на /forgot-password; после смены — вход с flash «Пароль изменён…».
  */
 export function ResetPasswordPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const status = useFlash('status');
   const phone = recoveryPhone() ?? '';
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const f = new FormData(form);
+    setBusy(true);
+    try {
+      const r = await resetPassword({
+        phone,
+        code: String(f.get('code') ?? ''),
+        password: String(f.get('password') ?? ''),
+        password_confirmation: String(f.get('password_confirmation') ?? ''),
+      });
+      setRecoveryPhone(null);
+      setFlash('status', r.message);
+      await navigate({ to: '/login' });
+    } catch (err) {
+      setError(serverErrors(err).first);
+      form.reset();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <AuthLayout title={t('Восстановление пароля')}>
       <div className="auth-card-head">
         <h2>{t('Новый пароль')}</h2>
         <p>{t('Номер: {{phone}}', { phone })}</p>
       </div>
-      <form action="/reset-password" method="POST" className="auth-form" onSubmit={(e) => e.preventDefault()}>
+      {status && !error && <div className="auth-status">{t(status)}</div>}
+      {error && <div className="auth-errors">{t(error)}</div>}
+      <form action="/reset-password" method="POST" className="auth-form" onSubmit={onSubmit}>
         <div className="auth-field">
           <label htmlFor="code">{t('Код из Telegram')}</label>
           <div className="auth-input-wrap">
@@ -37,7 +71,9 @@ export function ResetPasswordPage() {
             <input type="password" id="password_confirmation" name="password_confirmation" required minLength={6} autoComplete="new-password" />
           </div>
         </div>
-        <button className="auth-submit">{t('Сменить пароль')}</button>
+        <button className="auth-submit" disabled={busy}>
+          {t('Сменить пароль')}
+        </button>
       </form>
       <p className="auth-footer">
         <a href="/forgot-password">{t('Запросить новый код')}</a>

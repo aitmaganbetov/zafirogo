@@ -86,6 +86,15 @@ func (e *APIError) remember(m Msg) {
 	e.msgs[m.Text()] = m
 }
 
+// Localized — ошибка с текстами на языке клуба запроса, как в ResponseError (для разделов со своим конвертом
+// ошибок, например API v1). Без каталога или клуба — как есть.
+func (d *Deps) Localized(ctx context.Context, e *APIError) *APIError {
+	if d.I18n == nil || ClubID(ctx) <= 0 {
+		return e
+	}
+	return e.localized(ctx, d.I18n, d.Locale(ctx))
+}
+
 // lookuper — каталог переводов (*i18n.Catalog).
 type lookuper interface {
 	Lookup(ctx context.Context, locale, key string) (string, bool)
@@ -98,7 +107,7 @@ var ruleMsgs sync.Map
 // laravelRuleKeys — правило RuleMessage → ключ группы validation (lang/*/validation.php).
 var laravelRuleKeys = map[string]string{
 	"min": "min.numeric", "max": "max.numeric", "gt": "gt.numeric",
-	"min_string": "min.string", "max_string": "max.string",
+	"min_string": "min.string", "max_string": "max.string", "min_array": "min.array", "max_array": "max.array",
 }
 
 func rememberRule(text, field, rule, param string) {
@@ -107,7 +116,7 @@ func rememberRule(text, field, rule, param string) {
 		key = k
 	}
 	params := map[string]string{"attribute": strings.ReplaceAll(field, "_", " "), "decimal": "0-2"}
-	for _, p := range []string{"min", "max", "value"} {
+	for _, p := range []string{"min", "max", "value", "date"} {
 		params[p] = param
 	}
 	ruleMsgs.LoadOrStore(text, Msg{Key: "validation." + key, Params: params, attribute: field})

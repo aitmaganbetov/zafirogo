@@ -61,3 +61,30 @@ DELETE FROM club_load_snapshots WHERE captured_at < sqlc.arg(before_at);
 
 -- name: MonitoringPruneClubRequests :execrows
 DELETE FROM club_request_metrics WHERE minute < sqlc.arg(before_minute);
+
+-- ---------------------------------------------------------------------------
+-- Оповещения в Telegram (Этап 4, H2; Q-060): условия старых CollectServerMetrics, SnapshotClubLoad, SchedulerWatchdog
+-- ---------------------------------------------------------------------------
+
+-- name: MonitoringErrorTotals :one
+-- CollectServerMetrics::checkErrors(): запросы и ошибки 5xx за последние минуты (minute >= $minute - 5).
+SELECT COALESCE(sum(requests), 0)::bigint AS requests, COALESCE(sum(errors), 0)::bigint AS errors
+FROM request_metrics
+WHERE minute >= sqlc.arg(from_minute);
+
+-- name: MonitoringLastServerMinute :one
+-- SchedulerWatchdog::check(): DB::table('server_metrics')->max('minute'); 0 — снимков нет.
+SELECT COALESCE(max(minute), 0)::bigint FROM server_metrics;
+
+-- name: MonitoringOfflineCandidates :many
+-- SnapshotClubLoad: имя клуба, наибольшее «в сети» 2–12 минут назад и активная подписка (ClubSubscription::active()).
+SELECT c.id AS club_id, c.name,
+       COALESCE((SELECT max(s.online) FROM club_load_snapshots s
+                 WHERE s.club_id = c.id AND s.captured_at >= sqlc.arg(from_at) AND s.captured_at < sqlc.arg(to_at)), 0)::bigint AS previous_online,
+       EXISTS (SELECT 1 FROM club_subscriptions cs
+               WHERE cs.club_id = c.id
+                 AND ((cs.status = 'active' AND (cs.current_period_ends_at IS NULL OR cs.current_period_ends_at > sqlc.arg(now)))
+                   OR (cs.status = 'trialing' AND cs.trial_ends_at > sqlc.arg(now)))) AS subscribed
+FROM clubs c
+WHERE c.id = ANY(sqlc.arg(club_ids)::bigint[])
+ORDER BY c.id;

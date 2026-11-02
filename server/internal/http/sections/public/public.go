@@ -49,8 +49,8 @@ const (
 	fallbackLocale     = "ru"
 )
 
-// openAPIv1 — resources/api/openapi-v1.yaml старого проекта (Integration API v1 переносится на Этапе 4; справка
-// показывает его контракт как есть — docs/open-questions/stage3-public.md).
+// openAPIv1 — спецификация раздела v1 (api/v1.yaml, интеграционный API /api/v1 — Этап 4, H1); копия файла
+// раздела (go:embed не видит каталог api/), совпадение проверяет TestOpenAPISpecMatchesSection.
 //
 //go:embed openapi-v1.yaml
 var openAPIv1 []byte

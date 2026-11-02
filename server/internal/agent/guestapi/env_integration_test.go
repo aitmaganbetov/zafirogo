@@ -156,6 +156,8 @@ type harness struct {
 type harnessOpts struct {
 	noLimits bool
 	settings string // clubs.settings JSON
+	// options — донастройка guestapi.Options (Telegram: Recovery, TransferCodes).
+	options func(*guestapi.Options)
 }
 
 func newHarness(t *testing.T, o harnessOpts) *harness {
@@ -209,6 +211,9 @@ func newHarness(t *testing.T, o harnessOpts) *harness {
 			t.Fatal(err)
 		}
 		opts.Limiter = lim
+	}
+	if o.options != nil {
+		o.options(&opts)
 	}
 	hooks, err := guestapi.NewHooks(opts)
 	if err != nil {

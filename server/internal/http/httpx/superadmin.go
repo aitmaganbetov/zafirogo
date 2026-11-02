@@ -7,6 +7,7 @@ import (
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
+	"github.com/aitmaganbetov/zafirogo/server/internal/telegram"
 )
 
 // SuperadminDeps — зависимости кабинета суперадмина (Этап 3, группа 6; раздел superadmin).
@@ -23,6 +24,10 @@ type SuperadminDeps struct {
 	UpdateKeys map[string]ed25519.PublicKey
 	// BroadcastOnline — команда всем ПК на связи (по всем клубам), в фоне после коммита. nil — не рассылается.
 	BroadcastOnline func(ctx context.Context, cmd *agentv1.Command)
+	// TelegramGateway — проверка токена Telegram Gateway при сохранении (TelegramGateway::configure()). nil — 503.
+	TelegramGateway *telegram.Gateway
+	// TelegramAlerts — бот оповещений: проверка токена, поиск чата, проверочное сообщение. nil — 503.
+	TelegramAlerts *telegram.Alerts
 	// HTTPClient — загрузка манифеста подписи установщика агента (nil — клиент с таймаутом 15 с).
 	HTTPClient *http.Client
 }

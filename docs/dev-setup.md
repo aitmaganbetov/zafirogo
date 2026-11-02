@@ -84,6 +84,8 @@ NATS и gRPC. Нужен для смоук-теста собранного би�
 | `ZAFIRO_AGENT_GRPC_LISTEN`, `_ENDPOINT` | `:8443`, `localhost:8443` | gRPC агентов; публичный адрес для ответа Enroll |
 | `ZAFIRO_AGENT_PKI_CA_CERT_FILE`, `_CA_KEY_FILE`, `_SERVER_CERT_FILE`, `_SERVER_KEY_FILE` | пусто | prod: все четыре обязательны (ключи — вне репозитория) |
 | `ZAFIRO_AGENT_PKI_DEV_DIR` | dev/test: `.dev/pki` | dev-CA (в prod запрещён); `_DEV_HOSTS` — имена сертификата |
+| `ZAFIRO_SECURITY_DATA_KEYS` \* | dev: случайный | ключи шифрования секретов в базе (вебхуки, Telegram; Q-050) `kid:секрет[,kid2:секрет2]`, секрет ≥ 32 байт; первый шифрует, остальные расшифровывают; ротация — `docs/schema-changes.md` «Шифрование секретов в базе»; в prod обязателен |
+| `ZAFIRO_SUPERADMIN_SECRET_KEY` \* | пусто | устаревший ключ Этапа 3 (формат `v1:`): только расшифровка, воркер `reencrypt-secrets` перешифровывает ключом данных |
 | `ZAFIRO_AGENT_ENROLL_CODE_PEPPER` \* | dev: случайный | HMAC кодов регистрации (≥ 32 байт), общий для инстансов; `_CODE_TTL` 15m |
 | `ZAFIRO_AGENT_ENROLL_DISKLESS_CERT_LIFETIME` | `24h` | сертификат бездискового ПК по ключу образа (Q-037) |
 | `ZAFIRO_AGENT_UPDATE_PUBLIC_KEYS` | пусто | открытые ключи Ed25519 подписи обновлений агента `key_id:base64,…`; пусто — обновления не рассылаются |
@@ -97,9 +99,11 @@ NATS и gRPC. Нужен для смоук-теста собранного би�
 | `ZAFIRO_REALTIME_*` | | `MAX_CONNS_PER_USER` 5, `SEND_BUFFER` 64, `PING_INTERVAL` 25s, `PING_TIMEOUT` 10s, `MAX_LIFETIME` 0, `ORIGIN_PATTERNS` |
 | `ZAFIRO_WORKERS_EXPIRE_SESSIONS_INTERVAL` | `1m` | снятие истёкших сессий ПК |
 | `ZAFIRO_WORKERS_PARTITIONS_INTERVAL`, `_MONTHS` | `24h`, `3` | месячные партиции журналов (Q-081) |
+| `ZAFIRO_WORKERS_LOG_RETENTION_INTERVAL` | `1h` | удаление месячных партиций журналов старше срока (`logs:retention`; ledger и `audit_log` — никогда) |
+| `ZAFIRO_INTEGRATIONS_REQUEST_LOG_RETENTION` | `2160h` | срок журнала запросов API `api_request_logs` (90 дней, `request_log_retention_days`) |
 
 \* — секрет: тип `config.Secret`, в логах и `fmt` печатается `***` (у DSN виден только хост и база).
-В dev/test незаданные `AUTH_SIGNING_KEYS` и `ENROLL_CODE_PEPPER` заменяются случайными до перезапуска (предупреждение в логе).
+В dev/test незаданные `AUTH_SIGNING_KEYS`, `ENROLL_CODE_PEPPER` и `SECURITY_DATA_KEYS` заменяются случайными до перезапуска (предупреждение в логе).
 
 
 ## Генерация кода

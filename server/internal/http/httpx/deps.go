@@ -14,6 +14,7 @@ import (
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/enroll"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
+	"github.com/aitmaganbetov/zafirogo/server/internal/apikey"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/password"
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
@@ -21,6 +22,8 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/wsticket"
 	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
+	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
+	"github.com/aitmaganbetov/zafirogo/server/internal/verifycode"
 )
 
 // Checker — проверка зависимости для /readyz (например, пинг Postgres).
@@ -91,6 +94,15 @@ type Deps struct {
 	WebhookURLCheck func(ctx context.Context, rawURL string) string
 	// WakeWebhooks — разбудить отправку вебхуков (повтор доставки). nil — доставку возьмёт очередной опрос.
 	WakeWebhooks func()
+	// APILimits, APICounter — интеграционный API /api/v1 (раздел v1): лимиты config/integrations.php и счётчики окон
+	// (Valkey; nil — в памяти процесса).
+	APILimits  apikey.Limits
+	APICounter apikey.Counter
+	// Secrets — шифрование секретов в базе (security.data_keys, Q-050): секрет вебхука хранится зашифрованным
+	// (webhook.SecretContext). nil — выдать секрет нельзя (503).
+	Secrets *secretbox.Box
+	// PasswordRecovery — «Забыли пароль» кодом из Telegram (раздел recovery). nil — «не подключено».
+	PasswordRecovery *verifycode.PasswordRecovery
 	// ApproveQrLogin — подтверждение входа на ПК по QR с телефона (guestapi.Server.ApproveQrLogin; ошибки — статусы
 	// gRPC). nil — 503.
 	ApproveQrLogin func(ctx context.Context, clubID int64, code string, userID int64) error

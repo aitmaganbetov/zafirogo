@@ -27,6 +27,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/ratelimit"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/pricing"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
+	"github.com/aitmaganbetov/zafirogo/server/internal/friends"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -79,16 +80,8 @@ func NormalizePhone(phone string) string {
 	return "+7" + d
 }
 
-// MaskPhone — Friends::maskPhone(): "+7 701 ••• •• 12"; не казахстанский формат — "•••".
-func MaskPhone(phone string) string {
-	if !registerPhoneRe.MatchString(phone) {
-		if phone == "" {
-			return ""
-		}
-		return "•••"
-	}
-	return "+7 " + phone[2:5] + " ••• •• " + phone[10:12]
-}
+// MaskPhone — Friends::maskPhone() (friends.MaskPhone).
+func MaskPhone(phone string) string { return friends.MaskPhone(phone) }
 
 type authService struct {
 	agentv1.UnimplementedGuestAuthServiceServer
@@ -458,16 +451,7 @@ func (a *authService) Logout(ctx context.Context, _ *agentv1.LogoutRequest) (*ag
 	return &agentv1.LogoutResponse{}, nil
 }
 
-// RequestPasswordResetCode — TODO(Этап 2+): коды в Telegram (PasswordRecovery::sendCode, Telegram Gateway).
-// Сервиса Telegram в Go ещё нет — Unimplemented (docs/open-questions/stage2-guest-grpc.md GG-5).
-func (a *authService) RequestPasswordResetCode(context.Context, *agentv1.RequestPasswordResetCodeRequest) (*agentv1.RequestPasswordResetCodeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "password recovery via Telegram is not implemented yet")
-}
-
-// ResetPassword — TODO: см. RequestPasswordResetCode.
-func (a *authService) ResetPassword(context.Context, *agentv1.ResetPasswordRequest) (*agentv1.ResetPasswordResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "password recovery via Telegram is not implemented yet")
-}
+// RequestPasswordResetCode, ResetPassword — telegram.go (Этап 4, H2).
 
 // ---------------------------------------------------------------------------
 // QR-вход (QrLogins)

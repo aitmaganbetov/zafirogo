@@ -18,6 +18,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/notifications"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/pclogin"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/public"
+	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/recovery"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/reservations"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/services"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/sessions"
@@ -28,6 +29,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/system"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/tariffs"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/todos"
+	v1 "github.com/aitmaganbetov/zafirogo/server/internal/http/sections/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/warehouse"
 )
 
@@ -63,10 +65,12 @@ func Sections() []httpx.Section {
 		activitylogs.Section(),
 		notifications.Section(),
 		pclogin.Section(),
+		recovery.Section(),
 		public.Section(),
 		billing.Section(),
 		settings.Section(),
 		integrations.Section(),
 		superadmin.Section(),
+		v1.Section(),
 	}
 }

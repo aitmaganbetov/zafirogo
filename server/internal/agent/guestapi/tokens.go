@@ -286,3 +286,27 @@ func (t *Tokens) SignedInElsewhere(ctx context.Context, userID, computerID int64
 	}
 	return best, nil
 }
+
+// RevokeEverywhere отзывает все токены пользователя на ПК всех клубов (восстановление пароля по коду из Telegram:
+// $user->tokens()->delete(), PasswordRecovery::reset()). Возвращает отозванные токены (клуб и ПК — для SignOutGuest).
+func (t *Tokens) RevokeEverywhere(ctx context.Context, userID int64) ([]Guest, error) {
+	m, err := t.c.Do(ctx, t.c.B().Hgetall().Key(t.userKey(userID)).Build()).AsStrMap()
+	if err != nil {
+		return nil, err
+	}
+	var out []Guest
+	for _, hash := range m {
+		tm, err := t.c.Do(ctx, t.c.B().Hgetall().Key(t.tokKey(hash)).Build()).AsStrMap()
+		if err != nil {
+			return out, err
+		}
+		g, _, ok := parseToken(tm)
+		if err := revokeScript.Exec(ctx, t.c, []string{t.tokKey(hash)}, []string{t.prefix, hash}).Error(); err != nil {
+			return out, err
+		}
+		if ok && g.UserID == userID {
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}

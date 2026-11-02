@@ -447,3 +447,54 @@ NULL. Тот же способ — в `ledger_transactions.meta` операци�
 
 Код: `cash/service/receipt.go` (`encodeReceipt`/`decodeReceipt`), `shop.EncodeItems`/`shop.DecodeItems`,
 `bonus.EncodeLevels`/`bonus.ParseSettings`. Запись уровней v2 подключится к экрану настроек (Этап 3).
+
+## 11. Шифрование секретов в базе (0025, Этап 4)
+
+Решение Q-050. В Laravel `webhook_endpoints.secret` — каст `'encrypted'` (`app/Models/WebhookEndpoint.php`), токены
+Telegram в `platform_settings` — `Crypt::encryptString` (`app/Services/TelegramGateway.php`,
+`Monitoring/TelegramAlerts.php`), ключ — `APP_KEY`. Здесь шифрует сервер, ключа в SQL нет.
+
+- **Шифр** — `server/internal/secretbox`: AES-256-GCM, ключ AES — HKDF-SHA256 от секрета конфигурации. Формат
+  `v2:<kid>:base64(nonce ‖ шифротекст)`. Связка ключей — `security.data_keys` (`ZAFIRO_SECURITY_DATA_KEYS=kid:секрет,…`,
+  секрет ≥ 32 байт, в prod обязательна): первый шифрует, остальные только расшифровывают.
+- **Контекст (associated data)**: секрет вебхука шифруется с `webhook_endpoints.secret:club=<club_id>`
+  (`webhook.SecretContext`) — шифротекст, скопированный в endpoint другого клуба, не расшифруется. Токены Telegram —
+  без контекста.
+- **Формат `v1:`** (Этап 3, кабинет суперадмина: ключ SHA-256 от `superadmin.secret_key`) только расшифровывается,
+  если `superadmin.secret_key` задан; воркер перешифровывает такие значения в `v2`, после чего ключ можно убрать.
+- **Где шифруется / расшифровывается**: выдача и ротация секрета вебхука (`sections/integrations`, секрет
+  показывается один раз в ответе, в базе — только шифротекст), отправка вебхука (`webhook.Deliverer` расшифровывает
+  перед подписью HMAC; не расшифровался — попытка «secret unavailable», запрос не уходит), токены Telegram
+  (`sections/superadmin`, `internal/telegram`).
+- **Миграция 0025**: `CHECK (secret ~ '^v[0-9]+:') NOT VALID` на `webhook_endpoints` — новые и изменённые строки
+  только шифротекстом; если открытых секретов нет (новая база), ограничение сразу проверяется целиком (`VALIDATE`).
+  Иначе `VALIDATE CONSTRAINT webhook_endpoints_secret_sealed` — отдельной миграцией после того, как воркер отработает
+  на всех окружениях.
+- **Воркер `reencrypt-secrets`** (`server/internal/worker/reencrypt_secrets.go`, один исполнитель — advisory lock,
+  при старте и раз в час): открытые секреты вебхуков (строки до 0025), `v1` и `v2` со старым `kid` → текущий ключ;
+  токены `platform_settings.value.token` в `v1`/`v2` со старым `kid` → текущий ключ. Запись условная (значение не
+  изменилось), поэтому повтор и параллельная ротация секрета пользователем безопасны. Нерасшифровываемое значение
+  остаётся как есть (ошибка в журнале, без значения).
+- **Ротация ключа**: 1) добавить новый ключ **первым** в `security.data_keys` (старый — следом) и перезапустить
+  инстансы; 2) воркер перешифрует строки (журнал `secrets re-encrypted`, проверка — нет строк с префиксом старого
+  `kid`: `SELECT count(*) FROM webhook_endpoints WHERE secret LIKE 'v2:<старый kid>:%'`); 3) убрать старый ключ.
+- **Перенос из MySQL** (Q-050): инструмент расшифровывает значения Laravel старым `APP_KEY` (передаётся ему как
+  секрет) и записывает зашифрованными `secretbox` (тот же `security.data_keys`, контекст клуба): открытый текст в
+  `webhook_endpoints.secret` CHECK не пропустит.
+
+## 12. Срок хранения журналов — удаление месячных партиций (0026, Этап 4)
+
+Решения Q-081 («отсоединение по сроку»), H1-Q1 (`docs/open-questions/stage4-h1.md`).
+
+- **Функция** `zafiro_drop_monthly_partitions(parent, before timestamptz)` (`SECURITY DEFINER`, EXECUTE — только
+  `zafiro_platform`): `DETACH PARTITION` + `DROP TABLE` для партиций `<parent>_YYYY_MM`, весь месяц которых
+  (UTC) раньше `before`; возвращает число удалённых. Белый список — только журналы, которые старый код чистил по
+  сроку: `api_request_logs` (90 дней, `PruneIntegrationData`). `ledger_*` и `audit_log` не удаляются никогда,
+  `activity_logs` старый код хранил вечно — для них функция бросает исключение.
+- **Задача** `logs:retention` (`server/internal/worker/log_retention.go`, `db.DropPartitionsBefore`): раз в
+  `workers.log_retention.interval` (1h, как `integrations:prune`) под `leader.RunOnce`; срок —
+  `integrations.request_log_retention` (`2160h`). `lock_timeout` 5 с: DETACH блокирует родителя, вставки журнала не
+  должны ждать в очереди.
+- **Отличие от старого**: удаление целыми месяцами — строка живёт не меньше срока, до месяца дольше.
+- **Тестовые базы** (`dbtest`) создают партиции и на 24 месяца назад (тесты с замороженными датами); в проде
+  партиции под старые даты создаёт только инструмент переноса (`tools/migrate-from-mysql/README.md`).

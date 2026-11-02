@@ -76,8 +76,11 @@ func run(ctx context.Context, fixturePath, dsn string) error {
 	if err != nil {
 		return err
 	}
-	// Партиции журналов: от самой ранней даты демо-данных и на текущее время загрузки (ledger пишет now()).
-	if _, err := db.EnsurePartitions(ctx, pool, now.AddDate(0, -2, 0), 4); err != nil {
+	// Партиции журналов от месяца dev.fixed_now (f.Now — его же new.sh передаёт серверу в ZAFIRO_DEV_FIXED_NOW):
+	// демо-данные — до 3 месяцев раньше и до 2 месяцев позже; плюс реальное текущее время загрузки
+	// (ledger пишет now()). Миграции создают партиции только с реального текущего месяца.
+	fixedMonth := time.Date(now.UTC().Year(), now.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
+	if _, err := db.EnsurePartitions(ctx, pool, fixedMonth.AddDate(0, -3, 0), 6); err != nil {
 		return fmt.Errorf("partitions: %w", err)
 	}
 	if _, err := db.EnsurePartitions(ctx, pool, time.Now().UTC(), 2); err != nil {

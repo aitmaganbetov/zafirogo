@@ -28,6 +28,8 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/session"
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	cashsvc "github.com/aitmaganbetov/zafirogo/server/internal/cash/service"
+	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
+	"github.com/aitmaganbetov/zafirogo/server/internal/webhook"
 )
 
 // g5Hooks — вызовы ConfigChanged и пробуждения вебхуков.
@@ -81,6 +83,7 @@ func newG5Env(t *testing.T, now time.Time) (*adminEnv, *g5Hooks) {
 			defer g.mu.Unlock()
 			g.wakes++
 		},
+		Secrets: g5Keys,
 	}))
 	t.Cleanup(srv.Close)
 	e := &adminEnv{t: t, db: d, srv: srv, club: d.Club(t, fmt.Sprintf("g5%d", adminSeq.Add(1)))}
@@ -397,6 +400,19 @@ func TestG5Integrations(t *testing.T) {
 		t.Fatalf("webhook secret: %v", r.body)
 	}
 	hook := e.scalar("SELECT id FROM webhook_endpoints WHERE club_id = $1", e.club)
+	// Q-050: в базе секрет только зашифрованным (контекст — клуб), расшифровывается в выданный один раз.
+	storedSecret := func(want string) {
+		t.Helper()
+		var stored string
+		if err := e.db.Owner.QueryRow(context.Background(), "SELECT secret FROM webhook_endpoints WHERE id = $1", hook).Scan(&stored); err != nil {
+			t.Fatal(err)
+		}
+		got, err := g5Keys.OpenWith(stored, webhook.SecretContext(e.club))
+		if strings.Contains(stored, want) || !strings.HasPrefix(stored, "v2:g5:") || err != nil || got != want {
+			t.Fatalf("stored webhook secret %q → %q %v", stored, got, err)
+		}
+	}
+	storedSecret(r.body["secret"].(string))
 	expect(t, e.send("PATCH", admin, fmt.Sprintf("/api/settings/integrations/webhooks/%d", hook), map[string]any{"is_active": false}), http.StatusOK, "disable")
 	if d := e.activityDetails("webhook.updated"); d["is_active"] != "false" {
 		t.Fatalf("webhook.updated: %v", d)
@@ -406,7 +422,9 @@ func TestG5Integrations(t *testing.T) {
 	if e.scalar("SELECT failure_count FROM webhook_endpoints WHERE id = $1", hook) != 0 {
 		t.Fatal("failure_count reset")
 	}
-	expect(t, e.post(admin, fmt.Sprintf("/api/settings/integrations/webhooks/%d/secret", hook), nil), http.StatusOK, "secret")
+	r = e.post(admin, fmt.Sprintf("/api/settings/integrations/webhooks/%d/secret", hook), nil)
+	expect(t, r, http.StatusOK, "secret")
+	storedSecret(r.body["secret"].(string))
 
 	// Доставки: keyset и повтор.
 	for i := range 22 {
@@ -440,3 +458,6 @@ func TestG5Integrations(t *testing.T) {
 	}
 	expect(t, e.send("DELETE", owner, fmt.Sprintf("/api/settings/integrations/keys/%d", keyID), nil), http.StatusOK, "revoke revoked")
 }
+
+// g5Keys — ключи данных тестов (security.data_keys).
+var g5Keys, _ = secretbox.NewKeyring([]secretbox.Key{{ID: "g5", Secret: strings.Repeat("g", 32)}}, "")

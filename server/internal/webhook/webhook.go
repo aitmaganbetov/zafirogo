@@ -15,14 +15,22 @@
 // X-Zafiro-Delivery) детерминирован: uuid v5 от (id события, id endpoint) — повторная обработка того же
 // сообщения не создаёт вторую доставку (UNIQUE webhook_deliveries.event_id).
 //
-// Секрет endpoint'а читается из БД как есть. В Laravel он зашифрован Crypt (APP_KEY); расшифровка при
-// переносе данных — вопрос Q-050 (не решён). Пока он не решён, перенесённые endpoint'ы будут подписывать
-// зашифрованной строкой — получатель отвергнет подпись.
+// Секрет endpoint'а хранится зашифрованным (secretbox, ключи security.data_keys, контекст SecretContext —
+// как каст 'encrypted' в app/Models/WebhookEndpoint.php); Deliverer расшифровывает его перед подписью. Открытый
+// секрет строки до миграции 0025 используется как есть, пока его не перешифрует воркер reencrypt-secrets.
+// Секреты Laravel (Crypt, APP_KEY) инструмент переноса расшифровывает старым ключом и шифрует новым (Q-050).
 package webhook
 
 import (
+	"strconv"
 	"time"
 )
+
+// SecretContext — контекст шифрования (associated data) секрета вебхука: шифротекст привязан к клубу и не
+// расшифруется, если его скопировать в endpoint другого клуба.
+func SecretContext(clubID int64) string {
+	return "webhook_endpoints.secret:club=" + strconv.FormatInt(clubID, 10)
+}
 
 // DefaultEvents — события, на которые можно подписать вебхук (config/integrations.php webhook_events).
 var DefaultEvents = []string{

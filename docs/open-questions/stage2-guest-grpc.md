@@ -59,6 +59,7 @@ INTERNAL/UNAVAILABLE/отмена не сохраняются. 2) Ключ БД 
 Сервиса Telegram в Go нет, поэтому `RequestPasswordResetCode`, `ResetPassword`, `RequestTransferCode` отвечают
 `UNIMPLEMENTED` (TODO в коде). `TransferBalance` с `telegram_code` уже работает поверх `billing.ConfirmFriendTransferCode`
 (коды, выданные мобильным приложением/старым сервером; проверка кода — `password.Hasher.Verify`, bcrypt/Argon2id).
+- Сделано (Этап 4, H2): все три RPC реализованы (`guestapi/telegram.go`, `internal/verifycode`), см. `stage4-telegram.md`.
 
 ## GG-6. Пересадка: «ПК в сети» по `last_seen_at`
 

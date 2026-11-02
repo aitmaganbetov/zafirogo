@@ -19,6 +19,7 @@ import (
 	"github.com/valkey-io/valkey-go"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/enroll"
+	"github.com/aitmaganbetov/zafirogo/server/internal/apikey"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/password"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
@@ -31,6 +32,8 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/wsticket"
 	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
 	"github.com/aitmaganbetov/zafirogo/server/internal/monitoring"
+	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
+	"github.com/aitmaganbetov/zafirogo/server/internal/verifycode"
 )
 
 // Checker — проверка зависимости для /readyz (например, пинг Postgres).
@@ -96,8 +99,16 @@ type Options struct {
 	WebhookURLCheck func(ctx context.Context, rawURL string) string
 	// WakeWebhooks — разбудить отправку вебхуков. nil — очередной опрос.
 	WakeWebhooks func()
+	// APILimits — лимиты интеграционного API /api/v1 (config integrations.*); нулевые поля — старые значения.
+	APILimits apikey.Limits
+	// APICounter — счётчики окон /api/v1; nil — в Valkey (если задан Valkey), иначе в памяти процесса.
+	APICounter apikey.Counter
+	// Secrets — ключи шифрования секретов в базе (security.data_keys): секреты вебхуков. nil — 503 при выдаче.
+	Secrets *secretbox.Box
 	// ApproveQrLogin — подтверждение QR-входа на ПК (guestapi.Server.ApproveQrLogin). nil — 503.
 	ApproveQrLogin func(ctx context.Context, clubID int64, code string, userID int64) error
+	// PasswordRecovery — восстановление пароля кодом из Telegram (раздел recovery). nil — «не подключено».
+	PasswordRecovery *verifycode.PasswordRecovery
 	// RequireSubscription — middleware subscription (RequireActiveSubscription, subscription.go): разделы панели —
 	// при активной подписке клуба. Включает app (прод); в тестах разделов — по выбору (их клубы без подписки).
 	RequireSubscription bool
@@ -107,6 +118,10 @@ type Options struct {
 	Superadmin httpx.SuperadminDeps
 	// Metrics — счётчики запросов экрана «Сервер» (monitoring.Recorder). nil — не считаются.
 	Metrics *monitoring.Recorder
+	// Legacy — старый REST мобильных приложений (server/internal/http/legacy, Q-058): middleware, перехватывающий
+	// запросы старого контракта до входа панели (токены Sanctum). root — корневой роутер (вызовы нового REST
+	// изнутри). nil — старого REST нет.
+	Legacy func(d *httpx.Deps, root http.Handler) func(http.Handler) http.Handler
 }
 
 // limitRoutes применяет лимиты разделов ("МЕТОД /путь" → правило; сегмент {param} — любой непустой сегмент)
@@ -216,6 +231,21 @@ func wsTicketAuth(a *auth.Service, tickets *wsticket.Store, log *slog.Logger) fu
 	}
 }
 
+// skipIntegrationAPI — middleware mw не действует на /api/v1: там Authorization: Bearer — API-ключ интеграции
+// (zfk_…), его проверяет раздел v1 (AuthenticateApiKey), а не сессия сотрудника.
+func skipIntegrationAPI(mw func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		wrapped := mw(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/v1" || strings.HasPrefix(r.URL.Path, "/api/v1/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			wrapped.ServeHTTP(w, r)
+		})
+	}
+}
+
 // NewRouter собирает корневой обработчик.
 func NewRouter(o Options) http.Handler {
 	if o.Logger == nil {
@@ -233,6 +263,7 @@ func NewRouter(o Options) http.Handler {
 	}
 	deps := &httpx.Deps{
 		Superadmin: o.Superadmin,
+		Secrets:    o.Secrets,
 		Logger:     o.Logger, Auth: o.Auth, Pool: o.Pool, PlatformPool: o.PlatformPool, Billing: o.Billing, Cash: o.Cash,
 		Presence: o.Presence, Checkers: o.Checkers, CheckTimeout: o.CheckTimeout, Now: o.Now, Passwords: o.Passwords,
 		AgentCommands: o.AgentCommands, Enroll: o.Enroll,
@@ -240,6 +271,15 @@ func NewRouter(o Options) http.Handler {
 		ChatToGuest:       o.ChatToGuest,
 		ClubConfigChanged: o.ClubConfigChanged, WebhookURLCheck: o.WebhookURLCheck, WakeWebhooks: o.WakeWebhooks,
 		ApproveQrLogin: o.ApproveQrLogin,
+		APILimits:      o.APILimits.WithDefaults(), APICounter: o.APICounter,
+		PasswordRecovery: o.PasswordRecovery,
+	}
+	if deps.APICounter == nil {
+		if o.Valkey != nil {
+			deps.APICounter = apikey.ValkeyCounter{Client: o.Valkey}
+		} else {
+			deps.APICounter = &apikey.MemoryCounter{Now: o.Now}
+		}
 	}
 	if o.Valkey != nil && o.Auth != nil {
 		deps.WSTickets = wsticket.New(o.Valkey, "", 0)
@@ -257,9 +297,13 @@ func NewRouter(o Options) http.Handler {
 		Recoverer(o.Logger),
 		SecurityHeaders,
 	)
+	if o.Legacy != nil {
+		// Мобильные приложения на старом REST: свои токены и формат ответов — до аутентификации панели.
+		r.Use(o.Legacy(deps, r))
+	}
 	if o.Auth != nil {
 		// Principal из Authorization: Bearer — до лимитов (ключ «пользователь») и обработчиков.
-		r.Use(o.Auth.Middleware)
+		r.Use(skipIntegrationAPI(o.Auth.Middleware))
 	}
 	// После Principal: клуб запроса для счётчиков и режим просмотра для домена кабинета.
 	r.Use(o.Metrics.Middleware, superadminHost(o.Superadmin.Domain))

@@ -9,17 +9,27 @@
 // ZAFIRO_LOAD_PCS ПК (по умолчанию 10 000), открывает по TCP-соединению и стриму на ПК, шлёт Status раз в
 // ZAFIRO_LOAD_STATUS_EVERY (30 с) и замеряет за ZAFIRO_LOAD_WINDOW (60 с): CPU и RSS процесса сервера,
 // горутины и кучу Go, записи в Postgres (pg_stat_user_tables) и время доставки команды.
+//
+// ZAFIRO_LOAD_TLS=1.2|1.3 — стримы по mTLS, как в production: серверный TLS grpcserver.TLSConfig (dev-PKI во временном
+// каталоге), у каждого ПК свой клиентский сертификат ECDSA P-256 от выпускающего CA (pki.CA.Issue), версия TLS
+// клиента ограничена указанной (агенты на Windows 10 — TLS 1.2). Идентичность ПК по-прежнему — тестовый перехватчик.
 package stream
 
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"math/rand/v2"
+	mrand "math/rand/v2"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -32,6 +42,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/valkey-io/valkey-go"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
@@ -40,7 +51,49 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/commands"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 	grpcserver "github.com/aitmaganbetov/zafirogo/server/internal/grpc"
+	"github.com/aitmaganbetov/zafirogo/server/internal/pki"
 )
+
+// loadTLSVersion — ZAFIRO_LOAD_TLS: "" (без TLS), "1.2" или "1.3".
+func loadTLSVersion(t *testing.T) uint16 {
+	switch v := os.Getenv("ZAFIRO_LOAD_TLS"); v {
+	case "":
+		return 0
+	case "1.2":
+		return tls.VersionTLS12
+	case "1.3", "1":
+		return tls.VersionTLS13
+	default:
+		t.Fatalf("ZAFIRO_LOAD_TLS=%q: ожидается 1.2 или 1.3", v)
+		return 0
+	}
+}
+
+// clientTLS — mTLS клиента ПК: свой ключ ECDSA P-256 и сертификат от выпускающего CA, доверие — dev-корню.
+func clientTLS(t *testing.T, ca *pki.CA, roots *x509.CertPool, club, pc int64, version uint16) *tls.Config {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, err := x509.ParseCertificateRequest(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, err := ca.Issue(pki.IssueRequest{CSR: csr, ClubID: club, ComputerID: pc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chain := [][]byte{iss.Cert.Raw, ca.Certificate().Raw}
+	return &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: chain, PrivateKey: key, Leaf: iss.Cert}},
+		RootCAs:      roots, ServerName: "localhost", MinVersion: version, MaxVersion: version,
+	}
+}
 
 func envInt(name string, def int) int {
 	if v, err := strconv.Atoi(os.Getenv(name)); err == nil && v > 0 {
@@ -92,15 +145,28 @@ func TestLoadServerChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer svc.Close()
-	// Те же лимиты транспорта, что у боевого сервера (grpcserver.DefaultLimits), но без TLS.
+	// Те же лимиты транспорта, что у боевого сервера (grpcserver.DefaultLimits); TLS — если задан каталог PKI.
 	lim := grpcserver.DefaultLimits()
-	gs := grpc.NewServer(grpc.StreamInterceptor(testIdentity),
+	var creds []grpc.ServerOption
+	if dir := os.Getenv("ZAFIRO_LOAD_PKI_DIR"); dir != "" {
+		po := pki.Options{DevDir: dir}
+		ca, err := pki.LoadCA(po)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, err := pki.LoadServerCertificate(po)
+		if err != nil {
+			t.Fatal(err)
+		}
+		creds = append(creds, grpc.Creds(credentials.NewTLS(grpcserver.TLSConfig(cert, ca.ClientCAs()))))
+	}
+	gs := grpc.NewServer(append(creds, grpc.StreamInterceptor(testIdentity),
 		grpc.MaxRecvMsgSize(lim.MaxRecvMsgSize), grpc.MaxSendMsgSize(lim.MaxSendMsgSize),
 		grpc.MaxConcurrentStreams(lim.MaxConcurrentStreams),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: lim.KeepaliveMinTime, PermitWithoutStream: true}),
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: lim.KeepaliveTime, Timeout: lim.KeepaliveTimeout}),
 		grpc.InitialWindowSize(lim.WindowSize), grpc.InitialConnWindowSize(lim.WindowSize),
-		grpc.ReadBufferSize(lim.BufferSize), grpc.WriteBufferSize(lim.BufferSize))
+		grpc.ReadBufferSize(lim.BufferSize), grpc.WriteBufferSize(lim.BufferSize))...)
 	Register(gs, svc)
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -214,6 +280,27 @@ func TestLoad(t *testing.T) {
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestLoadServerChild$", "-test.v", "-test.timeout=0") // #nosec G204 -- сам тестовый бинарник
 	cmd.Env = append(os.Environ(), loadChildEnv+"=1", "ZAFIRO_LOAD_DSN="+dsn, "ZAFIRO_LOAD_VALKEY="+testEnv.vkAddr, "ZAFIRO_LOAD_NATS="+testEnv.natsURL)
+	// mTLS: dev-PKI (корень, выпускающий CA агентов, серверный сертификат localhost) и сертификат на каждый ПК.
+	tlsVersion := loadTLSVersion(t)
+	clientCreds := map[int64]*tls.Config{}
+	if tlsVersion != 0 {
+		dir := filepath.Join(t.TempDir(), "pki")
+		po := pki.Options{DevDir: dir}
+		ca, err := pki.LoadCA(po)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rootPEM, err := os.ReadFile(filepath.Join(dir, pki.DevRootCertFile)) // #nosec G304 -- временный каталог теста
+		if err != nil {
+			t.Fatal(err)
+		}
+		roots := x509.NewCertPool()
+		roots.AppendCertsFromPEM(rootPEM)
+		for _, id := range ids {
+			clientCreds[id] = clientTLS(t, ca, roots, club, id, tlsVersion)
+		}
+		cmd.Env = append(cmd.Env, "ZAFIRO_LOAD_PKI_DIR="+dir)
+	}
 	stdout, _ := cmd.StdoutPipe()
 	stdin, _ := cmd.StdinPipe()
 	cmd.Stderr = os.Stderr
@@ -265,7 +352,11 @@ func TestLoad(t *testing.T) {
 		wg.Add(1)
 		go func(pc int64) {
 			defer wg.Done()
-			cc, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()),
+			tc := insecure.NewCredentials()
+			if cfg := clientCreds[pc]; cfg != nil {
+				tc = credentials.NewTLS(cfg)
+			}
+			cc, err := grpc.NewClient(addr, grpc.WithTransportCredentials(tc),
 				grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 10 * time.Second}))
 			if err != nil {
 				failed.Add(1)
@@ -309,7 +400,7 @@ func TestLoad(t *testing.T) {
 				}
 			}()
 			// Статус раз в statusEvery с равномерным сдвигом (как 10 000 независимых ПК).
-			first := time.NewTimer(time.Duration(rand.Int64N(int64(statusEvery)))) // #nosec G404 -- распределение нагрузки
+			first := time.NewTimer(time.Duration(mrand.Int64N(int64(statusEvery)))) // #nosec G404 -- распределение нагрузки
 			defer first.Stop()
 			select {
 			case <-stop:
@@ -321,7 +412,7 @@ func TestLoad(t *testing.T) {
 			for {
 				if st.Send(&agentv1.AgentMessage{Payload: &agentv1.AgentMessage_Status{Status: &agentv1.Status{
 					State: agentv1.ComputerState_COMPUTER_STATE_IDLE,
-					Load:  &agentv1.ComputerLoad{CpuBasisPoints: uint32(rand.IntN(10000)), RamBasisPoints: 4000}}}}) == nil { // #nosec G404,G115
+					Load:  &agentv1.ComputerLoad{CpuBasisPoints: uint32(mrand.IntN(10000)), RamBasisPoints: 4000}}}}) == nil { // #nosec G404,G115
 					statuses.Add(1)
 				}
 				select {
@@ -389,6 +480,7 @@ func TestLoad(t *testing.T) {
 	}
 
 	report := map[string]any{
+		"tls":                          os.Getenv("ZAFIRO_LOAD_TLS"),
 		"streams":                      connected.Load(),
 		"connect_seconds":              connectTime.Seconds(),
 		"status_interval_seconds":      statusEvery.Seconds(),

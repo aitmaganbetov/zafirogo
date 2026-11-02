@@ -17,9 +17,8 @@ import (
 
 // Морф-классы предметов журнала — как subject_type перенесённых строк Laravel (getMorphClass()).
 const (
-	subjectUser       = `App\Models\User`
-	subjectComputer   = `App\Models\ClubComputer`
-	subjectFriendship = `App\Models\Friendship`
+	subjectUser     = `App\Models\User`
+	subjectComputer = `App\Models\ClubComputer`
 )
 
 // displayName — ClubComputer::displayName(): display_name ?: device_name ?: sprintf('PC-%02d', number).

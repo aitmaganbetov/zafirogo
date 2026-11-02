@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/enroll"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/guestapi"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/stream"
+	"github.com/aitmaganbetov/zafirogo/server/internal/apikey"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/password"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/ratelimit"
@@ -46,6 +48,7 @@ import (
 	grpcserver "github.com/aitmaganbetov/zafirogo/server/internal/grpc"
 	httpserver "github.com/aitmaganbetov/zafirogo/server/internal/http"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
+	"github.com/aitmaganbetov/zafirogo/server/internal/http/legacy"
 	"github.com/aitmaganbetov/zafirogo/server/internal/monitoring"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/pki"
@@ -332,8 +335,12 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		return fmt.Errorf("agent certificate cache: %w", err)
 	}
 
+	// Telegram (Этап 4, H2): коды восстановления пароля и перевода, бот оповещений; ключи — ниже (tg.store.Box).
+	tg := newTelegram(a, hasher, cfg.Agent.Guest.TokenTTL, ro.Now, log)
+
 	// API гостя: те же опции для хуков стрима (до stream.New) и для gRPC-сервисов (после).
 	guestOpts := guestapi.Options{
+		Recovery: tg.recovery, TransferCodes: tg.transfers,
 		Pool: a.AppPool, Valkey: a.Valkey, Passwords: hasher, Limiter: a.Limiter, Billing: a.Billing,
 		TokenTTL: cfg.Agent.Guest.TokenTTL, IdempotencyTTL: cfg.Agent.Guest.IdempotencyTTL,
 		QRBaseURL: cfg.Agent.Guest.QRBaseURL, PublicBaseURL: cfg.Agent.Guest.PublicBaseURL,
@@ -427,7 +434,15 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	if err != nil {
 		return fmt.Errorf("outbox: %w", err)
 	}
+	// Ключи шифрования секретов в базе (Q-050): security.data_keys; superadmin.secret_key Этапа 3 — только
+	// расшифровка старых значений v1 (их перешифровывает воркер reencrypt-secrets).
+	box, err := newDataKeyring(cfg)
+	if err != nil {
+		return err
+	}
+	tg.store.Box = box
 	deliverer, err := webhook.NewDeliverer(webhook.DelivererOptions{
+		Secrets:  box,
 		Platform: a.PlatformPool, App: a.AppPool,
 		Guard:   webhook.Guard{RequireHTTPS: cfg.Webhooks.RequireHTTPS, AllowPrivate: cfg.Webhooks.AllowPrivateHosts},
 		Backoff: cfg.Webhooks.Backoff, Timeout: cfg.Webhooks.Timeout, ConnectTimeout: cfg.Webhooks.ConnectTimeout,
@@ -460,13 +475,14 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	}
 
 	// Мониторинг (CollectServerMetrics, SnapshotClubLoad, PruneMonitoringData) и истечение подписок (PD-10, Q-036).
-	monitor := &monitoring.Workers{Platform: a.PlatformPool, Recorder: metrics, Online: a.Stream.Presence(), Log: log}
+	monitor := &monitoring.Workers{Platform: a.PlatformPool, Recorder: metrics, Online: a.Stream.Presence(), Alerts: tg.monitor, Log: log}
 	expireSubs := &worker.ExpireSubscriptions{Platform: a.PlatformPool, Now: ro.Now, Log: log}
 	a.workers = []namedWorker{
 		{"monitoring-flush", monitor.RunFlush},
 		{"monitoring-collect", monitor.RunCollect},
 		{"monitoring-clubs", monitor.RunClubs},
 		{"monitoring-prune", monitor.RunPrune},
+		{"monitoring-watchdog", monitor.RunWatchdog},
 		{"expire-subscriptions", expireSubs.Run},
 		{"agent-cert-cache", a.CertCache.Run},
 		{"agent-presence-sweeper", sweeper.Run},
@@ -476,7 +492,13 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		{"realtime-hub", a.Realtime.Run},
 		{"expire-sessions", expire.Run},
 		{"burn-expired-packages", burnPackages.Run},
+		{"reencrypt-secrets", (&worker.ReencryptSecrets{Platform: a.PlatformPool, Box: box, Log: log}).Run},
 		{"ensure-partitions", partitions.Run},
+		{"log-retention", (&worker.LogRetention{
+			Platform: a.PlatformPool, Interval: cfg.Workers.LogRetention.Interval, Log: log,
+			// Сроки журналов — как в старом (PruneIntegrationData); ledger и audit_log — никогда.
+			Retention: map[string]time.Duration{"api_request_logs": cfg.Integrations.RequestLogRetention},
+		}).Run},
 	}
 	if a.workers, err = withoutWorkers(a.workers, cfg.Dev.DisableWorkers); err != nil {
 		return err
@@ -497,6 +519,12 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		return reason
 	}
 	ro.WakeWebhooks = deliverer.Wake
+	ro.APILimits = apikey.Limits{ // интеграционный API /api/v1 (config/integrations.php)
+		KeyDefault: cfg.Integrations.KeyRateLimit, KeyMax: cfg.Integrations.KeyRateLimitMax, Club: cfg.Integrations.ClubRateLimit,
+		FailedAuthPerMinute: cfg.Integrations.FailedAuthPerMinute, MaxRequestBytes: int64(cfg.Integrations.MaxRequestKB) * 1024,
+		MaxBulkItems: cfg.Integrations.MaxBulkItems, IdempotencyRetention: cfg.Integrations.IdempotencyRetention,
+	}
+	ro.Secrets = box
 	ro.Billing = a.Billing
 	ro.Cash = a.Cash
 	ro.Presence = a.Stream.Presence()
@@ -506,16 +534,26 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	if guestSrv != nil {
 		ro.ApproveQrLogin = guestSrv.ApproveQrLogin // страница /pc-login/{code} (тот же Server, что будит WatchQrLogin)
 	}
+	ro.PasswordRecovery = tg.recovery
+	if cfg.Mobile.Enabled {
+		// Старый REST мобильных приложений (Q-058, docs/mobile-compat.md).
+		lo := legacy.Options{Limiter: a.Limiter, Passwords: hasher, UpstreamHost: cfg.Mobile.UpstreamHost,
+			PublicBaseURL: firstNonEmpty(cfg.Agent.Guest.PublicBaseURL, cfg.Agent.Guest.QRBaseURL, guestapi.DefaultQRBaseURL),
+			TokenTTL:      cfg.Mobile.TokenTTL, Recovery: tg.recovery, TransferCodes: tg.transfers, Log: log}
+		if cfg.Mobile.Upstream != "" {
+			if lo.Upstream, err = url.Parse(cfg.Mobile.Upstream); err != nil {
+				return fmt.Errorf("mobile.upstream: %w", err)
+			}
+		}
+		ro.Legacy = func(d *httpx.Deps, root http.Handler) func(http.Handler) http.Handler {
+			return legacy.New(lo, d, root).Middleware
+		}
+	}
 	ro.Mounts = map[string]http.Handler{"/ws": a.Realtime}
 	ro.Metrics = metrics
-	box, err := secretbox.New(cfg.Superadmin.SecretKey.Reveal())
-	if err != nil {
-		log.Warn("superadmin.secret_key is not set: Telegram tokens cannot be saved", "err", err)
-		box = nil
-	}
 	ro.Superadmin = httpx.SuperadminDeps{
 		Domain: cfg.Superadmin.Domain, BackupPath: cfg.Superadmin.BackupPath, SSLHosts: cfg.Superadmin.SSLHosts,
-		Secrets: box, UpdateKeys: updateKeys,
+		Secrets: box, UpdateKeys: updateKeys, TelegramGateway: tg.gateway, TelegramAlerts: tg.alerts,
 		BroadcastOnline: broadcastOnline(a.Stream.Commands(), a.Stream.Presence(), log),
 	}
 	ro.Checkers = append(ro.Checkers,
@@ -525,6 +563,19 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		httpserver.CheckFunc{CheckName: "nats", Fn: a.pingNATS},
 	)
 	return nil
+}
+
+// newDataKeyring — связка ключей данных из security.data_keys (+ устаревший superadmin.secret_key для v1).
+func newDataKeyring(cfg *config.Config) (*secretbox.Box, error) {
+	keys := make([]secretbox.Key, 0, len(cfg.Security.DataKeys))
+	for _, k := range cfg.Security.DataKeys {
+		keys = append(keys, secretbox.Key{ID: k.ID, Secret: k.Secret.Reveal()})
+	}
+	box, err := secretbox.NewKeyring(keys, cfg.Superadmin.SecretKey.Reveal())
+	if err != nil {
+		return nil, fmt.Errorf("security.data_keys: %w", err)
+	}
+	return box, nil
 }
 
 // Close освобождает ресурсы, если Run не вызывался (Run закрывает их сам).
@@ -539,4 +590,14 @@ func (a *App) closeResources() {
 			a.closers[i]()
 		}
 	})
+}
+
+// firstNonEmpty — первая непустая строка.
+func firstNonEmpty(v ...string) string {
+	for _, s := range v {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }

@@ -36,7 +36,9 @@ type Workers struct {
 	Recorder *Recorder
 	Probe    Probe
 	Online   OnlineCounter
-	Log      *slog.Logger
+	// Alerts — оповещения в Telegram (Q-060); nil — без оповещений.
+	Alerts *Alerts
+	Log    *slog.Logger
 }
 
 func (w *Workers) log() *slog.Logger {
@@ -126,7 +128,7 @@ func (w *Workers) RunCollect(ctx context.Context) error {
 func (w *Workers) Collect(ctx context.Context, now time.Time) (bool, error) {
 	return leader.RunOnce(ctx, w.Platform, CollectJob, func(ctx context.Context, _ *pgxpool.Conn) error {
 		s := w.Probe.Snapshot(ctx, w.Platform)
-		return db.InPlatformTx(ctx, w.Platform, func(q *store.Queries) error {
+		if err := db.InPlatformTx(ctx, w.Platform, func(q *store.Queries) error {
 			return q.MonitoringInsertServerMetric(ctx, store.MonitoringInsertServerMetricParams{
 				Minute: now.Unix() / 60, Load1: s.Load1, Load5: s.Load5, Load15: s.Load15,
 				CpuCount: s.CPUCount, MemoryTotalMb: s.MemoryTotalMB, MemoryUsedMb: s.MemoryUsedMB,
@@ -134,7 +136,10 @@ func (w *Workers) Collect(ctx context.Context, now time.Time) (bool, error) {
 				DatabaseMb: s.DatabaseMB, QueuePending: s.QueuePending, QueueFailed: s.QueueFailed,
 				QueueOldestSeconds: s.QueueOldestSeconds,
 			})
-		})
+		}); err != nil {
+			return err
+		}
+		return w.checkServer(ctx, now, s)
 	})
 }
 
@@ -149,7 +154,7 @@ func (w *Workers) RunClubs(ctx context.Context) error {
 }
 
 // SnapshotClubs — SnapshotClubLoad::handle(): по клубу с ПК — всего, в сети, занято; день недели (1 = пн) и час
-// в часовом поясе клуба. Оповещения «клуб ушёл офлайн» — Этап 4 (Telegram, Q-060).
+// в часовом поясе клуба; оповещение «клуб ушёл офлайн» (Telegram, Q-060) — checkClubs.
 func (w *Workers) SnapshotClubs(ctx context.Context, now time.Time) (bool, error) {
 	return leader.RunOnce(ctx, w.Platform, ClubsJob, func(ctx context.Context, _ *pgxpool.Conn) error {
 		online := map[int64]int64{}
@@ -160,7 +165,9 @@ func (w *Workers) SnapshotClubs(ctx context.Context, now time.Time) (bool, error
 			}
 			online = o
 		}
-		return db.InPlatformTx(ctx, w.Platform, func(q *store.Queries) error {
+		current := map[int64]int64{} // клуб с ПК → в сети сейчас
+		if err := db.InPlatformTx(ctx, w.Platform, func(q *store.Queries) error {
+			clear(current)
 			rows, err := q.MonitoringClubCounts(ctx, &now)
 			if err != nil {
 				return err
@@ -181,9 +188,13 @@ func (w *Workers) SnapshotClubs(ctx context.Context, now time.Time) (bool, error
 				}); err != nil {
 					return err
 				}
+				current[r.ClubID] = min(online[r.ClubID], r.Computers)
 			}
 			return nil
-		})
+		}); err != nil {
+			return err
+		}
+		return w.checkClubs(ctx, now, current)
 	})
 }
 

@@ -32,6 +32,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	grpcserver "github.com/aitmaganbetov/zafirogo/server/internal/grpc"
 	"github.com/aitmaganbetov/zafirogo/server/internal/shop"
+	"github.com/aitmaganbetov/zafirogo/server/internal/verifycode"
 )
 
 // Умолчания.
@@ -73,6 +74,10 @@ type Options struct {
 	Notifier commands.SessionNotifier
 	// Commands — отправка команд ПК (QrLoginApproved, SignOutGuest); nil — Stream.Commands().
 	Commands *commands.Sender
+	// Recovery — восстановление пароля кодом из Telegram (RequestPasswordResetCode, ResetPassword); nil — «не подключено».
+	Recovery *verifycode.PasswordRecovery
+	// TransferCodes — коды подтверждения перевода в Telegram (RequestTransferCode); nil — «не подключено».
+	TransferCodes *verifycode.TransferCodes
 
 	// KeyPrefix — префикс ключей Valkey (пусто — DefaultKeyPrefix).
 	KeyPrefix string

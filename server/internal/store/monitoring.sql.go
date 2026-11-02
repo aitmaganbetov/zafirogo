@@ -121,6 +121,29 @@ func (q *Queries) MonitoringClubCounts(ctx context.Context, now *time.Time) ([]M
 	return items, nil
 }
 
+const monitoringErrorTotals = `-- name: MonitoringErrorTotals :one
+
+SELECT COALESCE(sum(requests), 0)::bigint AS requests, COALESCE(sum(errors), 0)::bigint AS errors
+FROM request_metrics
+WHERE minute >= $1
+`
+
+type MonitoringErrorTotalsRow struct {
+	Requests int64 `json:"requests"`
+	Errors   int64 `json:"errors"`
+}
+
+// ---------------------------------------------------------------------------
+// Оповещения в Telegram (Этап 4, H2; Q-060): условия старых CollectServerMetrics, SnapshotClubLoad, SchedulerWatchdog
+// ---------------------------------------------------------------------------
+// CollectServerMetrics::checkErrors(): запросы и ошибки 5xx за последние минуты (minute >= $minute - 5).
+func (q *Queries) MonitoringErrorTotals(ctx context.Context, fromMinute int64) (MonitoringErrorTotalsRow, error) {
+	row := q.db.QueryRow(ctx, monitoringErrorTotals, fromMinute)
+	var i MonitoringErrorTotalsRow
+	err := row.Scan(&i.Requests, &i.Errors)
+	return i, err
+}
+
 const monitoringInsertLoadSnapshot = `-- name: MonitoringInsertLoadSnapshot :exec
 INSERT INTO club_load_snapshots (club_id, captured_at, weekday, hour, computers, online, busy)
 VALUES ($1::bigint, $2, $3, $4, $5,
@@ -201,6 +224,76 @@ func (q *Queries) MonitoringInsertServerMetric(ctx context.Context, arg Monitori
 		arg.QueueOldestSeconds,
 	)
 	return err
+}
+
+const monitoringLastServerMinute = `-- name: MonitoringLastServerMinute :one
+SELECT COALESCE(max(minute), 0)::bigint FROM server_metrics
+`
+
+// SchedulerWatchdog::check(): DB::table('server_metrics')->max('minute'); 0 — снимков нет.
+func (q *Queries) MonitoringLastServerMinute(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, monitoringLastServerMinute)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const monitoringOfflineCandidates = `-- name: MonitoringOfflineCandidates :many
+SELECT c.id AS club_id, c.name,
+       COALESCE((SELECT max(s.online) FROM club_load_snapshots s
+                 WHERE s.club_id = c.id AND s.captured_at >= $1 AND s.captured_at < $2), 0)::bigint AS previous_online,
+       EXISTS (SELECT 1 FROM club_subscriptions cs
+               WHERE cs.club_id = c.id
+                 AND ((cs.status = 'active' AND (cs.current_period_ends_at IS NULL OR cs.current_period_ends_at > $3))
+                   OR (cs.status = 'trialing' AND cs.trial_ends_at > $3))) AS subscribed
+FROM clubs c
+WHERE c.id = ANY($4::bigint[])
+ORDER BY c.id
+`
+
+type MonitoringOfflineCandidatesParams struct {
+	FromAt  time.Time  `json:"from_at"`
+	ToAt    time.Time  `json:"to_at"`
+	Now     *time.Time `json:"now"`
+	ClubIds []int64    `json:"club_ids"`
+}
+
+type MonitoringOfflineCandidatesRow struct {
+	ClubID         int64  `json:"club_id"`
+	Name           string `json:"name"`
+	PreviousOnline int64  `json:"previous_online"`
+	Subscribed     bool   `json:"subscribed"`
+}
+
+// SnapshotClubLoad: имя клуба, наибольшее «в сети» 2–12 минут назад и активная подписка (ClubSubscription::active()).
+func (q *Queries) MonitoringOfflineCandidates(ctx context.Context, arg MonitoringOfflineCandidatesParams) ([]MonitoringOfflineCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, monitoringOfflineCandidates,
+		arg.FromAt,
+		arg.ToAt,
+		arg.Now,
+		arg.ClubIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MonitoringOfflineCandidatesRow
+	for rows.Next() {
+		var i MonitoringOfflineCandidatesRow
+		if err := rows.Scan(
+			&i.ClubID,
+			&i.Name,
+			&i.PreviousOnline,
+			&i.Subscribed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const monitoringPruneClubRequests = `-- name: MonitoringPruneClubRequests :execrows

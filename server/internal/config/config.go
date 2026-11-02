@@ -8,7 +8,7 @@
 // Имя переменной — ключ в верхнем регистре, точки заменены на "_": agent.grpc.listen →
 // ZAFIRO_AGENT_GRPC_LISTEN, database.platform_url → ZAFIRO_DATABASE_PLATFORM_URL. Переменные, которым
 // не соответствует ни один ключ из Defaults, игнорируются. Списки в окружении — через запятую;
-// auth.signing_keys — "kid:секрет,kid2:секрет2".
+// auth.signing_keys и security.data_keys — "kid:секрет,kid2:секрет2".
 //
 // Секреты (DSN, пароли, ключи подписи, перец кодов, ключ CA) имеют тип Secret и никогда не попадают в
 // логи: Secret и Config маскируют их в fmt и slog.
@@ -65,9 +65,12 @@ type Config struct {
 	Events          Events        `koanf:"events"`
 	Outbox          Outbox        `koanf:"outbox"`
 	Webhooks        Webhooks      `koanf:"webhooks"`
+	Integrations    Integrations  `koanf:"integrations"`
 	Realtime        Realtime      `koanf:"realtime"`
 	Workers         Workers       `koanf:"workers"`
 	Superadmin      Superadmin    `koanf:"superadmin"`
+	Mobile          Mobile        `koanf:"mobile"`
+	Security        Security      `koanf:"security"`
 	Dev             Dev           `koanf:"dev"`
 
 	// Generated — ключи, для которых в dev/test сгенерирован случайный секрет (не заданы явно).
@@ -309,6 +312,27 @@ type Webhooks struct {
 	PollInterval      time.Duration   `koanf:"poll_interval"`
 }
 
+// Integrations — интеграционный API /api/v1 (config/integrations.php старого проекта; значения по умолчанию — старые).
+type Integrations struct {
+	// KeyRateLimit — запросов в минуту на ключ по умолчанию (default_rate_limit_per_minute, API_KEY_RATE_LIMIT).
+	KeyRateLimit int `koanf:"key_rate_limit"`
+	// KeyRateLimitMax — предел лимита ключа (max_rate_limit_per_minute, API_KEY_RATE_LIMIT_MAX).
+	KeyRateLimitMax int `koanf:"key_rate_limit_max"`
+	// ClubRateLimit — запросов в минуту на клуб по всем ключам (club_rate_limit_per_minute, API_CLUB_RATE_LIMIT).
+	ClubRateLimit int `koanf:"club_rate_limit"`
+	// FailedAuthPerMinute — неудачных проверок ключа в минуту с одного IP (failed_auth_per_minute_per_ip).
+	FailedAuthPerMinute int `koanf:"failed_auth_per_minute"`
+	// MaxRequestKB — предел тела запроса (max_request_kb).
+	MaxRequestKB int `koanf:"max_request_kb"`
+	// MaxBulkItems — ПК в одной команде управления (max_bulk_items).
+	MaxBulkItems int `koanf:"max_bulk_items"`
+	// IdempotencyRetention — сколько хранится ответ по Idempotency-Key (idempotency_retention_hours).
+	IdempotencyRetention time.Duration `koanf:"idempotency_retention"`
+	// RequestLogRetention — срок хранения журнала запросов api_request_logs (request_log_retention_days, 90 дней);
+	// удаляет фоновая задача logs:retention целыми месячными партициями (worker.LogRetention).
+	RequestLogRetention time.Duration `koanf:"request_log_retention"`
+}
+
 // Realtime — WebSocket админки (/ws).
 type Realtime struct {
 	MaxConnsPerUser int           `koanf:"max_conns_per_user"`
@@ -342,14 +366,38 @@ func (c *Config) Now() func() time.Time {
 	return time.Now
 }
 
+// Security — ключи шифрования данных (секреты вебхуков, токены Telegram; server/internal/secretbox).
+type Security struct {
+	// DataKeys — связка ключей шифрования секретов в базе (Q-050): первый шифрует, остальные только
+	// расшифровывают (ротация: новый ключ — первым, воркер reencrypt-secrets перешифровывает строки, затем старый
+	// убирают). Секрет ≥ 32 байт. В env — ZAFIRO_SECURITY_DATA_KEYS=kid:секрет,kid2:секрет2. Обязателен в prod;
+	// в dev/test без значения — случайный (после перезапуска сохранённые секреты не читаются).
+	DataKeys []SigningKey `koanf:"data_keys"`
+}
+
+// Mobile — старый REST мобильных приложений Flutter (server/internal/http/legacy, решение Q-058,
+// docs/mobile-compat.md).
+type Mobile struct {
+	// Enabled — обслуживать маршруты приложений (/api/auth/*, /api/guest/*, /api/staff/*). По умолчанию включено.
+	Enabled bool `koanf:"enabled"`
+	// Upstream — адрес старого Laravel для клубов, которые ещё не переехали (поклубный переход): запрос с токеном,
+	// которого нет на этом сервере, и вход по телефону без клубов здесь уходят туда. Пусто — все клубы здесь.
+	Upstream string `koanf:"upstream"`
+	// UpstreamHost — заголовок Host для Upstream (пусто — Host исходного запроса).
+	UpstreamHost string `koanf:"upstream_host"`
+	// TokenTTL — срок токена приложения (Sanctum в старом: 30 дней).
+	TokenTTL time.Duration `koanf:"token_ttl"`
+}
+
 // Superadmin — кабинет суперадмина (Этап 3, группа 6).
 type Superadmin struct {
 	// Domain — отдельный хост кабинета (SUPERADMIN_DOMAIN старого проекта, решение Q-069): маршруты кабинета
 	// отвечают только на нём (с корня), на нём же — вход только для суперадминов. Пусто — кабинет по /superadmin.
 	// В dev — поддомен localhost (например admin.localhost).
 	Domain string `koanf:"domain"`
-	// SecretKey — ключ шифрования секретов платформы в базе (токены Telegram, как Crypt::encryptString старого
-	// кода). ≥ 32 байт; в dev/test без значения — случайный (после перезапуска сохранённые токены не читаются).
+	// SecretKey — ключ шифрования Этапа 3 (формат secretbox v1). Устарел: секреты шифрует security.data_keys,
+	// этот ключ (если задан) только расшифровывает старые значения v1, воркер reencrypt-secrets перешифровывает их
+	// текущим ключом данных; после этого ключ можно убрать из конфигурации. ≥ 32 байт.
 	SecretKey Secret `koanf:"secret_key"`
 	// BackupPath — каталог бэкапов (BACKUP_PATH): экран показывает время самого нового файла.
 	BackupPath string `koanf:"backup_path"`
@@ -361,6 +409,14 @@ type Superadmin struct {
 type Workers struct {
 	ExpireSessions ExpireSessions `koanf:"expire_sessions"`
 	Partitions     Partitions     `koanf:"partitions"`
+	LogRetention   LogRetention   `koanf:"log_retention"`
+}
+
+// LogRetention — удаление месячных партиций журналов старше срока хранения (worker.LogRetention).
+// Сроки — у журналов (integrations.request_log_retention); ledger и audit_log не удаляются никогда.
+type LogRetention struct {
+	// Interval — как часто проверять (integrations:prune в старом — hourly).
+	Interval time.Duration `koanf:"interval"`
 }
 
 // ExpireSessions — снятие истёкших сессий ПК (worker.ExpireSessions).
@@ -466,6 +522,15 @@ func Defaults() map[string]any {
 		"webhooks.workers":             8,
 		"webhooks.poll_interval":       "5s",
 
+		"integrations.key_rate_limit":         120,
+		"integrations.key_rate_limit_max":     1000,
+		"integrations.club_rate_limit":        600,
+		"integrations.failed_auth_per_minute": 20,
+		"integrations.max_request_kb":         256,
+		"integrations.max_bulk_items":         50,
+		"integrations.idempotency_retention":  "24h",
+		"integrations.request_log_retention":  "2160h",
+
 		"realtime.max_conns_per_user": 5,
 		"realtime.send_buffer":        64,
 		"realtime.ping_interval":      "25s",
@@ -476,6 +541,14 @@ func Defaults() map[string]any {
 		"workers.expire_sessions.interval": "1m",
 		"workers.partitions.interval":      "24h",
 		"workers.partitions.months":        3,
+		"workers.log_retention.interval":   "1h",
+
+		"security.data_keys": []any{},
+
+		"mobile.enabled":       true,
+		"mobile.upstream":      "",
+		"mobile.upstream_host": "",
+		"mobile.token_ttl":     "720h",
 
 		"superadmin.domain":      "",
 		"superadmin.secret_key":  "",
@@ -534,8 +607,8 @@ func Load(path string, environ func() []string) (*Config, error) {
 			if !ok {
 				return "", nil // неизвестная переменная (в т.ч. ZAFIRO_CONFIG_FILE, ZAFIRO_TEST_*)
 			}
-			if e.key == "auth.signing_keys" {
-				keys, err := parseSigningKeys(v)
+			if e.key == "auth.signing_keys" || e.key == "security.data_keys" {
+				keys, err := parseSigningKeys(e.key, v)
 				if err != nil {
 					envErr = err
 					return "", nil
@@ -568,12 +641,12 @@ func Load(path string, environ func() []string) (*Config, error) {
 }
 
 // parseSigningKeys разбирает "kid:секрет,kid2:секрет2". Текст ошибки не содержит секретов.
-func parseSigningKeys(v string) ([]any, error) {
+func parseSigningKeys(name, v string) ([]any, error) {
 	out := []any{}
 	for i, part := range splitList(v) {
 		id, secret, ok := strings.Cut(part, ":")
 		if !ok || id == "" || secret == "" {
-			return nil, fmt.Errorf("auth.signing_keys: элемент %d: ожидается kid:секрет", i+1)
+			return nil, fmt.Errorf("%s: элемент %d: ожидается kid:секрет", name, i+1)
 		}
 		out = append(out, map[string]any{"id": id, "secret": secret})
 	}
@@ -600,9 +673,9 @@ func (c *Config) applyDerived() {
 		c.Agent.Enroll.CodePepper = randomSecret(32)
 		c.Generated = append(c.Generated, "agent.enroll.code_pepper")
 	}
-	if c.Superadmin.SecretKey.IsZero() {
-		c.Superadmin.SecretKey = randomSecret(32)
-		c.Generated = append(c.Generated, "superadmin.secret_key")
+	if len(c.Security.DataKeys) == 0 {
+		c.Security.DataKeys = []SigningKey{{ID: "dev", Secret: randomSecret(32)}}
+		c.Generated = append(c.Generated, "security.data_keys")
 	}
 }
 
@@ -710,6 +783,8 @@ func (c *Config) Validate() error {
 		"realtime.ping_timeout":               c.Realtime.PingTimeout,
 		"workers.expire_sessions.interval":    c.Workers.ExpireSessions.Interval,
 		"workers.partitions.interval":         c.Workers.Partitions.Interval,
+		"workers.log_retention.interval":      c.Workers.LogRetention.Interval,
+		"integrations.request_log_retention":  c.Integrations.RequestLogRetention,
 	}
 	for name, d := range positive {
 		if d <= 0 {
@@ -845,6 +920,22 @@ func (c *Config) Validate() error {
 	if k := c.Superadmin.SecretKey; !k.IsZero() && len(k.Reveal()) < 32 {
 		add("superadmin.secret_key: нужно не меньше 32 байт")
 	}
+	if len(c.Security.DataKeys) == 0 {
+		add("security.data_keys: нужен хотя бы один ключ (ZAFIRO_SECURITY_DATA_KEYS=kid:секрет)")
+	}
+	seenData := map[string]bool{}
+	for i, k := range c.Security.DataKeys {
+		if !keyIDRe.MatchString(k.ID) {
+			add("security.data_keys[%d].id: ожидается [A-Za-z0-9_-]{1,16}", i)
+		}
+		if seenData[k.ID] {
+			add("security.data_keys[%d].id: повтор %q", i, k.ID)
+		}
+		seenData[k.ID] = true
+		if len(k.Secret.Reveal()) < 32 {
+			add("security.data_keys[%d].secret: нужно не меньше 32 байт", i)
+		}
+	}
 	if d := c.Superadmin.Domain; d != "" && (strings.ContainsAny(d, "/:@ ") || strings.HasPrefix(d, ".")) {
 		add("superadmin.domain: ожидается имя хоста без схемы и порта, получено %q", d)
 	}
@@ -861,6 +952,14 @@ func (c *Config) Validate() error {
 		if u, err := url.Parse(raw); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 			add("%s: ожидается http(s)://хост", name)
 		}
+	}
+	if raw := c.Mobile.Upstream; raw != "" {
+		if u, err := url.Parse(raw); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			add("mobile.upstream: ожидается http(s)://хост")
+		}
+	}
+	if c.Mobile.TokenTTL <= 0 {
+		add("mobile.token_ttl: должен быть > 0")
 	}
 	if c.Agent.Stream.KeyPrefix == "" || c.Agent.Stream.SubjectPrefix == "" {
 		add("agent.stream.key_prefix и agent.stream.subject_prefix: не должны быть пустыми")
@@ -883,6 +982,10 @@ func (c *Config) Validate() error {
 	}
 	if c.Webhooks.DisableAfter < 1 || c.Webhooks.Workers < 1 {
 		add("webhooks.disable_after и webhooks.workers: должны быть ≥ 1")
+	}
+	if i := c.Integrations; i.KeyRateLimit < 1 || i.KeyRateLimitMax < 1 || i.ClubRateLimit < 1 || i.FailedAuthPerMinute < 1 ||
+		i.MaxRequestKB < 1 || i.MaxBulkItems < 1 || i.IdempotencyRetention <= 0 {
+		add("integrations.*: лимиты должны быть ≥ 1, idempotency_retention > 0")
 	}
 	if c.Realtime.MaxConnsPerUser < 1 || c.Realtime.SendBuffer < 1 {
 		add("realtime.max_conns_per_user и realtime.send_buffer: должны быть ≥ 1")
@@ -942,6 +1045,10 @@ func (c *Config) LogValue() slog.Value {
 	for _, k := range c.Auth.SigningKeys {
 		keyIDs = append(keyIDs, k.ID)
 	}
+	dataKeyIDs := make([]string, 0, len(c.Security.DataKeys))
+	for _, k := range c.Security.DataKeys {
+		dataKeyIDs = append(dataKeyIDs, k.ID)
+	}
 	return slog.GroupValue(
 		slog.String("env", c.Env),
 		slog.Duration("shutdown_timeout", c.ShutdownTimeout),
@@ -959,6 +1066,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("log_level", c.Log.Level),
 		slog.String("log_format", c.Log.Format),
 		slog.Any("auth_signing_key_ids", keyIDs),
+		slog.Any("security_data_key_ids", dataKeyIDs),
 		slog.Group("agent",
 			slog.String("instance_id", c.Agent.InstanceID),
 			slog.String("grpc_listen", c.Agent.GRPC.Listen),

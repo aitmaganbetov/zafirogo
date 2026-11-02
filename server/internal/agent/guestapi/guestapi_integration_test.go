@@ -477,6 +477,7 @@ func TestGS075FriendTransfer(t *testing.T) {
 	if _, err := pd.social().AcceptFriend(cd, &agentv1.AcceptFriendRequest{FriendshipId: fid}); err != nil {
 		t.Fatal(err)
 	}
+	sa, sd := pa.connect("boot-75a", a), pd.connect("boot-75d", d)
 	_, err = pa.social().TransferBalance(ca, &agentv1.TransferBalanceRequest{IdempotencyKey: key(), FriendshipId: fid, AmountTiyn: 1000})
 	wantReason(t, err, codes.InvalidArgument, agentv1.ErrorCode_ERROR_CODE_VALIDATION_FAILED)
 	_, err = pa.social().TransferBalance(ca, &agentv1.TransferBalanceRequest{IdempotencyKey: key(), FriendshipId: fid, AmountTiyn: 1000,
@@ -495,6 +496,17 @@ func TestGS075FriendTransfer(t *testing.T) {
 	}
 	h.wantBalances(a, 9000, 0)
 	h.wantBalances(d, 1000, 0)
+	// BalanceChanged после коммита — и на ПК отправителя, и на ПК друга (где он вошёл).
+	for _, w := range []struct {
+		st   *agentStream
+		user int64
+		main int64
+	}{{sa, a, 9000}, {sd, d, 1000}} {
+		bc := w.st.waitCommand(func(c *agentv1.Command) bool { return c.GetBalanceChanged() != nil })
+		if bc.GetBalanceChanged().GetUserId() != w.user || bc.GetBalanceChanged().GetBalance().GetMainTiyn() != w.main {
+			t.Fatalf("balance changed = %+v, want user %d main %d", bc.GetBalanceChanged(), w.user, w.main)
+		}
+	}
 	_, err = pa.social().TransferBalance(ca, &agentv1.TransferBalanceRequest{IdempotencyKey: key(), FriendshipId: fid, AmountTiyn: 100_000_001,
 		Confirmation: &agentv1.TransferBalanceRequest_Password{Password: "password"}})
 	wantReason(t, err, codes.InvalidArgument, agentv1.ErrorCode_ERROR_CODE_TRANSFER_LIMIT)
@@ -502,10 +514,9 @@ func TestGS075FriendTransfer(t *testing.T) {
 	if err != nil || len(hist.GetEntries()) != 1 || hist.GetEntries()[0].GetMainDeltaTiyn() != 1000 || hist.GetEntries()[0].GetTitle() != "Перевод от друга Арман" {
 		t.Fatalf("history = %+v, %v", hist, err)
 	}
+	// Без Telegram Gateway — «Подтверждение кодом из Telegram пока не подключено.» (H2, telegram_integration_test.go).
 	_, err = pa.social().RequestTransferCode(ca, &agentv1.RequestTransferCodeRequest{FriendshipId: fid, AmountTiyn: 100})
-	if status.Code(err) != codes.Unimplemented {
-		t.Fatalf("transfer code: %v", err)
-	}
+	wantReason(t, err, codes.FailedPrecondition, agentv1.ErrorCode_ERROR_CODE_FEATURE_DISABLED)
 	h.noDrift()
 }
 

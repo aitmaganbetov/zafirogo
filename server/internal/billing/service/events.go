@@ -106,6 +106,28 @@ func NotifyBalance(ctx context.Context, n SessionNotifier, clubID, userID int64,
 	}
 }
 
+// NotifyBalancesAfterCommit — BalanceChanged на ПК, где вошли клиенты userIDs, с их балансами из транзакции q —
+// после коммита транзакции ctx (AfterCommit). n == nil — без уведомлений. Перевод другу: отправитель и друг.
+func NotifyBalancesAfterCommit(ctx context.Context, q *store.Queries, n SessionNotifier, clubID int64, userIDs ...int64) error {
+	if n == nil {
+		return nil
+	}
+	raw, err := q.GetClubSettingsForCash(ctx, clubID)
+	if err != nil {
+		return err
+	}
+	currency := clubCurrency(raw)
+	for _, id := range userIDs {
+		mb, err := q.GetMemberBalance(ctx, store.GetMemberBalanceParams{ClubID: clubID, UserID: id})
+		if err != nil {
+			return err
+		}
+		userID, main, bonus := id, money.Tiyn(mb.Balance), money.Tiyn(mb.BonusBalance)
+		AfterCommit(ctx, func(ctx context.Context) { NotifyBalance(ctx, n, clubID, userID, main, bonus, currency) })
+	}
+	return nil
+}
+
 // NotifySessionStarted — StartSession на ПК (новая или продлённая сессия). Ошибка — в лог.
 func NotifySessionStarted(ctx context.Context, n SessionNotifier, clubID, computerID int64, sessionID string, userID int64,
 	guest bool, startedAt, endsAt time.Time, issuedBy int64) {

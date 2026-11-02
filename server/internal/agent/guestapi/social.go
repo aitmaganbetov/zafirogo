@@ -8,18 +8,16 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
-	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/identity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/chat"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
+	"github.com/aitmaganbetov/zafirogo/server/internal/friends"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -27,11 +25,8 @@ import (
 
 // Тексты Friends / GuestFriendController.
 const (
-	msgFriendNotFound   = "Клиент с таким номером в клубе не найден."
-	msgFriendSelf       = "Нельзя добавить в друзья самого себя."
-	msgFriendAlready    = "Этот клиент уже у вас в друзьях."
-	msgFriendRequested  = "Заявка этому клиенту уже отправлена."
-	msgRequestNotFound  = "Заявка не найдена."
+	msgFriendNotFound   = friends.MsgUserNotFound
+	msgRequestNotFound  = friends.MsgRequestNotFound
 	msgTransferPassword = "Введите пароль от аккаунта, чтобы подтвердить перевод." // #nosec G101 -- текст для пользователя, не секрет
 	msgTransferWrong    = "Неверный пароль. Перевод не выполнен."
 	msgCodeFormat       = "Код — 6 цифр из сообщения в Telegram."
@@ -49,25 +44,36 @@ type socialService struct {
 	s *Server
 }
 
-// overview — Friends::overview(): друзья, входящие и исходящие заявки (до 300 строк).
+// overview — Friends::overview() (friends.List) в виде ответа агента.
 func overview(ctx context.Context, q *store.Queries, clubID, userID int64) (*agentv1.ListFriendsResponse, error) {
-	rows, err := q.GuestListFriendships(ctx, store.GuestListFriendshipsParams{UserID: userID, ClubID: clubID})
+	o, err := friends.List(ctx, q, clubID, userID)
 	if err != nil {
 		return nil, err
 	}
-	out := &agentv1.ListFriendsResponse{Friends: []*agentv1.Friend{}, Incoming: []*agentv1.Friend{}, Outgoing: []*agentv1.Friend{}}
-	for _, r := range rows {
-		f := &agentv1.Friend{FriendshipId: r.ID, Name: r.OtherName, MaskedPhone: MaskPhone(r.OtherPhone)}
-		switch {
-		case r.AcceptedAt != nil:
-			out.Friends = append(out.Friends, f)
-		case r.AddresseeID == userID:
-			out.Incoming = append(out.Incoming, f)
-		default:
-			out.Outgoing = append(out.Outgoing, f)
+	conv := func(in []friends.Friend) []*agentv1.Friend {
+		out := make([]*agentv1.Friend, 0, len(in))
+		for _, f := range in {
+			out = append(out, &agentv1.Friend{FriendshipId: f.FriendshipID, Name: f.Name, MaskedPhone: f.MaskedPhone})
 		}
+		return out
 	}
-	return out, nil
+	return &agentv1.ListFriendsResponse{Friends: conv(o.Friends), Incoming: conv(o.Incoming), Outgoing: conv(o.Outgoing)}, nil
+}
+
+// friendsError — ошибки friends → статусы gRPC (как было до выноса в пакет friends).
+func friendsError(err error) error {
+	var fe *friends.Error
+	switch {
+	case errors.Is(err, friends.ErrNotFound):
+		return rpcError(codes.NotFound, agentv1.ErrorCode_ERROR_CODE_FRIENDSHIP_NOT_FOUND, msgRequestNotFound, nil, "friendship")
+	case errors.As(err, &fe) && fe.Code == friends.CodeRequestNotFound:
+		return rpcError(codes.NotFound, agentv1.ErrorCode_ERROR_CODE_FRIENDSHIP_NOT_FOUND, msgRequestNotFound, nil, "friendship")
+	case errors.As(err, &fe) && fe.Code == friends.CodeUserNotFound:
+		return rpcError(codes.NotFound, agentv1.ErrorCode_ERROR_CODE_USER_NOT_FOUND, msgFriendNotFound, nil, "phone")
+	case errors.As(err, &fe):
+		return validation(fe.Field, fe.Message)
+	}
+	return err
 }
 
 // ListFriends — GET /api/guest/friends (GuestFriendController::index()).
@@ -105,45 +111,11 @@ func (ss *socialService) AddFriend(ctx context.Context, req *agentv1.AddFriendRe
 	now := s.o.Now()
 	out := &agentv1.AddFriendResponse{}
 	err = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
-		out.Accepted = false
-		friend, err := q.GuestFindClubUserByPhone(ctx, store.GuestFindClubUserByPhoneParams{ClubID: id.ClubID, Phone: phone})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return rpcError(codes.NotFound, agentv1.ErrorCode_ERROR_CODE_USER_NOT_FOUND, msgFriendNotFound, nil, "phone")
-		}
+		accepted, err := friends.Request(ctx, q, s.record, id.ClubID, g.UserID, phone, now)
 		if err != nil {
-			return err
+			return friendsError(err)
 		}
-		if friend.ID == g.UserID {
-			return validation("phone", msgFriendSelf)
-		}
-		me, err := q.GuestUserInClub(ctx, store.GuestUserInClubParams{ClubID: id.ClubID, UserID: g.UserID})
-		if err != nil {
-			return err
-		}
-		existing, err := q.GuestLockFriendshipPair(ctx, store.GuestLockFriendshipPairParams{ClubID: id.ClubID, UserA: g.UserID, UserB: friend.ID})
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			fid, err := q.GuestInsertFriendship(ctx, store.GuestInsertFriendshipParams{ClubID: id.ClubID, RequesterID: g.UserID, AddresseeID: friend.ID, Now: &now})
-			if err != nil {
-				return err
-			}
-			if err := s.record(ctx, q, activity.Entry{ClubID: id.ClubID, Event: "friend.requested",
-				Description: me.Name + " отправил заявку в друзья " + friend.Name, UserID: g.UserID,
-				SubjectType: subjectFriendship, SubjectID: fid}); err != nil {
-				return err
-			}
-		case err != nil:
-			return err
-		case existing.AcceptedAt != nil:
-			return validation("phone", msgFriendAlready)
-		case existing.RequesterID == g.UserID:
-			return validation("phone", msgFriendRequested)
-		default:
-			if err := s.acceptLocked(ctx, q, id.ClubID, existing.ID, g.UserID, me.Name); err != nil {
-				return err
-			}
-			out.Accepted = true
-		}
+		out.Accepted = accepted
 		out.Friends, err = overview(ctx, q, id.ClubID, g.UserID)
 		return err
 	})
@@ -151,15 +123,6 @@ func (ss *socialService) AddFriend(ctx context.Context, req *agentv1.AddFriendRe
 		return nil, s.fail(ctx, "AddFriend", err)
 	}
 	return out, nil
-}
-
-func (s *Server) acceptLocked(ctx context.Context, q *store.Queries, clubID, friendshipID, userID int64, userName string) error {
-	now := s.o.Now()
-	if err := q.GuestAcceptFriendship(ctx, store.GuestAcceptFriendshipParams{Now: &now, ClubID: clubID, ID: friendshipID}); err != nil {
-		return err
-	}
-	return s.record(ctx, q, activity.Entry{ClubID: clubID, Event: "friend.accepted", Description: userName + " принял заявку в друзья",
-		UserID: userID, SubjectType: subjectFriendship, SubjectID: friendshipID})
 }
 
 // AcceptFriend — POST /api/guest/friends/{friendship}/accept (Friends::accept()).
@@ -174,20 +137,10 @@ func (ss *socialService) AcceptFriend(ctx context.Context, req *agentv1.AcceptFr
 	}
 	out := &agentv1.AcceptFriendResponse{}
 	err = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
-		f, err := q.GuestLockFriendship(ctx, store.GuestLockFriendshipParams{ClubID: id.ClubID, ID: req.GetFriendshipId()})
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (f.AddresseeID != g.UserID || f.AcceptedAt != nil)) {
-			return rpcError(codes.NotFound, agentv1.ErrorCode_ERROR_CODE_FRIENDSHIP_NOT_FOUND, msgRequestNotFound, nil, "friendship")
+		if err := friends.Accept(ctx, q, s.record, id.ClubID, g.UserID, req.GetFriendshipId(), s.o.Now()); err != nil {
+			return friendsError(err)
 		}
-		if err != nil {
-			return err
-		}
-		me, err := q.GuestUserInClub(ctx, store.GuestUserInClubParams{ClubID: id.ClubID, UserID: g.UserID})
-		if err != nil {
-			return err
-		}
-		if err := s.acceptLocked(ctx, q, id.ClubID, f.ID, g.UserID, me.Name); err != nil {
-			return err
-		}
+		var err error
 		out.Friends, err = overview(ctx, q, id.ClubID, g.UserID)
 		return err
 	})
@@ -206,24 +159,10 @@ func (ss *socialService) RemoveFriend(ctx context.Context, req *agentv1.RemoveFr
 	}
 	out := &agentv1.RemoveFriendResponse{}
 	err = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
-		f, err := q.GuestLockFriendship(ctx, store.GuestLockFriendshipParams{ClubID: id.ClubID, ID: req.GetFriendshipId()})
-		if errors.Is(err, pgx.ErrNoRows) || (err == nil && f.RequesterID != g.UserID && f.AddresseeID != g.UserID) {
-			return rpcError(codes.NotFound, agentv1.ErrorCode_ERROR_CODE_FRIENDSHIP_NOT_FOUND, msgRequestNotFound, nil, "friendship")
+		if err := friends.Remove(ctx, q, s.record, id.ClubID, g.UserID, req.GetFriendshipId()); err != nil {
+			return friendsError(err)
 		}
-		if err != nil {
-			return err
-		}
-		if err := q.GuestDeleteFriendship(ctx, store.GuestDeleteFriendshipParams{ClubID: id.ClubID, ID: f.ID}); err != nil {
-			return err
-		}
-		me, err := q.GuestUserInClub(ctx, store.GuestUserInClubParams{ClubID: id.ClubID, UserID: g.UserID})
-		if err != nil {
-			return err
-		}
-		if err := s.record(ctx, q, activity.Entry{ClubID: id.ClubID, Event: "friend.removed", Description: me.Name + " удалил дружбу или заявку",
-			UserID: g.UserID, Details: map[string]any{"friendship_id": f.ID, "accepted": f.AcceptedAt != nil}}); err != nil {
-			return err
-		}
+		var err error
 		out.Friends, err = overview(ctx, q, id.ClubID, g.UserID)
 		return err
 	})
@@ -233,11 +172,7 @@ func (ss *socialService) RemoveFriend(ctx context.Context, req *agentv1.RemoveFr
 	return out, nil
 }
 
-// RequestTransferCode — TODO: код подтверждения перевода в Telegram (FriendTransferCodes::send()) — сервиса
-// Telegram в Go ещё нет (open-questions/stage2-guest-grpc.md GG-5).
-func (ss *socialService) RequestTransferCode(context.Context, *agentv1.RequestTransferCodeRequest) (*agentv1.RequestTransferCodeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "transfer codes via Telegram are not implemented yet")
-}
+// RequestTransferCode — telegram.go (Этап 4, H2).
 
 // TransferBalance — перевод другу с основного баланса (POST /api/guest/friends/{friendship}/transfer с паролем,
 // .../transfer/confirm с кодом из Telegram; Friends::transfer(), FriendTransferCodes::confirm()).

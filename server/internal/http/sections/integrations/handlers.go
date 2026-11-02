@@ -105,7 +105,7 @@ func listOf(raw json.RawMessage) []string {
 func (h *handlers) GetIntegrations(ctx context.Context, _ integrationsapi.GetIntegrationsRequestObject) (integrationsapi.GetIntegrationsResponseObject, error) {
 	out := integrationsapi.IntegrationsPage{
 		Keys: []integrationsapi.ApiKeyItem{}, Webhooks: []integrationsapi.WebhookItem{}, Requests: []integrationsapi.RequestLogItem{},
-		Staff: []integrationsapi.StaffAccessItem{}, DefaultRateLimit: defaultRateLimit, MaxRateLimit: maxRateLimit,
+		Staff: []integrationsapi.StaffAccessItem{}, DefaultRateLimit: h.d.APILimits.WithDefaults().KeyDefault, MaxRateLimit: h.d.APILimits.WithDefaults().KeyMax,
 	}
 	for _, s := range scopes {
 		out.Scopes = append(out.Scopes, integrationsapi.ScopeInfo{Scope: s.name, Label: s.label, Dangerous: s.dangerous})
@@ -137,11 +137,7 @@ func (h *handlers) GetIntegrations(ctx context.Context, _ integrationsapi.GetInt
 				LastUsedIp: k.LastUsedIp, Status: integrationsapi.Active,
 			}
 			// min($key->rate_limit_per_minute ?? default, max).
-			item.RateLimitPerMinute = defaultRateLimit
-			if k.RateLimitPerMinute != nil {
-				item.RateLimitPerMinute = int(*k.RateLimitPerMinute)
-			}
-			item.RateLimitPerMinute = min(item.RateLimitPerMinute, maxRateLimit)
+			item.RateLimitPerMinute = h.d.APILimits.WithDefaults().KeyLimit(k.RateLimitPerMinute)
 			switch {
 			case k.RevokedAt != nil:
 				item.Status = integrationsapi.Revoked
@@ -315,7 +311,7 @@ func parseIPs(s string, fe *httpx.FormErrors) []string {
 	return out
 }
 
-func validateKey(req *integrationsapi.ApiKeyRequest, now time.Time, tz string) (keyData, error) {
+func validateKey(req *integrationsapi.ApiKeyRequest, now time.Time, tz string, maxRate int) (keyData, error) {
 	var d keyData
 	var fe httpx.FormErrors
 	if req == nil {
@@ -368,8 +364,8 @@ func validateKey(req *integrationsapi.ApiKeyRequest, now time.Time, tz string) (
 				fe.Add("rate_limit_per_minute", httpx.RuleMessage("rate_limit_per_minute", cash.RuleInteger, ""))
 			case n < 1:
 				fe.Add("rate_limit_per_minute", httpx.RuleMessage("rate_limit_per_minute", cash.RuleMin, "1"))
-			case n > maxRateLimit:
-				fe.Add("rate_limit_per_minute", httpx.RuleMessage("rate_limit_per_minute", cash.RuleMax, strconv.Itoa(maxRateLimit)))
+			case n > int64(maxRate):
+				fe.Add("rate_limit_per_minute", httpx.RuleMessage("rate_limit_per_minute", cash.RuleMax, strconv.Itoa(maxRate)))
 			default:
 				v := int32(n)
 				d.rateLimit = &v
@@ -437,7 +433,7 @@ func (h *handlers) CreateApiKey(ctx context.Context, req integrationsapi.CreateA
 		if err != nil {
 			return err
 		}
-		d, err := validateKey(req.Body, now, club.Timezone)
+		d, err := validateKey(req.Body, now, club.Timezone, h.d.APILimits.WithDefaults().KeyMax)
 		if err != nil {
 			return err
 		}

@@ -41,3 +41,6 @@ import-mapping:
 CFG
   "$OAPI" -config "$tmp/$name.yaml" "$spec"
 done
+
+# Справка /docs/api показывает спецификацию раздела v1 (go:embed не видит каталог api/ — копия в пакете public).
+cp api/v1.yaml server/internal/http/sections/public/openapi-v1.yaml

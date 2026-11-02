@@ -99,8 +99,8 @@ ordered consumer club.>, только новые            фильтр club.*.
 | `notifications.changed` | `{}` | изменилось что-то, из чего строится колокольчик (`ClubNotifications::for()`): журнал из списка событий колокольчика, чат, заказ, остаток, ПК офлайн. Клиент перечитывает `GET /notifications` (список зависит от роли и `notifications_seen_at`) |
 | `computer.state` | `{"computer_id": 7, "status": "online\|offline\|busy\|maintenance", "session": {"user_id": 5, "ends_at": "…"} \| null, "reserved": bool, "maintenance": bool, "agent_version": "1.2.3"}` | дифф одного ПК (поля как у элемента `computerStates` старого `/club-map/state`); пишется только при изменении состояния, не на heartbeat |
 | `computer.session.expired` | `{"computer_id": 7, "session_id": 123}` | воркер истечения сессий |
-| `computer.reservation_changed` | `{"computer_id": 7, "reservation_id": 9, "action": "created\|cancelled\|arrived"}` | бронь (тип-вебхук) |
-| `computer.controlled` | `{"computer_id": 7, "action": "restart\|shutdown\|wake\|…"}` | команда управления (тип-вебхук) |
+| `computer.reservation_changed` | `{"computer_ids": [7], "reserved": true}` | флаг брони ПК: карта клуба (reserve) и API v1 `PUT /computers/{id}/reservation` (тип-вебхук, как в старом; брони экрана «Брони» шлют `reservation.changed` и `computer.state`) |
+| `computer.controlled` | `{"computer_ids": [7], "action": "power_on\|restart\|power_off\|service", "status": "restarting\|offline" \| null}` | команда управления (тип-вебхук) |
 | `chat.message` | `{"message_id": 10, "customer_id": 5, "from_staff": bool, "created_at": "…"}` | новое сообщение; текст — по REST (персональные данные не в шине) |
 | `chat.unread` | `{"unread": 3}` | счётчик непрочитанных клуба (бейдж) |
 | `todo.changed` | `{"todo_id": 4, "action": "created\|done\|reopened\|deleted", "due_on": "2026-10-30"}` | задача |

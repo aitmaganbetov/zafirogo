@@ -216,6 +216,13 @@ var ruleTemplates = map[string]string{
 	"prohibited":     "The :attribute field is prohibited.",
 	"confirmed":      "The :attribute field confirmation does not match.",
 	"regex":          "The :attribute field format is invalid.",
+	// API v1 (lang/en/validation.php): массивы, boolean, даты.
+	"array":          "The :attribute field must be an array.",
+	"max_array":      "The :attribute field must not have more than :max items.",
+	"min_array":      "The :attribute field must have at least :min items.",
+	"boolean":        "The :attribute field must be true or false.",
+	"date":           "The :attribute field must be a valid date.",
+	"after_or_equal": "The :attribute field must be a date after or equal to :date.",
 }
 
 // ruleParams — значения :min/:max/:value правил форм старого кода (FormRequest rules()). Разделы с другими
@@ -265,7 +272,7 @@ func RuleMessage(field, rule, param string) string {
 	}
 	msg := strings.ReplaceAll(tpl, ":attribute", strings.ReplaceAll(field, "_", " "))
 	msg = strings.ReplaceAll(msg, ":decimal", "0-2") // replaceDecimal(): 'decimal:0,2' → "0-2"
-	for _, k := range []string{":min", ":max", ":value"} {
+	for _, k := range []string{":min", ":max", ":value", ":date"} {
 		msg = strings.ReplaceAll(msg, k, param)
 	}
 	rememberRule(msg, field, key, param)

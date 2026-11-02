@@ -18,6 +18,7 @@ import (
 	integrationsapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/integrations"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
+	"github.com/aitmaganbetov/zafirogo/server/internal/webhook"
 )
 
 // webhookData — проверенные url и события.
@@ -85,6 +86,15 @@ func newSecret() (string, error) {
 	return "whsec_" + s, err
 }
 
+// sealSecret — секрет в базу только зашифрованным (в Laravel — каст 'encrypted', app/Models/WebhookEndpoint.php;
+// Q-050): ключи security.data_keys, контекст — клуб. Открытый секрет показывается один раз в ответе.
+func (h *handlers) sealSecret(clubID int64, secret string) (string, error) {
+	if h.d.Secrets == nil {
+		return "", httpx.ErrNotConfigured
+	}
+	return h.d.Secrets.SealWith(secret, webhook.SecretContext(clubID))
+}
+
 // CreateWebhook — storeWebhook(): не больше 20 вебхуков; секрет показывается один раз.
 func (h *handlers) CreateWebhook(ctx context.Context, req integrationsapi.CreateWebhookRequestObject) (integrationsapi.CreateWebhookResponseObject, error) {
 	var body integrationsapi.WebhookRequest
@@ -117,8 +127,12 @@ func (h *handlers) CreateWebhook(ctx context.Context, req integrationsapi.Create
 		if n >= maxWebhooks {
 			return httpx.Validation("url", msgTooManyWebhooks)
 		}
+		sealed, err := h.sealSecret(v.p.ClubID, secret)
+		if err != nil {
+			return err
+		}
 		id, err := q.IntegrationsInsertWebhook(ctx, store.IntegrationsInsertWebhookParams{
-			ClubID: v.p.ClubID, CreatedBy: v.p.UserID, Url: d.url, Secret: secret, Events: jsonList(d.events), Now: &now,
+			ClubID: v.p.ClubID, CreatedBy: v.p.UserID, Url: d.url, Secret: sealed, Events: jsonList(d.events), Now: &now,
 		})
 		if err != nil {
 			return err
@@ -253,7 +267,11 @@ func (h *handlers) RotateWebhookSecret(ctx context.Context, req integrationsapi.
 		if err != nil {
 			return err
 		}
-		if err := q.IntegrationsSetWebhookSecret(ctx, store.IntegrationsSetWebhookSecretParams{Secret: secret, Now: &now, ClubID: v.p.ClubID, ID: w.ID}); err != nil {
+		sealed, err := h.sealSecret(v.p.ClubID, secret)
+		if err != nil {
+			return err
+		}
+		if err := q.IntegrationsSetWebhookSecret(ctx, store.IntegrationsSetWebhookSecretParams{Secret: sealed, Now: &now, ClubID: v.p.ClubID, ID: w.ID}); err != nil {
 			return err
 		}
 		out = integrationsapi.CreatedSecret{Type: integrationsapi.Webhook, Name: w.Url, Secret: secret}

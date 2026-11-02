@@ -78,6 +78,32 @@ jobs:
           cache-dependency-path: server/go.sum
       - run: go test -race -count=1 ./...
 
+  # Переводы: каждый ключ фронта и сервера переведён на ru/kk/en — в database/translations старого проекта или в
+  # db/seed/translations-new.*.json (server/internal/i18n/coverage_test.go). Старый репозиторий — только чтение.
+  translations:
+    name: translations ru/kk/en
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          repository: aitmaganbetov/Zafiro
+          path: legacy/Zafiro
+          token: ${{ secrets.ZAFIRO_LEGACY_TOKEN || github.token }}
+          persist-credentials: false
+          sparse-checkout: database/translations
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: every key translated
+        env:
+          ZAFIRO_LEGACY_TRANSLATIONS: ${{ github.workspace }}/legacy/Zafiro/database/translations
+          ZAFIRO_REQUIRE_LEGACY: "1"
+        run: go test -count=1 -run 'TestEveryKeyTranslated|TestSeedTranslations' ./internal/i18n/
+
   integration:
     name: integration tests + migrations
     runs-on: ubuntu-24.04

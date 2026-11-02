@@ -551,37 +551,64 @@ func TestRLS(t *testing.T) {
 }
 
 func TestPartitions(t *testing.T) {
+	// Инвариант, а не абсолютное число: dbtest создаёт партиции и в прошлые месяцы
+	// (dbtest.PartitionMonthsBack), так что считать их «от миграции» нельзя.
 	d := testDB(t)
 	ctx := context.Background()
-	countParts := func(parent string) int {
-		var n int
-		if err := d.Owner.QueryRow(ctx, "SELECT count(*) FROM pg_inherits WHERE inhparent = $1::regclass", parent).Scan(&n); err != nil {
+	monthStart := func(offset int) time.Time {
+		now := time.Now().UTC()
+		return time.Date(now.Year(), now.Month()+time.Month(offset), 1, 0, 0, 0, 0, time.UTC)
+	}
+	hasPartition := func(parent string, month time.Time) bool {
+		var ok bool
+		if err := d.Owner.QueryRow(ctx, "SELECT to_regclass('public.' || $1) IS NOT NULL",
+			parent+"_"+month.Format("2006_01")).Scan(&ok); err != nil {
 			t.Fatal(err)
 		}
-		return n
+		return ok
 	}
+	// Миграции: текущий месяц и 3 вперёд; dbtest: ещё и прошлые месяцы.
 	for _, parent := range db.PartitionedTables {
-		if n := countParts(parent); n != 4 {
-			t.Fatalf("%s: %d partitions after migration, want 4 (current month + 3)", parent, n)
+		for off := -dbtest.PartitionMonthsBack; off <= 3; off++ {
+			if !hasPartition(parent, monthStart(off)) {
+				t.Fatalf("%s: no partition for %s", parent, monthStart(off).Format("2006-01"))
+			}
 		}
 	}
 	if _, err := db.EnsurePartitions(ctx, d.App, time.Now(), 6); !isSQLState(err, "42501") {
 		t.Fatalf("app role: err = %v, want permission denied", err)
 	}
-	created, err := db.EnsurePartitions(ctx, d.Platform, time.Now(), 6)
-	if err != nil {
+	// Фоновая задача (6 месяцев вперёд) досоздаёт недостающие месяцы.
+	if _, err := db.EnsurePartitions(ctx, d.Platform, time.Now(), 6); err != nil {
 		t.Fatal(err)
 	}
-	if created != 2*len(db.PartitionedTables) {
-		t.Fatalf("created %d partitions, want %d", created, 2*len(db.PartitionedTables))
+	for _, parent := range db.PartitionedTables {
+		for off := 0; off < 6; off++ {
+			if !hasPartition(parent, monthStart(off)) {
+				t.Fatalf("%s: no partition for %s after EnsurePartitions", parent, monthStart(off).Format("2006-01"))
+			}
+		}
 	}
+	// Повторный вызов ничего не создаёт.
 	again, err := db.EnsurePartitions(ctx, d.Platform, time.Now(), 6)
 	if err != nil || again != 0 {
 		t.Fatalf("second run created %d, err %v; want 0", again, err)
 	}
+	// Новый (далёкий) месяц создаётся — по одной партиции на таблицу.
+	far := monthStart(30)
+	if hasPartition("ledger_entries", far) {
+		t.Fatalf("partition for %s already exists", far.Format("2006-01"))
+	}
+	created, err := db.EnsurePartitions(ctx, d.Platform, far, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created != len(db.PartitionedTables) {
+		t.Fatalf("new month: created %d partitions, want %d", created, len(db.PartitionedTables))
+	}
 	// Граница месяца — по UTC.
 	var lower string
-	next := time.Now().UTC().AddDate(0, 5, 0)
+	next := monthStart(5)
 	name := "ledger_entries_" + next.Format("2006_01")
 	if err := d.Owner.QueryRow(ctx,
 		"SELECT pg_get_expr(c.relpartbound, c.oid) FROM pg_class c WHERE c.relname = $1", name).Scan(&lower); err != nil {

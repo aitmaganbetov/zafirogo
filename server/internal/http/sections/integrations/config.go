@@ -35,11 +35,6 @@ var events = []event{
 const (
 	// keyPrefix — integrations.key_prefix.
 	keyPrefix = "zfk_"
-	// defaultRateLimit, maxRateLimit — integrations.default_rate_limit_per_minute (API_KEY_RATE_LIMIT) и
-	// max_rate_limit_per_minute (API_KEY_RATE_LIMIT_MAX). Конфигурации API v1 в Go пока нет (Этап 4) — значения
-	// по умолчанию старого конфига.
-	defaultRateLimit = 120
-	maxRateLimit     = 1000
 	// maxActiveKeys, maxWebhooks — IntegrationController::MAX_ACTIVE_KEYS, MAX_WEBHOOKS.
 	maxActiveKeys = 50
 	maxWebhooks   = 20

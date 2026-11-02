@@ -93,7 +93,7 @@ func CustomerLabel(userName, userPhone, customerName, customerPhone *string) str
 
 // Create — ComputerReservations::create(): строка ПК блокируется; пересечение с ожидающей бронью ±интервал или
 // идущая оплаченная сессия, которая заходит в интервал до начала, — ошибка поля starts_at. Журнал
-// reservation.created, события reservation.changed и computer.reservation_changed (вебхук).
+// reservation.created, события reservation.changed и computer.state (карта клуба).
 func Create(ctx context.Context, q *store.Queries, info club.Info, actorID int64, b Booking, now time.Time) (int64, error) {
 	pc, err := q.LockReservationComputer(ctx, store.LockReservationComputerParams{ClubID: info.ID, ID: b.ComputerID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -195,11 +195,13 @@ func closeBooking(ctx context.Context, q *store.Queries, info club.Info, actorID
 	return changed(ctx, q, info, r.ID, r.ClubComputerID, action, from)
 }
 
-// changed — reservation.changed (экран «Брони»: перечитать день) и computer.reservation_changed (карта клуба,
-// вебхук интеграций; docs/realtime.md).
+// changed — reservation.changed (экран «Брони»: перечитать день) и computer.state (карта клуба: перечитать ПК —
+// бронь «сейчас» меняет статус; docs/realtime.md). Вебхук computer.reservation_changed бронь не шлёт: в старом коде
+// его отправляли только флаг брони ПК (ClubComputerController::control(reserve), API v1 PUT …/reservation) с
+// данными {computer_ids, reserved}; ReservationController вебхуков не отправлял (Q-057, блок H1).
 func changed(ctx context.Context, q *store.Queries, info club.Info, id, computerID int64, action string, startsLocal time.Time) error {
-	if _, err := outbox.Add(ctx, q, outbox.Event{ClubID: info.ID, Type: "computer.reservation_changed", Data: map[string]any{
-		"computer_id": computerID, "reservation_id": id, "action": action,
+	if _, err := outbox.Add(ctx, q, outbox.Event{ClubID: info.ID, Type: "computer.state", Data: map[string]any{
+		"computer_id": computerID,
 	}}); err != nil {
 		return err
 	}

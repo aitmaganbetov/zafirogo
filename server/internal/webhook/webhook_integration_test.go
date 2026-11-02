@@ -19,6 +19,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/db/dbtest"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox/natstest"
+	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 	"github.com/aitmaganbetov/zafirogo/server/internal/webhook"
 )
@@ -48,7 +49,20 @@ func (r *receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// testKeys — ключи данных тестов (security.data_keys): секрет в базе только зашифрованным (0025).
+var testKeys, _ = secretbox.NewKeyring([]secretbox.Key{{ID: "t1", Secret: strings.Repeat("k", 32)}}, "")
+
+// endpoint — вебхук с секретом, зашифрованным testKeys (как его сохраняет раздел integrations).
 func endpoint(t *testing.T, d *dbtest.DB, club int64, url, secret string, events string) int64 {
+	t.Helper()
+	sealed, err := testKeys.SealWith(secret, webhook.SecretContext(club))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return endpointRaw(t, d, club, url, sealed, events)
+}
+
+func endpointRaw(t *testing.T, d *dbtest.DB, club int64, url, secret string, events string) int64 {
 	t.Helper()
 	ctx := context.Background()
 	var user, id int64
@@ -135,7 +149,7 @@ func TestWebhookEndToEndWithRetry(t *testing.T) {
 	pub, _ := outbox.NewPublisher(outbox.PublisherOptions{Pool: d.Platform, JS: n.JS, Interval: 100 * time.Millisecond, LeaderRetry: 100 * time.Millisecond})
 	go func() { _ = pub.Run(ctx) }()
 	del, err := webhook.NewDeliverer(webhook.DelivererOptions{
-		Platform: d.Platform, App: d.App,
+		Platform: d.Platform, App: d.App, Secrets: testKeys,
 		Guard:   webhook.Guard{AllowPrivate: true, Ports: []int{}}, // httptest: http, 127.0.0.1, случайный порт
 		Backoff: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond}, PollInterval: 50 * time.Millisecond,
 	})
@@ -245,7 +259,7 @@ func TestWebhookFailureDisablesEndpoint(t *testing.T) {
 	ep := endpoint(t, d, club, srv.URL, "s", `["stock.changed"]`)
 	var disabled atomic.Int64
 	del, _ := webhook.NewDeliverer(webhook.DelivererOptions{
-		Platform: d.Platform, App: d.App, Guard: webhook.Guard{AllowPrivate: true, Ports: []int{}},
+		Platform: d.Platform, App: d.App, Guard: webhook.Guard{AllowPrivate: true, Ports: []int{}}, Secrets: testKeys,
 		Backoff: []time.Duration{time.Millisecond, time.Millisecond}, DisableAfter: 1,
 		OnEndpointDisabled: func(_, id int64) { disabled.Store(id) },
 	})
@@ -299,7 +313,7 @@ func TestWebhookFailureDisablesEndpoint(t *testing.T) {
 	}
 
 	// SSRF: без разрешения частных сетей адрес 127.0.0.1 блокируется.
-	strict, _ := webhook.NewDeliverer(webhook.DelivererOptions{Platform: d.Platform, App: d.App,
+	strict, _ := webhook.NewDeliverer(webhook.DelivererOptions{Platform: d.Platform, App: d.App, Secrets: testKeys,
 		Guard: webhook.Guard{Ports: []int{}}, Backoff: []time.Duration{time.Hour}})
 	if _, err := d.Owner.Exec(ctx, "UPDATE webhook_endpoints SET is_active = true WHERE id = $1", ep); err != nil {
 		t.Fatal(err)
@@ -311,5 +325,72 @@ func TestWebhookFailureDisablesEndpoint(t *testing.T) {
 	}
 	if r := deliveries(t, d, ep); r[2].status != webhook.StatusPending || r[2].lastErr == nil || *r[2].lastErr != "blocked: private_address" || recv.calls.Load() != calls {
 		t.Fatalf("ssrf = %+v", r[2])
+	}
+}
+
+// Q-050: секрет в базе зашифрован, подпись — открытым секретом; после ротации ключа данных (новый первым, старый для
+// расшифровки) доставка подписывается тем же секретом; без ключа — доставка не уходит; открытый текст в столбец не
+// записывается (CHECK webhook_endpoints_secret_sealed).
+func TestWebhookSecretEncrypted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	d := dbtest.New(t)
+	club := d.Club(t, "wh-sealed")
+	recv := &receiver{}
+	srv := httptest.NewServer(recv)
+	defer srv.Close()
+	const secret = "whsec_sealed_secret"
+	ep := endpoint(t, d, club, srv.URL, secret, `["stock.changed"]`)
+
+	var stored string
+	if err := d.Owner.QueryRow(ctx, "SELECT secret FROM webhook_endpoints WHERE id = $1", ep).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stored, secret) || !strings.HasPrefix(stored, "v2:t1:") {
+		t.Fatalf("stored secret %q", stored)
+	}
+	if _, err := d.Owner.Exec(ctx, "UPDATE webhook_endpoints SET secret = 'whsec_plain' WHERE id = $1", ep); err == nil {
+		t.Fatal("plaintext secret accepted by CHECK")
+	}
+
+	n := natstest.New(t, outbox.StreamName)
+	cons, _ := webhook.NewConsumer(webhook.ConsumerOptions{JS: n.JS, App: d.App})
+	deliver := func(id string, keys *secretbox.Box) deliveryRow {
+		t.Helper()
+		if _, err := cons.Enqueue(ctx, outbox.Envelope{ID: id, Type: "stock.changed", ClubID: club, CreatedAt: time.Now(), Data: json.RawMessage(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		del, _ := webhook.NewDeliverer(webhook.DelivererOptions{Platform: d.Platform, App: d.App, Secrets: keys,
+			Guard: webhook.Guard{AllowPrivate: true, Ports: []int{}}, Backoff: []time.Duration{time.Hour}})
+		if _, err := del.RunOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		r := deliveries(t, d, ep)
+		return r[len(r)-1]
+	}
+	verifyLast := func() {
+		t.Helper()
+		recv.mu.Lock()
+		g := recv.got[len(recv.got)-1]
+		recv.mu.Unlock()
+		if !webhook.Verify(secret, g.headers.Get(webhook.HeaderTimestamp), g.headers.Get(webhook.HeaderSignature), g.body, time.Now(), webhook.DefaultSignatureTTL) {
+			t.Fatalf("bad signature: %v", g.headers)
+		}
+	}
+	if r := deliver("00000000-0000-0000-0000-0000000000a1", testKeys); r.status != webhook.StatusDelivered {
+		t.Fatalf("delivery = %+v", r)
+	}
+	verifyLast()
+
+	rotated, _ := secretbox.NewKeyring([]secretbox.Key{{ID: "t2", Secret: strings.Repeat("n", 32)}, {ID: "t1", Secret: strings.Repeat("k", 32)}}, "")
+	if r := deliver("00000000-0000-0000-0000-0000000000a2", rotated); r.status != webhook.StatusDelivered {
+		t.Fatalf("delivery after rotation = %+v", r)
+	}
+	verifyLast()
+
+	unknown, _ := secretbox.NewKeyring([]secretbox.Key{{ID: "t2", Secret: strings.Repeat("n", 32)}}, "")
+	calls := recv.calls.Load()
+	if r := deliver("00000000-0000-0000-0000-0000000000a3", unknown); r.lastErr == nil || *r.lastErr != "secret unavailable" || recv.calls.Load() != calls {
+		t.Fatalf("delivery without key = %+v", r)
 	}
 }

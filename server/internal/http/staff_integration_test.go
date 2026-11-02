@@ -208,6 +208,20 @@ func TestCustomersScreen(t *testing.T) {
 	})
 
 	t.Run("сброс пароля: один раз на экран, no-store, выход на ПК", func(t *testing.T) {
+		// Токены мобильных приложений (Sanctum, $user->tokens()->delete()): клиента — во всех клубах, чужие — нет.
+		otherClub := e.db.Club(t, fmt.Sprintf("tok%d", adminSeq.Add(1)))
+		bystander, _ := e.member("Посторонний", "client", "", false)
+		token := func(clubID, userID int64) int64 {
+			n := adminSeq.Add(1)
+			var id int64
+			if err := e.db.Owner.QueryRow(context.Background(), `INSERT INTO mobile_api_tokens (club_id, user_id, name, token_hash, created_at, expires_at)
+				VALUES ($1, $2, 'mobileclient', $3, now(), now() + interval '1 day') RETURNING id`,
+				clubID, userID, fmt.Sprintf("%064d", n)).Scan(&id); err != nil {
+				t.Fatal(err)
+			}
+			return id
+		}
+		own, ownOther, foreign := token(e.club, created), token(otherClub, created), token(e.club, bystander)
 		r := e.send("POST", owner, fmt.Sprintf("/api/customers/%d/password", created), "", nil)
 		pw, _ := r.body["password"].(string)
 		if r.status != 200 || len(pw) != 8 || r.header.Get("Cache-Control") != "no-store, private" {
@@ -221,6 +235,12 @@ func TestCustomersScreen(t *testing.T) {
 		}
 		if n := e.scalar("SELECT count(*) FROM audit_log WHERE club_id = $1 AND action = 'user.password_reset'", e.club); n != 1 {
 			t.Fatalf("audit %d", n)
+		}
+		if n := e.scalar("SELECT count(*) FROM mobile_api_tokens WHERE id = ANY($1) AND revoked_at IS NOT NULL", []int64{own, ownOther}); n != 2 {
+			t.Fatalf("customer mobile tokens revoked: %d of 2", n)
+		}
+		if n := e.scalar("SELECT count(*) FROM mobile_api_tokens WHERE id = $1 AND revoked_at IS NULL", foreign); n != 1 {
+			t.Fatal("another user's mobile token must stay valid")
 		}
 		e.mu.Lock()
 		defer e.mu.Unlock()

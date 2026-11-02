@@ -197,7 +197,7 @@ func TestLoadNestedEnvKeys(t *testing.T) {
 		cfg.Auth.SigningKeys[1].Secret.Reveal() != "fedcba9876543210fedcba9876543210" {
 		t.Errorf("auth.signing_keys = %v", cfg.Auth.SigningKeys)
 	}
-	if len(cfg.Generated) != 2 || cfg.Generated[0] != "agent.enroll.code_pepper" || cfg.Generated[1] != "superadmin.secret_key" {
+	if len(cfg.Generated) != 2 || cfg.Generated[0] != "agent.enroll.code_pepper" || cfg.Generated[1] != "security.data_keys" {
 		t.Errorf("generated = %v", cfg.Generated)
 	}
 }
@@ -246,6 +246,7 @@ func TestValidateProd(t *testing.T) {
 		"ZAFIRO_DATABASE_PLATFORM_URL=postgres://platform:topsecret@db/zafiro",
 		"ZAFIRO_AUTH_SIGNING_KEYS=k1:topsecret-0123456789abcdef0123456789",
 		"ZAFIRO_AGENT_ENROLL_CODE_PEPPER=topsecret-0123456789abcdef0123456789",
+		"ZAFIRO_SECURITY_DATA_KEYS=d2:topsecret-0123456789abcdef0123456789,d1:topsecret-abcdef0123456789abcdef01234",
 		"ZAFIRO_AGENT_PKI_CA_CERT_FILE=/etc/zafiro/ca.pem",
 		"ZAFIRO_AGENT_PKI_CA_KEY_FILE=/etc/zafiro/ca.key",
 		"ZAFIRO_AGENT_PKI_SERVER_CERT_FILE=/etc/zafiro/server.pem",
@@ -254,6 +255,12 @@ func TestValidateProd(t *testing.T) {
 	cfg, err := Load("", environ(base...))
 	if err != nil {
 		t.Fatalf("valid prod config: %v", err)
+	}
+	if len(cfg.Security.DataKeys) != 2 || cfg.Security.DataKeys[0].ID != "d2" || cfg.Security.DataKeys[1].ID != "d1" {
+		t.Errorf("security.data_keys = %v", cfg.Security.DataKeys)
+	}
+	if strings.Contains(cfg.String(), "topsecret") || !strings.Contains(cfg.String(), "d2") {
+		t.Errorf("config log: %s", cfg.String())
 	}
 	if len(cfg.Generated) != 0 || cfg.Agent.PKI.DevDir != "" {
 		t.Errorf("prod must not generate secrets or dev PKI: %v %q", cfg.Generated, cfg.Agent.PKI.DevDir)
@@ -272,6 +279,10 @@ func TestValidateProd(t *testing.T) {
 		"no platform dsn":    drop("ZAFIRO_DATABASE_PLATFORM_URL="),
 		"no signing keys":    drop("ZAFIRO_AUTH_SIGNING_KEYS="),
 		"no pepper":          drop("ZAFIRO_AGENT_ENROLL_CODE_PEPPER="),
+		"no data keys":       drop("ZAFIRO_SECURITY_DATA_KEYS="),
+		"short data key":     append(drop("ZAFIRO_SECURITY_DATA_KEYS="), "ZAFIRO_SECURITY_DATA_KEYS=d1:topsecret"),
+		"dup data key":       append(drop("ZAFIRO_SECURITY_DATA_KEYS="), "ZAFIRO_SECURITY_DATA_KEYS=d1:topsecret-0123456789abcdef0123456789,d1:topsecret-0123456789abcdef0123456789"),
+		"bad data key id":    append(drop("ZAFIRO_SECURITY_DATA_KEYS="), "ZAFIRO_SECURITY_DATA_KEYS=d.1:topsecret-0123456789abcdef0123456789"),
 		"no server key":      drop("ZAFIRO_AGENT_PKI_SERVER_KEY_FILE="),
 		"short signing key":  append(drop("ZAFIRO_AUTH_SIGNING_KEYS="), "ZAFIRO_AUTH_SIGNING_KEYS=k1:topsecret"),
 		"bad signing format": append(drop("ZAFIRO_AUTH_SIGNING_KEYS="), "ZAFIRO_AUTH_SIGNING_KEYS=topsecret-0123456789abcdef0123456789"),

@@ -84,9 +84,14 @@ func TestUnknownAPIPathIsJSON404(t *testing.T) {
 	srv := newTestServer(t, Options{Frontend: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("spa"))
 	})})
-	resp, body := getJSON(t, srv.URL+"/api/v1/nope")
+	resp, body := getJSON(t, srv.URL+"/api/nope")
 	if resp.StatusCode != http.StatusNotFound || body["error"] != "not_found" {
 		t.Fatalf("status %d body %v", resp.StatusCode, body)
+	}
+	// /api/v1 — интеграционный API: конверт ошибки ApiError ({"error": {"code", "message"}}).
+	resp, body = getJSON(t, srv.URL+"/api/v1/nope")
+	if e, _ := body["error"].(map[string]any); resp.StatusCode != http.StatusNotFound || e["code"] != "not_found" {
+		t.Fatalf("v1: status %d body %v", resp.StatusCode, body)
 	}
 }
 

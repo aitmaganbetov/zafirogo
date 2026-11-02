@@ -1,6 +1,7 @@
 // Команда import-translations — перенос переводов интерфейса старого проекта в Postgres, как
 // `php artisan translations:sync` (Laravel: app/Console/Commands/SyncTranslations.php, TranslationCatalog::sync()):
-// языки ru/kk/en (если их нет) и строки из database/translations/{code}.php, которых ещё нет в таблице.
+// языки ru/kk/en (если их нет) и строки из database/translations/{code}.php, которых ещё нет в таблице, плюс
+// переводы новых строк Этапов 1–4 из db/seed/translations-new.{code}.json (-seed; строки старого файла важнее).
 // Отредактированные в суперадминке строки не меняются. Строки хранятся в формате Laravel (":name", "a|b|c");
 // в формат i18next их переводит GET /api/i18n/{locale} (решение Q-065).
 //
@@ -34,6 +35,7 @@ func run() error {
 	dir := flag.String("dir", "", "каталог database/translations старого проекта ({ru,kk,en}.php)")
 	dsn := flag.String("dsn", "", "DSN Postgres (иначе IMPORT_TRANSLATIONS_DSN)")
 	dry := flag.Bool("dry-run", false, "только разобрать файлы и показать число строк")
+	seed := flag.String("seed", "../db/seed", "каталог translations-new.{ru,kk,en}.json (пусто — не загружать)")
 	flag.Parse()
 	if *dir == "" {
 		return errors.New("-dir обязателен")
@@ -64,6 +66,20 @@ func run() error {
 	}
 	if len(shipped) == 0 {
 		return errors.New("в каталоге нет файлов переводов")
+	}
+	if *seed != "" {
+		extra, err := i18n.LoadSeed(*seed)
+		if err != nil {
+			return err
+		}
+		for code, s := range extra {
+			n := 0
+			for _, g := range s {
+				n += len(g)
+			}
+			fmt.Printf("%s: %d строк\n", filepath.Base(i18n.SeedFile(*seed, code)), n)
+			shipped[code] = shipped[code].Merge(s)
+		}
 	}
 	if *dry {
 		return nil

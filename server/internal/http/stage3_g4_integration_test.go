@@ -220,7 +220,7 @@ func TestG4Reservations(t *testing.T) {
 	expect(t, e.post(admin, fmt.Sprintf("/api/reservations/%d/arrive", rid), nil), 200, "arrive")
 	expectField(t, e.post(admin, fmt.Sprintf("/api/reservations/%d/cancel", rid), nil), "reservation", "Эта бронь уже закрыта.")
 	if e.activityCount("reservation.created", rid) != 1 || e.activityCount("reservation.arrived", rid) != 1 ||
-		e.outboxCount("computer.reservation_changed") != 2 || e.outboxCount("reservation.changed") != 2 {
+		e.outboxCount("computer.reservation_changed") != 0 || e.outboxCount("reservation.changed") != 2 {
 		t.Fatal("journal/events")
 	}
 	c := e.get(admin, "/api/reservations/customers?q=али")

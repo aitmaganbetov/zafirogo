@@ -176,6 +176,7 @@ type ApiKey struct {
 	UpdatedAt          *time.Time      `json:"updated_at"`
 }
 
+// Журнал запросов /api/v1 (LogApiRequest): без query, заголовков и тел. Партиции по месяцам (UTC), 0022
 type ApiRequestLog struct {
 	ID         int64     `json:"id"`
 	ClubID     *int64    `json:"club_id"`
@@ -577,6 +578,20 @@ type MemberBalance struct {
 	UpdatedAt    *time.Time `json:"updated_at"`
 }
 
+// Токены мобильных приложений в формате Sanctum (Q-058); id перенесённых = personal_access_tokens.id
+type MobileApiToken struct {
+	ID         int64      `json:"id"`
+	ClubID     int64      `json:"club_id"`
+	UserID     int64      `json:"user_id"`
+	Name       string     `json:"name"`
+	TokenHash  string     `json:"token_hash"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+	// Выход/смена клуба/сброс пароля: строка остаётся, чтобы токен не ушёл на старый сервер
+	RevokedAt *time.Time `json:"revoked_at"`
+}
+
 type News struct {
 	ID          int64      `json:"id"`
 	ClubID      *int64     `json:"club_id"`
@@ -882,7 +897,7 @@ type WebhookEndpoint struct {
 	ClubID    int64  `json:"club_id"`
 	CreatedBy int64  `json:"created_by"`
 	Url       string `json:"url"`
-	// В Laravel зашифрован Crypt (APP_KEY), см. docs/open-questions/database.md
+	// Секрет подписи, зашифрован secretbox (v2:<kid>:…, контекст webhook_endpoints.secret:club=<club_id>); в Laravel — Crypt (APP_KEY), перешифровка при переносе — Q-050
 	Secret        string          `json:"secret"`
 	Events        json.RawMessage `json:"events"`
 	IsActive      bool            `json:"is_active"`

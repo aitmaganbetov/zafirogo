@@ -1,3 +1,8 @@
+# Интеграционный API v1 (раздел v1): тот же контракт, что resources/api/openapi-v1.yaml старого проекта (внешние
+# интеграторы не меняются — решения Q-056, Q-057). Отличия от старого файла: operationId у операций, x-go-type у
+# price (сумма без float при генерации), имена ответов ProductResponse/ProductListResponse (совпадали с именем
+# схемы). Обработчики — server/internal/http/sections/v1 (маршруты, области, лимиты,
+# идемпотентность — как routes/api_v1.php и app/Http/Middleware/Api/*). Эту же спецификацию показывает /docs/api.
 openapi: 3.0.3
 info:
   title: Zafiro Integration API
@@ -85,6 +90,7 @@ tags:
 paths:
   /me:
     get:
+      operationId: v1Me
       tags: [Key]
       summary: The club and the permissions of the calling key
       description: "Scope: any valid key."
@@ -111,6 +117,7 @@ paths:
 
   /products:
     get:
+      operationId: v1ListProducts
       tags: [Products and stock]
       summary: List products
       description: "Scope: `products:read`."
@@ -121,9 +128,10 @@ paths:
         - { name: search, in: query, schema: { type: string }, description: Name prefix }
         - { name: category_id, in: query, schema: { type: integer } }
       responses:
-        "200": { $ref: "#/components/responses/ProductList" }
+        "200": { $ref: "#/components/responses/ProductListResponse" }
         "403": { $ref: "#/components/responses/Forbidden" }
     post:
+      operationId: v1CreateProduct
       tags: [Products and stock]
       summary: Create a product
       description: "Scope: `products:write`. A positive `quantity` is booked as the initial stock receipt. Idempotency-Key supported."
@@ -139,21 +147,23 @@ paths:
                 sku: { type: string, maxLength: 100, description: Unique within the club }
                 name: { type: string, maxLength: 150 }
                 product_category_id: { type: integer }
-                price: { type: number, minimum: 0 }
+                price: { type: number, minimum: 0, x-go-type: json.Number }
                 quantity: { type: integer, minimum: 0, maximum: 1000000 }
       responses:
-        "201": { $ref: "#/components/responses/Product" }
+        "201": { $ref: "#/components/responses/ProductResponse" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
   /products/{product}:
     parameters: [{ name: product, in: path, required: true, schema: { type: integer } }]
     get:
+      operationId: v1GetProduct
       tags: [Products and stock]
       summary: Get a product
       description: "Scope: `products:read`. Products of other clubs answer 404."
       responses:
-        "200": { $ref: "#/components/responses/Product" }
+        "200": { $ref: "#/components/responses/ProductResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
+      operationId: v1UpdateProduct
       tags: [Products and stock]
       summary: Change product details
       description: "Scope: `products:write`. Stock cannot be changed here — use `POST /stock-movements`."
@@ -167,13 +177,14 @@ paths:
                 sku: { type: string }
                 name: { type: string }
                 product_category_id: { type: integer }
-                price: { type: number }
+                price: { type: number, x-go-type: json.Number }
       responses:
-        "200": { $ref: "#/components/responses/Product" }
+        "200": { $ref: "#/components/responses/ProductResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/ValidationFailed" }
   /product-categories:
     get:
+      operationId: v1ListProductCategories
       tags: [Products and stock]
       summary: List product categories
       description: "Scope: `products:read`."
@@ -191,6 +202,7 @@ paths:
                       data: { type: array, items: { type: object, properties: { id: { type: integer }, name: { type: string } } } }
   /stock-movements:
     get:
+      operationId: v1ListStockMovements
       tags: [Products and stock]
       summary: List stock movements
       description: "Scope: `products:read`."
@@ -210,6 +222,7 @@ paths:
                     properties:
                       data: { type: array, items: { $ref: "#/components/schemas/StockMovement" } }
     post:
+      operationId: v1CreateStockMovement
       tags: [Products and stock]
       summary: Receive or write off stock
       description: "Scope: `stock:write`. **Idempotency-Key required.** A write-off larger than the stock is rejected."
@@ -237,6 +250,7 @@ paths:
 
   /sales:
     get:
+      operationId: v1ListSales
       tags: [Sales]
       summary: List point-of-sale receipts
       description: "Scope: `sales:read`."
@@ -259,6 +273,7 @@ paths:
                       data: { type: array, items: { $ref: "#/components/schemas/Sale" } }
   /sales/{sale}:
     get:
+      operationId: v1GetSale
       tags: [Sales]
       summary: Get a receipt
       description: "Scope: `sales:read`."
@@ -273,6 +288,7 @@ paths:
 
   /zones:
     get:
+      operationId: v1ListZones
       tags: [PCs and zones]
       summary: List zones
       description: "Scope: `computers:read`."
@@ -300,6 +316,7 @@ paths:
                             computers_count: { type: integer }
   /computers:
     get:
+      operationId: v1ListComputers
       tags: [PCs and zones]
       summary: List PCs
       description: "Scope: `computers:read`. Network and hardware details are not exposed."
@@ -320,6 +337,7 @@ paths:
                       data: { type: array, items: { $ref: "#/components/schemas/Computer" } }
   /computers/{computer}:
     get:
+      operationId: v1GetComputer
       tags: [PCs and zones]
       summary: Get a PC
       description: "Scope: `computers:read`."
@@ -333,6 +351,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
   /computers/{computer}/reservation:
     put:
+      operationId: v1SetComputerReservation
       tags: [PCs and zones]
       summary: Reserve or release a PC (booking)
       description: "Scope: `bookings:write`. Setting the current state again changes nothing. A PC with an active session cannot be reserved (409)."
@@ -354,6 +373,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
   /computers/control:
     post:
+      operationId: v1ControlComputers
       tags: [PCs and zones]
       summary: Power on, restart or power off PCs
       description: |
@@ -394,6 +414,7 @@ paths:
 
   /tariffs:
     get:
+      operationId: v1ListTariffs
       tags: [Tariffs and members]
       summary: List tariffs
       description: "Scope: `tariffs:read`."
@@ -426,6 +447,7 @@ paths:
                             zone_ids: { type: array, items: { type: integer } }
   /members:
     get:
+      operationId: v1ListMembers
       tags: [Tariffs and members]
       summary: List club members with balances
       description: "Scope: `members:read` (personal data). Phone numbers are masked; e-mail is never returned."
@@ -535,12 +557,12 @@ components:
         in_session: { type: boolean }
         last_seen_at: { type: string, format: date-time, nullable: true }
   responses:
-    Product:
+    ProductResponse:
       description: OK
       content:
         application/json:
           schema: { type: object, properties: { data: { $ref: "#/components/schemas/Product" } } }
-    ProductList:
+    ProductListResponse:
       description: OK
       content:
         application/json:

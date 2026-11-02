@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
+	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -42,6 +43,9 @@ type DelivererOptions struct {
 	// OnEndpointDisabled — endpoint выключен после DisableAfter неудач (сброс кэша слушателей,
 	// WebhookDispatcher::forgetClub()).
 	OnEndpointDisabled func(clubID, endpointID int64)
+	// Secrets — ключи данных: расшифровка секрета endpoint'а перед подписью. nil — зашифрованный секрет
+	// недоступен (доставка не отправляется), открытый (строки до 0025) подписывает как есть.
+	Secrets *secretbox.Box
 	// Log — журнал (nil — slog.Default()); Now — часы (nil — time.Now).
 	Log *slog.Logger
 	Now func() time.Time
@@ -261,10 +265,26 @@ func (d *Deliverer) send(ctx context.Context, ep store.GetWebhookEndpointForDeli
 	if err := json.Compact(&body, del.Payload); err != nil {
 		return 0, "invalid payload"
 	}
+	secret, err := d.secret(ep)
+	if err != nil {
+		d.o.Log.Error("webhook: secret cannot be decrypted", "club_id", ep.ClubID, "endpoint_id", ep.ID)
+		return 0, "secret unavailable"
+	}
 	return d.sender.send(ctx, request{
-		URL: ep.Url, Target: target, Secret: ep.Secret, Event: del.Event,
+		URL: ep.Url, Target: target, Secret: secret, Event: del.Event,
 		Delivery: uuid.UUID(del.EventID.Bytes).String(), Body: body.Bytes(), Timestamp: d.o.Now().Unix(),
 	})
+}
+
+// secret — открытый секрет подписи: расшифровка ключами данных; открытый текст (до 0025) — как есть.
+func (d *Deliverer) secret(ep store.GetWebhookEndpointForDeliveryRow) (string, error) {
+	if !secretbox.IsSealed(ep.Secret) {
+		return ep.Secret, nil
+	}
+	if d.o.Secrets == nil {
+		return "", secretbox.ErrInvalid
+	}
+	return d.o.Secrets.OpenWith(ep.Secret, SecretContext(ep.ClubID))
 }
 
 func truncateRunes(s string, n int) string {

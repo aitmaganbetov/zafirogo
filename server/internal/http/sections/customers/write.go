@@ -26,6 +26,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
 	customersapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/customers"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
+	"github.com/aitmaganbetov/zafirogo/server/internal/http/legacy"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
@@ -615,6 +616,12 @@ func (h *handlers) ResetCustomerPassword(ctx context.Context, req customersapi.R
 		return nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	// $user->tokens()->delete() — и токены мобильных приложений (Sanctum, mobile_api_tokens) аккаунта во всех
+	// клубах, как при восстановлении пароля (app.passwordResetSignOut). Отдельная транзакция с app.user_id
+	// клиента (политики mobile_token_owner_*); при ошибке — 500, сотрудник повторит сброс.
+	if err := legacy.RevokeUserTokens(ctx, h.d.Pool, req.UserId, now); err != nil {
 		return nil, err
 	}
 	return customersapi.ResetCustomerPassword200JSONResponse{

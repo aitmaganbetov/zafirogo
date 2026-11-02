@@ -1,9 +1,9 @@
 package superadmin
 
-// Telegram Gateway (коды восстановления пароля) и бот оповещений о сбоях — только настройки. Laravel:
+// Telegram Gateway (коды восстановления пароля) и бот оповещений о сбоях. Laravel:
 // app/Http/Controllers/Superadmin/TelegramController.php, app/Services/TelegramGateway.php,
-// app/Services/Monitoring/TelegramAlerts.php. Сама отправка через Telegram (проверка токена, поиск чата,
-// проверочное сообщение, алерты) — Этап 4 (DECISIONS «Telegram», Q-060): docs/open-questions/stage3-superadmin.md SA-5.
+// app/Services/Monitoring/TelegramAlerts.php. Вызовы Telegram (проверка токена Gateway, getMe/getUpdates/sendMessage
+// бота, проверочное сообщение) — server/internal/telegram (Этап 4, H2; DECISIONS «Telegram», Q-060).
 // Токены хранятся зашифрованными (secretbox, как Crypt::encryptString), в ответ и журнал не попадают.
 
 import (
@@ -20,6 +20,7 @@ import (
 	superadminapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/superadmin"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
+	"github.com/aitmaganbetov/zafirogo/server/internal/telegram"
 )
 
 const (
@@ -117,6 +118,13 @@ func (h *handlers) SaSetTelegramGateway(ctx context.Context, req superadminapi.S
 	case !gatewayTokenRe.MatchString(token):
 		return nil, httpx.ValidationMsg("token", "Это не похоже на токен Telegram Gateway: скопируйте его из настроек аккаунта gateway.telegram.org.", nil)
 	}
+	if h.d.Superadmin.Secrets == nil || h.d.Superadmin.TelegramGateway == nil {
+		return nil, httpx.ErrNotConfigured
+	}
+	// TelegramGateway::configure(): токен проверяется бесплатным запросом статуса до сохранения (вне транзакции).
+	if err := h.d.Superadmin.TelegramGateway.CheckToken(ctx, token); err != nil {
+		return nil, telegramError("token", err)
+	}
 	err := h.tx(ctx, func(q *store.Queries) error {
 		if err := h.writeSecret(ctx, q, settingGateway, token, secretSetting{}); err != nil {
 			return err
@@ -178,8 +186,17 @@ func (h *handlers) SaSetTelegramAlerts(ctx context.Context, req superadminapi.Sa
 	if err := fe.Err(); err != nil {
 		return nil, err
 	}
+	if h.d.Superadmin.Secrets == nil || h.d.Superadmin.TelegramAlerts == nil {
+		return nil, httpx.ErrNotConfigured
+	}
 	locale := h.d.Locale(ctx)
-	err := h.tx(ctx, func(q *store.Queries) error {
+	// TelegramAlerts::configure(): getMe, чат из getUpdates (если не задан), проверочное сообщение на языке
+	// суперадмина — до сохранения, вне транзакции.
+	chat, err := h.d.Superadmin.TelegramAlerts.Configure(ctx, token, chat, h.d.T(ctx, telegram.MsgBotConnected, nil))
+	if err != nil {
+		return nil, telegramError("bot_token", err)
+	}
+	err = h.tx(ctx, func(q *store.Queries) error {
 		if err := h.writeSecret(ctx, q, settingAlerts, token, secretSetting{ChatID: chat, Locale: locale}); err != nil {
 			return err
 		}
@@ -194,9 +211,28 @@ func (h *handlers) SaSetTelegramAlerts(ctx context.Context, req superadminapi.Sa
 	return superadminapi.SaSetTelegramAlerts200JSONResponse(msg(h.d.T(ctx, "Бот подключён: проверочное сообщение отправлено в чат.", nil))), nil
 }
 
-// SaTestTelegramAlerts — testAlerts(): отправка через Telegram — Этап 4; пока — ошибка отправки старого кода.
+// SaTestTelegramAlerts — testAlerts(): проверочное сообщение в настроенный чат (throttle:5,1).
 func (h *handlers) SaTestTelegramAlerts(ctx context.Context, _ superadminapi.SaTestTelegramAlertsRequestObject) (superadminapi.SaTestTelegramAlertsResponseObject, error) {
-	return nil, httpx.ValidationMsg("bot_token", "Не удалось отправить сообщение: проверьте бота и чат.", nil)
+	sent := false
+	if a := h.d.Superadmin.TelegramAlerts; a != nil {
+		var err error
+		if sent, err = a.Send(ctx, h.d.T(ctx, telegram.MsgBotTest, nil)); err != nil {
+			return nil, err
+		}
+	}
+	if !sent {
+		return nil, httpx.ValidationMsg("bot_token", "Не удалось отправить сообщение: проверьте бота и чат.", nil)
+	}
+	return superadminapi.SaTestTelegramAlerts200JSONResponse(msg(h.d.T(ctx, "Сообщение отправлено.", nil))), nil
+}
+
+// telegramError — RuntimeException старого configure() → ошибка поля (текст — ключ перевода).
+func telegramError(field string, err error) error {
+	var te *telegram.Error
+	if errors.As(err, &te) {
+		return httpx.ValidationMsg(field, te.Key, te.Params)
+	}
+	return err
 }
 
 // SaClearTelegramAlerts — destroyAlerts().
