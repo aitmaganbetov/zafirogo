@@ -29,6 +29,14 @@ func TestCommandDemoClub(t *testing.T) {
 		{[]string{"apply", "--club", "zafiro-arena", "--json", report}, exitOK, "записано"},
 		{[]string{"verify", "--club", "1"}, exitOK, "касса: остаток открытой смены"},
 		{[]string{"apply", "--club", "1"}, exitMigrated, "клуб уже есть в zafirogo"},
+		// Откат до go-live: purge (подтверждение — slug) → apply заново → verify → go-live; после него purge запрещён.
+		{[]string{"purge", "--club", "1", "--confirm", "zafiro-lite"}, exitUsage, "migrate-from-mysql purge"},
+		{[]string{"purge", "--club", "1", "--confirm", "zafiro-arena"}, exitOK, "удалено"},
+		{[]string{"apply", "--club", "zafiro-arena"}, exitOK, "записано"},
+		{[]string{"verify", "--club", "zafiro-arena"}, exitOK, "Итого: блокеров 0"},
+		{[]string{"go-live", "--club", "zafiro-arena"}, exitOK, "imported → live"},
+		{[]string{"go-live", "--club", "zafiro-arena"}, exitState, "уже открыт"},
+		{[]string{"purge", "--club", "zafiro-arena", "--confirm", "zafiro-arena"}, exitState, "удаление запрещено"},
 	} {
 		var out, errOut bytes.Buffer
 		if code := run(step.args, &out, &errOut); code != step.code {

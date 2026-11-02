@@ -155,8 +155,11 @@ func TestMigrateDemoClubs(t *testing.T) {
 		tiyn(t, scalarMy[string](t, my, "SELECT price FROM products WHERE club_id = 1 ORDER BY id LIMIT 1")) {
 		t.Fatalf("products.price = %d", got)
 	}
-	if got := scalarPG[int64](t, owner,
-		"SELECT count(*) FROM ledger_transactions WHERE club_id = 1 AND kind = 'migration_opening_balance' AND idempotency_key LIKE 'opening_balance:%'"); got !=
+	if got := scalarPG[int64](t, owner, `SELECT count(DISTINCT a.user_id) FROM ledger_entries e
+		JOIN ledger_accounts a ON a.club_id = e.club_id AND a.id = e.account_id
+		JOIN ledger_transactions t ON t.club_id = e.club_id AND t.id = e.transaction_id AND t.created_at = e.created_at
+		WHERE e.club_id = 1 AND t.kind = 'migration_opening_balance' AND t.idempotency_key LIKE 'opening_balances:%'
+		  AND a.user_id IS NOT NULL`); got !=
 		scalarMy[int64](t, my, "SELECT COUNT(*) FROM member_balances WHERE club_id = 1 AND (balance <> 0 OR bonus_balance <> 0)") {
 		t.Fatalf("входящих остатков: %d", got)
 	}

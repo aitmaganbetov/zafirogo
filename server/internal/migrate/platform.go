@@ -53,6 +53,9 @@ func platformTables() []table {
 	all := func(*Options) (string, []any) { return "1 = 1", nil }
 	noClub := func(*Options) (string, []any) { return "club_id IS NULL", nil }
 	return []table{
+		// S5-M2-О4 → S5-M3-4: суперадмины без членства в клубах (иначе их перенёс бы только клуб, на который они
+		// ссылаются). Права — is_superadmin из MySQL; существующий аккаунт не перезаписывается (S5-M1-4).
+		{Name: "users", Platform: true, OrderBy: "id", Where: func(*Options) (string, []any) { return "is_superadmin = 1", nil }},
 		{Name: "saas_plans", Platform: true, OrderBy: "id", Where: all},
 		{Name: "news", Platform: true, OrderBy: "id", Where: noClub},
 		{Name: "platform_logs", Platform: true, OrderBy: "id", Where: noClub},
@@ -640,11 +643,20 @@ func cloneMap(m map[string]any) map[string]any {
 // --- saas_plans, news, platform_logs ---
 
 func (p *platform) tables(ctx context.Context) error {
-	known, err := p.knownPlatformUsers(ctx)
-	if err != nil {
-		return err
-	}
+	var known map[int64]bool
 	for _, t := range platformTables() {
+		if t.Name == "users" {
+			if err := p.superadmins(ctx, t); err != nil {
+				return err
+			}
+			continue
+		}
+		if known == nil {
+			var err error
+			if known, err = p.knownPlatformUsers(ctx); err != nil {
+				return err
+			}
+		}
 		var refs []string
 		switch t.Name {
 		case "news":
@@ -683,6 +695,36 @@ func (p *platform) tables(ctx context.Context) error {
 	return nil
 }
 
+// superadmins — аккаунты суперадминов (users.is_superadmin): переносятся (как общие аккаунты: существующий id не
+// перезаписывается), сверяются по id; аккаунт без прав суперадмина в zafirogo — предупреждение (права не выдаются
+// молча: выдать в кабинете суперадмина).
+func (p *platform) superadmins(ctx context.Context, t table) error {
+	if p.mode == modeVerify {
+		if err := p.verifyTable(ctx, t); err != nil {
+			return err
+		}
+	} else if err := p.r.copyTable(ctx, t); err != nil {
+		return err
+	}
+	ids, err := p.r.mysqlIDs(ctx, "users", "is_superadmin = 1", nil)
+	if err != nil || len(ids) == 0 {
+		return err
+	}
+	p.r.rep.Totals["суперадмины (MySQL)"] = strconv.Itoa(len(ids))
+	if p.mode == modePlan {
+		return nil
+	}
+	lost, err := collectIDs(ctx, p.r.pg, "SELECT id FROM users WHERE id = ANY($1) AND NOT is_superadmin", ids)
+	if err != nil {
+		return err
+	}
+	for _, id := range lost {
+		p.r.rep.add(Warning, CodePlatform, "users", "is_superadmin", "", strconv.FormatInt(id, 10),
+			"суперадмин MySQL в zafirogo без прав суперадмина (аккаунт уже был в zafirogo) — выдать в кабинете суперадмина")
+	}
+	return nil
+}
+
 func (p *platform) knownPlatformUsers(ctx context.Context) (map[int64]bool, error) {
 	ids, err := p.r.mysqlIDs(ctx, "users", `id IN (SELECT created_by FROM news WHERE club_id IS NULL AND created_by IS NOT NULL
 		UNION SELECT user_id FROM platform_logs WHERE club_id IS NULL AND user_id IS NOT NULL)`, nil)
@@ -692,7 +734,16 @@ func (p *platform) knownPlatformUsers(ctx context.Context) (map[int64]bool, erro
 	if len(ids) == 0 {
 		return map[int64]bool{}, nil
 	}
-	return existingIDs(ctx, p.r.pg, "users", ids)
+	known, err := existingIDs(ctx, p.r.pg, "users", ids)
+	if err != nil || p.mode != modePlan {
+		return known, err
+	}
+	// plan ничего не пишет: суперадмины, которых перенесёт apply, считаются известными.
+	super, err := p.r.mysqlIDs(ctx, "users", "is_superadmin = 1", nil)
+	for _, id := range super {
+		known[id] = true
+	}
+	return known, err
 }
 
 // verifyTable — все строки MySQL есть в Postgres (по id; тарифы — тот же slug).

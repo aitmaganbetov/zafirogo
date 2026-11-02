@@ -63,7 +63,9 @@ func coreTables() []table {
 				"installation_key":        "Q-050: ключ установки клуба выпускается заново",
 				"installation_key_hash":   "Q-050: ключ установки клуба выпускается заново",
 				"installation_key_prefix": "Q-050: ключ установки клуба выпускается заново",
-			}},
+			},
+			// 0027: перенесённый клуб не открыт до go-live (до него его можно удалить и перенести заново, S5-M3-1).
+			Const: map[string]string{"migration_state": StateImported}},
 		{Name: "club_subscriptions", Where: clubScope, OrderBy: "id"},
 		{Name: "club_memberships", Where: clubScope, OrderBy: "id", UserRefs: []string{"user_id"}},
 		// Балансы — не копированием поля: строка с нулями, остаток — проводкой migration_opening_balance (Q-004).
@@ -101,7 +103,9 @@ func coreTables() []table {
 		{Name: "club_request_metrics", Where: clubScope, OrderBy: "id"},
 		{Name: "club_load_snapshots", Where: clubScope, OrderBy: "id"},
 		// Журнал платформы: события, относящиеся к клубу (club_id = клуб); события без клуба — с платформой.
-		{Name: "platform_logs", Platform: true, Where: clubScope, OrderBy: "id", PGWhere: "club_id = {club}", UserRefs: []string{"user_id"}},
+		// Сверка не считает события самого инструмента (migration.club_live — go-live).
+		{Name: "platform_logs", Platform: true, Where: clubScope, OrderBy: "id",
+			PGWhere: "club_id = {club} AND event NOT LIKE 'migration.%'", UserRefs: []string{"user_id"}},
 		// Журнал запросов API — только в пределах срока хранения (integrations.request_log_retention):
 		// более старые строки фоновая задача logs:retention всё равно удалила бы вместе с партицией.
 		{Name: "api_request_logs", OrderBy: "id", Partitioned: true,

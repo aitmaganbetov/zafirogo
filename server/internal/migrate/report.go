@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Severity — важность находки.
@@ -46,6 +47,8 @@ const (
 	CodeExtension         = "extension"
 	CodeFreeze            = "freeze" // заморозка клуба (подписка приостановлена в старом Laravel)
 	maxSamples            = 5
+	maxHistoryLines       = 30
+	maxDurationLines      = 12
 	maxFindingValueLength = 80
 )
 
@@ -86,13 +89,23 @@ type Report struct {
 	Tables   []*TableStat      `json:"tables"`
 	Findings []*Finding        `json:"findings"`
 	Totals   map[string]string `json:"totals,omitempty"`
+	// Durations — время шагов (мс): таблицы, входящие остатки, расширения, сверка (замер объёмов, README «Объёмы»).
+	Durations map[string]int64 `json:"durations_ms,omitempty"`
+	// BalanceHistory — Q-005: клиенты, у которых остаток не равен сумме движений истории старой базы.
+	BalanceHistory []BalanceHistoryDiff `json:"balance_history,omitempty"`
 
 	index map[string]*Finding
 	stats map[string]*TableStat
 }
 
 func newReport(mode string) *Report {
-	return &Report{Mode: mode, index: map[string]*Finding{}, stats: map[string]*TableStat{}, Totals: map[string]string{}}
+	return &Report{Mode: mode, index: map[string]*Finding{}, stats: map[string]*TableStat{}, Totals: map[string]string{},
+		Durations: map[string]int64{}}
+}
+
+// timed — время шага в отчёт (Durations; повторный шаг с тем же именем складывается).
+func (r *Report) timed(step string, began time.Time) {
+	r.Durations[step] += time.Since(began).Milliseconds()
 }
 
 func (r *Report) table(name string) *TableStat {
@@ -171,6 +184,10 @@ func (r *Report) WriteText(w io.Writer) error {
 	fmt.Fprintf(&b, "migrate-from-mysql %s: клуб #%d %q (%s)\n\n", r.Mode, r.ClubID, r.ClubName, r.ClubSlug)
 	b.WriteString("Таблицы:\n")
 	for _, t := range r.Tables {
+		if r.Mode == "purge" {
+			fmt.Fprintf(&b, "  %-24s удалено %8d\n", t.Table, t.Target)
+			continue
+		}
 		fmt.Fprintf(&b, "  %-24s MySQL %8d", t.Table, t.Source)
 		if t.Written > 0 || r.Mode == "apply" {
 			fmt.Fprintf(&b, "  записано %8d", t.Written)
@@ -197,6 +214,36 @@ func (r *Report) WriteText(w io.Writer) error {
 		sort.Strings(keys)
 		for _, k := range keys {
 			fmt.Fprintf(&b, "  %-40s %s\n", k, r.Totals[k])
+		}
+	}
+	if len(r.Durations) > 0 {
+		b.WriteString("\nВремя шагов:\n")
+		steps := make([]string, 0, len(r.Durations))
+		for k := range r.Durations {
+			steps = append(steps, k)
+		}
+		sort.Slice(steps, func(i, j int) bool { return r.Durations[steps[i]] > r.Durations[steps[j]] })
+		for i, k := range steps {
+			if i == maxDurationLines {
+				break
+			}
+			fmt.Fprintf(&b, "  %-40s %8d мс\n", k, r.Durations[k])
+		}
+	}
+	if len(r.BalanceHistory) > 0 {
+		fmt.Fprintf(&b, "\nQ-005: остаток ≠ сумма движений истории (%d клиентов; тенге: остаток / история / разница):\n", len(r.BalanceHistory))
+		for i, d := range r.BalanceHistory {
+			if i == maxHistoryLines {
+				fmt.Fprintf(&b, "  … ещё %d (полный список — отчёт --json, balance_history)\n", len(r.BalanceHistory)-i)
+				break
+			}
+			fmt.Fprintf(&b, "  клиент %-8d основной %s / %s / %s; бонусный %s / %s / %s", d.UserID,
+				tiynString(d.Main), tiynString(d.HistoryMain), tiynString(d.DiffMain),
+				tiynString(d.Bonus), tiynString(d.HistoryBonus), tiynString(d.DiffBonus))
+			if d.NoBalanceRow {
+				b.WriteString(" (нет строки баланса)")
+			}
+			b.WriteByte('\n')
 		}
 	}
 	for _, sev := range []Severity{Blocker, Warning, Info} {

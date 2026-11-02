@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -101,10 +102,18 @@ func (r *run) compare(ctx context.Context) error {
 	if err := r.compareDrawer(ctx); err != nil {
 		return err
 	}
+	// Q-005: остаток против истории старой базы — предупреждение, не расхождение сверки.
+	began := time.Now()
+	if err := r.balanceHistory(ctx); err != nil {
+		return err
+	}
+	r.rep.timed("Q-005: история балансов", began)
 	for _, ext := range r.o.Extensions {
+		began := time.Now()
 		if err := ext.Verify(ctx, r.env()); err != nil {
 			return fmt.Errorf("extension %s: %w", ext.Name(), err)
 		}
+		r.rep.timed("сверка: "+ext.Name(), began)
 	}
 	return nil
 }

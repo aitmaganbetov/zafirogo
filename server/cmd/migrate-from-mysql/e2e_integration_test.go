@@ -121,6 +121,8 @@ func TestMigratedClubOnNewServer(t *testing.T) {
 		{[]string{"plan", "--club", "zafiro-arena", "--laravel-storage", data.Storage, "--thaw-subscription", "active"}, "заморозка снята"},
 		{[]string{"apply", "--club", "zafiro-arena", "--laravel-storage", data.Storage, "--thaw-subscription", "active"}, "записано"},
 		{[]string{"verify", "--club", "zafiro-arena", "--laravel-storage", data.Storage}, "Итого: блокеров 0"},
+		// До go-live клуб закрыт (подписка suspended — 402 на всех входах), после — подписка в статусе до заморозки.
+		{[]string{"go-live", "--club", "zafiro-arena"}, "suspended → active"},
 	} {
 		var out, errOut bytes.Buffer
 		if code := run(step.args, &out, &errOut); code != exitOK {

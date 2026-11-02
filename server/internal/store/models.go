@@ -301,6 +301,8 @@ type Club struct {
 	AgentStaffMinutes     int32      `json:"agent_staff_minutes"`
 	LogoPath              *string    `json:"logo_path"`
 	SigninImagePath       *string    `json:"signin_image_path"`
+	// imported — перенесён из MySQL и не открыт (можно удалить и перенести заново); live — работает (окончательно)
+	MigrationState string `json:"migration_state"`
 }
 
 type ClubComputer struct {

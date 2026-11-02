@@ -90,6 +90,16 @@ func TestMigrateM2(t *testing.T) {
 	if n := scalarPG[int64](t, owner, "SELECT count(*) FROM news WHERE club_id IS NULL"); n != 1 {
 		t.Fatalf("platform news: %d", n)
 	}
+	// S5-M3-4: суперадмин без членства в клубах перенесён платформенным шагом — с правами суперадмина и тем же паролем;
+	// записи журнала платформы сохраняют автора.
+	if got := scalarPG[string](t, owner, "SELECT is_superadmin::text || ':' || (password = $1)::text FROM users WHERE id = 1",
+		scalarMy[string](t, my, "SELECT password FROM users WHERE id = 1")); got != "true:true" {
+		t.Fatalf("суперадмин: %q", got)
+	}
+	if got, want := scalarPG[int64](t, owner, "SELECT count(*) FROM platform_logs WHERE club_id IS NULL AND user_id = 1"),
+		scalarMy[int64](t, my, "SELECT COUNT(*) FROM platform_logs WHERE club_id IS NULL AND user_id = 1"); got != want {
+		t.Fatalf("журнал платформы суперадмина: %d, в MySQL %d", got, want)
+	}
 	// Повторный платформенный шаг: ничего не меняет, сверка — без блокеров.
 	before := scalarPG[int64](t, owner, "SELECT count(*) FROM translations")
 	if r, err := migrate.PlatformApply(ctx, my, owner, popts); err != nil {

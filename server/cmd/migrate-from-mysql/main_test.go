@@ -22,6 +22,9 @@ func TestRunUsage(t *testing.T) {
 		{[]string{"platform", "migrate"}, "usage"},
 		{[]string{"platform", "plan"}, "нужны"},
 		{[]string{"plan", "--club", "1", "--mysql", "x", "--pg", "y", "--laravel-storage", "/nonexistent/zafiro"}, "--laravel-storage"},
+		{[]string{"go-live"}, "нужны --club"},
+		{[]string{"purge", "--club", "1", "--pg", "y"}, "--confirm"},
+		{[]string{"purge", "--club", "1", "--confirm", "x"}, "DSN Postgres"},
 	} {
 		var out, errOut bytes.Buffer
 		if code := run(tc.args, &out, &errOut); code != exitUsage {

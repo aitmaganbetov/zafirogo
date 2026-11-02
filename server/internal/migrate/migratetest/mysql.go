@@ -30,13 +30,14 @@ func Testdata(name string) string {
 }
 
 // StartMySQL поднимает MySQL со схемой и демо-данными; возвращает пул и DSN (go-sql-driver). Закрывается в t.Cleanup.
-func StartMySQL(t testing.TB) (*sql.DB, string) {
+// extraArgs — дополнительные параметры mysqld (замер объёмов: --skip-log-bin, чтобы binlog не занимал диск).
+func StartMySQL(t testing.TB, extraArgs ...string) (*sql.DB, string) {
 	t.Helper()
 	ctx := context.Background()
 	ctr, err := testcontainers.Run(ctx, Image,
 		testcontainers.WithEnv(map[string]string{"MYSQL_ALLOW_EMPTY_PASSWORD": "yes", "MYSQL_DATABASE": "zafiro"}),
 		// Кодировка и сравнение — как config/database.php старого проекта.
-		testcontainers.WithCmd("--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"),
+		testcontainers.WithCmd(append([]string{"--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"}, extraArgs...)...),
 		testcontainers.WithExposedPorts("3306/tcp"),
 		testcontainers.WithFiles(
 			// Клиент mysql скрипта инициализации — utf8mb4 (в дампе нет SET NAMES: без этого кириллица в демо-данных

@@ -4,7 +4,9 @@
 //	migrate-from-mysql plan   --club <id|slug>   # сухой прогон: отчёт о данных, ничего не пишет
 //	migrate-from-mysql apply  --club <id|slug>   # перенос одной транзакцией (со сверкой до коммита)
 //	migrate-from-mysql verify --club <id|slug>   # сверка перенесённого клуба с MySQL
-//	migrate-from-mysql platform plan|apply|verify # платформа: языки, переводы, настройки, новости, тарифы (один раз)
+//	migrate-from-mysql platform plan|apply|verify # платформа: языки, переводы, настройки, новости, тарифы, суперадмины
+//	migrate-from-mysql go-live --club <id|slug>   # открыть перенесённый клуб (imported → live, подписка — статус до заморозки)
+//	migrate-from-mysql purge  --club <id|slug> --confirm <slug> # удалить перенесённый клуб до go-live (повторный перенос)
 //
 // Строки подключения — из окружения (секреты не в аргументах команды: их видно в списке процессов):
 // ZAFIRO_MIGRATE_MYSQL_DSN (go-sql-driver: user:pass@tcp(host:3306)/db, лучше логин только для чтения) и
@@ -14,7 +16,8 @@
 // ZAFIRO_SECURITY_DATA_KEYS (ключи данных нового сервера, та же переменная, что у сервера: "kid:секрет,…").
 //
 // Коды выхода: 0 — успех; 1 — ошибка; 2 — неверные аргументы; 3 — блокеры в данных (ничего не записано);
-// 4 — расхождение сверки (apply откатан); 5 — клуб уже перенесён (apply ничего не делает).
+// 4 — расхождение сверки (apply откатан); 5 — клуб уже перенесён (apply ничего не делает); 6 — состояние клуба не
+// позволяет (purge после go-live или при операциях в zafirogo, go-live открытого клуба).
 package main
 
 import (
@@ -46,6 +49,7 @@ const (
 	exitBlocked  = 3
 	exitMismatch = 4
 	exitMigrated = 5
+	exitState    = 6
 )
 
 func main() {
@@ -53,6 +57,9 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && (args[0] == "purge" || args[0] == "go-live") {
+		return runLifecycle(args, stdout, stderr)
+	}
 	platform := len(args) > 0 && args[0] == "platform"
 	if platform {
 		args = args[1:]
@@ -60,6 +67,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || (args[0] != "plan" && args[0] != "apply" && args[0] != "verify") {
 		fmt.Fprintln(stderr, "usage: migrate-from-mysql plan|apply|verify --club <id|slug> [flags]")
 		fmt.Fprintln(stderr, "       migrate-from-mysql platform plan|apply|verify [flags]")
+		fmt.Fprintln(stderr, "       migrate-from-mysql go-live --club <id|slug>")
+		fmt.Fprintln(stderr, "       migrate-from-mysql purge --club <id|slug> --confirm <slug>")
 		return exitUsage
 	}
 	mode := args[0]
@@ -183,6 +192,60 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return exitError
 	case mode == "plan" && report != nil && report.Count(migrate.Blocker) > 0:
 		return exitBlocked
+	}
+	return exitOK
+}
+
+// runLifecycle — go-live и purge перенесённого клуба (только Postgres: MySQL не нужен).
+func runLifecycle(args []string, stdout, stderr io.Writer) int {
+	mode := args[0]
+	fs := flag.NewFlagSet(mode, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	clubRef := fs.String("club", "", "id или slug клуба в zafirogo")
+	confirm := fs.String("confirm", "", "purge: slug клуба (подтверждение)")
+	pgDSN := fs.String("pg", os.Getenv("ZAFIRO_MIGRATE_PG_DSN"), "DSN Postgres владельца схемы (по умолчанию ZAFIRO_MIGRATE_PG_DSN)")
+	jsonOut := fs.String("json", "", "файл для отчёта в JSON")
+	if err := fs.Parse(args[1:]); err != nil {
+		return exitUsage
+	}
+	if *clubRef == "" || *pgDSN == "" || (mode == "purge" && *confirm == "") {
+		fmt.Fprintln(stderr, "нужны --club и DSN Postgres (ZAFIRO_MIGRATE_PG_DSN); для purge — --confirm <slug клуба>")
+		return exitUsage
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	pg, err := db.NewPool(ctx, *pgDSN)
+	if err != nil {
+		fmt.Fprintf(stderr, "postgres: %v\n", err)
+		return exitError
+	}
+	defer pg.Close()
+	var report *migrate.Report
+	if mode == "purge" {
+		report, err = migrate.Purge(ctx, pg, *clubRef, *confirm)
+	} else {
+		report, err = migrate.GoLive(ctx, pg, *clubRef)
+	}
+	if report != nil {
+		if werr := report.WriteText(stdout); werr != nil {
+			slog.Error("report", "err", werr)
+		}
+		if *jsonOut != "" {
+			if werr := writeJSON(*jsonOut, report); werr != nil {
+				fmt.Fprintf(stderr, "--json: %v\n", werr)
+			}
+		}
+	}
+	switch {
+	case errors.Is(err, migrate.ErrConfirm):
+		fmt.Fprintln(stderr, "--confirm не совпадает со slug клуба: ничего не удалено")
+		return exitUsage
+	case errors.Is(err, migrate.ErrClubState), errors.Is(err, migrate.ErrClubInUse):
+		fmt.Fprintln(stderr, "состояние клуба не позволяет: ничего не изменено")
+		return exitState
+	case err != nil:
+		fmt.Fprintf(stderr, "ошибка: %v\n", err)
+		return exitError
 	}
 	return exitOK
 }

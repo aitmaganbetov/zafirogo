@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -16,7 +17,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
-	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
@@ -80,6 +80,8 @@ type run struct {
 	balances []openingBalance
 	packages []openingMinutes
 	members  map[int64]bool
+	// subscriptions — статусы подписок клуба при go-live (thawSubscription).
+	subscriptions []subscriptionRestore
 }
 
 type openingBalance struct {
@@ -126,6 +128,9 @@ func Plan(ctx context.Context, my *sql.DB, pg *pgxpool.Pool, o Options) (*Report
 		return r.rep, err
 	}
 	if err := r.partitionsPlan(ctx); err != nil {
+		return r.rep, err
+	}
+	if err := r.balanceHistory(ctx); err != nil {
 		return r.rep, err
 	}
 	if len(o.Extensions) > 0 {
@@ -195,13 +200,27 @@ func Apply(ctx context.Context, my *sql.DB, pg *pgxpool.Pool, o Options) (*Repor
 		if r.rep.Count(Blocker) > 0 {
 			return ErrBlocked
 		}
+		// Статистика планировщика по строкам этой транзакции (S5-M3-5): без неё таблицы, пустые до переноса, планируются
+		// как пустые — поиск баланса клиента по (club_id, user_id) превращается в полный просмотр, и входящие остатки
+		// 50 000 клиентов растут квадратично (больше 20 минут вместо минут).
+		if err := r.analyze(ctx, tx, asPlatform, "member_balances", "club_memberships", "users", "ledger_accounts",
+			"ledger_transactions", "ledger_idempotency", "ledger_entries", "ledger_minute_entries", "time_packages"); err != nil {
+			return err
+		}
 		if err := r.postOpenings(ctx, tx); err != nil {
 			return err
 		}
+		if err := r.analyze(ctx, tx, asPlatform, "ledger_accounts", "ledger_transactions", "ledger_idempotency",
+			"ledger_entries", "ledger_minute_entries", "member_balances", "cash_transactions", "cash_shifts",
+			"session_purchases", "shop_orders", "activity_logs", "products", "tariffs"); err != nil {
+			return err
+		}
 		for _, ext := range o.Extensions {
+			began := time.Now()
 			if err := ext.Apply(ctx, r.env()); err != nil {
 				return fmt.Errorf("extension %s: %w", ext.Name(), err)
 			}
+			r.rep.timed("расширение "+ext.Name(), began)
 		}
 		if r.rep.Count(Blocker) > 0 {
 			return ErrBlocked
@@ -215,9 +234,11 @@ func Apply(ctx context.Context, my *sql.DB, pg *pgxpool.Pool, o Options) (*Repor
 			return err
 		}
 		// Сверка до коммита: расхождение — откат.
+		began := time.Now()
 		if err := r.compare(ctx); err != nil {
 			return err
 		}
+		r.rep.timed("сверка", began)
 		if r.rep.Has(Blocker, CodeVerifyMismatch) {
 			return ErrVerifyMismatch
 		}
@@ -265,6 +286,28 @@ func Verify(ctx context.Context, my *sql.DB, pg *pgxpool.Pool, o Options) (*Repo
 
 func (r *run) env() *Env {
 	return &Env{ClubID: r.club.ID, ClubSlug: r.club.Slug, Source: r.src.conn, Target: r.pg, Options: r.o, Report: r.rep, run: r}
+}
+
+// analyze — ANALYZE таблиц внутри транзакции переноса (видит её строки; блокировка SHARE UPDATE EXCLUSIVE не мешает
+// записи других клубов). ANALYZE делает владелец таблиц: роль платформы на время снимается.
+func (r *run) analyze(ctx context.Context, tx pgx.Tx, asPlatform bool, tables ...string) error {
+	defer r.rep.timed("ANALYZE", time.Now())
+	if asPlatform {
+		if _, err := tx.Exec(ctx, "RESET ROLE"); err != nil {
+			return err
+		}
+	}
+	for _, t := range tables {
+		if _, err := tx.Exec(ctx, "ANALYZE "+pgx.Identifier{t}.Sanitize()); err != nil {
+			return fmt.Errorf("pg: analyze %s: %w", t, err)
+		}
+	}
+	if asPlatform {
+		if _, err := tx.Exec(ctx, "SET LOCAL ROLE zafiro_platform"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // setPlatformRole — SET LOCAL ROLE zafiro_platform, если логин в ней состоит (PD-9: data-миграции под ролью
@@ -460,6 +503,7 @@ func (r *run) copyTable(ctx context.Context, t table) error {
 	where, args := t.Where(r.o)
 	args = bindClub(args, r.club.ID)
 
+	defer r.rep.timed("таблица "+t.Name, time.Now())
 	var batch [][]*string
 	flush := func() error {
 		if len(batch) == 0 {
@@ -816,43 +860,49 @@ func (r *run) transform(t table, row []*string, idx map[string]int, rowID string
 }
 
 // thawSubscription — заморозка клуба в старом Laravel делается приостановкой подписки в суперадминке
-// (Superadmin\ClubController::suspend(): status = 'suspended', canceled_at = now(); срок не меняется). В zafirogo
-// подписка возвращается в статус до заморозки (Options.ThawSubscription), canceled_at — NULL (у действующей подписки
-// его нет: extend() обнуляет). Без флага приостановленная подписка переносится как есть — с предупреждением.
+// (Superadmin\ClubController::suspend(): status = 'suspended', canceled_at = now(); срок не меняется).
+//
+// В zafirogo перенесённый клуб до go-live (S5-M3-2) закрыт тем же способом: подписка — suspended, все входы клуба
+// (панель, агенты, /api/v1, мобильные приложения) отвечают 402, как в старом сервере после заморозки. Статус, который
+// подписка получит при go-live, — в записи аудита migration.club_imported (go_live_subscriptions):
+//   - приостановленная (заморозка) с Options.ThawSubscription — этот статус, canceled_at — NULL (у действующей подписки
+//     его нет: extend() обнуляет); без флага — остаётся suspended (предупреждение);
+//   - не приостановленная (клуб не заморожен) — закрывается до go-live и получает при go-live свой статус обратно.
 func (r *run) thawSubscription(row []*string, idx map[string]int, set func(string, string), rowID string) {
 	status := deref(row[idx["status"]])
+	id, _ := strconv.ParseInt(rowID, 10, 64)
 	if status != "suspended" {
 		r.rep.add(Info, CodeFreeze, "club_subscriptions", "status", status, rowID,
-			"подписка не приостановлена: клуб не заморожен в старом Laravel? (README: порядок перевода)")
+			"подписка не приостановлена: клуб не заморожен в старом Laravel? (README: порядок перевода) — до go-live закрыта, при go-live — прежний статус")
+		r.subscriptions = append(r.subscriptions, subscriptionRestore{ID: id, Status: status})
+		set("status", "suspended")
 		return
 	}
 	if r.o.ThawSubscription == "" {
 		r.rep.add(Warning, CodeFreeze, "club_subscriptions", "status", status, rowID,
-			"подписка приостановлена (заморозка?) и переносится так — клуб в zafirogo будет заблокирован; укажите --thaw-subscription")
+			"подписка приостановлена (заморозка?) и останется такой после go-live — клуб в zafirogo будет заблокирован; укажите --thaw-subscription")
 		return
 	}
-	set("status", r.o.ThawSubscription)
-	row[idx["canceled_at"]] = nil
+	r.subscriptions = append(r.subscriptions, subscriptionRestore{ID: id, Status: r.o.ThawSubscription, ClearCanceledAt: true})
 	r.rep.add(Info, CodeFreeze, "club_subscriptions", "status", "suspended → "+r.o.ThawSubscription, rowID,
-		"заморозка снята: подписка в zafirogo — в статусе до приостановки")
+		"заморозка снята при go-live: подписка в zafirogo получит статус до приостановки")
 }
 
-// postOpenings — входящие остатки в ledger: балансы клиентов (billing.MigrateOpeningBalance, Q-004 — в том числе
+// subscriptionRestore — статус подписки клуба при go-live (до него перенесённый клуб закрыт: suspended).
+type subscriptionRestore struct {
+	ID              int64  `json:"id"`
+	Status          string `json:"status"`
+	ClearCanceledAt bool   `json:"clear_canceled_at,omitempty"`
+}
+
+// postOpenings — входящие остатки в ledger: балансы клиентов (postOpeningBalances, Q-004 — в том числе
 // отрицательные), минуты пакетов, касса (остаток открытой смены или последней закрытой).
 func (r *run) postOpenings(ctx context.Context, tx pgx.Tx) error {
+	defer r.rep.timed("входящие остатки (ledger)", time.Now())
 	q := store.New(tx)
-	var main, bonus money.Tiyn
-	ops := 0
-	for _, b := range r.balances {
-		res, err := billing.MigrateOpeningBalance(ctx, q, r.club.ID, b.UserID, b.Main, b.Bonus)
-		if err != nil {
-			return fmt.Errorf("opening balance of user %d: %w", b.UserID, err)
-		}
-		if res.TransactionID != 0 {
-			ops++
-		}
-		main += b.Main
-		bonus += b.Bonus
+	main, bonus, clients, err := r.postOpeningBalances(ctx, q)
+	if err != nil {
+		return err
 	}
 	for _, p := range r.packages {
 		if !r.members[p.UserID] {
@@ -886,8 +936,9 @@ func (r *run) postOpenings(ctx context.Context, tx pgx.Tx) error {
 		}
 	}
 	after, err := json.Marshal(map[string]any{
-		"source": "mysql", "opening_operations": ops, "main_tiyn": int64(main), "bonus_tiyn": int64(bonus),
+		"source": "mysql", "opening_clients": clients, "main_tiyn": int64(main), "bonus_tiyn": int64(bonus),
 		"cash_drawer_tiyn": int64(drawer.Amount), "minute_packages": len(r.packages),
+		goLiveSubscriptionsKey: r.subscriptions,
 	})
 	if err != nil {
 		return err
@@ -899,8 +950,61 @@ func (r *run) postOpenings(ctx context.Context, tx pgx.Tx) error {
 	}); err != nil {
 		return fmt.Errorf("audit: %w", err)
 	}
-	r.rep.Totals["ledger: входящих остатков клиентов"] = strconv.Itoa(ops)
+	r.rep.Totals["ledger: входящих остатков клиентов"] = strconv.Itoa(clients)
 	return nil
+}
+
+// openingBatch — клиентов в одной операции входящих остатков.
+const openingBatch = 500
+
+// postOpeningBalances — входящие остатки клиентов (Q-004, в том числе отрицательные): операции
+// migration_opening_balance по openingBatch клиентов (ключ opening_balances:<первый user_id>-<последний>), счета
+// member_main/member_bonus каждого клиента ±, встречный opening_balance ∓ сумма. По операции на клиента (как
+// billing.MigrateOpeningBalance) было бы 50 000 операций, а поиск счетов операции в ledger (UpsertLedgerAccounts:
+// JOIN по user_id IS NOT DISTINCT FROM — полный просмотр счетов клуба) растёт с числом счетов — квадратично
+// (S5-M3-5: 20+ минут на 50 000 клиентов). Проводки по клиенту и проекция member_balances — те же.
+func (r *run) postOpeningBalances(ctx context.Context, q *store.Queries) (main, bonus money.Tiyn, clients int, err error) {
+	list := slices.Clone(r.balances)
+	slices.SortFunc(list, func(a, b openingBalance) int { return cmp.Compare(a.UserID, b.UserID) })
+	for start := 0; start < len(list); start += openingBatch {
+		chunk := list[start:min(start+openingBatch, len(list))]
+		var entries []ledger.Entry
+		var total money.Tiyn
+		var first, last int64
+		for _, b := range chunk {
+			if b.Main == 0 && b.Bonus == 0 {
+				continue
+			}
+			if first == 0 {
+				first = b.UserID
+			}
+			last = b.UserID
+			clients++
+			if b.Main != 0 {
+				entries = append(entries, ledger.Entry{Account: ledger.Main(b.UserID), Amount: b.Main})
+			}
+			if b.Bonus != 0 {
+				entries = append(entries, ledger.Entry{Account: ledger.Bonus(b.UserID), Amount: b.Bonus})
+			}
+			total += b.Main + b.Bonus
+			main += b.Main
+			bonus += b.Bonus
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		if total != 0 {
+			entries = append(entries, ledger.Entry{Account: ledger.ClubAccount(ledger.AccountOpeningBalance), Amount: -total})
+		}
+		if _, err := ledger.Post(ctx, q, ledger.Operation{
+			ClubID: r.club.ID, Kind: ledger.KindMigrationOpeningBalance,
+			IdempotencyKey: fmt.Sprintf("opening_balances:%d-%d", first, last),
+			Entries:        entries,
+		}); err != nil {
+			return 0, 0, 0, fmt.Errorf("opening balances of users %d-%d: %w", first, last, err)
+		}
+	}
+	return main, bonus, clients, nil
 }
 
 // drawerState — ожидаемый остаток кассы.
