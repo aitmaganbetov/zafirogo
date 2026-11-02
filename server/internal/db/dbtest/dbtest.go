@@ -24,10 +24,19 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 )
 
 // PostgresImage совпадает с docker-compose.dev.yml.
 const PostgresImage = "postgres:18.6"
+
+// PartitionMonthsBack — на сколько месяцев назад от текущего создаются партиции журналов
+// (db.PartitionedTables). Миграции создают их с текущего месяца, а тесты с замороженными датами
+// (например, 2026-10-15) пишут журнал в прошлые месяцы — без партиции вставка падает
+// («no partition of relation …»). В проде прошлых месяцев нет: данные пишутся «сейчас»
+// (перенос старых данных создаёт партиции сам — tools/migrate-from-mysql/README.md).
+const PartitionMonthsBack = 24
 
 // DB — тестовая база.
 type DB struct {
@@ -94,6 +103,13 @@ func Start(ctx context.Context) (d *DB, cleanup func(), err error) {
 	cleanups = append(cleanups, owner.Close)
 	if err := Migrate(ctx, owner); err != nil {
 		return nil, cleanup, err
+	}
+	// Тем же механизмом, что и фоновая задача (db.EnsurePartitions): с PartitionMonthsBack назад
+	// до трёх месяцев вперёд (как миграции).
+	now := time.Now().UTC()
+	from := time.Date(now.Year(), now.Month()-PartitionMonthsBack, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := db.EnsurePartitions(ctx, owner, from, PartitionMonthsBack+4); err != nil {
+		return nil, cleanup, fmt.Errorf("dbtest: partitions: %w", err)
 	}
 
 	suffix, password := randomHex(4), randomHex(12)
