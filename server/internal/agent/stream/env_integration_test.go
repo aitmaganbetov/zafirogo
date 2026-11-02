@@ -157,7 +157,8 @@ func testIdentity(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, h grp
 	if club == 0 || pc == 0 {
 		return h(srv, ss)
 	}
-	return h(srv, &identityStream{ServerStream: ss, ctx: identity.WithIdentity(ss.Context(), identity.Identity{ClubID: club, ComputerID: pc})})
+	id := identity.Identity{ClubID: club, ComputerID: pc, CertSerial: first(md.Get("x-test-serial"))}
+	return h(srv, &identityStream{ServerStream: ss, ctx: identity.WithIdentity(ss.Context(), id)})
 }
 
 func first(v []string) string {
@@ -238,8 +239,15 @@ type agent struct {
 
 func (in *instance) dial(t testing.TB, club, pc int64) (agentv1.AgentService_ConnectClient, context.CancelFunc) {
 	t.Helper()
+	return in.dialSerial(t, club, pc, "")
+}
+
+// dialSerial — dial с серийным номером клиентского сертификата в идентичности.
+func (in *instance) dialSerial(t testing.TB, club, pc int64, serial string) (agentv1.AgentService_ConnectClient, context.CancelFunc) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	ctx = metadata.AppendToOutgoingContext(ctx, "x-test-club", strconv.FormatInt(club, 10), "x-test-computer", strconv.FormatInt(pc, 10))
+	ctx = metadata.AppendToOutgoingContext(ctx, "x-test-club", strconv.FormatInt(club, 10), "x-test-computer", strconv.FormatInt(pc, 10),
+		"x-test-serial", serial)
 	st, err := agentv1.NewAgentServiceClient(in.conn).Connect(ctx)
 	if err != nil {
 		cancel()
@@ -260,7 +268,13 @@ func defaultHello() *agentv1.Hello {
 // connect открывает стрим, шлёт Hello и ждёт Welcome.
 func (in *instance) connect(t testing.TB, club, pc int64, hello *agentv1.Hello) (*agent, *agentv1.Welcome) {
 	t.Helper()
-	st, cancel := in.dial(t, club, pc)
+	return in.connectSerial(t, club, pc, "", hello)
+}
+
+// connectSerial — connect с серийным номером клиентского сертификата.
+func (in *instance) connectSerial(t testing.TB, club, pc int64, serial string, hello *agentv1.Hello) (*agent, *agentv1.Welcome) {
+	t.Helper()
+	st, cancel := in.dialSerial(t, club, pc, serial)
 	a := &agent{t: t, stream: st, cancel: cancel, msgs: make(chan *agentv1.ServerMessage, 256), errc: make(chan error, 1)}
 	t.Cleanup(cancel)
 	if hello == nil {

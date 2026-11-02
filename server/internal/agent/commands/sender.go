@@ -62,6 +62,9 @@ type Envelope struct {
 	ComputerID int64  `json:"pc"`
 	// Gen — для kick: закрыть соединения ПК с поколением меньше Gen (0 — любое: отзыв сертификата).
 	Gen int64 `json:"gen,omitempty"`
+	// CertSerial — для kick при отзыве: закрыть поток, только если он открыт этим сертификатом (пусто — любой).
+	// Отзыв прежнего сертификата при продлении (superseded) не должен закрыть уже открытый поток на новом.
+	CertSerial string `json:"serial,omitempty"`
 	// Command — Command в двоичном protobuf.
 	Command []byte `json:"cmd,omitempty"`
 	// Code — gRPC-код закрытия, ErrorCode — agentv1.ErrorCode, Reason — текст статуса (для kick).

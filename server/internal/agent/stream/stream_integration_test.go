@@ -520,7 +520,41 @@ func TestRevokeKick(t *testing.T) {
 	inA := testEnv.instance(t, "a", nil)
 	inB := testEnv.instance(t, "b", nil)
 	a, _ := inA.connect(t, club, pc, nil)
-	if err := inB.svc.Kick(context.Background(), club, pc, codes.Unauthenticated, agentv1.ErrorCode_ERROR_CODE_CERTIFICATE_REVOKED, "certificate revoked"); err != nil {
+	if err := inB.svc.Kick(context.Background(), club, pc, "", codes.Unauthenticated, agentv1.ErrorCode_ERROR_CODE_CERTIFICATE_REVOKED, "certificate revoked"); err != nil {
+		t.Fatal(err)
+	}
+	err := a.closedWith(3 * time.Second)
+	if code, reason := reasonOf(t, err); code != codes.Unauthenticated || reason != "ERROR_CODE_CERTIFICATE_REVOKED" {
+		t.Fatalf("kick: %v %q", code, reason)
+	}
+}
+
+// TestRevokeKickBySerial — отзыв прежнего сертификата (продление, superseded) не закрывает поток, открытый
+// новым сертификатом, ни на своём инстансе, ни через NATS; отзыв сертификата потока закрывает его.
+func TestRevokeKickBySerial(t *testing.T) {
+	ctx := context.Background()
+	club := testEnv.club(t)
+	pc := testEnv.computer(t, club, 15)
+	inA := testEnv.instance(t, "a", nil)
+	inB := testEnv.instance(t, "b", nil)
+	a, _ := inA.connectSerial(t, club, pc, "new-serial", nil)
+	for _, in := range []*instance{inA, inB} {
+		if err := in.svc.Kick(ctx, club, pc, "old-serial", codes.Unauthenticated, agentv1.ErrorCode_ERROR_CODE_CERTIFICATE_REVOKED, "certificate revoked"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for deadline := time.After(time.Second); ; {
+		select {
+		case _, ok := <-a.msgs:
+			if !ok {
+				t.Fatalf("stream on the renewed certificate closed by revocation of the previous one: %v", <-a.errc)
+			}
+			continue
+		case <-deadline:
+		}
+		break
+	}
+	if err := inB.svc.Kick(ctx, club, pc, "new-serial", codes.Unauthenticated, agentv1.ErrorCode_ERROR_CODE_CERTIFICATE_REVOKED, "certificate revoked"); err != nil {
 		t.Fatal(err)
 	}
 	err := a.closedWith(3 * time.Second)

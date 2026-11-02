@@ -187,12 +187,16 @@ func (s *Service) LocalStreams() int {
 
 // Kick закрывает стрим ПК, где бы он ни был открыт (отзыв сертификата: codes.Unauthenticated +
 // ERROR_CODE_CERTIFICATE_REVOKED). Новые подключения отклоняет проверка сертификата при рукопожатии.
-func (s *Service) Kick(ctx context.Context, clubID, computerID int64, code codes.Code, ec agentv1.ErrorCode, reason string) error {
+// certSerial — серийный номер отозванного сертификата: поток закрывается, только если открыт им (поток на
+// продлённом сертификате переживает отзыв прежнего, superseded); пусто — поток ПК закрывается безусловно.
+// «Отключить ПК», «Перерегистрировать», удаление карточки, повторный Enroll и отзыв ключа образа отзывают все
+// неотозванные сертификаты ПК, поэтому сертификат открытого потока всегда среди отозванных.
+func (s *Service) Kick(ctx context.Context, clubID, computerID int64, certSerial string, code codes.Code, ec agentv1.ErrorCode, reason string) error {
 	own, ok, err := s.store.OwnerOf(ctx, computerID)
 	if err != nil || !ok {
 		return err
 	}
-	env := commands.Envelope{Type: commands.EnvelopeKick, ClubID: clubID, ComputerID: computerID,
+	env := commands.Envelope{Type: commands.EnvelopeKick, ClubID: clubID, ComputerID: computerID, CertSerial: certSerial,
 		Code: uint32(code), ErrorCode: int32(ec), Reason: reason} // #nosec G115 -- codes.Code < 17
 	if own.Instance == s.o.Instance {
 		s.handleKick(env)
@@ -301,6 +305,9 @@ func (s *Service) handleKick(env commands.Envelope) {
 	c := s.local(env.ComputerID)
 	if c == nil || c.id.ClubID != env.ClubID {
 		return
+	}
+	if env.CertSerial != "" && c.id.CertSerial != env.CertSerial {
+		return // отозван другой сертификат ПК (например, прежний после продления) — этот поток не трогаем
 	}
 	if env.Gen > 0 {
 		if c.own.Gen < env.Gen {
