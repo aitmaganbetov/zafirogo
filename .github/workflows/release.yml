@@ -116,10 +116,10 @@ jobs:
       VERSION: ${{ needs.build.outputs.version }}
       COSIGN_SIGN: ${{ vars.COSIGN_SIGN }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: image
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sbom
       - name: image name
