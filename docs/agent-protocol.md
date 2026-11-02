@@ -631,3 +631,152 @@ cd server && ZAFIRO_LOAD_PCS=5000 ZAFIRO_LOAD_TLS=1.2 go test -tags 'integration
 Оценка на 50 000 ПК: ≈ 4,5 ГБ RAM под стримы на все инстансы (TLS 1.2) против ≈ 3 ГБ без TLS; при 3 инстансах —
 ≈ 1,5 ГБ на инстанс плюс база процесса. Время подключения в прогоне ограничено клиентами на той же машине (генерация
 рукопожатий 200 параллельно), а не сервером; разброс 14–22 с между прогонами — шум общей машины.
+
+## 14. Клиент .NET (агент, `agent/`)
+
+Этап 5, A1 — слой связи нового агента. UI (WPF + WebView2) — следующий шаг (A2). Вопросы и принятые решения —
+`docs/open-questions/stage5-agent.md`.
+
+### 14.1. Решение и проекты
+
+`agent/ZafiroAgent.slnx`, .NET 10 (`agent/global.json`), версии пакетов — точно, централизованно
+(`agent/Directory.Packages.props`), lock-файлы проверяются (`dotnet restore --locked-mode`), обновления — Dependabot
+(`nuget`, `/agent`, cooldown 14 дней). Предупреждения — ошибки; анализаторы AOT/trim и платформ (CA1416) включены.
+
+| Проект | Что внутри |
+|---|---|
+| `Zafiro.Agent.Protocol` | C# из `proto/agent/v1/*.proto` (Grpc.Tools 2.85.0 при сборке, в репозиторий не кладётся; Google.Protobuf 3.36.2, Grpc.Net.Client 2.85.0 — как `tools/proto-csharp-check.sh`) + локальные контракты: IPC служба ↔ UI (`Proto/zafiro/agent/ipc/v1/ipc.proto`) и файлы состояния службы (`Proto/zafiro/agent/local/v1/state.proto`) |
+| `Zafiro.Agent.Core` | библиотека связи без UI и хостинга: регистрация и продление (`Enrollment/Enroller.cs`), хранилища ключа (`Credentials/`), канал mTLS (`Transport/AgentChannelFactory.cs`, `TrustAnchors.cs`, `Backoff.cs`), стрим и команды (`Runtime/AgentRuntime.cs`, `AgentState.cs`), журналы команд и событий (`Journal/`), клиенты гостя (`Guest/GuestApi.cs`), ошибки (`Errors/AgentRpcException.cs`), обновления (`Updates/`) |
+| `Zafiro.Agent.Service` | хост службы (`Microsoft.Extensions.Hosting`; Windows — служба `ZafiroAgent`, Linux — консоль для тестов), платформа (`Platform/WindowsPlatform.cs`, `LinuxPlatform.cs`), IPC (`Ipc/`), запуск UI (`Ui/UiCoordinator.cs`) |
+| `Zafiro.Agent.Tests` | xUnit: unit (без сервера) и интеграционные `[Trait("Category","Integration")]` против Go-сервера |
+
+Native AOT: служба публикуется `dotnet publish -r win-x64|linux-x64 -p:PublishAot=true` без предупреждений trim/AOT
+(без рефлексии: protobuf вместо JSON для файлов и IPC, source-generated P/Invoke, генератор привязки конфигурации;
+WMI не используется). Замер (Linux, AOT): исполняемый файл 12,5 МБ, RSS службы с открытым стримом ≈ 31 МБ.
+
+### 14.2. Архитектура: служба, UI, IPC
+
+```
+ Сеанс 0 (SYSTEM)                                   Сеанс пользователя
+┌──────────────────────────────────────┐          ┌──────────────────────────┐
+│ Zafiro.Agent.Service                 │  IPC     │ UI (WPF + WebView2, A2)  │
+│  AgentRuntime ── gRPC/mTLS ──▶ сервер│◀────────▶│ экран входа/блокировки,  │
+│  ключ ПК (CNG), токен гостя (память) │ protobuf │ лаунчер, магазин         │
+│  журналы команд/событий (ProgramData)│  кадры   │ живёт, пока нужен экран  │
+│  UiCoordinator: запуск UI ───────────┼─────────▶│ (screen ≠ NONE)          │
+└──────────────────────────────────────┘          └──────────────────────────┘
+```
+
+- **Служба** держит единственное соединение HTTP/2 с сервером (стрим `Connect` + unary-вызовы гостя на том же
+  канале), выполняет команды, хранит ключ ПК и токен гостя. UI ничего секретного не видит: в ответах
+  `Login`/`Register`/`WatchQrLogin` поле `GuestSignIn.token` пустое.
+- **IPC** (`ipc.proto`): кадр — 4 байта длины (LE, ≤ 1 МиБ) + `Envelope{request|response|event}`. Методы —
+  `agent.GetSnapshot`, `agent.Enroll` (код из панели), `agent.VerifyStaffPin`, `agent.GetTranslations`,
+  `agent.ReportActivity`, `agent.SignOut` и все RPC гостя по имени `<Сервис>/<Метод>` (`GuestService/PurchaseTariff`…)
+  с теми же сообщениями, что в `proto/agent/v1` (таблица — `Ipc/IpcDispatcher.cs`). События: `Snapshot` (связь,
+  состояние ПК, нужный экран, клуб, сессия, гость, баланс, часы сервера), `ShowMessage`, чат, счётчики, QR, переводы.
+  Ошибки — `Error{error_code, grpc_status, message (LocalizedMessage сервера), retry_after_ms, violations}`.
+- **Проверка клиента IPC.** Windows — именованный канал `ZafiroAgent.Ipc`: экземпляры создают только SYSTEM и
+  администраторы, подключаются вошедшие пользователи; клиент принимается, если он в активном сеансе консоли, его exe —
+  UI из папки установки (`Service:UiExecutable`) и его SID (UI подключается с `TokenImpersonationLevel.Identification`)
+  — пользователь этого сеанса или SYSTEM. Linux — unix socket (0600), uid клиента из `SO_PEERCRED` — uid службы или
+  `Service:AllowedUids`. Не больше 4 клиентов и 8 запросов на клиента одновременно.
+- **UI только когда нужен экран** (решение 5): `AgentState.Screen` — `SETUP` (ПК не зарегистрирован/отозван),
+  `LOCK` (никто не играет, гость без сессии, блокировка сотрудником), `NONE` (идёт сессия, техрежим, выключение).
+  `UiCoordinator` раз в 3 с: экран нужен (или пришло сообщение сотрудника), а UI не подключён — запуск UI в сеансе
+  консоли (`CreateProcessAsUser`, как сторож старого агента; администраторы — только если разрешено установщиком;
+  повторы 3 с … 1 мин). При `screen = NONE` UI закрывается сам и освобождает WebView2.
+
+### 14.3. Ключ, сертификат, доверие
+
+- **Корень CA** — только встроенный (pinning): `Agent:RootCaPem`/`RootCaFile`; сервер проверяется
+  `X509ChainTrustMode.CustomRootTrust` без системного хранилища и без CRL/OCSP; TLS 1.2+.
+- **Windows** (`WindowsCredentialStore`): именованный постоянный машинный ключ CNG ECDSA P-256, `ExportPolicy = None`,
+  сначала Microsoft Platform Crypto Provider (TPM), иначе Software KSP. Сертификат и метаданные (`StoredCredentials`) —
+  `%ProgramData%\Zafiro\Agent\credentials.bin`, зашифрован DPAPI учётной записи службы (SYSTEM); папка — только SYSTEM и
+  администраторы, без наследования, чужая папка/ссылка откладывается (как `DeviceVaultStore` старого агента).
+  Хранилище сертификатов `LocalMachine\My` не нужно: сертификат связывается с ключом CNG (`CopyWithPrivateKey`).
+- **Linux** (`FileCredentialStore`, тесты): ключ PKCS#8 и сертификат в файле 0600, каталог 0700.
+- Данные привязаны к `hardware_uuid`: образ, снятый с другого ПК, считается «не зарегистрирован».
+- **Выданный сертификат проверяется** до сохранения: цепочка до встроенного корня (корень из ответа не берётся), срок,
+  EKU `clientAuth`, открытый ключ — тот, что в CSR. В TLS уходит сертификат + промежуточный CA
+  (`SslStreamCertificateContext`).
+
+### 14.4. Жизненный цикл службы
+
+1. **Старт**: загрузка учётных данных; нет — `CONNECTION_NOT_ENROLLED`, экран регистрации. Бездисковый ПК с
+   `Agent:ImageKey` регистрируется сам (Enroll по ключу образа) после каждой загрузки.
+2. **Enroll** (`Enroller`): новый ключ → CSR (`CertificateRequest`, SHA-256) → `EnrollmentService.Enroll` по каналу
+   без клиентского сертификата. `PENDING_APPROVAL` → `CONNECTION_PENDING_APPROVAL`, повтор тем же ключом через
+   `RetryInfo` (по умолчанию 30 с). Ошибка — ключ удаляется.
+3. **Connect**: канал mTLS (`SocketsHttpHandler`: PING каждые 30 с, таймаут 10 с, одно соединение без закрытия по
+   простою; отправка ≤ 1 МиБ, приём ≤ 8 МиБ; метаданные `zafiro-protocol-version`, `zafiro-agent-version`,
+   `zafiro-locale` на каждом вызове) → `Hello` (версия, `last_command_seq` из журнала, `boot_id`, железо, возможности,
+   статус, версия переводов, язык) → `Welcome` за 30 с (часы сервера, конфигурация, сессия, интервал статуса) →
+   `Status` сразу, при каждом изменении состояния (не чаще 1 в 2 с) и не реже `status_interval` → досылка
+   неподтверждённых событий и итогов долгих команд.
+4. **Команды** (`AgentRuntime.HandleCommandAsync`): повтор `command_id` или `seq ≤ last_command_seq` — не выполняется
+   (сохранённый итог или `DUPLICATE`); истёкшая — `COMMAND_EXPIRED`; итог пишется в журнал (`commands.pb`, атомарно,
+   последние 256) **до** отправки `CommandResult` — повтор `Reboot` после перезагрузки ПК не перезагружает его снова.
+   Действие (перезагрузка, Drain) — после отправки итога. `UpdateAvailable` — `ACCEPTED`, итог позже
+   (недоставленные итоги хранятся и досылаются после переподключения).
+5. **События** (`events.pb`): журнал на диске до `EventAck`, повтор после переподключения.
+6. **Переподключение**: full jitter `random(0, min(60 с, 2^attempt))`, не раньше `RetryInfo`; счётчик сбрасывается
+   после стрима ≥ 60 с; `Drain` — случайно в окне; `PROTOCOL_VERSION_UNSUPPORTED` — раз в 10 минут.
+7. **Продление**: после `renew_after` (или `Welcome.certificate_renew_after`) + jitter до 24 ч (≤ 90 % оставшегося
+   срока): новый ключ → `RenewCertificate` по текущему каналу → новый канал → после первого `Welcome` прежний ключ
+   удаляется.
+8. **Отзыв / истечение**: `CERTIFICATE_REVOKED` — ключ и сертификат удаляются, гость выходит, `CONNECTION_REVOKED`
+   («ПК не подключён к клубу», нужен новый код); `CERTIFICATE_EXPIRED`/`CERTIFICATE_REQUIRED` или истёкший `not_after` —
+   данные удаляются, новая регистрация.
+9. **Гость** (`GuestApi`): токен — только в памяти службы, `authorization: Bearer` в метаданных; `GUEST_TOKEN_INVALID`
+   — выход гостя. Денежные RPC: пустой `idempotency_key` заполняется UUID v7, при `UNAVAILABLE`/`DEADLINE_EXCEEDED`/
+   `IDEMPOTENCY_IN_PROGRESS` — до 3 попыток **тем же** ключом. Таймауты: 15 с запись, 5 с чтение.
+10. **Локально по часам сервера**: конец сессии (событие `SessionEnded{EXPIRED}`), конец техрежима, выход гостя без
+    сессии по бездействию (`idle_logout_minutes`, бездействие сообщает UI), действие после сессии
+    (`after_session_action` + задержка, если гость не купил время).
+11. **Обновление**: подпись Ed25519 (`UpdateVerifier`: строка как `commands.UpdateSigningMessage`, ключи — встроенные
+    `Service/ServiceOptions.cs` `UpdateKeys`, RFC 8032 — BouncyCastle) → хост из списка → скачивание (≤ size_bytes)
+    → размер и SHA-256 по открытому файлу → тихая установка (без `install_now` — только когда ПК свободен). Любое
+    несовпадение — файл удаляется, `UPDATE_VERIFICATION_FAILED` + `AgentEvent.update_result`.
+
+Ошибки сервера разбираются в типизированные исключения (`RpcErrors.Parse`): `ErrorCode` из `ErrorInfo.reason`
+(неизвестный — `INTERNAL`), `LocalizedMessage` (показывается как есть), `RetryInfo`, `BadRequest`;
+`CertificateRevokedException`, `CertificateExpiredException`, `PendingApprovalException`, `RateLimitedException`,
+`GuestTokenInvalidException`, `ValidationFailedException`, `ProtocolVersionUnsupportedException`.
+
+### 14.5. Нагрузка на ПК
+
+Без опросов: всё по стриму (push). Фоновые задачи — один таймер 1 с (часы сессии, техрежим, продление) и таймер
+статуса (60 с). Одно TCP-соединение, PING раз в 30 с. Native AOT, GC рабочей станции без фонового режима. UI с WebView2
+не работает во время сессии.
+
+### 14.6. Тесты и сборка
+
+```bash
+agent/test.sh unit          # Docker mcr.microsoft.com/dotnet/sdk:10.0: restore --locked-mode, build, unit-тесты
+agent/test.sh integration   # agent/tests/integration/server.sh: Postgres/Valkey/NATS (compose, tmpfs, свои порты),
+                            # goose up, демо-клуб (tools/visual/fixtures/demo.json, подписка продлена), go build,
+                            # сервер с dev-PKI; затем тесты Category=Integration (сеть хоста)
+agent/test.sh aot           # Native AOT publish службы (linux-x64) без предупреждений → agent/.work/aot
+agent/tests/Zafiro.Agent.Tests/TestData/gen-update-vector.sh   # новый вектор подписи (server/cmd/sign-update)
+```
+
+Unit: backoff, журнал команд (дедупликация, перезапуск, предел 256), события, подпись обновления против вектора
+Go-утилиты `server/cmd/sign-update` (и порча каждого поля), разбор `google.rpc.Status`, состояние ПК и экран,
+выполнение команд (повтор перезагрузки, истёкшие, сессия, блокировка, техрежим, WoL), CSR и проверка выданного
+сертификата, файловое хранилище (0600, чужое железо), IPC по unix socket (снимок, методы, uid), SMBIOS, WoL.
+
+Интеграционный сценарий (`Integration/ServerScenarioTests.cs`): код регистрации (`POST /api/agent-enrollment/codes`
+под владельцем демо-клуба) → Enroll (повтор кода — `ENROLLMENT_CODE_EXPIRED` с текстом) → Connect → Welcome →
+уведомление из панели (`/api/club-computers/notify`) доходит `ShowMessage`, итог подтверждён, seq в журнале →
+перезапуск службы: команда не приходит второй раз → продление сертификата и переподключение с новым → вход гостя
+(неверный пароль — `INVALID_CREDENTIALS`) → тарифы → покупка, повтор с тем же ключом (одно списание),
+`IDEMPOTENCY_KEY_REUSED` для другого запроса → `BalanceChanged` от сервера → завершение сессии гостем → выход →
+«Отключить ПК» (`/revoke`) закрывает стрим `CERTIFICATE_REVOKED`, ключ удалён.
+
+CI — `.github/workflows/agent.yml`: сборка, unit-тесты и Native AOT publish на `windows-latest` и `ubuntu-latest`,
+интеграционные — на ubuntu с тем же `server.sh`.
+
+**Не проверено (нет Windows-машины):** служба Windows, SChannel с ключом CNG/TPM, именованный канал и проверка SID,
+запуск UI в сеансе пользователя, SMBIOS/реестр на реальном железе — пункт `stage5-agent.md` AG-1.

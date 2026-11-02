@@ -1,0 +1,3 @@
+# Вектор подписи обновления: байты не должны меняться (autocrlf на Windows сломал бы sha256).
+tests/Zafiro.Agent.Tests/TestData/update-vector.bin binary
+*.sh text eol=lf

@@ -1,0 +1,9 @@
+{
+  "version": "2.0.1",
+  "sha256": "03b83d46ac1ac3ae06360e1b48fe17f6fb38a8d5478c308fede37754be5467dd",
+  "size_bytes": 51,
+  "channel": "stable",
+  "key_id": "test-vector",
+  "signature_ed25519": "c95XlosRtV34FHxQw6I0bd/YMAmUMSIXTmSa0+r3Kzpkion5AHU42JEKakmSVMzlBWADhiy+mXOwSi+ccV5jDg==",
+  "url": "https://github.com/aitmaganbetov/Zafiro/releases/download/agent-v2.0.1/ZafiroAgentSetup-2.0.1.exe"
+}

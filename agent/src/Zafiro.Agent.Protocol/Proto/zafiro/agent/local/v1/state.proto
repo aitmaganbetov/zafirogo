@@ -1,0 +1,56 @@
+// Файлы состояния службы агента (только на ПК, не передаются на сервер).
+// Формат — protobuf, а не JSON: без рефлексии (Native AOT) и с проверкой целостности при чтении.
+syntax = "proto3";
+
+package zafiro.agent.local.v1;
+
+option csharp_namespace = "Zafiro.Agent.Local.V1";
+
+import "agent/v1/agent.proto";
+import "google/protobuf/timestamp.proto";
+
+// Журнал команд сервера (agent.proto, шапка п. 5–6): last_command_seq и итоги последних 256 команд.
+// Записывается атомарно ДО отправки CommandResult.
+message CommandJournal {
+  // seq последней выполненной долговременной команды (уходит в Hello.last_command_seq).
+  uint64 last_command_seq = 1;
+  // Итоги последних выполненных команд (по command_id; повтор отвечается сохранённым итогом).
+  repeated zafiro.agent.v1.CommandResult recent = 2;
+  // Итоги долгих команд (ACCEPTED → итог), полученные без связи: досылаются после переподключения.
+  repeated zafiro.agent.v1.CommandResult undelivered = 3;
+}
+
+// Неподтверждённые события агента (доставка «как минимум один раз» до EventAck).
+message EventJournal {
+  repeated zafiro.agent.v1.AgentEvent pending = 1;
+}
+
+// Учётные данные ПК: сертификат и метаданные регистрации. Приватный ключ:
+//   * Windows — именованный неэкспортируемый машинный ключ CNG (key_name), файл зашифрован DPAPI учётной записи службы;
+//   * Linux (тесты, разработка) — PKCS#8 в key_pkcs8, файл с правами 0600.
+message StoredCredentials {
+  // Сертификат ПК (PEM).
+  string certificate_pem = 1;
+  // Цепочка CA (промежуточный → корень), PEM.
+  repeated string ca_chain_pem = 2;
+  // Имя ключа CNG (Windows).
+  string key_name = 3;
+  // Ключ ECDSA P-256 в PKCS#8 (только файловое хранилище).
+  bytes key_pkcs8 = 4;
+  int64 computer_id = 5;
+  int64 club_id = 6;
+  string club_name = 7;
+  string computer_number = 8;
+  // Адрес AgentService ("host:port").
+  string agent_endpoint = 9;
+  google.protobuf.Timestamp not_after = 10;
+  google.protobuf.Timestamp renew_after = 11;
+  // true — сертификат получен по ключу образа (бездисковый ПК, §12.8).
+  bool diskless = 12;
+  // Ключ прежнего сертификата после продления: удаляется после первого успешного подключения с новым.
+  string previous_key_name = 13;
+  // Аппаратный UUID, на котором выданы данные (образ с другого ПК не подходит).
+  string hardware_uuid = 14;
+  // Когда сохранено.
+  google.protobuf.Timestamp saved_at = 15;
+}

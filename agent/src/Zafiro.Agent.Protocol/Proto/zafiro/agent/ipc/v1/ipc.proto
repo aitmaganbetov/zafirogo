@@ -1,0 +1,160 @@
+// Локальный канал служба агента ↔ UI (WPF/WebView2, этап A2). Только на ПК, наружу не выходит.
+//
+// Транспорт (docs/agent-protocol.md «Клиент .NET»):
+//   * Windows — именованный канал "ZafiroAgent.Ipc" (ACL: создают только SYSTEM/администраторы, подключаются
+//     вошедшие пользователи); служба проверяет клиента: сеанс консоли, SID пользователя сеанса, путь exe UI.
+//   * Linux (тесты) — unix socket; служба проверяет uid клиента (SO_PEERCRED).
+// Кадр: 4 байта длины (little-endian, не больше 1 МиБ) + Envelope.
+//
+// Ключ ПК, сертификат и токен гостя остаются в службе: UI вызывает методы службы, служба — gRPC.
+// В ответах Login/Register/WatchQrLogin поле GuestSignIn.token всегда пустое.
+syntax = "proto3";
+
+package zafiro.agent.ipc.v1;
+
+option csharp_namespace = "Zafiro.Agent.Ipc.V1";
+
+import "agent/v1/agent.proto";
+import "agent/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+// Кадр канала (ровно одно).
+message Envelope {
+  oneof kind {
+    // UI → служба.
+    Request request = 1;
+    // Служба → UI: ответ на Request с тем же id.
+    Response response = 2;
+    // Служба → UI: событие (без запроса).
+    Event event = 3;
+  }
+}
+
+// Запрос UI. method — имя из списка ниже, payload — сериализованное сообщение запроса.
+//
+//   agent.GetSnapshot        GetSnapshotRequest              → Snapshot
+//   agent.Enroll             EnrollWithCodeRequest           → Snapshot
+//   agent.VerifyStaffPin     zafiro.agent.v1.VerifyStaffPinRequest → zafiro.agent.v1.VerifyStaffPinResponse
+//   agent.GetTranslations    zafiro.agent.v1.GetTranslationsRequest → zafiro.agent.v1.GetTranslationsResponse
+//   agent.ReportActivity     ReportActivityRequest           → GetSnapshotRequest (пусто)
+//   agent.SignOut            SignOutRequest                  → Snapshot
+//   <Сервис>/<Метод>         как в proto/agent/v1 (например "GuestService/PurchaseTariff",
+//                            "GuestAuthService/Login", "ShopService/PlaceOrder", "SocialService/TransferBalance").
+message Request {
+  uint64 id = 1;
+  string method = 2;
+  bytes payload = 3;
+}
+
+// Ответ службы.
+message Response {
+  uint64 id = 1;
+  // Сериализованный ответ (если error не задан).
+  bytes payload = 2;
+  // Ошибка (gRPC сервера или самой службы).
+  Error error = 3;
+}
+
+// Ошибка для UI: код контракта + текст для показа (google.rpc.LocalizedMessage сервера).
+message Error {
+  zafiro.agent.v1.ErrorCode error_code = 1;
+  // gRPC-код (Grpc.Core.StatusCode), 0 — ошибка самой службы.
+  int32 grpc_status = 2;
+  // Текст для гостя (LocalizedMessage) или пусто.
+  string message = 3;
+  // Повторить не раньше, мс (RetryInfo), 0 — не задано.
+  int64 retry_after_ms = 4;
+  // Нарушения полей (google.rpc.BadRequest).
+  repeated FieldViolation violations = 5;
+}
+
+// Нарушение поля.
+message FieldViolation {
+  string field = 1;
+  string description = 2;
+}
+
+// Состояние связи службы с сервером.
+enum Connection {
+  CONNECTION_UNSPECIFIED = 0;
+  // ПК не зарегистрирован (нужен код из панели клуба).
+  CONNECTION_NOT_ENROLLED = 1;
+  // Идёт регистрация.
+  CONNECTION_ENROLLING = 2;
+  // Бездисковый ПК ждёт подтверждения в панели клуба.
+  CONNECTION_PENDING_APPROVAL = 3;
+  // Подключение / переподключение.
+  CONNECTION_CONNECTING = 4;
+  // Стрим открыт, Welcome получен.
+  CONNECTION_ONLINE = 5;
+  // Сертификат отозван: ключ удалён, нужен новый код («ПК не подключён к клубу»).
+  CONNECTION_REVOKED = 6;
+}
+
+// Какой экран нужен.
+enum Screen {
+  SCREEN_UNSPECIFIED = 0;
+  // Экран не нужен: UI может закрыться (WebView2 освобождается).
+  SCREEN_NONE = 1;
+  // Экран входа / блокировки.
+  SCREEN_LOCK = 2;
+  // Лаунчер гостя (идёт сессия, гость открыл лаунчер).
+  SCREEN_LAUNCHER = 3;
+  // Регистрация ПК (ввод кода).
+  SCREEN_SETUP = 4;
+}
+
+// Снимок состояния для UI.
+message Snapshot {
+  Connection connection = 1;
+  zafiro.agent.v1.ComputerState state = 2;
+  Screen screen = 3;
+  zafiro.agent.v1.ComputerRef computer = 4;
+  zafiro.agent.v1.ClubConfig config = 5;
+  zafiro.agent.v1.ActiveSession session = 6;
+  // Вошедший гость (нет — никто не вошёл).
+  zafiro.agent.v1.GuestUser guest = 7;
+  zafiro.agent.v1.Balance balance = 8;
+  // Часы сервера в момент снимка (конец сессии считается по ним).
+  google.protobuf.Timestamp server_time = 9;
+  int64 translations_version = 10;
+  // Конец техрежима (state = SERVICE).
+  google.protobuf.Timestamp service_until = 11;
+  string club_name = 12;
+}
+
+// Пустой запрос снимка.
+message GetSnapshotRequest {}
+
+// Регистрация ПК по одноразовому коду, введённому сотрудником на экране агента.
+message EnrollWithCodeRequest {
+  string code = 1;
+}
+
+// Активность гостя (UI видит ввод клавиатуры и мыши в сеансе пользователя, служба — нет).
+message ReportActivityRequest {
+  uint32 idle_seconds = 1;
+}
+
+// Выход гостя (кнопка «Выйти»).
+message SignOutRequest {}
+
+// Событие службы для UI.
+message Event {
+  oneof kind {
+    // Новый снимок (любое изменение состояния).
+    Snapshot snapshot = 1;
+    // Сообщение сотрудника в углу экрана.
+    zafiro.agent.v1.ShowMessage show_message = 2;
+    zafiro.agent.v1.GuestCountersChanged guest_counters = 3;
+    zafiro.agent.v1.ChatMessageReceived chat_message = 4;
+    zafiro.agent.v1.QrLoginApproved qr_login_approved = 5;
+    // Переводы обновлены (UI перечитывает agent.GetTranslations).
+    TranslationsUpdated translations_updated = 6;
+  }
+}
+
+// Переводы обновлены.
+message TranslationsUpdated {
+  int64 version = 1;
+}
