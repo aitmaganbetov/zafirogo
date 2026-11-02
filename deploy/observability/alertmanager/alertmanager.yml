@@ -1,0 +1,51 @@
+# Alertmanager для staging (Этап 6, O3). Алерты дежурным — в Telegram (как оповещения платформы, решение Q-060),
+# но отдельным ботом/чатом от бота суперадминки (internal/monitoring): падение сервера не должно глушить канал,
+# по которому о нём сообщают.
+#
+# Секреты: токен бота — файлом (secrets/alertmanager_telegram_token, в git не попадает). chat_id Alertmanager из
+# переменных не читает: в проде задайте его в копии этого файла (deploy/observability/alertmanager/alertmanager.prod.yml
+# вне git или через систему конфигурации). На staging по умолчанию алерты никуда не отправляются (receiver null) —
+# видны в UI Alertmanager и Grafana.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: "null"
+  group_by: ["alertname", "instance", "job"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - receiver: "null"
+      matchers: ['environment="staging"']
+    # Прод: раскомментировать и задать chat_id в receivers ниже.
+    # - receiver: telegram-critical
+    #   matchers: ['severity="critical"']
+    #   repeat_interval: 1h
+    # - receiver: telegram-warning
+    #   matchers: ['severity="warning"']
+
+inhibit_rules:
+  # Инстанс недоступен — не дублировать алертами, которые из-за этого же сработали на нём.
+  - source_matchers: ['alertname="ZafiroInstanceDown"']
+    target_matchers: ['severity="warning"']
+    equal: ["instance"]
+  # Критический срок сертификата заменяет предупреждение.
+  - source_matchers: ['alertname="ZafiroCertificateExpiresCritical"']
+    target_matchers: ['alertname="ZafiroCertificateExpiresSoon"']
+    equal: ["cert"]
+
+receivers:
+  - name: "null"
+  # - name: telegram-critical
+  #   telegram_configs:
+  #     - bot_token_file: /run/secrets/alertmanager_telegram_token
+  #       chat_id: -1000000000000
+  #       parse_mode: HTML
+  #       send_resolved: true
+  # - name: telegram-warning
+  #   telegram_configs:
+  #     - bot_token_file: /run/secrets/alertmanager_telegram_token
+  #       chat_id: -1000000000000
+  #       parse_mode: HTML
+  #       send_resolved: true

@@ -1,0 +1,104 @@
+# Модульные тесты правил: promtool test rules (deploy/observability/check.sh). Пути rule_files — относительно этого файла.
+rule_files:
+  - ../rules/zafiro-records.rules.yml
+  - ../rules/zafiro-alerts.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  # Массовый обрыв: 1000 ПК на связи → 700 (−30%) — алерт через минуту после падения.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_agent_online_computers{job="zafiro", instance="app1:9090"}'
+        values: '1000x10 700x10'
+      - series: 'zafiro_agent_online_computers{job="zafiro", instance="app2:9090"}'
+        values: '1000x10 700x10'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: ZafiroAgentsMassDisconnect
+        exp_alerts: []
+      - eval_time: 14m
+        alertname: ZafiroAgentsMassDisconnect
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "ПК на связи: −30% за 5 минут"
+              description: "Массовый обрыв потоков агентов: сеть клубов/провайдера, балансировщик L4, сертификат сервера, падение инстансов."
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-agents-disconnect
+      # Мало ПК (< 50) — не будим.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_agent_online_computers{job="zafiro", instance="app1:9090"}'
+        values: '20x10 5x10'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: ZafiroAgentsMassDisconnect
+        exp_alerts: []
+
+  # Отставание outbox > 1 минуты.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_outbox_oldest_unpublished_age_seconds{job="zafiro", instance="app1:9090"}'
+        values: '0 0 0 120x5'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ZafiroOutboxLag
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: ZafiroOutboxLag
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Самое старое неопубликованное событие outbox ждёт 2m 0s"
+              description: "Админка (WebSocket) и вебхуки не получают событий. Публикатор outbox не работает или NATS недоступен."
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-outbox-lag
+
+  # Ошибка запроса ledger — сразу critical.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_ledger_errors_total{job="zafiro", instance="app1:9090", query="InsertLedgerEntries", reason="ledger_entries_balanced"}'
+        values: '0 0 1 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ZafiroLedgerErrors
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: ZafiroLedgerErrors
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Ошибки запросов ledger: 1 за 5 минут"
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-ledger-errors
+
+  # Сертификат CA агентов истекает через 20 дней (< 21) — warning; серверный через 60 — нет.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_tls_certificate_expiry_timestamp_seconds{job="zafiro", instance="app1:9090", cert="agent_ca"}'
+        values: '1728000x80'
+      - series: 'zafiro_tls_certificate_expiry_timestamp_seconds{job="zafiro", instance="app1:9090", cert="agent_server"}'
+        values: '5184000x80'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: ZafiroCertificateExpiresSoon
+        exp_alerts:
+          - exp_labels: {severity: warning, cert: agent_ca}
+            exp_annotations:
+              summary: "Сертификат agent_ca истекает через 19d 22h 50m 0s"
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-certificates
+
+  # Задача не запускалась 3 интервала (снятие истёкших сессий — раз в минуту).
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_worker_last_run_timestamp_seconds{job="club-computers:expire-sessions", instance="app1:9090"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ZafiroWorkerNotRunning
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ZafiroWorkerNotRunning
+        exp_alerts:
+          - exp_labels: {severity: warning, job: "club-computers:expire-sessions"}
+            exp_annotations:
+              summary: "Задача club-computers:expire-sessions не запускалась 10m 0s"
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-worker-not-running
