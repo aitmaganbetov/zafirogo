@@ -37,8 +37,9 @@ var (
 	laravelVarRe = regexp.MustCompile(`:([a-z_]+)`)
 )
 
-// serverSkipDirs — не интерфейс: команды и конфигурация (тексты для оператора), сгенерированный код.
-var serverSkipDirs = []string{"cmd", "gen", "internal/store", "internal/config", "internal/app", "internal/http/api"}
+// serverSkipDirs — не интерфейс: команды, конфигурация и инструмент переноса данных (тексты для оператора),
+// сгенерированный код.
+var serverSkipDirs = []string{"cmd", "gen", "internal/store", "internal/config", "internal/app", "internal/http/api", "internal/migrate"}
 
 // serverSkipFiles — файлы со своей локализацией: «5 минут назад» на ru/kk/en (Carbon diffForHumans).
 var serverSkipFiles = []string{
