@@ -158,6 +158,29 @@ func TestTrustedPrefixes(t *testing.T) {
 	}
 }
 
+func TestAgentGRPCProxyTrusted(t *testing.T) {
+	cfg, err := Load("", environ("ZAFIRO_AGENT_GRPC_PROXY_TRUSTED=172.30.0.10, 10.20.0.0/16", "ZAFIRO_AGENT_GRPC_PROXY_HEADER_TIMEOUT=3s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps, err := cfg.Agent.GRPC.ProxyTrustedPrefixes()
+	if err != nil || len(ps) != 2 || ps[0].String() != "172.30.0.10/32" || ps[1].String() != "10.20.0.0/16" {
+		t.Fatalf("prefixes = %v, %v", ps, err)
+	}
+	if cfg.Agent.GRPC.ProxyHeaderTimeout != 3*time.Second {
+		t.Fatalf("proxy_header_timeout = %s", cfg.Agent.GRPC.ProxyHeaderTimeout)
+	}
+	if def, err := Load("", environ()); err != nil || len(def.Agent.GRPC.ProxyTrusted) != 0 || def.Agent.GRPC.ProxyHeaderTimeout != 5*time.Second {
+		t.Fatalf("defaults: %v, %v", def, err)
+	}
+	if _, err := Load("", environ("ZAFIRO_AGENT_GRPC_PROXY_TRUSTED=balancer")); err == nil || !strings.Contains(err.Error(), "agent.grpc.proxy_trusted") {
+		t.Fatalf("invalid prefix: %v", err)
+	}
+	if _, err := Load("", environ("ZAFIRO_AGENT_GRPC_PROXY_HEADER_TIMEOUT=0s")); err == nil {
+		t.Fatal("zero proxy_header_timeout accepted")
+	}
+}
+
 func TestLoadNestedEnvKeys(t *testing.T) {
 	cfg, err := Load("", environ(
 		"ZAFIRO_AGENT_GRPC_LISTEN=127.0.0.1:9443",

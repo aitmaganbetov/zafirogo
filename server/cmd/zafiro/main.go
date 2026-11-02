@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"runtime/debug"
 	"syscall"
 
@@ -53,7 +54,14 @@ func run() error {
 	return a.Run(ctx)
 }
 
+// buildVersion — версия сборки образа (Dockerfile: -ldflags "-X main.buildVersion=<тег или коммит>"); в образе нет
+// .git, поэтому сведения VCS из debug.ReadBuildInfo там пусты.
+var buildVersion string
+
 func version() string {
+	if buildVersion != "" {
+		return buildVersion + " " + runtime.Version()
+	}
 	bi, ok := debug.ReadBuildInfo()
 	if !ok {
 		return "unknown"

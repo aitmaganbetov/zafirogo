@@ -1,0 +1,29 @@
+# Контекст сборки образа (Dockerfile): только то, что нужно сборке. Всё остальное — не в контексте
+# (.git, .env, секреты, агент, документы, node_modules, локальные артефакты).
+*
+!web/
+!server/
+!db/migrations/
+!db/seed/
+
+# Локальные артефакты внутри разрешённых каталогов
+web/node_modules
+web/dist
+web/playwright-report
+web/test-results
+web/blob-report
+web/.vite
+**/*.tsbuildinfo
+server/internal/webui/dist/*
+!server/internal/webui/dist/.gitkeep
+server/tmp
+**/*.test
+**/*.out
+**/coverage.*
+
+# Секреты не попадают в контекст ни при каких обстоятельствах
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/.dev

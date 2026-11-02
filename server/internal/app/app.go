@@ -44,13 +44,13 @@ import (
 	cashsvc "github.com/aitmaganbetov/zafirogo/server/internal/cash/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/clubmap"
 	"github.com/aitmaganbetov/zafirogo/server/internal/config"
-	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	grpcserver "github.com/aitmaganbetov/zafirogo/server/internal/grpc"
 	httpserver "github.com/aitmaganbetov/zafirogo/server/internal/http"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/legacy"
 	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
 	"github.com/aitmaganbetov/zafirogo/server/internal/monitoring"
+	"github.com/aitmaganbetov/zafirogo/server/internal/observability"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/pki"
 	"github.com/aitmaganbetov/zafirogo/server/internal/realtime"
@@ -82,11 +82,16 @@ type App struct {
 	Billing   *billingsvc.Service
 	Cash      *cashsvc.Service
 	Realtime  *realtime.Handler
+	// Obs — метрики Prometheus, трассировка и хуки журнала (Этап 6 O3, internal/observability).
+	Obs *observability.Observer
 
 	httpSrv *http.Server
-	httpLis net.Listener
-	grpcSrv *grpcserver.Server
-	grpcLis net.Listener
+	// metricsSrv/metricsLis — внутренний порт /metrics (observability.metrics_listen); nil — выключен.
+	metricsSrv *http.Server
+	metricsLis net.Listener
+	httpLis    net.Listener
+	grpcSrv    *grpcserver.Server
+	grpcLis    net.Listener
 
 	workers  []namedWorker
 	revSub   *nats.Subscription
@@ -135,6 +140,14 @@ func withoutWorkers(all []namedWorker, disable []string) ([]namedWorker, error) 
 // HTTPAddr — адрес, который слушает HTTP (полезно при ":0").
 func (a *App) HTTPAddr() string { return a.httpLis.Addr().String() }
 
+// MetricsAddr — адрес внутреннего порта /metrics ("" — выключен).
+func (a *App) MetricsAddr() string {
+	if a.metricsLis == nil {
+		return ""
+	}
+	return a.metricsLis.Addr().String()
+}
+
 // GRPCAddr — адрес gRPC агентов ("" в режиме без зависимостей).
 func (a *App) GRPCAddr() string {
 	if a.grpcLis == nil {
@@ -159,6 +172,26 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (a *App, e
 	}()
 	a = built
 
+	// Наблюдаемость (Этап 6 O3) — первой: обёртка журнала (request_id, trace_id, маскирование, выборка) действует
+	// на все подсистемы ниже.
+	if a.Obs, err = observability.New(ctx, observability.Options{
+		Instance: cfg.Agent.InstanceID, OTLPEndpoint: cfg.Observability.OTLPEndpoint,
+		SampleRatio: cfg.Observability.TraceSampleRatio, Log: log,
+	}); err != nil {
+		return nil, err
+	}
+	// Замыкания closers не обращаются к a: при ошибке Build именованный результат a уже nil.
+	obs := a.Obs
+	a.closers = append(a.closers, func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = obs.Shutdown(sctx)
+	})
+	log = slog.New(observability.NewLogHandler(log.Handler(), a.Obs, observability.LogOptions{
+		SampleInitial: cfg.Observability.LogSampleInitial, SampleThereafter: cfg.Observability.LogSampleThereafter,
+	}))
+	a.log = log
+
 	trusted, err := cfg.HTTP.TrustedPrefixes()
 	if err != nil {
 		return nil, err
@@ -169,6 +202,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (a *App, e
 		TrustedProxies: trusted,
 		Frontend:       webui.Handler(webui.FS(), webui.WithSuperadminDomain(cfg.Superadmin.Domain)),
 		Checkers:       []httpserver.Checker{httpserver.CheckFunc{CheckName: "shutdown", Fn: a.checkNotDraining}},
+		Observe:        a.Obs.HTTPMiddleware,
 	}
 
 	if cfg.Standalone() {
@@ -196,11 +230,27 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (a *App, e
 		return nil, fmt.Errorf("http listen: %w", err)
 	}
 	a.closers = append(a.closers, func() { _ = a.httpLis.Close() })
+	if addr := cfg.Observability.MetricsListen; addr != "" {
+		if a.metricsLis, err = lc.Listen(ctx, "tcp", addr); err != nil {
+			return nil, fmt.Errorf("observability.metrics_listen: %w", err)
+		}
+		mlis := a.metricsLis
+		a.closers = append(a.closers, func() { _ = mlis.Close() })
+		a.metricsSrv = a.Obs.NewServer()
+	}
 	if a.grpcSrv != nil {
 		if a.grpcLis, err = lc.Listen(ctx, "tcp", cfg.Agent.GRPC.Listen); err != nil {
 			return nil, fmt.Errorf("grpc listen: %w", err)
 		}
 		a.closers = append(a.closers, func() { _ = a.grpcLis.Close() })
+		// За L4-балансировщиком адрес ПК приходит заголовком PROXY (docs/deploy.md): лимиты по IP и подсети ключа образа.
+		proxyTrusted, err := cfg.Agent.GRPC.ProxyTrustedPrefixes()
+		if err != nil {
+			return nil, err
+		}
+		a.grpcLis = grpcserver.NewProxyListener(a.grpcLis, grpcserver.ProxyProtocol{
+			Trusted: proxyTrusted, HeaderTimeout: cfg.Agent.GRPC.ProxyHeaderTimeout, Logger: log,
+		})
 	}
 	return a, nil
 }
@@ -214,12 +264,12 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 
 	// --- Postgres: два логина ---
 	var err error
-	if a.AppPool, err = db.NewPool(ctx, cfg.Database.URL.Reveal()); err != nil {
+	if a.AppPool, err = newPool(ctx, cfg.Database.URL.Reveal(), a.Obs.NewPgxTracer("app")); err != nil {
 		// Текст ошибки pgx может содержать DSN — не выводим его.
 		return errors.New("database.url: не удалось подключиться (проверьте DSN логина zafiro_app)")
 	}
 	a.closers = append(a.closers, a.AppPool.Close)
-	if a.PlatformPool, err = db.NewPool(ctx, cfg.Database.PlatformURL.Reveal()); err != nil {
+	if a.PlatformPool, err = newPool(ctx, cfg.Database.PlatformURL.Reveal(), a.Obs.NewPgxTracer("platform")); err != nil {
 		return errors.New("database.platform_url: не удалось подключиться (проверьте DSN логина zafiro_platform)")
 	}
 	a.closers = append(a.closers, a.PlatformPool.Close)
@@ -237,25 +287,28 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		return fmt.Errorf("valkey: %w", err)
 	}
 	a.closers = append(a.closers, a.Valkey.Close)
+	a.Valkey = a.Obs.WrapValkey(a.Valkey) // valkey_commands_total, valkey_errors_total
 
 	// --- NATS + поток событий ---
-	if a.NATS, err = nats.Connect(cfg.NATS.URL.Reveal(),
+	if a.NATS, err = nats.Connect(cfg.NATS.URL.Reveal(), append(a.Obs.NATSOptions(),
 		nats.Name("zafiro-"+cfg.Agent.InstanceID),
 		nats.Timeout(5*time.Second),
 		nats.MaxReconnects(-1),
 		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
 			if err != nil {
+				a.Obs.NATSDisconnected()
 				log.Warn("nats disconnected", "err", err)
 			}
 		}),
 		nats.ReconnectHandler(func(*nats.Conn) { log.Info("nats reconnected") }),
-	); err != nil {
+	)...); err != nil {
 		return errors.New("nats: не удалось подключиться (проверьте nats.url)")
 	}
 	a.closers = append(a.closers, a.NATS.Close)
 	if a.JS, err = jetstream.New(a.NATS); err != nil {
 		return fmt.Errorf("jetstream: %w", err)
 	}
+	a.JS = a.Obs.WrapJetStream(a.JS) // спаны и счётчики публикации outbox и потребителей
 	if _, err := outbox.EnsureStream(ctx, a.JS, outbox.StreamOptions{
 		MaxAge: cfg.Events.Stream.MaxAge, Duplicates: cfg.Events.Stream.Duplicates, Replicas: cfg.Events.Stream.Replicas,
 	}); err != nil {
@@ -287,7 +340,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	}
 	if a.Auth, err = auth.NewService(auth.Options{
 		Pool: a.AppPool, Hasher: hasher, Sessions: sessions, Logger: log,
-		Events: &authEvents{app: a.AppPool, platform: a.PlatformPool, log: log, now: cfg.Now()},
+		Events: a.Obs.WrapAuthEvents(&authEvents{app: a.AppPool, platform: a.PlatformPool, log: log, now: cfg.Now()}),
 	}); err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
@@ -407,8 +460,11 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	metrics := monitoring.NewRecorder(nil)
 	if a.grpcSrv, err = grpcserver.NewServer(grpcserver.Options{
 		// AG-16: тексты ошибок агента — на языке гостя (zafiro-locale) или клуба.
-		ExtraUnary:        []grpc.UnaryServerInterceptor{metrics.UnaryInterceptor(), guestapi.LocalizeErrors(i18n.NewCatalog(a.AppPool))},
-		ExtraStream:       []grpc.StreamServerInterceptor{metrics.StreamInterceptor()},
+		ExtraUnary:  []grpc.UnaryServerInterceptor{metrics.UnaryInterceptor(), guestapi.LocalizeErrors(i18n.NewCatalog(a.AppPool))},
+		ExtraStream: []grpc.StreamServerInterceptor{metrics.StreamInterceptor()},
+		// Prometheus и спаны — внешними: отказы проверки сертификата и паники тоже считаются (Этап 6 O3).
+		OuterUnary:        []grpc.UnaryServerInterceptor{a.Obs.UnaryServerInterceptor()},
+		OuterStream:       []grpc.StreamServerInterceptor{a.Obs.StreamServerInterceptor()},
 		ServerCertificate: serverCert, ClientCAs: a.CA.ClientCAs(), Certs: a.CertCache,
 		Enrollment: enroll.NewGRPC(a.Enroll), Logger: log,
 	}, func(s *grpc.Server) {
@@ -515,6 +571,10 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	if a.workers, err = withoutWorkers(a.workers, cfg.Dev.DisableWorkers); err != nil {
 		return err
 	}
+	for i := range a.workers {
+		a.workers[i].run = a.Obs.TrackWorker(a.workers[i].name, a.workers[i].run) // worker_up, worker_errors_total
+	}
+	a.setObservabilitySources(serverCert)
 
 	ro.Auth = a.Auth
 	ro.Limiter = a.Limiter

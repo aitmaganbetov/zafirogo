@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"runtime/debug"
+	"slices"
 	"time"
 
 	"google.golang.org/grpc"
@@ -110,6 +111,10 @@ type Options struct {
 	// ExtraUnary / ExtraStream — перехватчики после проверки сертификата (лимиты, метрики).
 	ExtraUnary  []grpc.UnaryServerInterceptor
 	ExtraStream []grpc.StreamServerInterceptor
+	// OuterUnary / OuterStream — внешние перехватчики, до восстановления после паники и проверки сертификата
+	// (метрики и спаны Prometheus/OpenTelemetry, Этап 6 O3: отказы UNAUTHENTICATED и паники → INTERNAL тоже видны).
+	OuterUnary  []grpc.UnaryServerInterceptor
+	OuterStream []grpc.StreamServerInterceptor
 }
 
 // Server — gRPC-сервер агентов.
@@ -167,8 +172,8 @@ func NewServer(opts Options, register func(*grpc.Server)) (*Server, error) {
 	auth := &authenticator{certs: opts.Certs, public: public, now: now, logger: logger}
 	tlsCfg := TLSConfig(opts.ServerCertificate, opts.ClientCAs)
 
-	unary := append([]grpc.UnaryServerInterceptor{recoverUnary(logger), auth.unary}, opts.ExtraUnary...)
-	stream := append([]grpc.StreamServerInterceptor{recoverStream(logger), auth.stream}, opts.ExtraStream...)
+	unary := append(append(slices.Clone(opts.OuterUnary), recoverUnary(logger), auth.unary), opts.ExtraUnary...)
+	stream := append(append(slices.Clone(opts.OuterStream), recoverStream(logger), auth.stream), opts.ExtraStream...)
 	srv := grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
 		grpc.ChainUnaryInterceptor(unary...),

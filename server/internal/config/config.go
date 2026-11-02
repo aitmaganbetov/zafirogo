@@ -72,6 +72,7 @@ type Config struct {
 	Mobile          Mobile        `koanf:"mobile"`
 	Security        Security      `koanf:"security"`
 	Dev             Dev           `koanf:"dev"`
+	Observability   Observability `koanf:"observability"`
 
 	// Generated — ключи, для которых в dev/test сгенерирован случайный секрет (не заданы явно).
 	// Такие секреты живут до перезапуска процесса. Не из конфигурации.
@@ -225,6 +226,17 @@ type AgentGRPC struct {
 	Listen string `koanf:"listen"`
 	// Endpoint — публичный адрес AgentService, который получает агент в ответе Enroll.
 	Endpoint string `koanf:"endpoint"`
+	// ProxyTrusted — IP/CIDR L4-балансировщиков, которые ставят заголовок PROXY protocol (v1 или v2) перед TLS
+	// (grpcserver.NewProxyListener): от них заголовок обязателен, адрес ПК берётся из него (лимиты по IP, подсети
+	// ключа образа Q-037). Пусто — PROXY protocol выключен. ZAFIRO_AGENT_GRPC_PROXY_TRUSTED=10.0.0.5,10.1.0.0/24.
+	ProxyTrusted []string `koanf:"proxy_trusted"`
+	// ProxyHeaderTimeout — время на получение заголовка PROXY от балансировщика.
+	ProxyHeaderTimeout time.Duration `koanf:"proxy_header_timeout"`
+}
+
+// ProxyTrustedPrefixes разбирает agent.grpc.proxy_trusted (IP или CIDR).
+func (g AgentGRPC) ProxyTrustedPrefixes() ([]netip.Prefix, error) {
+	return parsePrefixes("agent.grpc.proxy_trusted", g.ProxyTrusted)
 }
 
 // AgentPKI — CA агентов и серверный сертификат gRPC (server/internal/pki).
@@ -341,6 +353,24 @@ type Realtime struct {
 	PingTimeout     time.Duration `koanf:"ping_timeout"`
 	MaxLifetime     time.Duration `koanf:"max_lifetime"`
 	OriginPatterns  []string      `koanf:"origin_patterns"`
+}
+
+// Observability — эксплуатационная наблюдаемость (Этап 6, O3; server/internal/observability, docs/observability.md).
+type Observability struct {
+	// MetricsListen — адрес внутреннего порта /metrics Prometheus (например 127.0.0.1:9090 или :9090 во внутренней
+	// сети контейнеров). Отдельный HTTP-сервер, не публичный роутер: без аутентификации, наружу не публиковать.
+	// Пусто — метрики не отдаются (по умолчанию).
+	MetricsListen string `koanf:"metrics_listen"`
+	// OTLPEndpoint — адрес OTLP/HTTP коллектора трасс OpenTelemetry (http(s)://host:4318). Пусто — трассировка
+	// выключена (по умолчанию).
+	OTLPEndpoint string `koanf:"otlp_endpoint"`
+	// TraceSampleRatio — доля трасс, которые начинает этот инстанс (0..1).
+	TraceSampleRatio float64 `koanf:"trace_sample_ratio"`
+	// LogSampleInitial / LogSampleThereafter — выборка шумных записей журнала debug/info: за секунду по одному
+	// сообщению — первые LogSampleInitial, затем каждая LogSampleThereafter-я. 0 — без выборки. warn/error не
+	// отбрасываются.
+	LogSampleInitial    int `koanf:"log_sample_initial"`
+	LogSampleThereafter int `koanf:"log_sample_thereafter"`
 }
 
 // Dev — только для dev/test, в prod запрещено валидацией.
@@ -474,6 +504,8 @@ func Defaults() map[string]any {
 		"agent.instance_id":                   "",
 		"agent.grpc.listen":                   ":8443",
 		"agent.grpc.endpoint":                 "localhost:8443",
+		"agent.grpc.proxy_trusted":            []string{},
+		"agent.grpc.proxy_header_timeout":     "5s",
 		"agent.pki.ca_cert_file":              "",
 		"agent.pki.ca_key_file":               "",
 		"agent.pki.server_cert_file":          "",
@@ -554,6 +586,12 @@ func Defaults() map[string]any {
 		"superadmin.secret_key":  "",
 		"superadmin.backup_path": "",
 		"superadmin.ssl_hosts":   []string{},
+
+		"observability.metrics_listen":        "",
+		"observability.otlp_endpoint":         "",
+		"observability.trace_sample_ratio":    0.1,
+		"observability.log_sample_initial":    100,
+		"observability.log_sample_thereafter": 100,
 
 		"dev.fixed_now":       "",
 		"dev.disable_workers": []string{},
@@ -759,6 +797,7 @@ func (c *Config) Validate() error {
 		"auth.refresh_reuse_grace":            c.Auth.RefreshReuseGrace,
 		"auth.touch_every":                    c.Auth.TouchEvery,
 		"agent.enroll.code_ttl":               c.Agent.Enroll.CodeTTL,
+		"agent.grpc.proxy_header_timeout":     c.Agent.GRPC.ProxyHeaderTimeout,
 		"agent.enroll.diskless_cert_lifetime": c.Agent.Enroll.DisklessCertLifetime,
 		"agent.cert.lifetime":                 c.Agent.Cert.Lifetime,
 		"agent.cert_cache.refresh":            c.Agent.CertCache.Refresh,
@@ -890,6 +929,9 @@ func (c *Config) Validate() error {
 	if c.Agent.GRPC.Endpoint == "" {
 		add("agent.grpc.endpoint: пусто")
 	}
+	if _, err := c.Agent.GRPC.ProxyTrustedPrefixes(); err != nil {
+		errs = append(errs, err)
+	}
 	pki := c.Agent.PKI
 	files := pki.CACertFile != "" || pki.CAKeyFile != "" || pki.ServerCertFile != "" || pki.ServerKeyFile != ""
 	if files && (pki.CACertFile == "" || pki.CAKeyFile == "" || pki.ServerCertFile == "" || pki.ServerKeyFile == "") {
@@ -993,6 +1035,24 @@ func (c *Config) Validate() error {
 	if c.Workers.Partitions.Months < 1 || c.Workers.Partitions.Months > 24 {
 		add("workers.partitions.months: ожидается 1..24")
 	}
+	if ob := c.Observability; ob.MetricsListen != "" {
+		if _, port, err := net.SplitHostPort(ob.MetricsListen); err != nil {
+			add("observability.metrics_listen: %w", err)
+		} else if port != "0" && (ob.MetricsListen == c.HTTP.Addr || ob.MetricsListen == c.Agent.GRPC.Listen) {
+			add("observability.metrics_listen: должен отличаться от http.addr и agent.grpc.listen")
+		}
+	}
+	if ep := c.Observability.OTLPEndpoint; ep != "" {
+		if u, err := url.Parse(ep); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
+			add("observability.otlp_endpoint: ожидается http(s)://host:port без логина и пароля")
+		}
+	}
+	if r := c.Observability.TraceSampleRatio; r < 0 || r > 1 {
+		add("observability.trace_sample_ratio: ожидается 0..1")
+	}
+	if c.Observability.LogSampleInitial < 0 || c.Observability.LogSampleThereafter < 0 {
+		add("observability.log_sample_*: должны быть ≥ 0")
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("config: %w", errors.Join(errs...))
@@ -1007,19 +1067,24 @@ func validPostgresURL(s Secret) bool {
 
 // TrustedPrefixes разбирает TrustedProxies (IP или CIDR) в netip.Prefix.
 func (h HTTP) TrustedPrefixes() ([]netip.Prefix, error) {
-	out := make([]netip.Prefix, 0, len(h.TrustedProxies))
-	for _, s := range h.TrustedProxies {
+	return parsePrefixes("http.trusted_proxies", h.TrustedProxies)
+}
+
+// parsePrefixes — список IP или CIDR ключа name в netip.Prefix (IP — префикс /32 или /128).
+func parsePrefixes(name string, list []string) ([]netip.Prefix, error) {
+	out := make([]netip.Prefix, 0, len(list))
+	for _, s := range list {
 		if strings.Contains(s, "/") {
 			p, err := netip.ParsePrefix(s)
 			if err != nil {
-				return nil, fmt.Errorf("http.trusted_proxies: %q: %w", s, err)
+				return nil, fmt.Errorf("%s: %q: %w", name, s, err)
 			}
 			out = append(out, p.Masked())
 			continue
 		}
 		a, err := netip.ParseAddr(s)
 		if err != nil {
-			return nil, fmt.Errorf("http.trusted_proxies: %q: %w", s, err)
+			return nil, fmt.Errorf("%s: %q: %w", name, s, err)
 		}
 		a = a.Unmap()
 		out = append(out, netip.PrefixFrom(a, a.BitLen()))
@@ -1027,7 +1092,8 @@ func (h HTTP) TrustedPrefixes() ([]netip.Prefix, error) {
 	return out, nil
 }
 
-// RedactURL убирает пароль из URL. Некорректный URL заменяется целиком.
+// RedactURL убирает пароль из URL. Некорректный URL заменяется целиком. Пароль и ключи бывают и в параметрах
+// (pgx: postgres://host/db?password=…&sslpassword=…), их значения тоже маскируются (SEC-021).
 func RedactURL(raw string) string {
 	if raw == "" {
 		return ""
@@ -1035,6 +1101,20 @@ func RedactURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return redacted
+	}
+	if u.RawQuery != "" {
+		q, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			return redacted
+		}
+		for k := range q {
+			lk := strings.ToLower(k)
+			if strings.Contains(lk, "pass") || strings.Contains(lk, "secret") || strings.Contains(lk, "token") ||
+				strings.Contains(lk, "key") {
+				q[k] = []string{"xxxxx"}
+			}
+		}
+		u.RawQuery = q.Encode()
 	}
 	return u.Redacted()
 }
@@ -1071,12 +1151,15 @@ func (c *Config) LogValue() slog.Value {
 			slog.String("instance_id", c.Agent.InstanceID),
 			slog.String("grpc_listen", c.Agent.GRPC.Listen),
 			slog.String("grpc_endpoint", c.Agent.GRPC.Endpoint),
+			slog.Any("grpc_proxy_trusted", c.Agent.GRPC.ProxyTrusted),
 			slog.String("pki_ca_cert_file", c.Agent.PKI.CACertFile),
 			slog.String("pki_server_cert_file", c.Agent.PKI.ServerCertFile),
 			slog.String("pki_dev_dir", c.Agent.PKI.DevDir),
 			slog.Any("enroll_code_pepper", c.Agent.Enroll.CodePepper),
 		),
 		slog.Any("generated_secrets", c.Generated),
+		slog.String("observability_metrics_listen", c.Observability.MetricsListen),
+		slog.String("observability_otlp_endpoint", RedactURL(c.Observability.OTLPEndpoint)),
 		slog.String("dev_fixed_now", c.Dev.FixedNow),
 		slog.Any("dev_disable_workers", c.Dev.DisableWorkers),
 	)

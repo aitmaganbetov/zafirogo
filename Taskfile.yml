@@ -19,6 +19,7 @@ vars:
   GOSEC_VERSION: v2.30.0
 
   COMPOSE: docker compose -f docker-compose.dev.yml --env-file .env
+  STAGING_COMPOSE: docker compose -f deploy/staging/compose.yaml --env-file deploy/staging/.env.staging
   WEBUI_DIST: server/internal/webui/dist
   BIN: bin/zafiro
 
@@ -242,6 +243,89 @@ tasks:
       - mkdir -p bin
       - cd server && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../{{.BIN}} ./cmd/zafiro
       - echo "собрано {{.BIN}}"
+
+  # ---------- образ и staging (docs/deploy.md, deploy/README.md) ----------
+
+  image:
+    desc: "Docker-образ (Dockerfile): task image IMAGE=zafiro:dev [VERSION=v1.2.3] [BUILD_CA=/путь/ca.crt — прокси с подменой TLS] [BUILD_ARGS='--build-arg …']"
+    vars:
+      IMAGE: '{{.IMAGE | default "zafiro:dev"}}'
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+    cmds:
+      - docker build {{if .BUILD_CA}}--secret id=build_ca,src={{.BUILD_CA}}{{end}} {{.BUILD_ARGS}} --build-arg VERSION={{.VERSION}} -t {{.IMAGE}} .
+
+  staging:init:
+    desc: "Staging: пароли (.env.staging), секреты сервера, PKI агентов, TLS веба — deploy/staging/init.sh (идемпотентно)"
+    cmds:
+      - sh deploy/staging/init.sh
+
+  staging:image:
+    desc: Собрать образ zafiro:staging для staging (как в CI, локально)
+    cmds:
+      - task: image
+        vars: {IMAGE: "zafiro:staging", BUILD_CA: "{{.BUILD_CA}}", BUILD_ARGS: "{{.BUILD_ARGS}}"}
+
+  staging:up:
+    desc: "Staging одной командой: init → compose up (миграции → 2 инстанса → nginx) → ждёт /readyz обоих инстансов. Образ — STG_IMAGE из .env.staging (zafiro:staging: task staging:image)"
+    deps: [staging:init]
+    cmds:
+      - "{{.STAGING_COMPOSE}} up -d --remove-orphans"
+      - test "$({{.STAGING_COMPOSE}} ps -a migrate --format '{{"{{"}}.ExitCode{{"}}"}}')" = 0
+      - |
+        for port in 18081 18082; do
+          i=0
+          until curl -fsS "http://127.0.0.1:$port/readyz" >/dev/null 2>&1; do
+            i=$((i+1)); if [ $i -gt 60 ]; then echo "инстанс :$port не готов"; curl -sS "http://127.0.0.1:$port/readyz"; exit 1; fi
+            sleep 2
+          done
+          echo "инстанс :$port — /readyz ok"
+        done
+
+  staging:down:
+    desc: Остановить staging (graceful, данные в томах сохраняются)
+    cmds:
+      - "{{.STAGING_COMPOSE}} down"
+
+  staging:destroy:
+    desc: Остановить staging и удалить тома (база, Valkey, NATS); секреты в deploy/staging/secrets остаются
+    cmds:
+      - "{{.STAGING_COMPOSE}} down -v --remove-orphans"
+
+  staging:ps:
+    desc: Состояние контейнеров staging
+    cmds:
+      - "{{.STAGING_COMPOSE}} ps -a"
+
+  staging:logs:
+    desc: "Логи staging: task staging:logs -- app1"
+    cmds:
+      - "{{.STAGING_COMPOSE}} logs --tail=200 {{.CLI_ARGS}}"
+
+  staging:migrate:
+    desc: Повторить job миграций (goose up под владельцем схемы) — перед выкладкой новых инстансов
+    cmds:
+      - "{{.STAGING_COMPOSE}} run --rm migrate up"
+
+  staging:reload-lb:
+    desc: Проверить и перечитать конфигурацию nginx (карта /api/v1 при go-live клуба) без разрыва соединений
+    cmds:
+      - "{{.STAGING_COMPOSE}} exec lb nginx -t"
+      - "{{.STAGING_COMPOSE}} exec lb nginx -s reload"
+
+  staging:seed:
+    desc: Демо-данные (tools/visual/fixtures/demo.json) в базу staging — для входа и проверок; только staging
+    dir: server
+    cmds:
+      - sh -c '. ../deploy/staging/.env.staging && go run ./cmd/visual-seed -fixture ../tools/visual/fixtures/demo.json -db "postgres://$STG_DB_OWNER_USER:$STG_DB_OWNER_PASSWORD@127.0.0.1:15432/$STG_POSTGRES_DB?sslmode=disable"'
+      # Демо-данные датированы октябрём 2026 (визуальное сравнение с фиксированным «сейчас»): подписки — активны от сегодня.
+      - sh -c '. ../deploy/staging/.env.staging && cd .. && {{.STAGING_COMPOSE}} exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$STG_DB_OWNER_USER" -d "$STG_POSTGRES_DB" -c "UPDATE club_subscriptions SET status = '"'"'active'"'"', started_at = now(), current_period_ends_at = now() + interval '"'"'30 days'"'"'"'
+
+  staging:smoke:
+    desc: "Проверки staging (нужны staging:up и staging:seed): вход и WebSocket через nginx, событие между инстансами, агент через L4 + PROXY protocol + mTLS, остановка инстанса (переподключение, идемпотентная покупка), drain"
+    dir: server
+    cmds:
+      - ZAFIRO_STAGING_DIR={{.ROOT_DIR}}/deploy/staging go test -tags staging -count=1 -v -timeout 10m -run '^TestStaging' ./internal/app/
 
   clean:
     desc: Удалить артефакты сборки

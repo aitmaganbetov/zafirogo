@@ -410,6 +410,11 @@ system. `club_id NULL` — событие платформы (пишет тол�
   всех клубах при `app.user_id` — выбор клуба при входе).
 - Без RLS (не данные клуба): `users`, `clubs`, `saas_plans`, `password_recovery_codes`, `platform_settings`, `languages`,
   `translations`, `server_metrics`, `request_metrics`, `platform_logs`.
+- С `0028_least_privilege` (Этап 6, `docs/security-review.md` SEC-005, `open-questions/stage6-security.md` SQ-4) права
+  `zafiro_app` на них урезаны: `users` — `INSERT`/`UPDATE` только профиля и пароля (`is_superadmin`, `blocked_at` — только
+  `zafiro_platform`), без `DELETE`; `clubs` — RLS без FORCE: читают все, `UPDATE` пулом клуба — только `id = app.club_id`,
+  `INSERT`/`DELETE` — платформа; `platform_settings`, `saas_plans` — только чтение; `platform_logs` — без `UPDATE`/`DELETE`;
+  `goose_db_version` — без прав.
 - `zafiro_tables_without_rls()` — проверка в тестах: таблицы с `club_id` без включённого и принудительного RLS (новые миграции
   обязаны включать RLS сами; права на новые таблицы роли получают через `ALTER DEFAULT PRIVILEGES`).
 - Go: `db.InTenantTx(ctx, pool, clubID, fn)` — `BEGIN; SELECT set_config('app.club_id', $1, true), set_config('app.user_id', …),

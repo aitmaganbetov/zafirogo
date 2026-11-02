@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/aitmaganbetov/zafirogo/server/internal/observability"
 )
 
 // errShutdownTimeout — бюджет остановки исчерпан: часть воркеров не завершилась.
@@ -47,6 +49,16 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		return nil
 	})
+	if a.metricsSrv != nil {
+		// Внутренний порт /metrics (Этап 6 O3): закрывается после воркеров — метрики видны во время остановки.
+		g.Go(func() error {
+			a.log.Info("metrics listening", "addr", a.metricsLis.Addr().String())
+			if err := observability.Serve(a.metricsSrv, a.metricsLis); err != nil {
+				return fmt.Errorf("metrics: %w", err)
+			}
+			return nil
+		})
+	}
 	if a.grpcSrv != nil {
 		g.Go(func() error {
 			a.log.Info("grpc listening", "addr", a.GRPCAddr(), "instance", a.cfg.Agent.InstanceID)
@@ -68,6 +80,9 @@ func (a *App) Run(ctx context.Context) error {
 	a.shutdownServers(deadline)
 
 	cancelWorkers()
+	if a.metricsSrv != nil {
+		_ = a.metricsSrv.Close()
+	}
 	done := make(chan error, 1)
 	go func() { done <- g.Wait() }()
 	var runErr error

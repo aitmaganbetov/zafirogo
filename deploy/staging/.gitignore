@@ -1,0 +1,4 @@
+# Секреты staging (deploy/staging/init.sh) — только на хосте staging.
+secrets/
+.env.staging
+!.env.staging.example

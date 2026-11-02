@@ -171,15 +171,30 @@ const contentSecurityPolicy = "default-src 'self'; " +
 	"style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data: blob:; " +
 	"font-src 'self' data:; " +
-	"connect-src 'self' ws: wss:; " +
+	"connect-src 'self' " + cspHostPlaceholder + "; " +
 	"object-src 'none'; " +
 	"base-uri 'self'; " +
 	"form-action 'self'; " +
 	"frame-ancestors 'none'"
 
+// cspHostPlaceholder — место в contentSecurityPolicy для WebSocket своего хоста (cspFor).
+const cspHostPlaceholder = "{ws-self}"
+
+// cspFor — CSP ответа: WebSocket — только на хост запроса (wss://host, ws://host), а не на любой хост (`ws: wss:`
+// открывали канал утечки данных при любой XSS, SEC-019). 'self' в connect-src покрывает ws(s) не во всех браузерах,
+// поэтому хост указан явно. Host проверен net/http (недопустимые символы — 400 до обработчика).
+func cspFor(host string) string {
+	ws := "" // без Host (HTTP/1.0) — только 'self'
+	if host != "" && !strings.ContainsAny(host, " ;,'\"") {
+		ws = "wss://" + host + " ws://" + host
+	}
+	return strings.Replace(contentSecurityPolicy, cspHostPlaceholder, ws, 1)
+}
+
 // SecurityHeaders выставляет защитные заголовки на каждый ответ.
-// HSTS выставляется, только если TLS терминируется в самом процессе; за прокси его
-// ставит прокси (решение о HSTS в проде — см. docs/open-questions/infra.md).
+// HSTS — на каждый ответ (SEC-018): за TLS-прокси r.TLS == nil, и раньше заголовка не было вовсе, если его забыли
+// в конфигурации прокси. По RFC 6797 §8.1 браузер игнорирует HSTS, полученный по HTTP, поэтому для локальной
+// разработки по http:// это ничего не меняет (решение — docs/open-questions/stage6-security.md SQ-3).
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -189,10 +204,8 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
-		h.Set("Content-Security-Policy", contentSecurityPolicy)
-		if r.TLS != nil {
-			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-		}
+		h.Set("Content-Security-Policy", cspFor(r.Host))
+		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		next.ServeHTTP(w, r)
 	})
 }

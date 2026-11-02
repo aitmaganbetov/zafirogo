@@ -63,3 +63,12 @@ updates:
     # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
     cooldown:
       default-days: 14
+
+  # Dockerfile образа сервера (node, golang, distroless — тег + digest).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14

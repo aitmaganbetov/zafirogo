@@ -122,6 +122,9 @@ type Options struct {
 	// запросы старого контракта до входа панели (токены Sanctum). root — корневой роутер (вызовы нового REST
 	// изнутри). nil — старого REST нет.
 	Legacy func(d *httpx.Deps, root http.Handler) func(http.Handler) http.Handler
+	// Observe — метрики Prometheus и спан запроса (observability.Observer.HTTPMiddleware, Этап 6 O3): ставится сразу
+	// после middleware.RequestID, чтобы запись RequestLogger получила request_id и trace_id. nil — без них.
+	Observe func(http.Handler) http.Handler
 }
 
 // limitRoutes применяет лимиты разделов ("МЕТОД /путь" → правило; сегмент {param} — любой непустой сегмент)
@@ -291,11 +294,13 @@ func NewRouter(o Options) http.Handler {
 	r := chi.NewRouter()
 	r.Use(
 		middleware.RequestID,
+		passIfNil(o.Observe),
 		RealIP(o.TrustedProxies),
 		RequestMeta(o.APIKeyPrefix),
 		RequestLogger(o.Logger),
 		Recoverer(o.Logger),
 		SecurityHeaders,
+		bodyLimit,
 	)
 	if o.Legacy != nil {
 		// Мобильные приложения на старом REST: свои токены и формат ответов — до аутентификации панели.
@@ -306,7 +311,7 @@ func NewRouter(o Options) http.Handler {
 		r.Use(skipIntegrationAPI(o.Auth.Middleware))
 	}
 	// После Principal: клуб запроса для счётчиков и режим просмотра для домена кабинета.
-	r.Use(o.Metrics.Middleware, superadminHost(o.Superadmin.Domain))
+	r.Use(o.Metrics.Middleware, superadminHost(o.Superadmin.Domain), readOnlyGuard)
 	r.Use(limitRoutes(o.Limiter, sections))
 	if o.Pool != nil && o.RequireSubscription {
 		// RequireActiveSubscription: разделы панели клуба — при активной подписке (subscription.go).
@@ -342,3 +347,11 @@ func NewRouter(o Options) http.Handler {
 }
 
 func writeError(w http.ResponseWriter, status int, code string) { httpx.WriteError(w, status, code) }
+
+// passIfNil — middleware mw или пропуск запроса без изменений (необязательные middleware в списке r.Use).
+func passIfNil(mw func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	if mw == nil {
+		return func(next http.Handler) http.Handler { return next }
+	}
+	return mw
+}
