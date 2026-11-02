@@ -1,7 +1,8 @@
 name: agent
 
-# Агент ПК (.NET 10, agent/): сборка и unit-тесты на Windows и Linux, Native AOT службы, интеграционные тесты
-# против Go-сервера (Postgres, Valkey, NATS в Docker). Локально то же — agent/test.sh unit|integration|aot.
+# Агент ПК (.NET 10, agent/): сборка (служба, UI WPF/WebView2 — на Linux через EnableWindowsTargeting) и unit-тесты
+# на Windows и Linux, тесты страницы UI (Node), Native AOT службы, интеграционные тесты против Go-сервера (Postgres,
+# Valkey, NATS в Docker). Локально то же — agent/test.sh unit|frontend|integration|aot.
 on:
   push:
     branches: [main]
@@ -59,6 +60,11 @@ jobs:
         run: dotnet build ZafiroAgent.slnx -c Release --no-restore
       - name: unit tests
         run: dotnet test tests/Zafiro.Agent.Tests/Zafiro.Agent.Tests.csproj -c Release --no-build --filter "Category!=Integration" --logger "console;verbosity=normal"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: frontend tests (мост, деньги, CSP — без WebView2)
+        run: node --test tests/frontend/*.test.mjs
       - name: Native AOT publish (служба)
         run: |
           rid=${{ runner.os == 'Windows' && 'win-x64' || 'linux-x64' }}

@@ -65,8 +65,11 @@ func (a *AgentService) GetTranslations(ctx context.Context, req *agentv1.GetTran
 		if err != nil {
 			return err
 		}
-		if enabled == nil || !*enabled { // abort_unless(in_array($locale, enabledCodes()), 404)
-			return rpcError(codes.NotFound, agentv1.ErrorCode_ERROR_CODE_VALIDATION_FAILED, msgLocaleUnknown, nil, "locale")
+		// Laravel: abort_unless(in_array($locale, enabledCodes()), 404). В контракте (common.proto) кода «язык не
+		// найден» нет; reason VALIDATION_FAILED по таблице common.proto идёт с INVALID_ARGUMENT + BadRequest(locale),
+		// как и неверный формат выше (open-questions/stage5-agent.md AG-6).
+		if enabled == nil || !*enabled {
+			return validation("locale", msgLocaleUnknown)
 		}
 		if out.Version, err = q.GuestTranslationsVersion(ctx, store.GuestTranslationsVersionParams{ClubID: id.ClubID, ComputerID: id.ComputerID}); err != nil {
 			return err

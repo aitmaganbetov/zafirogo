@@ -38,6 +38,10 @@ func NewHooks(o Options) (*Hooks, error) {
 	return &Hooks{s: s}, nil
 }
 
+// Tokens — хранилище токенов гостя хуков (тот же Valkey и префикс, что у Server): enroll.Options.GuestTokens
+// отзывает им токен гостя ПК при отзыве сертификата (open-questions/stage5-agent.md AG-5).
+func (h *Hooks) Tokens() *Tokens { return h.s.tokens }
+
 // Hooks — хуки, которые делят хранилище токенов с этим Server.
 func (s *Server) Hooks() *Hooks { return &Hooks{s: s} }
 

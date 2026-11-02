@@ -634,8 +634,8 @@ cd server && ZAFIRO_LOAD_PCS=5000 ZAFIRO_LOAD_TLS=1.2 go test -tags 'integration
 
 ## 14. Клиент .NET (агент, `agent/`)
 
-Этап 5, A1 — слой связи нового агента. UI (WPF + WebView2) — следующий шаг (A2). Вопросы и принятые решения —
-`docs/open-questions/stage5-agent.md`.
+Этап 5: A1 — слой связи нового агента (служба), A2 — интерфейс (процесс UI: WPF + WebView2, страница — перенос
+`WindowsAgent/Frontend`), установщик и выпуск. Вопросы и принятые решения — `docs/open-questions/stage5-agent.md`.
 
 ### 14.1. Решение и проекты
 
@@ -647,8 +647,12 @@ cd server && ZAFIRO_LOAD_PCS=5000 ZAFIRO_LOAD_TLS=1.2 go test -tags 'integration
 |---|---|
 | `Zafiro.Agent.Protocol` | C# из `proto/agent/v1/*.proto` (Grpc.Tools 2.85.0 при сборке, в репозиторий не кладётся; Google.Protobuf 3.36.2, Grpc.Net.Client 2.85.0 — как `tools/proto-csharp-check.sh`) + локальные контракты: IPC служба ↔ UI (`Proto/zafiro/agent/ipc/v1/ipc.proto`) и файлы состояния службы (`Proto/zafiro/agent/local/v1/state.proto`) |
 | `Zafiro.Agent.Core` | библиотека связи без UI и хостинга: регистрация и продление (`Enrollment/Enroller.cs`), хранилища ключа (`Credentials/`), канал mTLS (`Transport/AgentChannelFactory.cs`, `TrustAnchors.cs`, `Backoff.cs`), стрим и команды (`Runtime/AgentRuntime.cs`, `AgentState.cs`), журналы команд и событий (`Journal/`), клиенты гостя (`Guest/GuestApi.cs`), ошибки (`Errors/AgentRpcException.cs`), обновления (`Updates/`) |
-| `Zafiro.Agent.Service` | хост службы (`Microsoft.Extensions.Hosting`; Windows — служба `ZafiroAgent`, Linux — консоль для тестов), платформа (`Platform/WindowsPlatform.cs`, `LinuxPlatform.cs`), IPC (`Ipc/`), запуск UI (`Ui/UiCoordinator.cs`) |
+| `Zafiro.Agent.Service` | хост службы (`Microsoft.Extensions.Hosting`; Windows — служба `ZafiroAgent`, Linux — консоль для тестов), платформа (`Platform/WindowsPlatform.cs`, `LinuxPlatform.cs`), IPC (`Ipc/`), запуск UI и уведомления для него (`Ui/UiCoordinator.cs`), ключ образа (`ImageKeyStore.cs`, AG-10) |
+| `Zafiro.Agent.UI.Core` | логика процесса UI без WPF (проверяется на Linux): клиент IPC (`Ipc/IpcClient.cs`), мост страницы ↔ служба (`Bridge/BridgeRouter.cs`), QR-код (`Bridge/QrCodes.cs`), выбор экрана (`Screens/UiController.cs`), тексты уведомлений (`Screens/UiTranslations.cs`), правила киоска (`Kiosk/KioskRules.cs`) |
+| `Zafiro.Agent.UI` | процесс UI, `net10.0-windows`, WPF + WebView2 (`Microsoft.Web.WebView2` 1.0.4258.31): окно (`Views/MainWindow.cs`), уведомления в углу (`Views/CornerNotice.cs`), закрытие других мониторов (`Views/ScreenCover.cs`), перехват клавиш (`Kiosk/KioskKeyboard.cs`), действия страницы (`Platform/UiHost.cs`); страница — `Frontend/` |
 | `Zafiro.Agent.Tests` | xUnit: unit (без сервера) и интеграционные `[Trait("Category","Integration")]` против Go-сервера |
+| `agent/tests/frontend` | тесты страницы UI на Node (`node --test`): мост, деньги в тиынах, формулы минут, переводы, CSP, методы моста |
+| `agent/installer` | установщик Inno Setup 6 (`ZafiroAgent.iss`), защита учётной записи клиента (`Protect-ClubPc.ps1`) |
 
 Native AOT: служба публикуется `dotnet publish -r win-x64|linux-x64 -p:PublishAot=true` без предупреждений trim/AOT
 (без рефлексии: protobuf вместо JSON для файлов и IPC, source-generated P/Invoke, генератор привязки конфигурации;
@@ -673,8 +677,12 @@ WMI не используется). Замер (Linux, AOT): исполняем�
 - **IPC** (`ipc.proto`): кадр — 4 байта длины (LE, ≤ 1 МиБ) + `Envelope{request|response|event}`. Методы —
   `agent.GetSnapshot`, `agent.Enroll` (код из панели), `agent.VerifyStaffPin`, `agent.GetTranslations`,
   `agent.ReportActivity`, `agent.SignOut` и все RPC гостя по имени `<Сервис>/<Метод>` (`GuestService/PurchaseTariff`…)
-  с теми же сообщениями, что в `proto/agent/v1` (таблица — `Ipc/IpcDispatcher.cs`). События: `Snapshot` (связь,
-  состояние ПК, нужный экран, клуб, сессия, гость, баланс, часы сервера), `ShowMessage`, чат, счётчики, QR, переводы.
+  с теми же сообщениями, что в `proto/agent/v1` (таблица имён и типов — `Zafiro.Agent.Protocol/Ipc/IpcMethods.cs`, общая
+  для службы и моста UI; тест сверяет её с `Ipc/IpcDispatcher.cs`). События: `Snapshot` (связь, состояние ПК, нужный
+  экран, клуб, сессия, гость, баланс, часы сервера), `ShowMessage`, чат, счётчики, QR, переводы, `SessionEnding`
+  (за 10, 5, 3 и 1 минуту до конца сессии — `UiCoordinator`, как `WarnSessionTime` старого агента). Уведомления
+  (`ShowMessage`, ответ клуба в чате, `SessionEnding`), пришедшие, пока UI не подключён, служба держит (≤ 16, ≤ 5 минут),
+  запускает ради них UI и отдаёт их сразу после первого снимка.
   Ошибки — `Error{error_code, grpc_status, message (LocalizedMessage сервера), retry_after_ms, violations}`.
 - **Проверка клиента IPC.** Windows — именованный канал `ZafiroAgent.Ipc`: экземпляры создают только SYSTEM и
   администраторы, подключаются вошедшие пользователи; клиент принимается, если он в активном сеансе консоли, его exe —
@@ -685,7 +693,7 @@ WMI не используется). Замер (Linux, AOT): исполняем�
   `LOCK` (никто не играет, гость без сессии, блокировка сотрудником), `NONE` (идёт сессия, техрежим, выключение).
   `UiCoordinator` раз в 3 с: экран нужен (или пришло сообщение сотрудника), а UI не подключён — запуск UI в сеансе
   консоли (`CreateProcessAsUser`, как сторож старого агента; администраторы — только если разрешено установщиком;
-  повторы 3 с … 1 мин). При `screen = NONE` UI закрывается сам и освобождает WebView2.
+  повторы 3 с … 1 мин). При `screen = NONE` UI закрывается сам и освобождает WebView2 (§14.7).
 
 ### 14.3. Ключ, сертификат, доверие
 
@@ -749,12 +757,15 @@ WMI не используется). Замер (Linux, AOT): исполняем�
 
 Без опросов: всё по стриму (push). Фоновые задачи — один таймер 1 с (часы сессии, техрежим, продление) и таймер
 статуса (60 с). Одно TCP-соединение, PING раз в 30 с. Native AOT, GC рабочей станции без фонового режима. UI с WebView2
-не работает во время сессии.
+не работает во время сессии: процесс UI запускается ради экрана или уведомления и завершается, когда смотреть нечего
+(уведомление в углу — окно WPF без WebView2).
 
 ### 14.6. Тесты и сборка
 
 ```bash
-agent/test.sh unit          # Docker mcr.microsoft.com/dotnet/sdk:10.0: restore --locked-mode, build, unit-тесты
+agent/test.sh unit          # Docker mcr.microsoft.com/dotnet/sdk:10.0: restore --locked-mode, build (и UI через
+                            # EnableWindowsTargeting), unit-тесты
+agent/test.sh frontend      # тесты страницы UI: node --test agent/tests/frontend/*.test.mjs (Node 22 или контейнер)
 agent/test.sh integration   # agent/tests/integration/server.sh: Postgres/Valkey/NATS (compose, tmpfs, свои порты),
                             # goose up, демо-клуб (tools/visual/fixtures/demo.json, подписка продлена), go build,
                             # сервер с dev-PKI; затем тесты Category=Integration (сеть хоста)
@@ -766,6 +777,14 @@ Unit: backoff, журнал команд (дедупликация, переза
 Go-утилиты `server/cmd/sign-update` (и порча каждого поля), разбор `google.rpc.Status`, состояние ПК и экран,
 выполнение команд (повтор перезагрузки, истёкшие, сессия, блокировка, техрежим, WoL), CSR и проверка выданного
 сертификата, файловое хранилище (0600, чужое железо), IPC по unix socket (снимок, методы, uid), SMBIOS, WoL.
+UI (`UiTests.cs`, без WPF): мост — вызов службы по схеме proto (тиыны строкой int64), ошибка сервера с текстом, отказ
+лишнему полю/неверному типу/неизвестному enum/чужому методу/испорченному конверту/слишком большому сообщению без вызова
+службы, локальные методы `ui.*`; клиент IPC UI ↔ настоящий `IpcServer` службы по unix socket (снимок, уведомление,
+отложенное до подключения, отказ гостю без входа); выбор экрана (`UiController`), предупреждения 10/5/3/1, правила
+киоска, аргументы UI, тексты уведомлений, перенос ключа образа (AG-10). Страница (`agent/tests/frontend`): деньги
+(int64, показ без float, сумма перевода → тиыны), `minutesPrice`/`affordableMinutes` по GS-053 и PQ-1, переводы и
+множественное число, мост (id, ошибки, таймауты, события), телефон; статически — CSP без внешних адресов и inline-скриптов,
+нет `eval`/`innerHTML`, все `bridge.call` — из `IpcMethods.cs` или `ui.*`, ключи `i18n/ru|kk|en.json` совпадают.
 
 Интеграционный сценарий (`Integration/ServerScenarioTests.cs`): код регистрации (`POST /api/agent-enrollment/codes`
 под владельцем демо-клуба) → Enroll (повтор кода — `ENROLLMENT_CODE_EXPIRED` с текстом) → Connect → Welcome →
@@ -779,4 +798,119 @@ CI — `.github/workflows/agent.yml`: сборка, unit-тесты и Native AO
 интеграционные — на ubuntu с тем же `server.sh`.
 
 **Не проверено (нет Windows-машины):** служба Windows, SChannel с ключом CNG/TPM, именованный канал и проверка SID,
-запуск UI в сеансе пользователя, SMBIOS/реестр на реальном железе — пункт `stage5-agent.md` AG-1.
+запуск UI в сеансе пользователя, SMBIOS/реестр на реальном железе, весь процесс UI (WPF, WebView2, перехват клавиш,
+мониторы) и установщик — пункт `stage5-agent.md` AG-1, чек-лист — §14.9.
+
+### 14.7. UI: процесс, мост, безопасность
+
+```
+ служба (SYSTEM) ──IPC──▶ Zafiro.Agent.UI.exe (сеанс пользователя)
+                          ├─ IpcClient: канал ZafiroAgent.Ipc (Identification), переподключение 0,5…5 с
+                          ├─ UiController: Snapshot.screen → вид окна (скрыто | регистрация | блокировка | лаунчер)
+                          ├─ MainWindow: WebView2 ── https://app.zafiro.invalid/index.html (папка Frontend)
+                          │     postMessage {id, method, params} ──▶ BridgeRouter ──▶ IPC ──▶ служба ──▶ gRPC
+                          │     ◀── {id, result | error}, {event: Snapshot…}, {local: staffPin…}
+                          ├─ CornerNotice: уведомления в углу (WPF, без WebView2)
+                          └─ KioskKeyboard (WH_KEYBOARD_LL), ScreenCover (другие мониторы), сворачивание чужих окон
+```
+
+- **Когда UI живёт.** Служба запускает UI, когда нужен экран (`SETUP`, `LOCK`) или есть уведомление; ярлык «Zafiro»
+  (`Zafiro.Agent.UI.exe --launcher`) открывает лаунчер во время сессии (если UI уже запущен — сигналом
+  `Local\ZafiroAgent.UI.Launcher`; запуск службой этот сигнал не проверяет, чтобы чужой процесс, занявший имя, не мог
+  помешать экрану блокировки). WebView2 создаётся вместе с окном и освобождается при его закрытии; окна нет и уведомлений
+  нет — процесс завершается. После покупки времени на экране блокировки лаунчер остаётся открытым, пока гость не нажмёт
+  «На рабочий стол». Обрыв канала к службе (обновление) — экран блокировки остаётся, поверх — «Нет связи со службой
+  агента»; служба так и не ответила за 15 с — UI выходит (службы нет — блокировать нечем).
+- **Мост** (`BridgeRouter`): сообщение страницы ≤ 64 КиБ, ровно `{id, method, params}`, id — целое 1…2⁵³−1;
+  метод — только из `IpcMethods` (запрос разбирается строго по схеме proto: неизвестное поле, неверный тип, неизвестное
+  значение enum — `VALIDATION_FAILED` без вызова службы) или локальный: `ui.ReturnToDesktop`, `ui.Power`
+  (`restart|shutdown`, кнопки экрана входа), `ui.InputLanguage` (язык ввода у поля пароля), `ui.QrImage` (только https,
+  ≤ 512 символов → PNG data:). JSON — каноническое отображение proto3: lowerCamelCase, int64 (тиыны, id) — строкой с
+  целым числом (страница переводит в `Number` только безопасные целые, показ — `Zafiro.formatAmount` без float), enum —
+  именем. Ошибка — `ipc.Error` как есть (`errorCode`, `grpcStatus`, `message` — LocalizedMessage сервера, `retryAfterMs`,
+  `violations`); страница показывает `message`, иначе — свой запасной текст. Ключ идемпотентности денежных RPC страница
+  не передаёт: его создаёт служба (UUID v7) и повторяет тем же ключом.
+- **Страница** (`Frontend/`): `index.html`, `styles.css`, `main.js` — лаунчер старого агента без изменений вида
+  (вызовы `webview.postMessage({type})` и обработчики ответов старого C# заменены вызовами моста, данные — в новом формате,
+  опросов нет: сессия, гость, баланс, настройки — из снимка, чат и счётчики — событиями); `lock.js` + `lock.css` — экран
+  входа и регистрации ПК (перенос WPF-окна `ClubSetupWindow`: вход, регистрация, восстановление пароля, QR-вход, кнопки
+  питания со вторым нажатием, языки, номер ПК) и PIN сотрудника (`StaffPinWindow`, Ctrl+Alt+P); `app.js` — снимок,
+  выбор экрана, переводы; `core.js` — мост, деньги, переводы, телефон (тесты Node). Ключа установки клуба больше нет:
+  ПК подключается одноразовым кодом из панели (`agent.Enroll`).
+- **Переводы**: ключ — русский текст; строки сервера (`agent.GetTranslations` через службу, при новой версии из
+  снимка или `TranslationsUpdated`) поверх встроенных `Frontend/i18n/ru|kk|en.json` (перенос файлов старого агента +
+  новые ключи A2). Язык — выбранный гостем, после выхода гостя — язык клуба (`config.default_locale`).
+- **Безопасность страницы**: только виртуальный хост `app.zafiro.invalid` → папка `Frontend` (`DenyCors`); навигация
+  на другой адрес, фреймы, новые окна, загрузки, запросы разрешений (камера, микрофон…) — отклоняются;
+  `WebResourceRequested` отвечает 403 на любой запрос не к виртуальному хосту; CSP в `index.html`:
+  `default-src 'none'; script-src 'self'; img-src 'self' data:; connect-src 'self'` (только встроенные переводы),
+  без внешних адресов и inline-скриптов; сообщения моста принимаются только от `https://app.zafiro.invalid/`.
+  Release: без DevTools, контекстного меню и горячих клавиш браузера; автозаполнение и сохранение паролей выключены.
+  Картинки товаров, новостей и экрана входа с сервера не загружаются (у UI нет сети) — встроенные заглушки (AG-13).
+- **Киоск** (экран блокировки, нет оплаченной сессии): окно поверх всех, чужие окна на переднем плане сворачиваются
+  (раз в 1 с), другие мониторы закрыты чёрными окнами с названием клуба, перехват Win, Alt+Tab, Alt+F4, Ctrl+Esc и др.
+  (`KioskRules` — без изменений из старого агента), Alt+F4 окну не закрывает его. Ctrl+Alt+Del перехватить нельзя.
+- **Деньги**: суммы на странице — целые тиыны; «На весь баланс» и автобиллинг пока считает страница той же формулой,
+  что сервер (`pricing.AffordableMinutes`, PQ-1), и покупает обычным `PurchaseMinutes` — серверного RPC для них в
+  контракте нет (AG-12).
+
+### 14.8. Установщик и выпуск
+
+- **Inno Setup 6.5.4** (`agent/installer/ZafiroAgent.iss`; в CI — установщик с GitHub jrsoftware/issrc, SHA-256
+  закреплён в `.github/workflows/agent-release.yml`). Выбран вместо WiX: собирается на `windows-latest` без лишних
+  инструментов, старый установщик был на нём же (задачи, страницы обновления, `/MERGETASKS="!protect"` тихого обновления
+  службой) — AG-14.
+- Содержимое (`{app}` = `Program Files\Zafiro Agent`): `Zafiro.Agent.Service.exe` (Native AOT, служба `ZafiroAgent`,
+  LocalSystem, автозапуск, перезапуск при сбое), `appsettings.json` (только при первой установке),
+  `appsettings.Production.json` (галочка «экран и под администратором», признак бездискового ПК), `root-ca.pem`
+  (переменная репозитория `AGENT_ROOT_CA_PEM`, AG-3; служба берёт его по умолчанию), `Zafiro.Agent.UI.exe` + `Frontend\`
+  (self-contained), `Protect-ClubPc.ps1` (галочка «Защитить учётную запись клиента»). Ярлык «Zafiro» —
+  `Zafiro.Agent.UI.exe --launcher`. Удаление — служба, UI и `ProgramData\Zafiro\Agent` (ключ и сертификат ПК).
+- **Ключ образа** (бездисковые ПК, AG-10): `ZafiroAgentSetup.exe /IMAGEKEYFILE=<файл>` → `Zafiro.Agent.Service.exe
+  --set-image-key` (ключ — через stdin) → DPAPI LocalMachine в `ProgramData\Zafiro\Agent\image-key.bin` (папка только
+  SYSTEM и администраторы). Ключ, оставшийся в `appsettings.json` (`Agent:ImageKey`), служба при старте переносит туда же
+  и стирает из файла. Делать в режиме правки образа (супер-рабочая станция), иначе запись пропадёт при перезагрузке.
+- **Выпуск** (`agent-release.yml`): job `build` (windows-latest) — unit-тесты .NET и страницы, `dotnet publish`
+  службы (`win-x64`, Native AOT, без предупреждений trim/AOT) и UI (`win-x64`, self-contained), `root-ca.pem`,
+  Authenticode exe (секреты `AGENT_CODESIGN_PFX`/`AGENT_CODESIGN_PASSWORD`; нет — предупреждение, AG-15), установщик,
+  Authenticode установщика; job `sign` (ubuntu) — `server/cmd/sign-update` (sha256, размер, Ed25519, проверка ключом
+  сервера) и выпуск `agent-v<версия>`.
+
+### 14.9. Ручная проверка на Windows 10 и 11 (до первого перевода клуба)
+
+Стенд — тот же Go-сервер (`agent/tests/integration/server.sh start`, сервер доступен ПК по сети) или staging;
+установщик из `agent-release` (или локальная сборка: `dotnet publish` службы и UI в одну папку, `ISCC.exe`).
+Проверить на Windows 10 22H2 и Windows 11 23H2+, с монитором 100 % и 125–150 % масштаба, и на ПК с двумя мониторами.
+
+- [ ] **Установка**: установщик ставит службу `ZafiroAgent` (LocalSystem, автозапуск), ярлык «Zafiro», `root-ca.pem`;
+  `Protect-ClubPc.ps1` с галочкой защищает учётную запись Client; повторный запуск — страница «Переустановка»; удаление
+  убирает службу и `ProgramData\Zafiro\Agent`.
+- [ ] **Регистрация ПК**: после установки в сеансе пользователя открывается экран «Подключение к клубу» (вид — как
+  старое окно ClubSetupWindow); неверный код — текст сервера; код из панели — экран входа, номер ПК и зона слева сверху.
+- [ ] **Блокировка**: экран входа поверх всех окон на всех мониторах (второй монитор — чёрный с названием клуба);
+  Win, Alt+Tab, Alt+F4, Ctrl+Esc, Ctrl+Shift+Esc, Win+Tab не выводят из экрана; запущенная заранее игра сворачивается;
+  гость без прав администратора не может закрыть `Zafiro.Agent.UI.exe` (диспетчер задач запрещён); убитый процесс
+  (если удалось) служба запускает снова ≤ 3 с; убитый `msedgewebview2.exe` — страница загружается снова.
+- [ ] **Вход**: телефон форматируется «700 123-45-67», неверный пароль — текст сервера, вход — лаунчер; регистрация
+  (имя, повтор пароля), «Забыли пароль?» (код в Telegram, новый пароль); QR-вход (если включён в клубе): QR виден,
+  подтверждение с телефона — вход; кнопка языка ввода меняет раскладку; языки клуба меняют тексты.
+- [ ] **Покупка**: тарифы с ценами (тенге, без лишних нулей), выбор баланса (основной/бонусы/смешанно), покупка —
+  ПК разблокирован, лаунчер открыт до «На рабочий стол»; поминутно и «На весь баланс» (число минут как в панели);
+  абонемент; завершение сессии — возврат на баланс уведомлением; автобиллинг после паузы.
+- [ ] **Сессия**: во время игры UI не работает (`Zafiro.Agent.UI.exe` и `msedgewebview2.exe` нет в процессах), ярлык
+  «Zafiro» открывает лаунчер; за 10, 5, 3, 1 минуту — уведомления в углу поверх игры; сообщение сотрудника с панели —
+  уведомление; ответ клуба в чате — уведомление; конец времени — экран блокировки, отсчёт перезагрузки/выключения, если
+  он включён в клубе.
+- [ ] **Магазин и прочее**: товары (картинки — заглушки, AG-13), корзина, оплата — заказ в панели; друзья, перевод с
+  паролем; пересадка; история с фильтрами; профиль (имя, пароль); чат.
+- [ ] **Техрежим**: Ctrl+Alt+P — окно PIN; неверный PIN — текст сервера; верный — экран снимается на время из настроек
+  клуба, затем блокировка возвращается.
+- [ ] **Обновление**: выпуск с подписью Ed25519 из `agent-release` и включённое автообновление — служба скачивает,
+  проверяет подпись и SHA-256, ставит тихо (`/VERYSILENT … /MERGETASKS="!protect"`) только когда ПК свободен; UI во время
+  обновления показывает «Нет связи со службой агента» и возвращается; регистрация ПК сохраняется; испорченный файл —
+  `UPDATE_VERIFICATION_FAILED`, установка не запускается.
+- [ ] **Бездисковый ПК**: в режиме правки образа `ZafiroAgentSetup.exe /IMAGEKEYFILE=…` — в `appsettings.json` ключа нет,
+  `ProgramData\Zafiro\Agent\image-key.bin` есть (читают только SYSTEM и администраторы); ключ, вписанный в
+  `appsettings.json` вручную, после запуска службы стирается из файла; после загрузки клиентского ПК из образа — новый
+  MAC попадает в «ожидающие», подтверждённый ПК регистрируется сам после каждой загрузки.
+- [ ] **Отключить ПК** в панели: экран «ПК не подключён к клубу»; гость этого ПК сразу может войти на соседнем ПК (AG-5).

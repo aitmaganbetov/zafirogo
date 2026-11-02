@@ -393,6 +393,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		Limiter:              &valkeyLimiter{c: a.Valkey, prefix: "zafiro:enroll-rl:"},
 		Cache:                a.CertCache,
 		OnRevoked:            publishRevoked(a.NATS, revSubject, log),
+		GuestTokens:          hooks.Tokens(), // AG-5: отзыв сертификата ПК отзывает токен гостя этого ПК
 		Activity:             enrollActivity(log),
 		Logger:               log,
 	}); err != nil {

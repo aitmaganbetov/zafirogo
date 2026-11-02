@@ -63,6 +63,11 @@ type ActivityFunc func(ctx context.Context, q *store.Queries, ev ActivityEvent) 
 // RevokedFunc — после коммита отзыва (публикация в NATS для других инстансов).
 type RevokedFunc func(ctx context.Context, clubID, computerID int64, serials []string)
 
+// GuestTokenRevoker отзывает токен гостя на ПК (guestapi.Tokens.RevokeComputer; userID 0 — любой гость).
+type GuestTokenRevoker interface {
+	RevokeComputer(ctx context.Context, computerID, userID int64) error
+}
+
 // Options — зависимости сервиса.
 type Options struct {
 	// Pool — пул приложения (роль zafiro_app).
@@ -83,9 +88,14 @@ type Options struct {
 	// Cache — кэш сертификатов этого инстанса (обновляется сразу после выпуска и отзыва).
 	Cache     *CertCache
 	OnRevoked RevokedFunc
-	Activity  ActivityFunc
-	Logger    *slog.Logger
-	Now       func() time.Time
+	// GuestTokens — токены гостя в Valkey (общие для всех инстансов): при отзыве сертификата ПК («Отключить ПК»,
+	// «Перерегистрировать», повторная регистрация, отзыв ключа образа) токен гостя этого ПК отзывается сразу, иначе
+	// он до 2 минут держал бы гостя «вошедшим на другом ПК» (SIGNED_IN_ELSEWHERE, open-questions/stage5-agent.md
+	// AG-5). Продление (superseded) гостя не трогает. nil — не отзывать.
+	GuestTokens GuestTokenRevoker
+	Activity    ActivityFunc
+	Logger      *slog.Logger
+	Now         func() time.Time
 }
 
 // Service — регистрация ПК и сертификаты агентов.
@@ -186,7 +196,7 @@ func (s *Service) Reregister(ctx context.Context, p principal.Principal, compute
 		})
 	})
 	if err == nil {
-		s.afterRevoke(ctx, p.ClubID, computerID, revoked)
+		s.afterRevoke(ctx, p.ClubID, computerID, revoked, true)
 	}
 	return out, err
 }
@@ -205,7 +215,7 @@ func (s *Service) RevokeComputer(ctx context.Context, p principal.Principal, com
 	if err != nil {
 		return 0, err
 	}
-	s.afterRevoke(ctx, p.ClubID, computerID, revoked)
+	s.afterRevoke(ctx, p.ClubID, computerID, revoked, true)
 	return len(revoked), nil
 }
 
@@ -301,9 +311,17 @@ func (s *Service) withCodeRetry(fn func() error) error {
 	return err
 }
 
-func (s *Service) afterRevoke(ctx context.Context, clubID, computerID int64, serials []string) {
+// afterRevoke — после коммита отзыва: кэш, публикация для других инстансов и (signOutGuest) отзыв токена гостя ПК.
+func (s *Service) afterRevoke(ctx context.Context, clubID, computerID int64, serials []string, signOutGuest bool) {
 	if len(serials) == 0 {
 		return
+	}
+	if signOutGuest && s.opts.GuestTokens != nil {
+		if err := s.opts.GuestTokens.RevokeComputer(ctx, computerID, 0); err != nil {
+			// Токен всё равно неприменим (привязан к ПК с отозванным сертификатом) и истечёт сам.
+			s.opts.Logger.WarnContext(ctx, "revoke guest token of revoked computer failed",
+				"club_id", clubID, "computer_id", computerID, "err", err)
+		}
 	}
 	if s.opts.Cache != nil {
 		for _, serial := range serials {

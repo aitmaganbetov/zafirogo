@@ -196,12 +196,6 @@ func newHarness(t *testing.T, o harnessOpts) *harness {
 	if err := cache.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
-	h.enr, err = enroll.New(enroll.Options{Pool: d.App, CA: ca, CodePepper: []byte("0123456789abcdef0123456789abcdef"),
-		AgentEndpoint: "agent.test:443", Cache: cache})
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	h.billing = billingsvc.New(d.App, billingsvc.ClockFunc(h.clock.Now), nil)
 	opts := guestapi.Options{Pool: d.App, Valkey: env.valkey, Passwords: env.pw, Billing: h.billing,
 		KeyPrefix: h.prefix + "guest:", QRBaseURL: "https://zafiro.test", QRPollEvery: 100 * time.Millisecond, Now: h.clock.Now}
@@ -216,6 +210,12 @@ func newHarness(t *testing.T, o harnessOpts) *harness {
 		o.options(&opts)
 	}
 	hooks, err := guestapi.NewHooks(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Отзыв сертификата ПК отзывает токен гостя этого ПК (AG-5) — как в internal/app.
+	h.enr, err = enroll.New(enroll.Options{Pool: d.App, CA: ca, CodePepper: []byte("0123456789abcdef0123456789abcdef"),
+		AgentEndpoint: "agent.test:443", Cache: cache, GuestTokens: hooks.Tokens()})
 	if err != nil {
 		t.Fatal(err)
 	}

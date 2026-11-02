@@ -17,7 +17,10 @@ public sealed class ServiceOptions
     /// </summary>
     public List<int> AllowedUids { get; set; } = [];
 
-    /// <summary>Путь к exe UI (WPF/WebView2, этап A2). Пусто — UI не запускается (только IPC).</summary>
+    /// <summary>
+    /// Путь к exe UI (WPF/WebView2). Пусто — на Windows Zafiro.Agent.UI.exe рядом со службой (установщик кладёт их
+    /// вместе); на Linux UI не запускается (только IPC для тестов).
+    /// </summary>
     public string UiExecutable { get; set; } = "";
 
     /// <summary>Хосты, с которых можно скачивать установщик обновления.</summary>

@@ -4,6 +4,7 @@ package guestapi_test
 
 import (
 	"context"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/pricing"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 )
@@ -366,6 +368,27 @@ func fieldOf(err error) string {
 	return ""
 }
 
+// AG-5: «Отключить ПК» отзывает токен гостя этого ПК — гость сразу входит на соседнем ПК (без 2 минут
+// SIGNED_IN_ELSEWHERE), токен отключённого ПК больше не действует. Продление сертификата гостя не трогает.
+func TestRevokeComputerSignsGuestOut(t *testing.T) {
+	h := newHarness(t, harnessOpts{noLimits: true})
+	phone := uniqPhone()
+	h.customer("Клиент", phone, "password", 0, 0)
+	pc1, pc2 := h.enrollPC(), h.enrollPC()
+	tok1 := pc1.mustLogin(phone, "password")
+	_, err := pc2.login(phone, "password")
+	wantReason(t, err, codes.FailedPrecondition, agentv1.ErrorCode_ERROR_CODE_SIGNED_IN_ELSEWHERE)
+
+	n, err := h.enr.RevokeComputer(context.Background(), principal.Principal{UserID: h.owner, ClubID: h.club, Role: "owner"}, pc1.id, netip.Addr{})
+	if err != nil || n == 0 {
+		t.Fatalf("revoke = %d, %v", n, err)
+	}
+	if _, err := h.srv.Tokens().Lookup(context.Background(), tok1); err == nil {
+		t.Fatal("guest token of the revoked computer is still valid")
+	}
+	pc2.mustLogin(phone, "password")
+}
+
 // QR-вход: выключен в клубе → FEATURE_DISABLED; включён — PENDING, подтверждение с телефона (серверная часть)
 // будит ожидание → APPROVED с токеном; повторное ожидание — EXPIRED (код одноразовый).
 func TestQrLogin(t *testing.T) {
@@ -520,7 +543,7 @@ func TestGS075FriendTransfer(t *testing.T) {
 	h.noDrift()
 }
 
-// Переводы агента из БД: версия, not_modified по known_version, выключенный язык — NOT_FOUND.
+// Переводы агента из БД: версия, not_modified по known_version, выключенный язык — INVALID_ARGUMENT/VALIDATION_FAILED.
 func TestTranslations(t *testing.T) {
 	h := newHarness(t, harnessOpts{})
 	code := "t" + strings.ToLower(uuid.NewString()[:6])
@@ -548,8 +571,10 @@ func TestTranslations(t *testing.T) {
 	}
 	h.exec("UPDATE languages SET is_enabled = false WHERE id = $1", lang)
 	_, err = p.agent().GetTranslations(context.Background(), &agentv1.GetTranslationsRequest{Locale: code})
-	if status.Code(err) != codes.NotFound {
-		t.Fatalf("disabled language: %v", err)
+	// AG-6: код и reason по таблице common.proto (INVALID_ARGUMENT ↔ VALIDATION_FAILED), поле — locale.
+	wantReason(t, err, codes.InvalidArgument, agentv1.ErrorCode_ERROR_CODE_VALIDATION_FAILED)
+	if f := fieldOf(err); f != "locale" {
+		t.Fatalf("disabled language field = %q", f)
 	}
 	_, err = p.agent().GetTranslations(context.Background(), &agentv1.GetTranslationsRequest{Locale: "../x"})
 	wantReason(t, err, codes.InvalidArgument, agentv1.ErrorCode_ERROR_CODE_VALIDATION_FAILED)

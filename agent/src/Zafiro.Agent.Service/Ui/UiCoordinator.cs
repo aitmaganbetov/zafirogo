@@ -30,9 +30,13 @@ public sealed class UiCoordinator : BackgroundService
     private readonly IUiLauncher _launcher;
     private readonly TimeProvider _time;
     private readonly ILogger _log;
+    // Предупреждения о конце сессии: за сколько минут (WarnSessionTime старого агента, MainWindow.xaml.cs).
+    private static readonly int[] SessionWarningMinutes = [10, 5, 3, 1];
+
     private int _failures;
     private DateTimeOffset _nextAttempt;
-    private volatile bool _noticePending;
+    private DateTimeOffset? _warnedForEnd;
+    private int _warnedMinutes = int.MaxValue;
 
     public UiCoordinator(AgentRuntime runtime, IpcServer ipc, IUiLauncher launcher, TimeProvider time, ILogger<UiCoordinator> log)
     {
@@ -48,7 +52,6 @@ public sealed class UiCoordinator : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _runtime.UiEvent += OnUiEvent;
         try
         {
             using var timer = new PeriodicTimer(Check, _time);
@@ -61,28 +64,55 @@ public sealed class UiCoordinator : BackgroundService
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
         }
-        finally
-        {
-            _runtime.UiEvent -= OnUiEvent;
-        }
     }
 
-    private void OnUiEvent(Event e)
+    /// <summary>
+    /// За 10, 5, 3 и 1 минуту до конца сессии — уведомление, каждое один раз. Время продлили — отсчёт заново, но без
+    /// уведомления сразу после покупки. Перенесено из старого агента: MainWindow.xaml.cs WarnSessionTime().
+    /// </summary>
+    internal SessionEnding? CheckSessionEnding(DateTimeOffset? endsAt, DateTimeOffset serverNow)
     {
-        if (e.KindCase == Event.KindOneofCase.ShowMessage) _noticePending = true;
+        if (endsAt is not { } end)
+        {
+            _warnedForEnd = null;
+            return null;
+        }
+
+        var left = end - serverNow;
+        var reached = int.MaxValue;
+        foreach (var minutes in SessionWarningMinutes)
+            if (left <= TimeSpan.FromMinutes(minutes)) reached = Math.Min(reached, minutes);
+
+        if (_warnedForEnd != end)
+        {
+            _warnedForEnd = end;
+            _warnedMinutes = reached;
+            return null;
+        }
+
+        if (reached >= _warnedMinutes || left <= TimeSpan.Zero) return null;
+        _warnedMinutes = reached;
+        return new SessionEnding
+        {
+            MinutesLeft = Math.Max(1, (int)Math.Ceiling(left.TotalMinutes)),
+            EndsAt = Google.Protobuf.WellKnownTypes.Timestamp.FromDateTimeOffset(end),
+        };
     }
 
     private void Tick()
     {
+        var snap = _runtime.State.BuildSnapshot();
+        if (CheckSessionEnding(snap.Session?.EndsAt?.ToDateTimeOffset(), snap.ServerTime.ToDateTimeOffset()) is { } ending)
+            _ipc.Publish(new Event { SessionEnding = ending });
+
         if (_ipc.ConnectedClients > 0)
         {
             _failures = 0;
-            _noticePending = false;
             return;
         }
 
-        var screen = _runtime.State.Screen;
-        if (screen == Screen.None && !_noticePending) return;
+        var screen = snap.Screen;
+        if (screen == Screen.None && !_ipc.HasPendingNotices) return;
         if (_time.GetUtcNow() < _nextAttempt) return;
         var launched = _launcher.Launch(screen == Screen.None ? Screen.Lock : screen);
         _failures++;

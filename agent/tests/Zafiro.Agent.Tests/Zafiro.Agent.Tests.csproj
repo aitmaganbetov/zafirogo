@@ -10,6 +10,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Zafiro.Agent.Core\Zafiro.Agent.Core.csproj" />
     <ProjectReference Include="..\..\src\Zafiro.Agent.Service\Zafiro.Agent.Service.csproj" />
+    <ProjectReference Include="..\..\src\Zafiro.Agent.UI.Core\Zafiro.Agent.UI.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

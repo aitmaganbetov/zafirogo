@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<!-- Только свои ресурсы с виртуального хоста UI: внешних адресов нет (картинки с сервера — заглушки, AG-13);
+	     connect-src 'self' — только встроенные переводы i18n/*.json. Остальное режет и сам процесс UI (WebResourceRequested). -->
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'" />
+	<title data-i18n="Zafiro Agent — Сессия">Zafiro Agent — Сессия</title>
+	<link rel="stylesheet" href="styles.css" />
+	<link rel="stylesheet" href="lock.css" />
+  </head>
+  <body>
+	<!-- Экран входа / блокировки и регистрации ПК (перенос WPF-окна ClubSetupWindow старого агента в HTML). -->
+	<div class="lock-screen" id="lockScreen" hidden>
+	  <div class="lock-frame">
+		<img class="lock-image" id="lockImage" src="gaming-setup.jpg" alt="" />
+		<div class="lock-shade"></div>
+		<div class="lock-brand">
+		  <div class="lock-logo">ZAFIRO</div>
+		  <div class="lock-pc" id="lockPc" hidden>
+			<div class="lock-pc-number" id="lockPcNumber"></div>
+			<div class="lock-pc-zone" id="lockPcZone"></div>
+		  </div>
+		</div>
+		<div class="lock-bottom">
+		  <p class="lock-power-hint" id="lockPowerHint" hidden></p>
+		  <div class="lock-bottom-row">
+			<button class="lock-power" id="lockShutdown" type="button" aria-label="Выключить ПК" data-i18n-aria-label="Выключить ПК" title="Выключить ПК" data-i18n-title="Выключить ПК">
+			  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 3v9m6.4-5.4a8 8 0 1 1-12.8 0"/></svg>
+			</button>
+			<button class="lock-power" id="lockRestart" type="button" aria-label="Перезагрузить ПК" data-i18n-aria-label="Перезагрузить ПК" title="Перезагрузить ПК" data-i18n-title="Перезагрузить ПК">
+			  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7L20 8.6"/><path d="M20 3v5.6h-5.6"/></svg>
+			</button>
+			<div class="lock-languages" id="lockLanguages" role="group" aria-label="Язык" data-i18n-aria-label="Язык" hidden></div>
+		  </div>
+		</div>
+		<section class="lock-card" aria-labelledby="lockTitle">
+		  <div class="lock-kicker">ZAFIRO CLUB</div>
+		  <h1 class="lock-title" id="lockTitle" data-i18n="Вход">Вход</h1>
+		  <p class="lock-club" id="lockClub"></p>
+
+		  <!-- Регистрация ПК: одноразовый код из панели клуба (Компьютеры → «Подключить ПК»). -->
+		  <form class="lock-form" id="setupForm" autocomplete="off" hidden>
+			<label class="lock-label" for="setupCode" data-i18n="Код подключения ПК">Код подключения ПК</label>
+			<input class="lock-input lock-code" id="setupCode" maxlength="16" spellcheck="false" autocomplete="off" placeholder="XXXX-XXXX" />
+			<p class="lock-notice" id="setupNotice" hidden></p>
+			<p class="lock-error" id="setupError" role="alert"></p>
+			<button class="lock-submit" id="setupSubmit" type="submit" data-i18n="Подключить ПК">Подключить ПК</button>
+		  </form>
+
+		  <!-- Вход гостя, регистрация, восстановление пароля. -->
+		  <form class="lock-form" id="loginForm" autocomplete="off" hidden>
+			<div id="loginNamePanel" hidden>
+			  <label class="lock-label" for="loginName" data-i18n="Имя">Имя</label>
+			  <input class="lock-input" id="loginName" maxlength="255" autocomplete="off" />
+			</div>
+			<label class="lock-label" for="loginPhone" data-i18n="Телефон">Телефон</label>
+			<div class="lock-phone">
+			  <span class="lock-phone-prefix">+7</span>
+			  <input class="lock-input" id="loginPhone" maxlength="16" inputmode="tel" autocomplete="off" placeholder="700 123-45-67" />
+			</div>
+			<div id="loginCodePanel" hidden>
+			  <label class="lock-label" for="loginCode" data-i18n="Код из Telegram">Код из Telegram</label>
+			  <input class="lock-input" id="loginCode" maxlength="6" inputmode="numeric" autocomplete="off" />
+			</div>
+			<div id="loginPasswordPanel">
+			  <label class="lock-label" for="loginPassword" id="loginPasswordLabel" data-i18n="Пароль">Пароль</label>
+			  <div class="lock-password">
+				<input class="lock-input" id="loginPassword" type="password" maxlength="256" autocomplete="off" />
+				<button class="lock-eye" type="button" data-lock-eye aria-label="Показать пароль" data-i18n-aria-label="Показать пароль">
+				  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+				</button>
+				<button class="lock-input-language" id="loginInputLanguage" type="button" tabindex="-1"></button>
+			  </div>
+			</div>
+			<div id="loginConfirmPanel" hidden>
+			  <label class="lock-label" for="loginConfirm" data-i18n="Повторите пароль">Повторите пароль</label>
+			  <div class="lock-password">
+				<input class="lock-input" id="loginConfirm" type="password" maxlength="256" autocomplete="off" />
+				<button class="lock-eye" type="button" data-lock-eye aria-label="Показать пароль" data-i18n-aria-label="Показать пароль">
+				  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+				</button>
+			  </div>
+			</div>
+			<p class="lock-notice" id="loginNotice" hidden></p>
+			<p class="lock-error" id="loginError" role="alert"></p>
+			<button class="lock-submit" id="loginSubmit" type="submit" data-i18n="Войти">Войти</button>
+			<button class="lock-link" id="loginRegisterToggle" type="button" data-i18n="Нет аккаунта? Зарегистрироваться">Нет аккаунта? Зарегистрироваться</button>
+			<button class="lock-link" id="loginForgotToggle" type="button" data-i18n="Забыли пароль?">Забыли пароль?</button>
+		  </form>
+
+		  <!-- Вход с телефона: только если клуб включил QR-код в настройках «Гости». -->
+		  <div class="lock-qr" id="loginQr" hidden>
+			<div class="lock-qr-code"><img id="loginQrImage" alt="" width="132" height="132" /></div>
+			<div class="lock-qr-text">
+			  <strong data-i18n="Вход с телефона">Вход с телефона</strong>
+			  <p data-i18n="Наведите камеру телефона на QR-код, войдите на сайте и подтвердите вход.">Наведите камеру телефона на QR-код, войдите на сайте и подтвердите вход.</p>
+			</div>
+		  </div>
+		</section>
+	  </div>
+	</div>
+
+	<!-- Служба агента недоступна (перезапуск при обновлении): экран остаётся заблокированным. -->
+	<div class="service-overlay" id="serviceOverlay" hidden>
+	  <p data-i18n="Нет связи со службой агента. Подождите или обратитесь к администратору клуба.">Нет связи со службой агента. Подождите или обратитесь к администратору клуба.</p>
+	</div>
+
+	<!-- PIN сотрудника (Ctrl+Alt+P): техрежим на время из настроек клуба. Перенос окна StaffPinWindow. -->
+	<dialog class="pin-dialog" id="pinDialog" aria-labelledby="pinTitle">
+	  <form id="pinForm" autocomplete="off">
+		<h2 id="pinTitle" data-i18n="Выход сотрудника">Выход сотрудника</h2>
+		<p class="pin-hint" data-i18n="Введите PIN-код из настроек клуба, чтобы закрыть Zafiro Agent.">Введите PIN-код из настроек клуба, чтобы закрыть Zafiro Agent.</p>
+		<input class="pin-input" id="pinInput" type="password" maxlength="16" inputmode="numeric" autocomplete="off" aria-label="PIN-код" data-i18n-aria-label="PIN-код" />
+		<p class="pin-error" id="pinError" role="alert"></p>
+		<div class="pin-actions">
+		  <button class="pin-cancel" id="pinCancel" type="button" data-i18n="Отмена">Отмена</button>
+		  <button class="pin-submit" id="pinSubmit" type="submit" data-i18n="Закрыть агент">Закрыть агент</button>
+		</div>
+	  </form>
+	</dialog>
+
+	<div id="app" class="layout" hidden>
+	  <aside class="sidebar">
+		<div class="brand">
+		  <div class="logo">ZAFIRO</div>
+		</div>
+		<nav class="nav">
+		  <button class="nav-item" id="homeNavigation" type="button" aria-label="Главная" data-i18n-aria-label="Главная" title="Главная" data-i18n-title="Главная">
+			<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7"/><path d="M5 9v11h14V9M9 20v-6h6v6"/></svg>
+		  </button>
+		  <button class="nav-item" id="shopNavigation" type="button" aria-label="Магазин" data-i18n-aria-label="Магазин" title="Магазин" data-i18n-title="Магазин">
+			<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9h18l-1.5 12h-15L3 9Z"/><path d="M8 9V6a4 4 0 0 1 8 0v3"/></svg>
+		  </button>
+		  <button class="nav-item" id="tariffNavigation" type="button" aria-label="Тарифы" data-i18n-aria-label="Тарифы" title="Тарифы" data-i18n-title="Тарифы">
+			<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2m-3-10v1m0 12v1m9-4h-1M4 12H3"/></svg>
+		  </button>
+		  <button class="nav-item" id="historyNavigation" type="button" aria-label="История" data-i18n-aria-label="История" title="История" data-i18n-title="История">
+			<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5m4-1v5l3 2"/></svg>
+		  </button>
+		  <button class="nav-item" id="friendsNavigation" type="button" aria-label="Друзья" data-i18n-aria-label="Друзья" title="Друзья" data-i18n-title="Друзья" hidden>
+			<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.8"/><path d="M16 14.2a5 5 0 0 1 6 4.8"/></svg>
+			<span class="nav-badge" id="friendsBadge" hidden></span>
+		  </button>
+		  <button class="nav-item" id="chatNavigation" type="button" aria-label="Помощь" data-i18n-aria-label="Помощь" title="Помощь" data-i18n-title="Помощь">
+			<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/></svg>
+			<span class="nav-badge" id="chatBadge" hidden></span>
+		  </button>
+		  <button class="nav-item" id="profileNavigation" type="button" aria-label="Профиль" data-i18n-aria-label="Профиль" title="Профиль" data-i18n-title="Профиль">
+			<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+		  </button>
+		</nav>
+	  </aside>
+
+	  <main class="main">
+		<header class="main-header">
+		  <div>
+			<div class="club"><span id="clubName">Zafiro</span><span class="pc-label" id="pcLabel" hidden></span></div>
+			<div id="userName" class="muted small">Гость</div>
+		  </div>
+		  <div class="header-actions">
+		  <div class="lang-switch" id="langSwitch" role="group" aria-label="Язык" data-i18n-aria-label="Язык" hidden></div>
+		  <button class="shop-shortcut" id="pageToggle" type="button">
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9h18l-1.5 12h-15L3 9Z"/><path d="M8 9V6a4 4 0 0 1 8 0v3"/></svg>
+			<span data-i18n="Магазин">Магазин</span>
+		  </button>
+		  </div>
+		</header>
+
+		<section class="grid" id="sessionPage" aria-label="Текущая сессия" data-i18n-aria-label="Текущая сессия">
+		  <div class="card">
+			<h3 data-i18n="Информация о текущей сессии">Информация о текущей сессии</h3>
+			<div class="small muted" data-i18n="Осталось времени">Осталось времени</div>
+			<div id="remainingBig" class="large">Нет активной сессии</div>
+			<div class="muted small" id="sessionExpiresRow" hidden><span data-i18n="Сессия истекает:">Сессия истекает:</span> <span id="sessionExpires"></span></div>
+		  </div>
+
+		  <div class="card">
+			<h3 data-i18n="Основной счёт">Основной счёт</h3>
+			<div class="balance"><span id="balanceBig">0</span> <span class="muted">KZT</span></div>
+			<div class="small muted"><span data-i18n="Бонус:">Бонус:</span> <span id="bonusSmall">0</span> KZT</div>
+			<div class="balance-actions">
+			  <button id="btnTopUp" class="primary" type="button" data-i18n="Пополнить">Пополнить</button>
+			  <button id="btnRefreshBalance" class="refresh-balance" type="button" aria-label="Обновить баланс" data-i18n-aria-label="Обновить баланс" title="Обновить баланс" data-i18n-title="Обновить баланс">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9M4 4v4h4m-4 5a8 8 0 0 0 14.9 3.9M20 20v-4h-4"/></svg>
+				<span data-i18n="Обновить">Обновить</span>
+			  </button>
+			</div>
+		  </div>
+
+		  <!-- Новости: первая карточка — Zafiro (суперадмин), вторая — клуб. Без новостей — просто картинка. -->
+		  <button class="card media-card game-card news-card" type="button" data-news-column="platform" disabled>
+			<img class="game-art" src="gaming-setup.jpg" data-fallback="gaming-setup.jpg" alt="Игровая приставка и телевизор с видеоигрой" data-i18n-alt="Игровая приставка и телевизор с видеоигрой" />
+			<span class="news-card-text" hidden><small data-i18n="Новости Zafiro">Новости Zafiro</small><strong></strong></span>
+		  </button>
+
+		  <button class="card media-card game-card news-card" type="button" data-news-column="club" disabled>
+			<img class="game-art" src="gaming-event.jpg" data-fallback="gaming-event.jpg" alt="Игрок за компьютером на киберспортивном турнире" data-i18n-alt="Игрок за компьютером на киберспортивном турнире" />
+			<span class="news-card-text" hidden><small data-i18n="Новости клуба">Новости клуба</small><strong></strong></span>
+		  </button>
+
+		</section>
+
+		<section class="shop-page" id="shopPage" aria-labelledby="shopTitle" hidden>
+		  <header class="shop-heading">
+			<div>
+			  <p class="shop-kicker" data-i18n="ПРИНЕСЁМ К ВАШЕМУ ПК">ПРИНЕСЁМ К ВАШЕМУ ПК</p>
+			  <h1 id="shopTitle" data-i18n="Магазин клуба">Магазин клуба</h1>
+			  <p class="shop-intro" data-i18n="Напитки, перекус и полезное для игрового места.">Напитки, перекус и полезное для игрового места.</p>
+			</div>
+			<button class="cart-toggle" id="cartToggle" type="button" aria-label="Открыть корзину" data-i18n-aria-label="Открыть корзину">
+			  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h2l2.2 11.2a2 2 0 0 0 2 1.6h8.9a2 2 0 0 0 2-1.6L22 8H6"/><circle cx="10" cy="21" r="1"/><circle cx="18" cy="21" r="1"/></svg>
+			  <span data-i18n="Корзина">Корзина</span>
+			  <span class="cart-count" id="cartCount">0</span>
+			</button>
+		  </header>
+		  <div class="shop-toolbar">
+			<div class="shop-categories" id="shopCategories" role="group" aria-label="Категории товаров" data-i18n-aria-label="Категории товаров">
+			  <!-- Категории — те, что есть у товаров клуба на складе (main.js). -->
+			  <button class="category-button is-active" type="button" data-category="all" aria-pressed="true" data-i18n="Все товары">Все товары</button>
+			</div>
+			<span id="shopCount" class="shop-count"></span>
+		  </div>
+		  <div class="shop-layout">
+			<div class="shop-catalog" id="shopCatalog"></div>
+			<aside class="cart-panel" aria-label="Корзина" data-i18n-aria-label="Корзина">
+			  <div class="cart-panel-heading">
+				<h2 data-i18n="Ваш заказ">Ваш заказ</h2>
+				<span id="cartPanelCount">0</span>
+			  </div>
+			  <div class="cart-items" id="cartItems"></div>
+			  <div class="cart-empty" id="cartEmpty" data-i18n="Добавьте товары из каталога">Добавьте товары из каталога</div>
+			  <div class="cart-total"><span data-i18n="Итого">Итого</span><strong id="cartTotal">0 KZT</strong></div>
+			  <button class="primary cart-pay" type="button" data-cart-pay data-i18n="Оплатить с баланса">Оплатить с баланса</button>
+			  <p class="cart-note" data-i18n="Оплата с основного счёта. Сотрудник клуба принесёт заказ к вашему ПК.">Оплата с основного счёта. Сотрудник клуба принесёт заказ к вашему ПК.</p>
+			</aside>
+		  </div>
+		</section>
+
+		<section class="history-page" id="historyPage" aria-labelledby="historyTitle" hidden>
+		  <header class="history-heading">
+			<div>
+			  <p class="history-kicker" data-i18n="СЧЁТ И ОПЕРАЦИИ">СЧЁТ И ОПЕРАЦИИ</p>
+			  <h1 id="historyTitle" data-i18n="История">История</h1>
+			  <p data-i18n="Пополнения, списания и движение бонусных средств.">Пополнения, списания и движение бонусных средств.</p>
+			</div>
+		  </header>
+		  <div class="history-balances" aria-label="Текущий баланс" data-i18n-aria-label="Текущий баланс">
+			<article class="history-balance-card">
+			  <span data-i18n="Основной счёт">Основной счёт</span>
+			  <strong><span id="historyBalance">0</span><small>KZT</small></strong>
+			</article>
+			<article class="history-balance-card bonus-balance-card">
+			  <span data-i18n="Бонусный счёт">Бонусный счёт</span>
+			  <strong><span id="historyBonus">0</span><small>KZT</small></strong>
+			</article>
+		  </div>
+		  <section class="history-content" aria-labelledby="historyListTitle">
+			<div class="history-list-heading">
+			  <div>
+				<h2 id="historyListTitle" data-i18n="Операции">Операции</h2>
+				<p data-i18n="Покупки, пополнения, переводы и входы на ПК">Покупки, пополнения, переводы и входы на ПК</p>
+			  </div>
+			</div>
+			<div class="history-filters" id="historyFilters" role="group" aria-label="Фильтр операций" data-i18n-aria-label="Фильтр операций">
+			  <button class="category-button is-active" type="button" data-history-filter="" aria-pressed="true" data-i18n="Все">Все</button>
+			  <button class="category-button" type="button" data-history-filter="purchases" aria-pressed="false" data-i18n="Покупки">Покупки</button>
+			  <button class="category-button" type="button" data-history-filter="top_ups" aria-pressed="false" data-i18n="Пополнения">Пополнения</button>
+			  <button class="category-button" type="button" data-history-filter="transfers" aria-pressed="false" data-i18n="Переводы">Переводы</button>
+			  <button class="category-button" type="button" data-history-filter="visits" aria-pressed="false" data-i18n="Входы и пересадки">Входы и пересадки</button>
+			</div>
+			<ol class="history-list" id="historyList"></ol>
+			<div class="history-empty" id="historyEmpty" hidden>
+			  <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="24" cy="24" r="17"/><path d="M24 14v10l7 4M8 11H3V6"/><path d="M4 11a21 21 0 0 1 35-4"/></svg>
+			  <h3 data-i18n="Операций пока нет">Операций пока нет</h3>
+			  <p data-i18n="Здесь появятся покупки тарифов, пополнения, переводы и входы на ПК.">Здесь появятся покупки тарифов, пополнения, переводы и входы на ПК.</p>
+			</div>
+			<p class="friends-status" id="historyStatus" role="status" aria-live="polite"></p>
+			<button class="friend-button history-more" id="historyMore" type="button" hidden data-i18n="Показать ещё">Показать ещё</button>
+		  </section>
+		</section>
+
+		<section class="tariff-page" id="tariffPage" aria-labelledby="tariffTitle" hidden>
+		  <header class="tariff-heading">
+			<div>
+			  <p class="tariff-kicker" data-i18n="ВРЕМЯ ДЛЯ ИГРЫ">ВРЕМЯ ДЛЯ ИГРЫ</p>
+			  <h1 id="tariffTitle" data-i18n="Тарифы">Тарифы</h1>
+			  <p data-i18n="Выберите подходящий пакет игрового времени.">Выберите подходящий пакет игрового времени.</p>
+			</div>
+		  </header>
+		  <!-- Абонементы: сохранённое время тарифа с ограничением использования, запуск без оплаты. -->
+		  <section class="minute-card" id="packageSection" aria-labelledby="packageTitle" hidden>
+			<div class="minute-head">
+			  <h2 id="packageTitle" data-i18n="Ваши абонементы">Ваши абонементы</h2>
+			  <p data-i18n="Неиспользованное время тарифа — запустите его, пока не сгорело.">Неиспользованное время тарифа — запустите его, пока не сгорело.</p>
+			</div>
+			<div class="package-list" id="packageList"></div>
+		  </section>
+		  <!-- Время поминутно по цене часа зоны этого ПК (если клуб задал цену часа в зоне). -->
+		  <section class="minute-card" id="minuteCard" aria-labelledby="minuteTitle" hidden>
+			<div class="minute-head">
+			  <h2 id="minuteTitle" data-i18n="Поминутно">Поминутно</h2>
+			  <p id="minuteRate"></p>
+			</div>
+			<div class="minute-row">
+			  <label for="minuteInput" data-i18n="Минут">Минут</label>
+			  <input id="minuteInput" type="number" min="1" max="720" step="1" value="60" inputmode="numeric">
+			  <div class="minute-quick">
+				<button type="button" class="friend-button" data-minutes="15">15</button>
+				<button type="button" class="friend-button" data-minutes="30">30</button>
+				<button type="button" class="friend-button" data-minutes="60">60</button>
+				<button type="button" class="friend-button" data-minutes="120">120</button>
+			  </div>
+			</div>
+			<div class="minute-buy">
+			  <strong id="minutePrice"></strong>
+			  <button class="primary" id="minuteBuy" type="button" data-i18n="Купить">Купить</button>
+			</div>
+			<!-- «На весь баланс» (настройка клуба): столько минут, сколько оплачивает основной баланс. -->
+			<div class="minute-whole" id="minuteWhole" hidden>
+			  <p data-i18n="Без тарифа: играйте, пока хватает денег на основном балансе. Ушли раньше — остаток вернётся.">Без тарифа: играйте, пока хватает денег на основном балансе. Ушли раньше — остаток вернётся.</p>
+			  <button class="primary" id="minuteWholeBuy" type="button"></button>
+			</div>
+		  </section>
+		  <p class="tariff-page-status" id="tariffPageStatus" role="status" aria-live="polite">Загружаем тарифы…</p>
+		  <div class="tariff-catalog" id="tariffCatalog"></div>
+		</section>
+
+		<section class="profile-page" id="profilePage" aria-labelledby="profileTitle" hidden>
+		  <header class="profile-heading">
+			<p class="profile-kicker" data-i18n="АККАУНТ ZAFIRO">АККАУНТ ZAFIRO</p>
+			<h1 id="profileTitle" data-i18n="Профиль">Профиль</h1>
+			<p data-i18n="Информация о пользователе и текущем игровом сеансе.">Информация о пользователе и текущем игровом сеансе.</p>
+		  </header>
+		  <section class="profile-overview" aria-label="Пользователь" data-i18n-aria-label="Пользователь">
+			<div class="profile-avatar" aria-hidden="true"><span id="profileAvatarText">Г</span></div>
+			<div class="profile-identity">
+			  <h2 id="profileDisplayName">Гость</h2>
+			  <p id="profileStatus">Нет активной сессии</p>
+			</div>
+		  </section>
+		  <section class="profile-balances" aria-label="Состояние счёта" data-i18n-aria-label="Состояние счёта">
+			<div class="profile-balance">
+			  <span data-i18n="Основной счёт">Основной счёт</span>
+			  <strong><span id="profileBalance">0</span><small>KZT</small></strong>
+			</div>
+			<div class="profile-balance profile-bonus">
+			  <span data-i18n="Бонусный счёт">Бонусный счёт</span>
+			  <strong><span id="profileBonus">0</span><small>KZT</small></strong>
+			</div>
+		  </section>
+		  <section class="profile-session" aria-labelledby="profileSessionTitle">
+			<h2 id="profileSessionTitle" data-i18n="Текущая сессия">Текущая сессия</h2>
+			<p class="profile-no-session" id="profileNoSession" data-i18n="Нет активной сессии">Нет активной сессии</p>
+			<dl class="profile-details" id="profileDetails" hidden>
+			  <div><dt data-i18n="Тариф">Тариф</dt><dd id="profileTariff">—</dd></div>
+			  <div><dt data-i18n="Начало">Начало</dt><dd id="profileStartedAt">—</dd></div>
+			  <div><dt data-i18n="Осталось времени">Осталось времени</dt><dd id="profileRemaining">—</dd></div>
+			</dl>
+		  </section>
+		  <!-- Имя и пароль своего аккаунта Zafiro (один аккаунт во всех клубах); пароль — с текущим. -->
+		  <section class="profile-account" id="profileAccount" aria-labelledby="profileAccountTitle" hidden>
+			<h2 id="profileAccountTitle" data-i18n="Аккаунт">Аккаунт</h2>
+			<div class="profile-account-forms">
+			  <form class="transfer-form" id="profileNameForm">
+				<label for="profileNameInput" data-i18n="Имя">Имя</label>
+				<input id="profileNameInput" maxlength="255" autocomplete="name" required>
+				<button class="primary" id="profileNameSubmit" type="submit" data-i18n="Сохранить имя">Сохранить имя</button>
+			  </form>
+			  <form class="transfer-form" id="profilePasswordForm">
+			<label for="profileCurrentPassword" data-i18n="Текущий пароль">Текущий пароль</label>
+			<div class="password-field">
+			  <input id="profileCurrentPassword" type="password" maxlength="256" autocomplete="current-password" required>
+			  <button class="password-eye" type="button" data-password-eye aria-pressed="false" aria-label="Показать пароль" data-i18n-aria-label="Показать пароль" title="Показать пароль" data-i18n-title="Показать пароль"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+			</div>
+			<label for="profileNewPassword" data-i18n="Новый пароль">Новый пароль</label>
+			<div class="password-field">
+			  <input id="profileNewPassword" type="password" maxlength="256" autocomplete="new-password" required>
+			  <button class="password-eye" type="button" data-password-eye aria-pressed="false" aria-label="Показать пароль" data-i18n-aria-label="Показать пароль" title="Показать пароль" data-i18n-title="Показать пароль"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+			</div>
+			<label for="profileRepeatPassword" data-i18n="Повторите новый пароль">Повторите новый пароль</label>
+			<div class="password-field">
+			  <input id="profileRepeatPassword" type="password" maxlength="256" autocomplete="new-password" required>
+			  <button class="password-eye" type="button" data-password-eye aria-pressed="false" aria-label="Показать пароль" data-i18n-aria-label="Показать пароль" title="Показать пароль" data-i18n-title="Показать пароль"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+			</div>
+				<p class="friends-status" id="profilePasswordStatus" role="status" aria-live="polite"></p>
+				<button class="primary" id="profilePasswordSubmit" type="submit" data-i18n="Сменить пароль">Сменить пароль</button>
+			  </form>
+			</div>
+		  </section>
+		  <p class="profile-version" id="profileVersion" hidden></p>
+		</section>
+
+		<section class="friends-page chat-page" id="chatPage" aria-labelledby="chatTitle" hidden>
+		  <header class="profile-heading">
+			<p class="profile-kicker" data-i18n="СВЯЗЬ С КЛУБОМ">СВЯЗЬ С КЛУБОМ</p>
+			<h1 id="chatTitle" data-i18n="Помощь">Помощь</h1>
+			<p data-i18n="Напишите кассиру или оператору клуба: ответ придёт сюда.">Напишите кассиру или оператору клуба: ответ придёт сюда.</p>
+		  </header>
+		  <ol class="chat-thread" id="chatThread"></ol>
+		  <p class="friends-status" id="chatStatus" role="status" aria-live="polite"></p>
+		  <form class="chat-form" id="chatForm">
+			<textarea id="chatInput" rows="2" maxlength="1000" aria-label="Сообщение" data-i18n-aria-label="Сообщение" placeholder=""></textarea>
+			<button class="primary" type="submit" data-i18n="Отправить">Отправить</button>
+		  </form>
+		</section>
+
+		<!-- Друзья и переводы: пункт меню виден, только если клуб их включил (настройки «Гости»). -->
+		<section class="friends-page" id="friendsPage" aria-labelledby="friendsTitle" hidden>
+		  <header class="profile-heading">
+			<p class="profile-kicker" data-i18n="ДРУЗЬЯ В КЛУБЕ">ДРУЗЬЯ В КЛУБЕ</p>
+			<h1 id="friendsTitle" data-i18n="Друзья">Друзья</h1>
+			<p data-i18n="Заявки, друзья и переводы с основного счёта.">Заявки, друзья и переводы с основного счёта.</p>
+		  </header>
+		  <section class="friends-content">
+			<form class="friend-add" id="friendAddForm" hidden>
+			  <label for="friendPhone" data-i18n="Добавить друга по номеру телефона">Добавить друга по номеру телефона</label>
+			  <div class="friend-add-row">
+				<span class="friend-prefix">+7</span>
+				<input id="friendPhone" type="tel" inputmode="numeric" maxlength="16" autocomplete="off" placeholder="700 123 45 67">
+				<button class="primary" type="submit" data-i18n="Добавить">Добавить</button>
+			  </div>
+			</form>
+			<p class="friends-status" id="friendsStatus" role="status" aria-live="polite"></p>
+			<div class="friend-groups" id="friendGroups"></div>
+		  </section>
+		</section>
+
+		<dialog class="cart-dialog" id="cartDialog" aria-labelledby="cartDialogTitle">
+		  <div class="cart-dialog-heading">
+			<h2 id="cartDialogTitle" data-i18n="Ваш заказ">Ваш заказ</h2>
+			<button class="icon-button" id="cartClose" type="button" aria-label="Закрыть корзину" data-i18n-aria-label="Закрыть корзину" title="Закрыть" data-i18n-title="Закрыть">
+			  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+			</button>
+		  </div>
+		  <div class="dialog-cart-items" id="dialogCartItems"></div>
+		  <div class="dialog-cart-empty" id="dialogCartEmpty" data-i18n="Корзина пока пуста">Корзина пока пуста</div>
+		  <div class="cart-total"><span data-i18n="Итого">Итого</span><strong id="dialogCartTotal">0 KZT</strong></div>
+		  <button class="primary cart-pay" type="button" data-cart-pay data-i18n="Оплатить с баланса">Оплатить с баланса</button>
+		  <p class="cart-note" data-i18n="Оплата с основного счёта. Сотрудник клуба принесёт заказ к вашему ПК.">Оплата с основного счёта. Сотрудник клуба принесёт заказ к вашему ПК.</p>
+		  <button class="clear-cart" id="clearCart" type="button" data-i18n="Очистить корзину">Очистить корзину</button>
+		</dialog>
+
+		<dialog class="cart-dialog news-dialog" id="newsDialog" aria-labelledby="newsTitle">
+		  <div class="cart-dialog-heading">
+			<p class="news-kicker" id="newsKicker"></p>
+			<button class="icon-button" id="newsClose" type="button" aria-label="Закрыть" data-i18n-aria-label="Закрыть" title="Закрыть" data-i18n-title="Закрыть">
+			  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+			</button>
+		  </div>
+		  <img class="news-image" id="newsImage" alt="" hidden>
+		  <h2 class="news-title" id="newsTitle"></h2>
+		  <p class="news-date" id="newsDate"></p>
+		  <div class="news-body" id="newsBody"></div>
+		  <div class="news-nav">
+			<button class="friend-button" id="newsNewer" type="button" data-i18n="← Новее">← Новее</button>
+			<span id="newsPosition"></span>
+			<button class="friend-button" id="newsOlder" type="button" data-i18n="Раньше →">Раньше →</button>
+		  </div>
+		</dialog>
+
+		<dialog class="cart-dialog" id="transferDialog" aria-labelledby="transferTitle">
+		  <div class="cart-dialog-heading">
+			<h2 id="transferTitle" data-i18n="Перевод другу">Перевод другу</h2>
+			<button class="icon-button" id="transferClose" type="button" aria-label="Закрыть" data-i18n-aria-label="Закрыть" title="Закрыть" data-i18n-title="Закрыть">
+			  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+			</button>
+		  </div>
+		  <p class="dialog-note" id="transferFriend"></p>
+		  <form class="transfer-form" id="transferForm">
+			<label for="transferAmount" data-i18n="Сумма с основного счёта">Сумма с основного счёта</label>
+			<input id="transferAmount" inputmode="decimal" maxlength="13" autocomplete="off" required>
+			<label for="transferPassword" data-i18n="Пароль от аккаунта">Пароль от аккаунта</label>
+			<div class="password-field">
+			  <input id="transferPassword" type="password" maxlength="256" autocomplete="current-password" required>
+			  <button class="password-eye" id="transferPasswordEye" type="button" aria-pressed="false" aria-label="Показать пароль" data-i18n-aria-label="Показать пароль" title="Показать пароль" data-i18n-title="Показать пароль"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+			</div>
+			<p class="friends-status" id="transferStatus" role="status" aria-live="polite"></p>
+			<button class="primary" id="transferSubmit" type="submit" data-i18n="Перевести">Перевести</button>
+		  </form>
+		</dialog>
+
+		<dialog class="cart-dialog seat-dialog" id="seatDialog" aria-labelledby="seatTitle">
+		  <div class="cart-dialog-heading">
+			<h2 id="seatTitle" data-i18n="Пересесть на другой ПК">Пересесть на другой ПК</h2>
+			<button class="icon-button" id="seatClose" type="button" aria-label="Закрыть" data-i18n-aria-label="Закрыть" title="Закрыть" data-i18n-title="Закрыть">
+			  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+			</button>
+		  </div>
+		  <p class="dialog-note" data-i18n="Оставшееся время перейдёт на выбранный ПК. Здесь вы выйдете из аккаунта, а на новом ПК войдёте снова.">Оставшееся время перейдёт на выбранный ПК. Здесь вы выйдете из аккаунта, а на новом ПК войдёте снова.</p>
+		  <p class="friends-status" id="seatStatus" role="status" aria-live="polite"></p>
+		  <!-- Карта клуба, как в панели на сайте: выбрать можно только свободный ПК, где действует тариф. -->
+		  <div class="seat-map-scroll" id="seatMapScroll"><div class="seat-map-frame" id="seatMapFrame"><div class="seat-map" id="seatMap"></div></div></div>
+		  <div class="seat-legend" aria-hidden="true">
+			<span><i class="seat-swatch free"></i><span data-i18n="Свободен">Свободен</span></span>
+			<span><i class="seat-swatch busy"></i><span data-i18n="Занят или недоступен">Занят или недоступен</span></span>
+			<span><i class="seat-swatch current"></i><span data-i18n="Вы здесь">Вы здесь</span></span>
+		  </div>
+		  <button class="primary seat-confirm" id="seatConfirm" type="button" disabled data-i18n="Выберите свободный ПК">Выберите свободный ПК</button>
+		</dialog>
+
+		<!-- Оплата времени: с основного баланса или бонусами (смешанная оплата в клубе — бонусы до процента, остальное с основного). -->
+		<dialog class="cart-dialog confirm-dialog" id="payDialog" aria-labelledby="payTitle">
+		  <h2 id="payTitle"></h2>
+		  <p class="dialog-note" id="payText"></p>
+		  <div class="confirm-actions">
+			<button class="friend-button" id="payCancel" type="button" data-i18n="Отмена">Отмена</button>
+			<button class="friend-button" id="payBonus" type="button"></button>
+			<button class="primary" id="payMain" type="button" data-i18n="С основного баланса">С основного баланса</button>
+		  </div>
+		</dialog>
+
+		<!-- Подтверждение: выход, завершение сессии, оплата заказа. -->
+		<dialog class="cart-dialog confirm-dialog" id="confirmDialog" aria-labelledby="confirmTitle">
+		  <h2 id="confirmTitle"></h2>
+		  <p class="dialog-note" id="confirmText"></p>
+		  <div class="confirm-actions">
+			<button class="friend-button" id="confirmCancel" type="button" data-i18n="Отмена">Отмена</button>
+			<button class="primary" id="confirmOk" type="button"></button>
+		  </div>
+		</dialog>
+
+	  </main>
+
+	  <aside class="rightpanel">
+		<div class="card right-card">
+		  <div class="tariffs">
+			
+			<p class="tariff-status" id="actionStatus" role="status" aria-live="polite"></p>
+			<div class="actions-row">
+			  <button class="action" id="btnReturn" type="button">
+				<svg class="action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4m-2-11 2-2 2 2m-2-2v6"/></svg>
+				<span data-i18n="На рабочий стол">На рабочий стол</span>
+			  </button>
+			  <button class="action" id="btnExtend" type="button">
+				<svg class="action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2m4-10v4m-2-2h4"/></svg>
+				<span id="extendLabel">Выбрать тариф</span>
+			  </button>
+			  <button class="action" id="btnSeat" type="button" hidden>
+				<svg class="action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="8" height="7" rx="1"/><rect x="14" y="13" width="8" height="7" rx="1"/><path d="M10 7.5h6a2 2 0 0 1 2 2V13m-2-2 2 2 2-2"/></svg>
+				<span data-i18n="Пересесть">Пересесть</span>
+			  </button>
+			  <button class="action danger" id="btnEnd" type="button">
+				<svg class="action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path id="endIconPath" d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9"/></svg>
+				<span data-i18n="Выйти">Выйти</span>
+			  </button>
+			</div>
+		  </div>
+		</div>
+	  </aside>
+	</div>
+
+	<!-- Ошибки и предупреждения: всплывающие сообщения цвета по смыслу. -->
+	<div class="toasts" id="toasts" aria-live="assertive"></div>
+
+	<script src="core.js"></script>
+	<script src="app.js"></script>
+	<script src="main.js"></script>
+	<script src="lock.js"></script>
+  </body>
+</html>

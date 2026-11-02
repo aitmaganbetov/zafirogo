@@ -220,7 +220,7 @@ func (s *Service) enrollByImageKey(ctx context.Context, in EnrollInput, dev devi
 	if s.opts.Cache != nil {
 		s.opts.Cache.Add(issued.Serial, clubID, pcID, issued.NotAfter, false)
 	}
-	s.afterRevoke(ctx, clubID, pcID, revoked)
+	s.afterRevoke(ctx, clubID, pcID, revoked, true)
 	s.opts.Logger.InfoContext(ctx, "agent enrolled by image key", "club_id", clubID, "computer_id", pcID,
 		"serial", issued.Serial)
 	return resp, nil
@@ -389,7 +389,7 @@ func (s *Service) RevokeImageKey(ctx context.Context, p principal.Principal, key
 		byComputer[c.ClubComputerID] = append(byComputer[c.ClubComputerID], c.Serial)
 	}
 	for computerID, serials := range byComputer {
-		s.afterRevoke(ctx, p.ClubID, computerID, serials)
+		s.afterRevoke(ctx, p.ClubID, computerID, serials, true)
 	}
 	return len(certs), nil
 }

@@ -2,7 +2,8 @@
 # Сборка и тесты агента (.NET 10) в Docker-образе mcr.microsoft.com/dotnet/sdk:10.0 — локальный dotnet не нужен.
 #
 #   agent/test.sh build         # dotnet build (Release)
-#   agent/test.sh unit          # build + unit-тесты (без сервера)
+#   agent/test.sh unit          # build + unit-тесты (без сервера; UI собирается через EnableWindowsTargeting)
+#   agent/test.sh frontend      # тесты страницы UI (мост, деньги, CSP) — Node ≥ 20, без WebView2
 #   agent/test.sh integration   # поднять Go-сервер (agent/tests/integration/server.sh) + интеграционные тесты
 #   agent/test.sh all           # unit + integration
 #   agent/test.sh aot           # проверка Native AOT: publish консольного хоста службы (linux-x64) → agent/.work/aot
@@ -70,6 +71,16 @@ integration() {
   return $rc
 }
 
+frontend() {
+  # Node — свой, если есть; иначе — в контейнере (FRONTEND_NODE_IMAGE).
+  if command -v node >/dev/null 2>&1; then
+    (cd "$HERE" && node --test tests/frontend/*.test.mjs)
+  else
+    docker run --rm -v "$REPO:/repo:ro" -w /repo/agent "${FRONTEND_NODE_IMAGE:-mirror.gcr.io/library/node:22-alpine}" \
+      sh -c 'node --test tests/frontend/*.test.mjs'
+  fi
+}
+
 aot() {
   # Native AOT требует clang и zlib в образе SDK — ставятся во временный контейнер. Публикация — в копии исходников
   # (/tmp/w): restore с RID дописал бы runtime-разделы в закоммиченные packages.lock.json.
@@ -89,8 +100,9 @@ case "$MODE" in
   build) build ;;
   unit) unit ;;
   integration) integration ;;
-  all) unit; integration ;;
+  frontend) frontend ;;
+  all) unit; frontend; integration ;;
   aot) aot ;;
   dotnet) in_docker "dotnet $*" ;;
-  *) echo "usage: $0 build|unit|integration|all|aot|dotnet <args>" >&2; exit 2 ;;
+  *) echo "usage: $0 build|unit|frontend|integration|all|aot|dotnet <args>" >&2; exit 2 ;;
 esac

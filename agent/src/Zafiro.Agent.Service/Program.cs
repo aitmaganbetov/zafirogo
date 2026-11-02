@@ -38,6 +38,41 @@ if (string.IsNullOrEmpty(agent.DataDirectory))
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "zafiro-agent");
 }
 
+// Корень CA (AG-3): установщик кладёт root-ca.pem рядом со службой; относительный путь — от папки программы
+// (рабочая папка службы Windows — System32).
+if (string.IsNullOrWhiteSpace(agent.RootCaPem))
+{
+    if (string.IsNullOrWhiteSpace(agent.RootCaFile) && File.Exists(Path.Combine(AppContext.BaseDirectory, "root-ca.pem")))
+        agent.RootCaFile = "root-ca.pem";
+    if (!string.IsNullOrWhiteSpace(agent.RootCaFile) && !Path.IsPathRooted(agent.RootCaFile))
+        agent.RootCaFile = Path.Combine(AppContext.BaseDirectory, agent.RootCaFile);
+}
+
+// UI (WPF + WebView2) ставится рядом со службой: путь по умолчанию — для запуска UI и проверки exe клиента канала IPC.
+if (OperatingSystem.IsWindows() && string.IsNullOrWhiteSpace(service.UiExecutable))
+{
+    service.UiExecutable = Path.Combine(AppContext.BaseDirectory, "Zafiro.Agent.UI.exe");
+}
+
+// AG-10: ключ образа — не в открытом appsettings.json (DPAPI LocalMachine / файл 0600, ImageKeyStore).
+if (args.Contains("--set-image-key"))
+{
+    // Установщик: ключ — первой строкой stdin (не в командной строке: её видят другие процессы).
+    var key = Console.In.ReadLine()?.Trim();
+    if (!ImageKeyStore.IsValid(key))
+    {
+        Console.Error.WriteLine("invalid image key");
+        return 2;
+    }
+
+    ImageKeyStore.Save(agent.DataDirectory, key!);
+    ImageKeyStore.EraseFromAppSettings(Path.Combine(AppContext.BaseDirectory, "appsettings.json"));
+    return 0;
+}
+
+var (imageKey, imageKeyMigration) = ImageKeyStore.Resolve(agent.ImageKey, agent.DataDirectory, Path.Combine(AppContext.BaseDirectory, "appsettings.json"));
+agent.ImageKey = imageKey;
+
 if (OperatingSystem.IsWindows())
 {
     builder.Services.AddWindowsService(o => o.ServiceName = ServiceOptions.ServiceName);
@@ -85,7 +120,19 @@ builder.Services.AddHostedService<AgentWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<IpcServer>());
 builder.Services.AddHostedService<UiCoordinator>();
 
-await builder.Build().RunAsync().ConfigureAwait(false);
+var host = builder.Build();
+var startupLog = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Zafiro.Agent.Service");
+switch (imageKeyMigration)
+{
+    case ImageKeyMigration.Migrated:
+        startupLog.LogInformation("image key moved from appsettings.json to the protected store");
+        break;
+    case ImageKeyMigration.MigratedButStillInConfig:
+        startupLog.LogWarning("image key saved to the protected store but is still present in the configuration (environment or read-only appsettings.json)");
+        break;
+}
+
+await host.RunAsync().ConfigureAwait(false);
 return 0;
 
 IIpcListener CreateUnixListener(IServiceProvider sp)

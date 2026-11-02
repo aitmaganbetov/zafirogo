@@ -2,6 +2,7 @@ using System.Net.Sockets;
 using Google.Protobuf;
 using Microsoft.Extensions.Logging.Abstractions;
 using Zafiro.Agent.Ipc.V1;
+using Zafiro.Agent.Ipc;
 using Zafiro.Agent.Service.Ipc;
 using Zafiro.Agent.Service.Platform;
 using Zafiro.Agent.Service.Ui;

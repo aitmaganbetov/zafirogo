@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 using Google.Protobuf;
 using Zafiro.Agent.Ipc.V1;
 
-namespace Zafiro.Agent.Service.Ipc;
+namespace Zafiro.Agent.Ipc;
 
 /// <summary>Кадры IPC: 4 байта длины (little-endian) + Envelope (protobuf), не больше 1 МиБ.</summary>
 public static class IpcFraming

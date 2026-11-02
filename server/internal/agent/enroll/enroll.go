@@ -174,7 +174,7 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (*agentv1.EnrollRe
 	if s.opts.Cache != nil {
 		s.opts.Cache.Add(issued.Serial, clubID, pc.ID, issued.NotAfter, false)
 	}
-	s.afterRevoke(ctx, clubID, pc.ID, revoked)
+	s.afterRevoke(ctx, clubID, pc.ID, revoked, true)
 	s.opts.Logger.InfoContext(ctx, "agent enrolled", "club_id", clubID, "computer_id", pc.ID,
 		"serial", issued.Serial, "ip", ip)
 	return resp, nil
@@ -537,7 +537,7 @@ func (s *Service) RenewCertificate(ctx context.Context, id identity.Identity, in
 	if s.opts.Cache != nil {
 		s.opts.Cache.Add(issued.Serial, id.ClubID, id.ComputerID, issued.NotAfter, true)
 	}
-	s.afterRevoke(ctx, id.ClubID, id.ComputerID, superseded)
+	s.afterRevoke(ctx, id.ClubID, id.ComputerID, superseded, false)
 	prevValid := prevAfter.Sub(s.opts.Now())
 	if prevValid < 0 {
 		prevValid = 0
@@ -577,7 +577,7 @@ func (s *Service) markFirstUse(ctx context.Context, clubID int64, serial string)
 		return err
 	}
 	if replaced != nil {
-		s.afterRevoke(ctx, clubID, computerID, []string{*replaced})
+		s.afterRevoke(ctx, clubID, computerID, []string{*replaced}, false)
 	}
 	return nil
 }
