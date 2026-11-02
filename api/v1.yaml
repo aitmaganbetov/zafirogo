@@ -1,0 +1,592 @@
+# Интеграционный API v1 (раздел v1): тот же контракт, что resources/api/openapi-v1.yaml старого проекта (внешние
+# интеграторы не меняются — решения Q-056, Q-057). Отличия от старого файла: operationId у операций, x-go-type у
+# price (сумма без float при генерации), имена ответов ProductResponse/ProductListResponse (совпадали с именем
+# схемы). Обработчики — server/internal/http/sections/v1 (маршруты, области, лимиты,
+# идемпотентность — как routes/api_v1.php и app/Http/Middleware/Api/*). Эту же спецификацию показывает /docs/api.
+openapi: 3.0.3
+info:
+  title: Zafiro Integration API
+  version: "1.0"
+  description: |
+    API for external systems of a Zafiro computer club (accounting, booking sites,
+    loyalty services). Every API key belongs to exactly one club; all data you
+    read or change is that club's. The club cannot be chosen in the request:
+    `club_id` in the query or body and the `X-Club-Id` header are rejected with
+    `403 tenant_override_forbidden` when they name another club.
+
+    **Authentication.** `Authorization: Bearer zfk_xxxxxxxx_...` (or `X-Api-Key`).
+    Keys are created in *Settings → API and integrations*; the secret is shown
+    once. Never embed a key in a mobile app or a web page — mobile apps sign in
+    with the user's account (`POST /api/auth/login`).
+
+    **Scopes.** Each endpoint lists the scope it needs; anything not granted is
+    denied (`403 insufficient_scope`).
+
+    **Limits.** Per key (default 120/min, set per key, max 1000/min) and per club
+    (600/min across all its keys). Responses carry `X-RateLimit-Limit` and
+    `X-RateLimit-Remaining`; `429 rate_limited` carries `Retry-After`. Request
+    bodies are limited to 256 KB. 20 failed authentications per minute from one
+    IP block that IP for a minute.
+
+    **Idempotency.** Send `Idempotency-Key: <1-100 chars>` on writes. A retry with
+    the same key and body returns the stored response with `Idempotent-Replayed:
+    true`; the same key with a different body is `422 idempotency_key_reused`.
+    Keys are kept for 24 hours. Required for stock movements and power commands.
+
+    **Pagination.** Lists are cursor-paginated by id: pass `meta.next_cursor` as
+    `cursor` until it is `null`. `limit` is 1–100 (default 50).
+
+    **Errors.** `{"error": {"code": "...", "message": "..."}}` with a stable
+    `code`; validation errors add `fields`.
+
+    **Webhooks.** See the `Webhooks` section at the end of this page.
+  contact:
+    name: Zafiro
+servers:
+  - url: /api/v1
+security:
+  - apiKey: []
+
+tags:
+  - name: Key
+  - name: Products and stock
+  - name: Sales
+  - name: PCs and zones
+  - name: Tariffs and members
+  - name: Webhooks
+    description: |
+      Zafiro sends `POST` requests with a JSON body to your HTTPS endpoint:
+
+      ```
+      X-Zafiro-Event: stock.changed
+      X-Zafiro-Delivery: 5b0f8c1e-...   (unique per delivery, use it to drop duplicates)
+      X-Zafiro-Timestamp: 1791900000    (unix seconds)
+      X-Zafiro-Signature: v1=<hex HMAC-SHA256(secret, "{timestamp}.{raw body}")>
+
+      {"id": "5b0f8c1e-...", "event": "stock.changed", "created_at": "...", "club_id": 7,
+       "data": {"product_id": 12, "sku": "COLA-05", "change": -2, "quantity": 18, "reason": "sale"}}
+      ```
+
+      Verify before trusting the body: recompute the HMAC over the raw body with
+      the endpoint secret, compare in constant time, reject timestamps older than
+      5 minutes and delivery ids you have already processed. Answer 2xx within 5
+      seconds; otherwise the delivery is retried after 10 s, 1 min, 5 min, 30 min
+      and 2 h. After 20 failed deliveries in a row the endpoint is disabled.
+
+      Events: `product.created`, `product.updated`, `stock.changed`,
+      `sale.completed`, `computer.reservation_changed`, `computer.controlled`.
+
+      PHP example:
+
+      ```php
+      $body = file_get_contents('php://input');
+      $ts = $_SERVER['HTTP_X_ZAFIRO_TIMESTAMP'] ?? '';
+      $expected = 'v1=' . hash_hmac('sha256', $ts . '.' . $body, getenv('ZAFIRO_WEBHOOK_SECRET'));
+      if (!hash_equals($expected, $_SERVER['HTTP_X_ZAFIRO_SIGNATURE'] ?? '') || abs(time() - (int) $ts) > 300) {
+          http_response_code(401); exit;
+      }
+      ```
+
+paths:
+  /me:
+    get:
+      operationId: v1Me
+      tags: [Key]
+      summary: The club and the permissions of the calling key
+      description: "Scope: any valid key."
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      club: { type: object, properties: { id: { type: integer }, name: { type: string }, slug: { type: string } } }
+                      key:
+                        type: object
+                        properties:
+                          prefix: { type: string, example: zfk_ab12cd34 }
+                          scopes: { type: array, items: { type: string } }
+                          expires_at: { type: string, format: date-time, nullable: true }
+                          rate_limit_per_minute: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /products:
+    get:
+      operationId: v1ListProducts
+      tags: [Products and stock]
+      summary: List products
+      description: "Scope: `products:read`."
+      parameters:
+        - { $ref: "#/components/parameters/cursor" }
+        - { $ref: "#/components/parameters/limit" }
+        - { name: sku, in: query, schema: { type: string }, description: Exact SKU }
+        - { name: search, in: query, schema: { type: string }, description: Name prefix }
+        - { name: category_id, in: query, schema: { type: integer } }
+      responses:
+        "200": { $ref: "#/components/responses/ProductListResponse" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: v1CreateProduct
+      tags: [Products and stock]
+      summary: Create a product
+      description: "Scope: `products:write`. A positive `quantity` is booked as the initial stock receipt. Idempotency-Key supported."
+      parameters: [{ $ref: "#/components/parameters/idempotencyKey" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sku, name, product_category_id, price, quantity]
+              properties:
+                sku: { type: string, maxLength: 100, description: Unique within the club }
+                name: { type: string, maxLength: 150 }
+                product_category_id: { type: integer }
+                price: { type: number, minimum: 0, x-go-type: json.Number }
+                quantity: { type: integer, minimum: 0, maximum: 1000000 }
+      responses:
+        "201": { $ref: "#/components/responses/ProductResponse" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /products/{product}:
+    parameters: [{ name: product, in: path, required: true, schema: { type: integer } }]
+    get:
+      operationId: v1GetProduct
+      tags: [Products and stock]
+      summary: Get a product
+      description: "Scope: `products:read`. Products of other clubs answer 404."
+      responses:
+        "200": { $ref: "#/components/responses/ProductResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      operationId: v1UpdateProduct
+      tags: [Products and stock]
+      summary: Change product details
+      description: "Scope: `products:write`. Stock cannot be changed here — use `POST /stock-movements`."
+      parameters: [{ $ref: "#/components/parameters/idempotencyKey" }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sku: { type: string }
+                name: { type: string }
+                product_category_id: { type: integer }
+                price: { type: number, x-go-type: json.Number }
+      responses:
+        "200": { $ref: "#/components/responses/ProductResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+  /product-categories:
+    get:
+      operationId: v1ListProductCategories
+      tags: [Products and stock]
+      summary: List product categories
+      description: "Scope: `products:read`."
+      parameters: [{ $ref: "#/components/parameters/cursor" }, { $ref: "#/components/parameters/limit" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Page" }
+                  - type: object
+                    properties:
+                      data: { type: array, items: { type: object, properties: { id: { type: integer }, name: { type: string } } } }
+  /stock-movements:
+    get:
+      operationId: v1ListStockMovements
+      tags: [Products and stock]
+      summary: List stock movements
+      description: "Scope: `products:read`."
+      parameters:
+        - { $ref: "#/components/parameters/cursor" }
+        - { $ref: "#/components/parameters/limit" }
+        - { name: product_id, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Page" }
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: "#/components/schemas/StockMovement" } }
+    post:
+      operationId: v1CreateStockMovement
+      tags: [Products and stock]
+      summary: Receive or write off stock
+      description: "Scope: `stock:write`. **Idempotency-Key required.** A write-off larger than the stock is rejected."
+      parameters: [{ $ref: "#/components/parameters/idempotencyKeyRequired" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id, type, quantity]
+              properties:
+                product_id: { type: integer }
+                type: { type: string, enum: [receipt, write_off] }
+                quantity: { type: integer, minimum: 1, maximum: 100000 }
+                note: { type: string, maxLength: 255 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/StockMovement" } } }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "428": { $ref: "#/components/responses/IdempotencyRequired" }
+
+  /sales:
+    get:
+      operationId: v1ListSales
+      tags: [Sales]
+      summary: List point-of-sale receipts
+      description: "Scope: `sales:read`."
+      parameters:
+        - { $ref: "#/components/parameters/cursor" }
+        - { $ref: "#/components/parameters/limit" }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: cash_shift_id, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Page" }
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: "#/components/schemas/Sale" } }
+  /sales/{sale}:
+    get:
+      operationId: v1GetSale
+      tags: [Sales]
+      summary: Get a receipt
+      description: "Scope: `sales:read`."
+      parameters: [{ name: sale, in: path, required: true, schema: { type: integer } }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/Sale" } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /zones:
+    get:
+      operationId: v1ListZones
+      tags: [PCs and zones]
+      summary: List zones
+      description: "Scope: `computers:read`."
+      parameters: [{ $ref: "#/components/parameters/cursor" }, { $ref: "#/components/parameters/limit" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Page" }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: integer }
+                            name: { type: string }
+                            description: { type: string, nullable: true }
+                            capacity: { type: integer, nullable: true }
+                            status: { type: string, nullable: true }
+                            computers_count: { type: integer }
+  /computers:
+    get:
+      operationId: v1ListComputers
+      tags: [PCs and zones]
+      summary: List PCs
+      description: "Scope: `computers:read`. Network and hardware details are not exposed."
+      parameters:
+        - { $ref: "#/components/parameters/cursor" }
+        - { $ref: "#/components/parameters/limit" }
+        - { name: zone_id, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Page" }
+                  - type: object
+                    properties:
+                      data: { type: array, items: { $ref: "#/components/schemas/Computer" } }
+  /computers/{computer}:
+    get:
+      operationId: v1GetComputer
+      tags: [PCs and zones]
+      summary: Get a PC
+      description: "Scope: `computers:read`."
+      parameters: [{ name: computer, in: path, required: true, schema: { type: integer } }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/Computer" } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /computers/{computer}/reservation:
+    put:
+      operationId: v1SetComputerReservation
+      tags: [PCs and zones]
+      summary: Reserve or release a PC (booking)
+      description: "Scope: `bookings:write`. Setting the current state again changes nothing. A PC with an active session cannot be reserved (409)."
+      parameters:
+        - { name: computer, in: path, required: true, schema: { type: integer } }
+        - { $ref: "#/components/parameters/idempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reserved], properties: { reserved: { type: boolean } } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/Computer" } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /computers/control:
+    post:
+      operationId: v1ControlComputers
+      tags: [PCs and zones]
+      summary: Power on, restart or power off PCs
+      description: |
+        Scope: `computers:control` (dangerous). **Idempotency-Key required.** Up to 50
+        PCs of the club per call. Restart and power off are refused for the whole
+        batch when any PC has an active customer session (409 with `computer_ids`).
+        Restart and power off reach the agent with its next heartbeat (within a minute;
+        a command not taken in 2 minutes expires). Power on is sent as Wake-on-LAN by
+        the club's running PCs to PCs whose MAC is known; the PC stays offline until it boots.
+      parameters: [{ $ref: "#/components/parameters/idempotencyKeyRequired" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [computer_ids, action]
+              properties:
+                computer_ids: { type: array, minItems: 1, maxItems: 50, items: { type: integer } }
+                action: { type: string, enum: [power_on, restart, power_off] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      action: { type: string }
+                      updated: { type: integer }
+                      computers: { type: array, items: { $ref: "#/components/schemas/Computer" } }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationFailed" }
+        "428": { $ref: "#/components/responses/IdempotencyRequired" }
+
+  /tariffs:
+    get:
+      operationId: v1ListTariffs
+      tags: [Tariffs and members]
+      summary: List tariffs
+      description: "Scope: `tariffs:read`."
+      parameters:
+        - { $ref: "#/components/parameters/cursor" }
+        - { $ref: "#/components/parameters/limit" }
+        - { name: active, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Page" }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: integer }
+                            name: { type: string }
+                            description: { type: string, nullable: true }
+                            duration_minutes: { type: integer }
+                            price: { type: string, example: "1000.00" }
+                            currency: { type: string, nullable: true }
+                            is_active: { type: boolean }
+                            zone_ids: { type: array, items: { type: integer } }
+  /members:
+    get:
+      operationId: v1ListMembers
+      tags: [Tariffs and members]
+      summary: List club members with balances
+      description: "Scope: `members:read` (personal data). Phone numbers are masked; e-mail is never returned."
+      parameters: [{ $ref: "#/components/parameters/cursor" }, { $ref: "#/components/parameters/limit" }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Page" }
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: integer }
+                            name: { type: string }
+                            phone_masked: { type: string, example: "+7 *** *** 45 67" }
+                            role: { type: string }
+                            balance: { type: string }
+                            bonus_balance: { type: string }
+
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: zfk_<prefix>_<secret>
+  parameters:
+    cursor: { name: cursor, in: query, schema: { type: string }, description: "meta.next_cursor of the previous page" }
+    limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+    idempotencyKey: { name: Idempotency-Key, in: header, schema: { type: string, maxLength: 100, pattern: "^[A-Za-z0-9_:-]+$" } }
+    idempotencyKeyRequired: { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 100, pattern: "^[A-Za-z0-9_:-]+$" } }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [invalid_api_key, api_key_revoked, api_key_expired, api_key_owner_lost_access, subscription_inactive, ip_not_allowed, too_many_failed_attempts, insufficient_scope, tenant_override_forbidden, payload_too_large, idempotency_key_required, idempotency_key_invalid, idempotency_key_reused, idempotency_in_progress, rate_limited, validation_failed, not_found, method_not_allowed, forbidden, conflict, bad_request, server_error]
+            message: { type: string }
+            fields: { type: object, additionalProperties: { type: array, items: { type: string } } }
+            required_scopes: { type: array, items: { type: string } }
+    Page:
+      type: object
+      properties:
+        meta:
+          type: object
+          properties:
+            per_page: { type: integer }
+            next_cursor: { type: string, nullable: true }
+    Product:
+      type: object
+      properties:
+        id: { type: integer }
+        sku: { type: string }
+        name: { type: string }
+        category_id: { type: integer, nullable: true }
+        category: { type: string, nullable: true }
+        price: { type: string, example: "500.00" }
+        quantity: { type: integer }
+        updated_at: { type: string, format: date-time }
+    StockMovement:
+      type: object
+      properties:
+        id: { type: integer }
+        product_id: { type: integer }
+        type: { type: string, enum: [receipt, write_off] }
+        quantity: { type: integer }
+        balance_after: { type: integer }
+        note: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+    Sale:
+      type: object
+      properties:
+        id: { type: integer }
+        cash_shift_id: { type: integer }
+        amount: { type: string, example: "1500.00" }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              quantity: { type: integer }
+              price: { type: string }
+              total: { type: string }
+        created_at: { type: string, format: date-time }
+    Computer:
+      type: object
+      properties:
+        id: { type: integer }
+        zone_id: { type: integer }
+        number: { type: integer }
+        name: { type: string, example: PC-07 }
+        status: { type: string, enum: [online, offline, reserved, restarting, available] }
+        connection: { type: string, enum: [online, offline] }
+        is_reserved: { type: boolean }
+        in_session: { type: boolean }
+        last_seen_at: { type: string, format: date-time, nullable: true }
+  responses:
+    ProductResponse:
+      description: OK
+      content:
+        application/json:
+          schema: { type: object, properties: { data: { $ref: "#/components/schemas/Product" } } }
+    ProductListResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            allOf:
+              - { $ref: "#/components/schemas/Page" }
+              - type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Product" } }
+    Unauthorized:
+      description: Missing, invalid, revoked or expired key
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Forbidden:
+      description: Missing scope, IP not allowed or tenant override
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    NotFound:
+      description: Not found (also for records of other clubs)
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Conflict:
+      description: Conflicts with the current state
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ValidationFailed:
+      description: Invalid data
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    IdempotencyRequired:
+      description: Idempotency-Key header missing
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
