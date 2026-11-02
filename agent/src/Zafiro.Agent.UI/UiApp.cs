@@ -1,6 +1,8 @@
 using System.IO;
 using System.Threading;
 using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Zafiro.Agent.Ipc.V1;
 using Zafiro.Agent.UI.Bridge;
@@ -32,6 +34,7 @@ internal sealed class UiApp : Application
     private EventWaitHandle? _launcherSignal;
     private RegisteredWaitHandle? _launcherWait;
     private MainWindow? _window;
+    private string _logoUrl = "";
 
     public UiApp(LaunchOptions options)
     {
@@ -106,6 +109,45 @@ internal sealed class UiApp : Application
         _window?.PostLocalEvent(connected ? "serviceConnected" : "serviceDisconnected");
     }
 
+    /// <summary>
+    /// Логотип клуба на закрытых мониторах (AG-13): байты — из службы (agent.GetImage, кэш на диске службы), UI в сеть
+    /// не ходит. ClubConfig.logo_url только сообщает, что логотип есть и сменился.
+    /// </summary>
+    private async Task LoadLogoAsync(string logoUrl)
+    {
+        if (logoUrl == _logoUrl) return;
+        _logoUrl = logoUrl;
+        if (logoUrl.Length == 0)
+        {
+            _covers.SetLogo(null);
+            return;
+        }
+
+        var image = await _bridge.GetImageAsync(BridgeRouter.ImageOrigin + "logo", _stop.Token).ConfigureAwait(true);
+        if (logoUrl != _logoUrl) return; // пока грузился, логотип сменили
+        ImageSource? logo = null;
+        if (image is not null)
+        {
+            try
+            {
+                var bitmap = new BitmapImage();
+                bitmap.BeginInit();
+                bitmap.CacheOption = BitmapCacheOption.OnLoad;
+                bitmap.DecodePixelWidth = 1024; // MaxLogoPixels старого агента
+                bitmap.StreamSource = new MemoryStream(image.Data.ToByteArray(), writable: false);
+                bitmap.EndInit();
+                bitmap.Freeze();
+                logo = bitmap;
+            }
+            catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException or IOException or ArgumentException)
+            {
+                UiLog.Write("club logo is not an image: " + ex.Message);
+            }
+        }
+
+        _covers.SetLogo(logo);
+    }
+
     private void OnServiceEvent(Event ev)
     {
         switch (ev.KindCase)
@@ -113,7 +155,10 @@ internal sealed class UiApp : Application
             case Event.KindOneofCase.Snapshot:
                 _ui.OnSnapshot(ev.Snapshot);
                 _covers.SetClubName(ev.Snapshot.Config?.ClubName ?? ev.Snapshot.ClubName);
-                _ = _texts.RefreshAsync(ev.Snapshot.Config?.DefaultLocale, ev.Snapshot.TranslationsVersion, _stop.Token);
+                _ = LoadLogoAsync(ev.Snapshot.Config?.LogoUrl ?? "");
+                // Уведомления в углу — на языке гостя (agent.SetLocale, AG-16), иначе на языке клуба.
+                _ = _texts.RefreshAsync(string.IsNullOrEmpty(ev.Snapshot.Locale) ? ev.Snapshot.Config?.DefaultLocale : ev.Snapshot.Locale,
+                    ev.Snapshot.TranslationsVersion, _stop.Token);
                 break;
             case Event.KindOneofCase.TranslationsUpdated:
                 _ = _texts.RefreshAsync(null, ev.TranslationsUpdated.Version, _stop.Token);

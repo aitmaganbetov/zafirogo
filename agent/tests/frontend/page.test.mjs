@@ -17,7 +17,9 @@ test('CSP: только свои ресурсы, без внешних адре�
   assert.ok(csp, 'CSP meta');
   assert.match(csp, /default-src 'none'/);
   assert.match(csp, /script-src 'self'(;|$)/);
-  assert.doesNotMatch(csp, /https?:|\*|'unsafe-eval'/);
+  // Единственный внешний адрес — виртуальный хост картинок клуба (их отдаёт процесс UI из кэша службы, AG-13).
+  assert.match(csp, /img-src 'self' data: https:\/\/img\.zafiro\.invalid;/);
+  assert.doesNotMatch(csp.replaceAll('https://img.zafiro.invalid', ''), /https?:|\*|'unsafe-eval'/);
   assert.match(csp, /connect-src 'self'/);
   assert.match(csp, /frame-src 'none'/);
   assert.match(csp, /form-action 'none'/);
@@ -32,7 +34,7 @@ test('скрипты: без eval, внешних адресов, innerHTML и �
   for (const name of scripts) {
     const code = read(name);
     assert.doesNotMatch(code, /\beval\(|new Function\(|innerHTML|outerHTML|insertAdjacentHTML|document\.write/, name);
-    assert.doesNotMatch(code, /['"`]https?:\/\//, name);
+    assert.doesNotMatch(code.replaceAll('https://img.zafiro.invalid/', ''), /['"`]https?:\/\//, name);
     if (name !== 'core.js') assert.doesNotMatch(code, /\.postMessage\(/, `${name}: только Zafiro.createBridge`);
   }
 });
@@ -61,4 +63,20 @@ test('переводы: встроенные файлы ru/kk/en с одинак
     const missing = Object.keys(ru.lines).filter((key) => !(key in other.lines));
     assert.deepEqual(missing, [], `${locale}: нет переводов`);
   }
+});
+
+test('«на весь баланс» и автобиллинг считает сервер (Q-008, AG-12): на странице нет формулы и своих покупок', () => {
+  const main = read('main.js');
+  assert.doesNotMatch(main, /affordableMinutes|autoStopped|autoAfterTariff|startAutoBilling/);
+  assert.match(main, /bridge\.call\('GuestService\/PlayWholeBalance'|purchaseTime\('GuestService\/PlayWholeBalance'/);
+  assert.match(main, /wholeBalanceMinutes/);
+  assert.match(main, /snap\.autoBilling/);
+  for (const name of scripts) assert.doesNotMatch(read(name), /agent\.GetImage/, `${name}: картинки — только img.zafiro.invalid`);
+});
+
+test('язык гостя уходит службе (AG-16), профиль — тариф и версия агента (AG-17)', () => {
+  assert.match(read('app.js'), /bridge\.call\('agent\.SetLocale', \{ locale: code \}\)/);
+  const main = read('main.js');
+  assert.match(main, /session\?\.tariffName/);
+  assert.match(main, /snap\.agentVersion/);
 });

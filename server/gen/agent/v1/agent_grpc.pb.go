@@ -134,6 +134,7 @@ const (
 	AgentService_Connect_FullMethodName         = "/zafiro.agent.v1.AgentService/Connect"
 	AgentService_GetTranslations_FullMethodName = "/zafiro.agent.v1.AgentService/GetTranslations"
 	AgentService_VerifyStaffPin_FullMethodName  = "/zafiro.agent.v1.AgentService/VerifyStaffPin"
+	AgentService_GetImage_FullMethodName        = "/zafiro.agent.v1.AgentService/GetImage"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -164,6 +165,14 @@ type AgentServiceClient interface {
 	// Если в метаданных есть токен гостя — сервер пишет в журнал, при ком закрыли агент.
 	// Ошибки: PIN_NOT_CONFIGURED, INVALID_PIN, RATE_LIMITED.
 	VerifyStaffPin(ctx context.Context, in *VerifyStaffPinRequest, opts ...grpc.CallOption) (*VerifyStaffPinResponse, error)
+	// Картинка клуба для интерфейса агента (у процесса UI нет сети: служба берёт её здесь и кэширует на диске).
+	// Заменяет прямые загрузки картинок старым агентом: GET /club-logos/{club}/{file}, /club-signin-images/{club}/{file}
+	// (ClubLogoController::show, ClubSignInImageController::show), /news-images/{news}/{file} (NewsController::image).
+	// Клуб — из сертификата ПК: логотип и картинка входа — только своего клуба, новость — своего клуба или платформы.
+	// PNG/JPEG, не больше 3 МиБ (ограничения club_images/news_images). Повтор с известным etag — not_modified без байтов.
+	// Лимит — как GetTranslations (agent-translations, 600/мин на IP): та же статика интерфейса, служба кэширует по
+	// etag. Ошибки: NOT_FOUND + VALIDATION_FAILED (картинки нет), RATE_LIMITED.
+	GetImage(ctx context.Context, in *GetImageRequest, opts ...grpc.CallOption) (*GetImageResponse, error)
 }
 
 type agentServiceClient struct {
@@ -207,6 +216,16 @@ func (c *agentServiceClient) VerifyStaffPin(ctx context.Context, in *VerifyStaff
 	return out, nil
 }
 
+func (c *agentServiceClient) GetImage(ctx context.Context, in *GetImageRequest, opts ...grpc.CallOption) (*GetImageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetImageResponse)
+	err := c.cc.Invoke(ctx, AgentService_GetImage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
 // for forward compatibility.
@@ -235,6 +254,14 @@ type AgentServiceServer interface {
 	// Если в метаданных есть токен гостя — сервер пишет в журнал, при ком закрыли агент.
 	// Ошибки: PIN_NOT_CONFIGURED, INVALID_PIN, RATE_LIMITED.
 	VerifyStaffPin(context.Context, *VerifyStaffPinRequest) (*VerifyStaffPinResponse, error)
+	// Картинка клуба для интерфейса агента (у процесса UI нет сети: служба берёт её здесь и кэширует на диске).
+	// Заменяет прямые загрузки картинок старым агентом: GET /club-logos/{club}/{file}, /club-signin-images/{club}/{file}
+	// (ClubLogoController::show, ClubSignInImageController::show), /news-images/{news}/{file} (NewsController::image).
+	// Клуб — из сертификата ПК: логотип и картинка входа — только своего клуба, новость — своего клуба или платформы.
+	// PNG/JPEG, не больше 3 МиБ (ограничения club_images/news_images). Повтор с известным etag — not_modified без байтов.
+	// Лимит — как GetTranslations (agent-translations, 600/мин на IP): та же статика интерфейса, служба кэширует по
+	// etag. Ошибки: NOT_FOUND + VALIDATION_FAILED (картинки нет), RATE_LIMITED.
+	GetImage(context.Context, *GetImageRequest) (*GetImageResponse, error)
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -253,6 +280,9 @@ func (UnimplementedAgentServiceServer) GetTranslations(context.Context, *GetTran
 }
 func (UnimplementedAgentServiceServer) VerifyStaffPin(context.Context, *VerifyStaffPinRequest) (*VerifyStaffPinResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method VerifyStaffPin not implemented")
+}
+func (UnimplementedAgentServiceServer) GetImage(context.Context, *GetImageRequest) (*GetImageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetImage not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -318,6 +348,24 @@ func _AgentService_VerifyStaffPin_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentService_GetImage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetImageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).GetImage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_GetImage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).GetImage(ctx, req.(*GetImageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -332,6 +380,10 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "VerifyStaffPin",
 			Handler:    _AgentService_VerifyStaffPin_Handler,
+		},
+		{
+			MethodName: "GetImage",
+			Handler:    _AgentService_GetImage_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

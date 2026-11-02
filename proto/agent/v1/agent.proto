@@ -147,6 +147,15 @@ service AgentService {
   // Если в метаданных есть токен гостя — сервер пишет в журнал, при ком закрыли агент.
   // Ошибки: PIN_NOT_CONFIGURED, INVALID_PIN, RATE_LIMITED.
   rpc VerifyStaffPin(VerifyStaffPinRequest) returns (VerifyStaffPinResponse);
+
+  // Картинка клуба для интерфейса агента (у процесса UI нет сети: служба берёт её здесь и кэширует на диске).
+  // Заменяет прямые загрузки картинок старым агентом: GET /club-logos/{club}/{file}, /club-signin-images/{club}/{file}
+  // (ClubLogoController::show, ClubSignInImageController::show), /news-images/{news}/{file} (NewsController::image).
+  // Клуб — из сертификата ПК: логотип и картинка входа — только своего клуба, новость — своего клуба или платформы.
+  // PNG/JPEG, не больше 3 МиБ (ограничения club_images/news_images). Повтор с известным etag — not_modified без байтов.
+  // Лимит — как GetTranslations (agent-translations, 600/мин на IP): та же статика интерфейса, служба кэширует по
+  // etag. Ошибки: NOT_FOUND + VALIDATION_FAILED (картинки нет), RATE_LIMITED.
+  rpc GetImage(GetImageRequest) returns (GetImageResponse);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -566,7 +575,18 @@ message Command {
     QrLoginApproved qr_login_approved = 27;
     // Сервер просит переподключиться (плановый перезапуск).
     Drain drain = 28;
+    // Изменилось состояние автобиллинга гостя (мгновенная, seq = 0).
+    AutoBillingChanged auto_billing_changed = 29;
   }
+}
+
+// Автобиллинг гостя изменился: началась пауза, остановлен, после покупки ждёт конца сессии.
+// Мгновенная; после переподключения агент читает состояние GuestService.GetAutoBilling.
+message AutoBillingChanged {
+  // ID гостя, к которому относится (агент игнорирует, если вошёл другой).
+  int64 user_id = 1;
+  // Состояние.
+  AutoBillingStatus status = 2;
 }
 
 // Начать или продлить сессию (оплата на кассе, в панели, покупка с телефона, пересадка).
@@ -785,4 +805,38 @@ message VerifyStaffPinResponse {
   uint32 staff_minutes = 1;
   // До какого времени.
   google.protobuf.Timestamp until = 2;
+}
+
+// Вид картинки клуба.
+enum ImageKind {
+  // Не задано (ошибка VALIDATION_FAILED).
+  IMAGE_KIND_UNSPECIFIED = 0;
+  // Логотип клуба ПК (ClubConfig.logo_url; id не нужен).
+  IMAGE_KIND_CLUB_LOGO = 1;
+  // Картинка экрана входа клуба ПК (ClubConfig.signin_image_url; id не нужен).
+  IMAGE_KIND_SIGNIN = 2;
+  // Картинка новости (NewsItem.news_id): клуба ПК или платформы.
+  IMAGE_KIND_NEWS = 3;
+}
+
+// Запрос картинки.
+message GetImageRequest {
+  // Вид.
+  ImageKind kind = 1;
+  // ID новости (IMAGE_KIND_NEWS), иначе 0.
+  int64 id = 2;
+  // ETag из прошлого ответа (кэш службы): совпал — not_modified.
+  string if_none_match = 3;
+}
+
+// Картинка.
+message GetImageResponse {
+  // true — etag совпал с if_none_match, data пусто.
+  bool not_modified = 1;
+  // Байты картинки (≤ 3 МиБ).
+  bytes data = 2;
+  // image/png или image/jpeg.
+  string content_type = 3;
+  // Отпечаток содержимого (SHA-256, hex).
+  string etag = 4;
 }

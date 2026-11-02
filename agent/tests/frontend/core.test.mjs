@@ -55,26 +55,6 @@ test('minutesPrice: floor((час × минуты + 30) / 60) — как AgentTa
   assert.equal(Z.minutesPrice(1, 330), 6);
 });
 
-test('affordableMinutes: «на весь баланс» (BR-022, GS-053, PQ-1) — те же числа, что pricing.AffordableMinutes', () => {
-  const offer = { available: true, pricePerHourTiyn: '60000', maxMinutes: 720 };
-  // GS-053: баланс 1400.00, час 600.00 → 140 минут за 1400.00.
-  assert.equal(Z.affordableMinutes(offer, '140000'), 140);
-  // Не больше max_minutes (720).
-  assert.equal(Z.affordableMinutes(offer, '100000000'), 720);
-  // PQ-1: час 1 тиын, баланс 5 тиынов → 300 (формула агента, а не максимум 329).
-  assert.equal(Z.affordableMinutes({ available: true, pricePerHourTiyn: '1', maxMinutes: 720 }, 5), 300);
-  // Цена не превышает баланс.
-  for (const balance of [1, 999, 1001, 59999, 123457]) {
-    const minutes = Z.affordableMinutes(offer, balance);
-    assert.ok(Z.minutesPrice(60000, minutes) <= balance, `balance ${balance}`);
-  }
-  assert.equal(Z.affordableMinutes({ ...offer, available: false }, 140000), 0);
-  assert.equal(Z.affordableMinutes({ ...offer, pricePerHourTiyn: '0' }, 140000), 0);
-  assert.equal(Z.affordableMinutes(offer, 0), 0);
-  assert.equal(Z.affordableMinutes(null, 140000), 0);
-  assert.equal(Z.affordableMinutes({ available: true, pricePerHourTiyn: '60000' }, '100000000'), 720); // max по умолчанию
-});
-
 test('переводы: строки сервера поверх встроенных, ключ — русский текст, подстановки и множественное число', () => {
   const i18n = Z.createI18n();
   assert.equal(i18n.t('Войти'), 'Войти');

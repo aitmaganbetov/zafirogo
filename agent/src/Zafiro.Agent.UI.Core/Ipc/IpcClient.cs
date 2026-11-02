@@ -141,7 +141,7 @@ public sealed class IpcClient : IIpcTransport, IAsyncDisposable
         var writer = Task.Run(async () =>
         {
             await foreach (var env in outbox.Reader.ReadAllAsync(session.Token).ConfigureAwait(false))
-                await IpcFraming.WriteAsync(stream, env, session.Token).ConfigureAwait(false);
+                await IpcFraming.WriteAsync(stream, env, session.Token, IpcFraming.MaxRequestFrameBytes).ConfigureAwait(false);
         }, CancellationToken.None);
         SetConnected(true);
         try

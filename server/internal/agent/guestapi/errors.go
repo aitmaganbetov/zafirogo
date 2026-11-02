@@ -49,7 +49,7 @@ func rpcError(code codes.Code, reason agentv1.ErrorCode, message string, params 
 	if field != "" {
 		md = map[string]string{"field": field}
 	}
-	return grpcserver.Error(code, reason, msg, md)
+	return withI18nKey(grpcserver.Error(code, reason, msg, md), message, params)
 }
 
 func substitute(msg string, params map[string]string) string {
@@ -94,6 +94,8 @@ func toStatus(err error) (known bool, st error) {
 		switch be.Code {
 		case billingsvc.ErrBookedFrom.Code:
 			return true, rpcError(codes.FailedPrecondition, agentv1.ErrorCode_ERROR_CODE_COMPUTER_RESERVED, be.Message, be.Params, be.Field)
+		case billingsvc.ErrWholeBalanceDisabled.Code:
+			return true, rpcError(codes.PermissionDenied, agentv1.ErrorCode_ERROR_CODE_FEATURE_DISABLED, be.Message, be.Params, "")
 		case billingsvc.ErrNoSuchSession.Code:
 			return true, rpcError(codes.FailedPrecondition, agentv1.ErrorCode_ERROR_CODE_SESSION_MISMATCH, be.Message, be.Params, be.Field)
 		default:

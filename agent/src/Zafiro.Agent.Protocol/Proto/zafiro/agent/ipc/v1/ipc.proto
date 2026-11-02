@@ -4,7 +4,7 @@
 //   * Windows — именованный канал "ZafiroAgent.Ipc" (ACL: создают только SYSTEM/администраторы, подключаются
 //     вошедшие пользователи); служба проверяет клиента: сеанс консоли, SID пользователя сеанса, путь exe UI.
 //   * Linux (тесты) — unix socket; служба проверяет uid клиента (SO_PEERCRED).
-// Кадр: 4 байта длины (little-endian, не больше 1 МиБ) + Envelope.
+// Кадр: 4 байта длины (little-endian) + Envelope; от UI — не больше 1 МиБ, от службы — не больше 4 МиБ (картинки).
 //
 // Ключ ПК, сертификат и токен гостя остаются в службе: UI вызывает методы службы, служба — gRPC.
 // В ответах Login/Register/WatchQrLogin поле GuestSignIn.token всегда пустое.
@@ -38,6 +38,8 @@ message Envelope {
 //   agent.GetTranslations    zafiro.agent.v1.GetTranslationsRequest → zafiro.agent.v1.GetTranslationsResponse
 //   agent.ReportActivity     ReportActivityRequest           → GetSnapshotRequest (пусто)
 //   agent.SignOut            SignOutRequest                  → Snapshot
+//   agent.SetLocale          SetLocaleRequest                → Snapshot   (язык гостя для текстов сервера, AG-16)
+//   agent.GetImage           zafiro.agent.v1.GetImageRequest → zafiro.agent.v1.GetImageResponse (кэш службы, AG-13)
 //   <Сервис>/<Метод>         как в proto/agent/v1 (например "GuestService/PurchaseTariff",
 //                            "GuestAuthService/Login", "ShopService/PlaceOrder", "SocialService/TransferBalance").
 message Request {
@@ -121,6 +123,18 @@ message Snapshot {
   // Конец техрежима (state = SERVICE).
   google.protobuf.Timestamp service_until = 11;
   string club_name = 12;
+  // Автобиллинг гостя (сервер, решение Q-008): пауза, ожидание, стоп. Нет — гость не вошёл или состояние ещё неизвестно.
+  zafiro.agent.v1.AutoBillingStatus auto_billing = 13;
+  // Версия агента (служба) — профиль лаунчера «Версия агента: …» (AG-17).
+  string agent_version = 14;
+  // Язык текстов сервера (zafiro-locale): выбранный гостем (agent.SetLocale), иначе язык клуба, иначе язык ПК.
+  string locale = 15;
+}
+
+// Язык, выбранный гостем на экране (только из ClubConfig.languages; пусто — сбросить к языку клуба). Сбрасывается
+// при выходе гостя.
+message SetLocaleRequest {
+  string locale = 1;
 }
 
 // Пустой запрос снимка.

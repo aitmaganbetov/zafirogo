@@ -1,4 +1,5 @@
 using Google.Protobuf;
+using Zafiro.Agent.Core;
 using Zafiro.Agent.Core.Errors;
 using Zafiro.Agent.Core.Guest;
 using Zafiro.Agent.Core.Runtime;
@@ -15,10 +16,12 @@ public sealed class IpcDispatcher
 {
     private readonly Dictionary<string, Func<ByteString, CancellationToken, Task<IMessage>>> _methods = new(StringComparer.Ordinal);
 
-    public IpcDispatcher(AgentRuntime runtime)
+    public IpcDispatcher(AgentRuntime runtime, AgentOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(runtime);
         var g = runtime.Guest;
+        var dir = options?.DataDirectory;
+        var images = new ImageCache(string.IsNullOrEmpty(dir) ? null : Path.Combine(dir, "images"), g.GetImageAsync);
 
         Map("agent.GetSnapshot", GetSnapshotRequest.Parser, (_, _) => Task.FromResult(runtime.State.BuildSnapshot()));
         Map("agent.Enroll", EnrollWithCodeRequest.Parser, (r, ct) => runtime.EnrollWithCodeAsync(r.Code, ct));
@@ -40,6 +43,13 @@ public sealed class IpcDispatcher
             await g.LogoutAsync(new LogoutRequest(), ct).ConfigureAwait(false);
             return runtime.State.BuildSnapshot();
         });
+
+        Map("agent.SetLocale", SetLocaleRequest.Parser, (r, _) =>
+        {
+            if (!runtime.State.SetGuestLocale(r.Locale)) throw new ArgumentException("locale is not enabled", nameof(r));
+            return Task.FromResult(runtime.State.BuildSnapshot());
+        });
+        Map("agent.GetImage", GetImageRequest.Parser, (r, ct) => images.GetAsync(r, ct));
 
         Map("GuestAuthService/Login", LoginRequest.Parser, async (r, ct) =>
         {
@@ -64,6 +74,8 @@ public sealed class IpcDispatcher
         Map("GuestService/PurchaseTariff", PurchaseTariffRequest.Parser, (r, ct) => g.PurchaseTariffAsync(r, ct));
         Map("GuestService/GetMinuteOffer", GetMinuteOfferRequest.Parser, (r, ct) => g.GetMinuteOfferAsync(r, ct));
         Map("GuestService/PurchaseMinutes", PurchaseMinutesRequest.Parser, (r, ct) => g.PurchaseMinutesAsync(r, ct));
+        Map("GuestService/PlayWholeBalance", PlayWholeBalanceRequest.Parser, (r, ct) => g.PlayWholeBalanceAsync(r, ct));
+        Map("GuestService/GetAutoBilling", GetAutoBillingRequest.Parser, (r, ct) => g.GetAutoBillingAsync(r, ct));
         Map("GuestService/ListPackages", ListPackagesRequest.Parser, (r, ct) => g.ListPackagesAsync(r, ct));
         Map("GuestService/StartPackage", StartPackageRequest.Parser, (r, ct) => g.StartPackageAsync(r, ct));
         Map("GuestService/EndSession", EndSessionRequest.Parser, (r, ct) => g.EndSessionAsync(r, ct));

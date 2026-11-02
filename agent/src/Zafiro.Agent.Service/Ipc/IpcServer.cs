@@ -196,7 +196,7 @@ public sealed class IpcServer : BackgroundService
             foreach (var notice in TakeNotices()) outbox.Writer.TryWrite(new Envelope { Event = notice });
             while (!cts.IsCancellationRequested)
             {
-                var env = await IpcFraming.ReadAsync(client.Stream, cts.Token).ConfigureAwait(false);
+                var env = await IpcFraming.ReadAsync(client.Stream, cts.Token, IpcFraming.MaxRequestFrameBytes).ConfigureAwait(false);
                 if (env is null) break;
                 if (env.KindCase != Envelope.KindOneofCase.Request) continue;
                 await inflight.WaitAsync(cts.Token).ConfigureAwait(false);

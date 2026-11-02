@@ -12,7 +12,7 @@
 | Сервис | Транспорт | Токен гостя | Назначение |
 |---|---|---|---|
 | `EnrollmentService` | TLS (Enroll), mTLS (RenewCertificate) | — | регистрация ПК по одноразовому коду, продление сертификата |
-| `AgentService` | mTLS | — (VerifyStaffPin — опционально) | стрим `Connect`, переводы, PIN сотрудника |
+| `AgentService` | mTLS | — (VerifyStaffPin — опционально) | стрим `Connect`, переводы, PIN сотрудника, картинки клуба (`GetImage`) |
 | `GuestAuthService` | mTLS | только `Logout` | вход, регистрация, QR-вход, восстановление пароля |
 | `GuestService` | mTLS | да | профиль, тарифы, минуты, пакеты, сессия, пересадка, журнал, новости |
 | `ShopService` | mTLS | `PlaceOrder` | товары, заказ к ПК |
@@ -127,7 +127,7 @@ UI (WPF/WebView2) общается со службой по именованно
 
 ## 5. Идемпотентность денежных RPC
 
-`idempotency_key` обязателен в: `PurchaseTariff`, `PurchaseMinutes`, `StartPackage`, `EndSession`,
+`idempotency_key` обязателен в: `PurchaseTariff`, `PurchaseMinutes`, `PlayWholeBalance`, `StartPackage`, `EndSession`,
 `TransferSeat`, `PlaceOrder`, `TransferBalance`, `SendChatMessage`. Ключ — UUID, генерирует агент на одно
 действие пользователя и повторяет его при сетевых повторах. Сервер хранит `(computer_id, idempotency_key)` →
 хеш запроса + ответ 24 часа (поведение как у `/api/v1`, `app/Http/Middleware/Api/ApiIdempotency.php`).
@@ -221,7 +221,7 @@ CI-секретах, открытый ключ вшит в агента.
 
 - unary: gRPC-код + `google.rpc.ErrorInfo{reason: "ERROR_CODE_…", domain: "agent.zafiro.kz", metadata}`;
   при валидации — `google.rpc.BadRequest`, при лимитах — `google.rpc.RetryInfo`, текст — `google.rpc.LocalizedMessage`
-  (язык из `zafiro-locale`). Go: `google.golang.org/genproto/googleapis/rpc/errdetails` + `status.WithDetails`;
+  (язык из `zafiro-locale`, если он включён на платформе, иначе язык клуба ПК — §15.3). Go: `google.golang.org/genproto/googleapis/rpc/errdetails` + `status.WithDetails`;
   C#: `Grpc.StatusProto` (пакет `Google.Api.CommonProtos`) — `RpcException.GetRpcStatus()`.
 - В proto `google.rpc.*` не импортируется (нет зависимости от googleapis в buf): детали передаются в
   `grpc-status-details-bin`, а `ErrorCode` — общий словарь.
@@ -278,6 +278,9 @@ CI-секретах, открытый ключ вшит в агента.
 | `POST /api/tariffs/{tariff}/purchase` | `GuestService.PurchaseTariff` |
 | `GET /api/guest/minutes` | `GuestService.GetMinuteOffer` |
 | `POST /api/guest/minutes/purchase` | `GuestService.PurchaseMinutes` |
+| «На весь баланс» (`main.js` minuteWholeBuy → purchaseMinutes) | `GuestService.PlayWholeBalance` (минуты считает сервер, §15.1) |
+| автобиллинг (`main.js` autoBillingTick → purchaseMinutes) | воркер сервера `agent:auto-billing` + `GuestService.GetAutoBilling`, `Command.auto_billing_changed` (§15.1) |
+| `GET /club-logos/…`, `/club-signin-images/…`, `/news-images/…` (агент качал сам) | `AgentService.GetImage` (§15.2) |
 | `GET /api/guest/packages` | `GuestService.ListPackages` |
 | `POST /api/guest/packages/{package}/start` | `GuestService.StartPackage` |
 | `POST /api/club-computers/{computer}/session/end` | `GuestService.EndSession` |
@@ -674,12 +677,14 @@ WMI не используется). Замер (Linux, AOT): исполняем�
 - **Служба** держит единственное соединение HTTP/2 с сервером (стрим `Connect` + unary-вызовы гостя на том же
   канале), выполняет команды, хранит ключ ПК и токен гостя. UI ничего секретного не видит: в ответах
   `Login`/`Register`/`WatchQrLogin` поле `GuestSignIn.token` пустое.
-- **IPC** (`ipc.proto`): кадр — 4 байта длины (LE, ≤ 1 МиБ) + `Envelope{request|response|event}`. Методы —
-  `agent.GetSnapshot`, `agent.Enroll` (код из панели), `agent.VerifyStaffPin`, `agent.GetTranslations`,
-  `agent.ReportActivity`, `agent.SignOut` и все RPC гостя по имени `<Сервис>/<Метод>` (`GuestService/PurchaseTariff`…)
+- **IPC** (`ipc.proto`): кадр — 4 байта длины (LE; от UI ≤ 1 МиБ, от службы ≤ 4 МиБ — картинка клуба до 3 МиБ) +
+  `Envelope{request|response|event}`. Методы — `agent.GetSnapshot`, `agent.Enroll` (код из панели), `agent.VerifyStaffPin`,
+  `agent.GetTranslations`, `agent.ReportActivity`, `agent.SignOut`, `agent.SetLocale` (язык гостя, §15.3),
+  `agent.GetImage` (картинки клуба из кэша службы, §15.2; со страницы мостом не вызывается) и все RPC гостя по имени `<Сервис>/<Метод>` (`GuestService/PurchaseTariff`…)
   с теми же сообщениями, что в `proto/agent/v1` (таблица имён и типов — `Zafiro.Agent.Protocol/Ipc/IpcMethods.cs`, общая
   для службы и моста UI; тест сверяет её с `Ipc/IpcDispatcher.cs`). События: `Snapshot` (связь, состояние ПК, нужный
-  экран, клуб, сессия, гость, баланс, часы сервера), `ShowMessage`, чат, счётчики, QR, переводы, `SessionEnding`
+  экран, клуб, сессия с названием тарифа, гость, баланс, часы сервера, автобиллинг, версия агента, язык текстов сервера),
+  `ShowMessage`, чат, счётчики, QR, переводы, `SessionEnding`
   (за 10, 5, 3 и 1 минуту до конца сессии — `UiCoordinator`, как `WarnSessionTime` старого агента). Уведомления
   (`ShowMessage`, ответ клуба в чате, `SessionEnding`), пришедшие, пока UI не подключён, служба держит (≤ 16, ≤ 5 минут),
   запускает ради них UI и отдаёт их сразу после первого снимка.
@@ -719,7 +724,7 @@ WMI не используется). Замер (Linux, AOT): исполняем�
    `RetryInfo` (по умолчанию 30 с). Ошибка — ключ удаляется.
 3. **Connect**: канал mTLS (`SocketsHttpHandler`: PING каждые 30 с, таймаут 10 с, одно соединение без закрытия по
    простою; отправка ≤ 1 МиБ, приём ≤ 8 МиБ; метаданные `zafiro-protocol-version`, `zafiro-agent-version`,
-   `zafiro-locale` на каждом вызове) → `Hello` (версия, `last_command_seq` из журнала, `boot_id`, железо, возможности,
+   `zafiro-locale` на каждом вызове — язык гостя, иначе язык клуба из Welcome, иначе `Agent:Locale`, §15.3) → `Hello` (версия, `last_command_seq` из журнала, `boot_id`, железо, возможности,
    статус, версия переводов, язык) → `Welcome` за 30 с (часы сервера, конфигурация, сессия, интервал статуса) →
    `Status` сразу, при каждом изменении состояния (не чаще 1 в 2 с) и не реже `status_interval` → досылка
    неподтверждённых событий и итогов долгих команд.
@@ -741,7 +746,8 @@ WMI не используется). Замер (Linux, AOT): исполняем�
    — выход гостя. Денежные RPC: пустой `idempotency_key` заполняется UUID v7, при `UNAVAILABLE`/`DEADLINE_EXCEEDED`/
    `IDEMPOTENCY_IN_PROGRESS` — до 3 попыток **тем же** ключом. Таймауты: 15 с запись, 5 с чтение.
 10. **Локально по часам сервера**: конец сессии (событие `SessionEnded{EXPIRED}`), конец техрежима, выход гостя без
-    сессии по бездействию (`idle_logout_minutes`, бездействие сообщает UI), действие после сессии
+    сессии по бездействию (`idle_logout_minutes`, бездействие сообщает UI; не выводит, пока сервер сообщает, что ждёт
+    автобиллинг — §15.1), действие после сессии
     (`after_session_action` + задержка, если гость не купил время).
 11. **Обновление**: подпись Ed25519 (`UpdateVerifier`: строка как `commands.UpdateSigningMessage`, ключи — встроенные
     `Service/ServiceOptions.cs` `UpdateKeys`, RFC 8032 — BouncyCastle) → хост из списка → скачивание (≤ size_bytes)
@@ -843,16 +849,19 @@ CI — `.github/workflows/agent.yml`: сборка, unit-тесты и Native AO
 - **Безопасность страницы**: только виртуальный хост `app.zafiro.invalid` → папка `Frontend` (`DenyCors`); навигация
   на другой адрес, фреймы, новые окна, загрузки, запросы разрешений (камера, микрофон…) — отклоняются;
   `WebResourceRequested` отвечает 403 на любой запрос не к виртуальному хосту; CSP в `index.html`:
-  `default-src 'none'; script-src 'self'; img-src 'self' data:; connect-src 'self'` (только встроенные переводы),
-  без внешних адресов и inline-скриптов; сообщения моста принимаются только от `https://app.zafiro.invalid/`.
+  `default-src 'none'; script-src 'self'; img-src 'self' data: https://img.zafiro.invalid; connect-src 'self'` (только
+  встроенные переводы), без других внешних адресов и inline-скриптов; сообщения моста принимаются только от
+  `https://app.zafiro.invalid/`.
   Release: без DevTools, контекстного меню и горячих клавиш браузера; автозаполнение и сохранение паролей выключены.
-  Картинки товаров, новостей и экрана входа с сервера не загружаются (у UI нет сети) — встроенные заглушки (AG-13).
+  Картинки клуба (новости, картинка экрана входа, логотип на закрытых мониторах) — с виртуального хоста
+  `img.zafiro.invalid`: процесс UI отвечает на них байтами из службы (IPC `agent.GetImage` → кэш службы →
+  `AgentService.GetImage`), сам в сеть не ходит (§15.2). У товаров картинок нет и в старом (заглушка, как было).
 - **Киоск** (экран блокировки, нет оплаченной сессии): окно поверх всех, чужие окна на переднем плане сворачиваются
   (раз в 1 с), другие мониторы закрыты чёрными окнами с названием клуба, перехват Win, Alt+Tab, Alt+F4, Ctrl+Esc и др.
   (`KioskRules` — без изменений из старого агента), Alt+F4 окну не закрывает его. Ctrl+Alt+Del перехватить нельзя.
-- **Деньги**: суммы на странице — целые тиыны; «На весь баланс» и автобиллинг пока считает страница той же формулой,
-  что сервер (`pricing.AffordableMinutes`, PQ-1), и покупает обычным `PurchaseMinutes` — серверного RPC для них в
-  контракте нет (AG-12).
+- **Деньги**: суммы на странице — целые тиыны; «На весь баланс» и автобиллинг считает и покупает сервер (§15.1):
+  страница показывает `GetMinuteOffer.whole_balance_minutes/price_tiyn`, покупает `GuestService/PlayWholeBalance` и
+  показывает отсчёт паузы автобиллинга из снимка (`Snapshot.auto_billing`); своей формулы и своих покупок нет.
 
 ### 14.8. Установщик и выпуск
 
@@ -895,13 +904,16 @@ CI — `.github/workflows/agent.yml`: сборка, unit-тесты и Native AO
   (имя, повтор пароля), «Забыли пароль?» (код в Telegram, новый пароль); QR-вход (если включён в клубе): QR виден,
   подтверждение с телефона — вход; кнопка языка ввода меняет раскладку; языки клуба меняют тексты.
 - [ ] **Покупка**: тарифы с ценами (тенге, без лишних нулей), выбор баланса (основной/бонусы/смешанно), покупка —
-  ПК разблокирован, лаунчер открыт до «На рабочий стол»; поминутно и «На весь баланс» (число минут как в панели);
-  абонемент; завершение сессии — возврат на баланс уведомлением; автобиллинг после паузы.
+  ПК разблокирован, лаунчер открыт до «На рабочий стол»; поминутно и «На весь баланс» (число минут считает сервер);
+  абонемент; завершение сессии — возврат на баланс уведомлением; автобиллинг после паузы (отсчёт «Поминутная оплата
+  через m:ss», покупает сервер; гость не выходит по бездействию, пока идёт пауза).
 - [ ] **Сессия**: во время игры UI не работает (`Zafiro.Agent.UI.exe` и `msedgewebview2.exe` нет в процессах), ярлык
   «Zafiro» открывает лаунчер; за 10, 5, 3, 1 минуту — уведомления в углу поверх игры; сообщение сотрудника с панели —
   уведомление; ответ клуба в чате — уведомление; конец времени — экран блокировки, отсчёт перезагрузки/выключения, если
   он включён в клубе.
-- [ ] **Магазин и прочее**: товары (картинки — заглушки, AG-13), корзина, оплата — заказ в панели; друзья, перевод с
+- [ ] **Магазин и прочее**: товары (картинки — заглушки, как в старом), новости с картинками клуба, картинка экрана входа и логотип на
+  втором мониторе (AG-13), профиль — тариф и версия агента (AG-17), смена языка — тексты ошибок сервера на этом языке
+  (AG-16), корзина, оплата — заказ в панели; друзья, перевод с
   паролем; пересадка; история с фильтрами; профиль (имя, пароль); чат.
 - [ ] **Техрежим**: Ctrl+Alt+P — окно PIN; неверный PIN — текст сервера; верный — экран снимается на время из настроек
   клуба, затем блокировка возвращается.
@@ -914,3 +926,75 @@ CI — `.github/workflows/agent.yml`: сборка, unit-тесты и Native AO
   `appsettings.json` вручную, после запуска службы стирается из файла; после загрузки клиентского ПК из образа — новый
   MAC попадает в «ожидающие», подтверждённый ПК регистрируется сам после каждой загрузки.
 - [ ] **Отключить ПК** в панели: экран «ПК не подключён к клубу»; гость этого ПК сразу может войти на соседнем ПК (AG-5).
+
+## 15. Закрытие пробелов протокола агента (Этап 5, A3)
+
+Вопросы — `docs/open-questions/stage5-agent.md` AG-12, AG-13, AG-16, AG-17. Контракт изменён совместимо (новые
+RPC, поля и вид команды; `buf breaking` против прошлого коммита — без поломок).
+
+### 15.1. «На весь баланс» и автобиллинг считает сервер (AG-12, решение Q-008)
+
+- **`GuestService.PlayWholeBalance{idempotency_key}`** → `TimePurchase` (купленные минуты, сумма, сессия с концом).
+  `billing/service.PurchaseWholeBalance`: в одной транзакции с блокировкой баланса — минуты
+  `pricing.WholeBalanceMinutes` по основному балансу и обычная покупка минут с основного (тот же ledger
+  `minutes_purchase`, журнал `time.purchased`, `StartSession`/`BalanceChanged` агенту). Своя операция идемпотентности
+  (`minutes_whole_balance`). Ошибки: `FEATURE_DISABLED` (клуб не разрешил), `TARIFF_UNAVAILABLE` (у зоны нет цены часа),
+  `INSUFFICIENT_FUNDS` (не хватает на минуту). `GetMinuteOffer` теперь отдаёт `whole_balance_minutes` и
+  `whole_balance_price_tiyn` — кнопку и цену страница берёт отсюда. Числа — GS-053 (2000 ₸ при 600 ₸/час — 200 минут).
+- **Автобиллинг** — правила старого агента (`WindowsAgent/Frontend/main.js` autoBillingTick, BR-023, GS-055):
+  гость вошёл, сессии нет, клуб включил автобиллинг, у зоны есть цена часа, основного баланса хватает на минуту →
+  пауза `auto_billing_pause_minutes`, затем покупка минут на весь основной баланс; после конца тарифа по времени —
+  сразу; гость сам завершил сессию, её завершили в клубе или перенесли, покупка не удалась — стоп до нового входа.
+  Включения/выключения гостем в старом агенте нет (настройка клуба `finances.auto_billing`), «выключение» — только
+  этот стоп.
+  - Состояние ПК — в Valkey рядом с токеном гостя (`<prefix>ab:<pc>` + ZSET `<prefix>ab:due` «когда пересмотреть»):
+    вход гостя (`signIn`/`Register`) — с чистого листа; обёртка уведомлений billing/кассы
+    (`guestapi.Server.WrapNotifier`) — начало сессии переносит пересмотр к её концу, `EndSession` с причиной EXPIRED —
+    «после тарифа», с другой — стоп, `BalanceChanged` — пересмотр сейчас; воркер истечения сессий и событие агента
+    `SessionEnded{EXPIRED}` — «после тарифа».
+  - Решение и покупку делает воркер `agent:auto-billing` (`worker.AutoBilling`, тик 1 с, один исполнитель на кластер —
+    advisory lock на каждый тик — `leader.RunOnce`, Q-086; постоянно соединение не держит): берёт ПК, срок которых пришёл (не больше 200 за тик), проверяет, что гость всё ещё вошёл
+    (токен ПК), и применяет `pricing.AutoBilling`. Покупка — `PurchaseWholeBalance{AutoBilling: true}` (операция
+    `minutes_auto_billing`) с ключом `autobill:<ПК>:<гость>:<вход>:<шаг>`: повтор после сбоя (и короткое раздвоение
+    лидерства) отвечает из `billing_requests`, второго списания нет. Без денег/выключено — пересмотр через 30 с (и сразу
+    после `BalanceChanged`); сбой БД — через 10 с.
+  - Агенту — мгновенная команда `Command.auto_billing_changed{user_id, AutoBillingStatus}` при смене состояния
+    (`enabled`, `waiting`, `pause_ends_at`, `stopped`); после входа и переподключения служба читает
+    `GuestService.GetAutoBilling`. Служба кладёт состояние в `Snapshot.auto_billing` и не выводит гостя по бездействию,
+    пока `waiting`; страница показывает «Поминутная оплата через m:ss» по часам сервера. Локальной формулы у агента нет.
+  - Тесты: `pricing` (формулы, GS-053/055), `guestapi` интеграционные `TestAG12*` (пауза → покупка 140 минут на 1400 ₸,
+    повторный тик без второй покупки, после конца тарифа — сразу, без денег — не ждёт, стоп после завершения гостем и
+    новый вход, повтор ключа, `AutoBillingChanged` в стриме), .NET `StageA3Tests`, страница `page.test.mjs`.
+
+### 15.2. Картинки клуба (AG-13)
+
+- **`AgentService.GetImage{kind, id, if_none_match}`** → `{data, content_type, etag, not_modified}` под mTLS: логотип и
+  картинка экрана входа — клуба из сертификата ПК (`club_images`), новость — клуба ПК или платформы (`news_images`);
+  чужая или удалённая — `NOT_FOUND` + `VALIDATION_FAILED`. Только PNG/JPEG ≤ 3 МиБ, etag — SHA-256. Лимит — как у
+  переводов (`agent-translations`).
+- **Служба** (`Core/Guest/ImageCache.cs`): кэш на диске `<DataDirectory>/images` (≤ 32 МиБ, старые удаляются),
+  свежая (10 минут) — без сервера, иначе запрос с etag; сервер недоступен — из кэша; `NOT_FOUND` — удаляется.
+- **UI**: страница ссылается на `https://img.zafiro.invalid/logo|signin|news/<id>`; процесс UI отвечает на эти запросы
+  WebView2 (`WebResourceRequested`) байтами из службы (`BridgeRouter.GetImageAsync`, IPC `agent.GetImage`), остальное —
+  403 как раньше. Как в старом агенте: картинка клуба на экране входа вместо стандартной (`ClubSetupWindow`
+  ShowSignInImage), логотип над названием клуба на закрытых мониторах (`Kiosk/ScreenCover.cs`), картинки новостей;
+  нет картинки — встроенная.
+
+### 15.3. Язык текстов сервера (AG-16)
+
+- Гость выбирает язык на экране → страница вызывает `agent.SetLocale` (только языки клуба; сброс — при выходе гостя) →
+  служба шлёт его в `zafiro-locale` на каждом вызове; без выбора — язык клуба (`ClubConfig.default_locale`), до Welcome —
+  `Agent:Locale`.
+- Сервер: перехватчик `guestapi.LocalizeErrors` (подключён в `internal/app`) переводит `LocalizedMessage` (и текст
+  статуса, описание поля `BadRequest`) каталогом `i18n` на язык `zafiro-locale`, если он включён, иначе на язык клуба
+  ПК. Ключ — русский текст; подстановки (`:computer`, `:time`…) переводятся вместе с ключом — `rpcError` кладёт ключ и
+  параметры во внутреннюю деталь `DebugInfo`, которую перехватчик убирает из ответа.
+
+### 15.4. Снимок для профиля (AG-17)
+
+- `ActiveSession.tariff_name` — `session_purchases.name` последней части сессии (тариф, пакет; для поминутной
+  оплаты — зона): в `Welcome.session`, `StartSession` (обёртка уведомлений), ответах входа и покупок.
+- `Snapshot.agent_version` — версия службы (`Agent:AgentVersion`); профиль лаунчера показывает «Тариф» и «Версия
+  агента: …», как `SessionPayload` старого агента (там `TariffName` фактически всегда был пуст — сервер его не
+  присылал).
+

@@ -177,7 +177,16 @@ internal sealed class MainWindow : Window
         core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
         core.WebResourceRequested += (_, args) =>
         {
-            if (!IsAppUrl(args.Request.Uri) && !args.Request.Uri.StartsWith("data:", StringComparison.Ordinal))
+            var uri = args.Request.Uri;
+            if (uri.StartsWith(BridgeRouter.ImageOrigin, StringComparison.Ordinal))
+            {
+                // Картинки клуба (AG-13): байты из службы, UI в сеть не ходит; нет картинки — 404 (страница — заглушка).
+                var deferral = args.GetDeferral();
+                _ = ServeImageAsync(environment, args, deferral, uri);
+                return;
+            }
+
+            if (!IsAppUrl(uri) && !uri.StartsWith("data:", StringComparison.Ordinal))
                 args.Response = environment.CreateWebResourceResponse(null, 403, "Forbidden", "");
         };
         core.ProcessFailed += (_, args) =>
@@ -217,6 +226,27 @@ internal sealed class MainWindow : Window
 
         core.SetVirtualHostNameToFolderMapping(AppHost, frontend, CoreWebView2HostResourceAccessKind.DenyCors);
         core.Navigate(AppOrigin + "index.html");
+    }
+
+    private async Task ServeImageAsync(CoreWebView2Environment environment, CoreWebView2WebResourceRequestedEventArgs args,
+        CoreWebView2Deferral deferral, string uri)
+    {
+        try
+        {
+            var image = await _bridge.GetImageAsync(uri, _closing.Token).ConfigureAwait(true);
+            args.Response = image is null
+                ? environment.CreateWebResourceResponse(null, 404, "Not Found", "")
+                : environment.CreateWebResourceResponse(new MemoryStream(image.Data.ToByteArray(), writable: false), 200, "OK",
+                    "Content-Type: " + image.ContentType + "\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff");
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or InvalidOperationException or COMException)
+        {
+            UiLog.Write("image request failed: " + ex.Message);
+        }
+        finally
+        {
+            deferral.Complete();
+        }
     }
 
     private async void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)

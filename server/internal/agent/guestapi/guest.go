@@ -334,19 +334,20 @@ func (gs *guestService) PurchaseTariff(ctx context.Context, req *agentv1.Purchas
 
 // timePurchase — ответ sell(): балансы после покупки, минуты, сессия.
 func (s *Server) timePurchase(ctx context.Context, id identity.Identity, g Guest, res billingsvc.PurchaseResult, msg string) (*agentv1.TimePurchase, error) {
-	currency := "KZT"
+	currency, tariff := "KZT", ""
 	err := db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
 		ci, err := loadClub(ctx, q, id)
 		if err != nil {
 			return err
 		}
 		currency = ci.settings.currency
-		return nil
+		tariff, err = sessionTariffName(ctx, q, id.ClubID, res.SessionID)
+		return err
 	})
 	if err != nil {
 		return nil, s.fail(ctx, "timePurchase", err)
 	}
-	sess := &agentv1.ActiveSession{SessionId: res.SessionID, UserId: g.UserID, EndsAt: timestamppb.New(res.SessionEndsAt)}
+	sess := &agentv1.ActiveSession{SessionId: res.SessionID, UserId: g.UserID, EndsAt: timestamppb.New(res.SessionEndsAt), TariffName: tariff}
 	return &agentv1.TimePurchase{
 		Message:          msg,
 		Balance:          &agentv1.Balance{MainTiyn: int64(res.NewBalance), BonusTiyn: int64(res.NewBonus), Currency: currency},
@@ -357,7 +358,8 @@ func (s *Server) timePurchase(ctx context.Context, id identity.Identity, g Guest
 	}, nil
 }
 
-// GetMinuteOffer — условия поминутной оплаты в зоне ПК (GET /api/guest/minutes, GuestMinutesController::show()).
+// GetMinuteOffer — условия поминутной оплаты в зоне ПК (GET /api/guest/minutes, GuestMinutesController::show())
+// и «на весь баланс» по основному балансу гостя (решение Q-008: минуты считает сервер, агент только показывает).
 func (gs *guestService) GetMinuteOffer(ctx context.Context, _ *agentv1.GetMinuteOfferRequest) (*agentv1.GetMinuteOfferResponse, error) {
 	s := gs.s
 	ctx, id, g, err := s.guestCall(ctx, "api.guest.minutes")
@@ -366,31 +368,25 @@ func (gs *guestService) GetMinuteOffer(ctx context.Context, _ *agentv1.GetMinute
 	}
 	var out *agentv1.GetMinuteOfferResponse
 	err = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
-		ci, err := loadClub(ctx, q, id)
-		if err != nil {
-			return err
-		}
-		pcRow, err := q.GuestComputer(ctx, store.GuestComputerParams{ClubID: id.ClubID, ID: id.ComputerID})
-		if err != nil {
-			return err
-		}
-		// hourlyPrice(): скидка — только при членстве и если клуб применяет её к поминутному времени.
-		var discount float64
-		if u, err := q.GuestUserInClub(ctx, store.GuestUserInClubParams{ClubID: id.ClubID, UserID: g.UserID}); err == nil {
-			discount = bonus.LoyaltyDiscountFor(ci.settings.bonus.LoyaltyLevelsInForce(), u.Discount, money.Tiyn(u.TotalSpent))
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		var price *money.Tiyn
-		if pcRow.PricePerHour != nil {
-			p := money.Tiyn(*pcRow.PricePerHour)
-			price = &p
-		}
-		o, err := pricing.MinuteOfferFor(price, ci.settings.rules, discount)
+		o, pcRow, ci, err := minuteOfferFor(ctx, q, id, g.UserID)
 		if err != nil {
 			return err
 		}
 		out = minuteOffer(o, pcRow.ZoneName, ci.settings.currency)
+		if o.WholeBalance && o.Available {
+			b, err := q.GetMemberBalance(ctx, store.GetMemberBalanceParams{ClubID: id.ClubID, UserID: g.UserID})
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			// renderWholeBalance(): wholeMinutes = affordableMinutes(), цена — minutesPrice(hourCents, wholeMinutes).
+			if minutes := pricing.WholeBalanceMinutes(o, money.Tiyn(b.Balance)); minutes > 0 {
+				price, err := pricing.MinutesPrice(o.PricePerHour, minutes)
+				if err != nil {
+					return err
+				}
+				out.WholeBalanceMinutes, out.WholeBalancePriceTiyn = int32(minutes), int64(price) // #nosec G115 -- ≤ 720
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -411,8 +407,8 @@ func minuteOffer(o pricing.MinuteOffer, zone, currency string) *agentv1.GetMinut
 	}
 }
 
-// PurchaseMinutes — покупка минут (POST /api/guest/minutes/purchase, purchaseMinutes()); автобиллинг агента и
-// «игра на весь баланс» (pricing.AffordableMinutes у агента) идут через этот же RPC.
+// PurchaseMinutes — покупка минут (POST /api/guest/minutes/purchase, purchaseMinutes()). «На весь баланс» и
+// автобиллинг считает сервер (PlayWholeBalance, autobilling.go — решение Q-008).
 func (gs *guestService) PurchaseMinutes(ctx context.Context, req *agentv1.PurchaseMinutesRequest) (*agentv1.PurchaseMinutesResponse, error) {
 	s := gs.s
 	ctx, id, g, err := s.guestCall(ctx, "api.guest.minutes.purchase")
@@ -439,6 +435,45 @@ func (gs *guestService) PurchaseMinutes(ctx context.Context, req *agentv1.Purcha
 			}
 			return &agentv1.PurchaseMinutesResponse{Purchase: p}, nil
 		})
+}
+
+// PlayWholeBalance — «играть на весь баланс»: минуты считает сервер по основному балансу под блокировкой
+// (billing PurchaseWholeBalance, решение Q-008). Старый агент считал их сам и покупал purchaseMinutes(…, 'main').
+func (gs *guestService) PlayWholeBalance(ctx context.Context, req *agentv1.PlayWholeBalanceRequest) (*agentv1.PlayWholeBalanceResponse, error) {
+	s := gs.s
+	ctx, id, g, err := s.guestCall(ctx, "api.guest.minutes.purchase")
+	if err != nil {
+		return nil, err
+	}
+	return once(ctx, s.idem, id.ComputerID, "PlayWholeBalance", req.GetIdempotencyKey(), req, &agentv1.PlayWholeBalanceResponse{},
+		func() (*agentv1.PlayWholeBalanceResponse, error) {
+			res, err := s.o.Billing.PurchaseWholeBalance(ctx, billingsvc.WholeBalanceRequest{
+				ClubID: id.ClubID, UserID: g.UserID, ComputerID: id.ComputerID,
+				IdempotencyKey: serviceKey(id.ComputerID, req.GetIdempotencyKey()), Actor: actor(ctx, g),
+			})
+			if err != nil {
+				return nil, s.fail(ctx, "PlayWholeBalance", err)
+			}
+			p, err := s.timePurchase(ctx, id, g, res, msgMinutesBought)
+			if err != nil {
+				return nil, err
+			}
+			return &agentv1.PlayWholeBalanceResponse{Purchase: p}, nil
+		})
+}
+
+// GetAutoBilling — состояние автобиллинга гостя на этом ПК (покупает сервер, autobilling.go).
+func (gs *guestService) GetAutoBilling(ctx context.Context, _ *agentv1.GetAutoBillingRequest) (*agentv1.GetAutoBillingResponse, error) {
+	s := gs.s
+	ctx, id, g, err := s.guestCall(ctx, "api.guest.minutes")
+	if err != nil {
+		return nil, err
+	}
+	st, err := s.autoBillingStatus(ctx, id, g)
+	if err != nil {
+		return nil, s.fail(ctx, "GetAutoBilling", err)
+	}
+	return &agentv1.GetAutoBillingResponse{Status: st}, nil
 }
 
 // ListPackages — сохранённые пакеты гостя (GET /api/guest/packages, packagesFor()).

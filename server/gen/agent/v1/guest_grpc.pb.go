@@ -424,20 +424,22 @@ var GuestAuthService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	GuestService_GetProfile_FullMethodName      = "/zafiro.agent.v1.GuestService/GetProfile"
-	GuestService_UpdateName_FullMethodName      = "/zafiro.agent.v1.GuestService/UpdateName"
-	GuestService_ChangePassword_FullMethodName  = "/zafiro.agent.v1.GuestService/ChangePassword"
-	GuestService_ListTariffs_FullMethodName     = "/zafiro.agent.v1.GuestService/ListTariffs"
-	GuestService_PurchaseTariff_FullMethodName  = "/zafiro.agent.v1.GuestService/PurchaseTariff"
-	GuestService_GetMinuteOffer_FullMethodName  = "/zafiro.agent.v1.GuestService/GetMinuteOffer"
-	GuestService_PurchaseMinutes_FullMethodName = "/zafiro.agent.v1.GuestService/PurchaseMinutes"
-	GuestService_ListPackages_FullMethodName    = "/zafiro.agent.v1.GuestService/ListPackages"
-	GuestService_StartPackage_FullMethodName    = "/zafiro.agent.v1.GuestService/StartPackage"
-	GuestService_EndSession_FullMethodName      = "/zafiro.agent.v1.GuestService/EndSession"
-	GuestService_GetSeatMap_FullMethodName      = "/zafiro.agent.v1.GuestService/GetSeatMap"
-	GuestService_TransferSeat_FullMethodName    = "/zafiro.agent.v1.GuestService/TransferSeat"
-	GuestService_ListHistory_FullMethodName     = "/zafiro.agent.v1.GuestService/ListHistory"
-	GuestService_ListNews_FullMethodName        = "/zafiro.agent.v1.GuestService/ListNews"
+	GuestService_GetProfile_FullMethodName       = "/zafiro.agent.v1.GuestService/GetProfile"
+	GuestService_UpdateName_FullMethodName       = "/zafiro.agent.v1.GuestService/UpdateName"
+	GuestService_ChangePassword_FullMethodName   = "/zafiro.agent.v1.GuestService/ChangePassword"
+	GuestService_ListTariffs_FullMethodName      = "/zafiro.agent.v1.GuestService/ListTariffs"
+	GuestService_PurchaseTariff_FullMethodName   = "/zafiro.agent.v1.GuestService/PurchaseTariff"
+	GuestService_GetMinuteOffer_FullMethodName   = "/zafiro.agent.v1.GuestService/GetMinuteOffer"
+	GuestService_PurchaseMinutes_FullMethodName  = "/zafiro.agent.v1.GuestService/PurchaseMinutes"
+	GuestService_PlayWholeBalance_FullMethodName = "/zafiro.agent.v1.GuestService/PlayWholeBalance"
+	GuestService_GetAutoBilling_FullMethodName   = "/zafiro.agent.v1.GuestService/GetAutoBilling"
+	GuestService_ListPackages_FullMethodName     = "/zafiro.agent.v1.GuestService/ListPackages"
+	GuestService_StartPackage_FullMethodName     = "/zafiro.agent.v1.GuestService/StartPackage"
+	GuestService_EndSession_FullMethodName       = "/zafiro.agent.v1.GuestService/EndSession"
+	GuestService_GetSeatMap_FullMethodName       = "/zafiro.agent.v1.GuestService/GetSeatMap"
+	GuestService_TransferSeat_FullMethodName     = "/zafiro.agent.v1.GuestService/TransferSeat"
+	GuestService_ListHistory_FullMethodName      = "/zafiro.agent.v1.GuestService/ListHistory"
+	GuestService_ListNews_FullMethodName         = "/zafiro.agent.v1.GuestService/ListNews"
 )
 
 // GuestServiceClient is the client API for GuestService service.
@@ -468,8 +470,17 @@ type GuestServiceClient interface {
 	GetMinuteOffer(ctx context.Context, in *GetMinuteOfferRequest, opts ...grpc.CallOption) (*GetMinuteOfferResponse, error)
 	// Покупка минут (1..720, GuestMinutesController::MAX_MINUTES). idempotency_key ОБЯЗАТЕЛЕН.
 	// Заменяет POST /api/guest/minutes/purchase (AgentTariffPurchaseService::purchaseMinutes; 10/мин).
-	// Автобиллинг агента тоже идёт через этот RPC.
 	PurchaseMinutes(ctx context.Context, in *PurchaseMinutesRequest, opts ...grpc.CallOption) (*PurchaseMinutesResponse, error)
+	// «Играть на весь баланс»: сервер сам считает минуты на весь основной баланс (pricing.WholeBalanceMinutes,
+	// решение Q-008) и покупает их с основного баланса в той же транзакции, что и блокировка баланса.
+	// idempotency_key ОБЯЗАТЕЛЕН. Заменяет локальный расчёт старого агента (WindowsAgent/Frontend/main.js
+	// renderWholeBalance, обработчик minuteWholeBuy → purchaseMinutes). Лимит — как PurchaseMinutes (10/мин).
+	// Ошибки: FEATURE_DISABLED (клуб не разрешил), TARIFF_UNAVAILABLE (у зоны нет цены часа), INSUFFICIENT_FUNDS
+	// (не хватает и на минуту), COMPUTER_RESERVED, IDEMPOTENCY_*, RATE_LIMITED.
+	PlayWholeBalance(ctx context.Context, in *PlayWholeBalanceRequest, opts ...grpc.CallOption) (*PlayWholeBalanceResponse, error)
+	// Состояние автобиллинга гостя на этом ПК (после входа и переподключения; дальше — команда AutoBillingChanged).
+	// Покупку делает сервер (решение Q-008); у агента автобиллинга нет. Лимит 60/мин на гостя.
+	GetAutoBilling(ctx context.Context, in *GetAutoBillingRequest, opts ...grpc.CallOption) (*GetAutoBillingResponse, error)
 	// Сохранённые пакеты времени гостя (TimePackage). Заменяет GET /api/guest/packages (60/мин).
 	ListPackages(ctx context.Context, in *ListPackagesRequest, opts ...grpc.CallOption) (*ListPackagesResponse, error)
 	// Запуск сохранённого пакета на этом ПК (без оплаты). idempotency_key ОБЯЗАТЕЛЕН.
@@ -574,6 +585,26 @@ func (c *guestServiceClient) PurchaseMinutes(ctx context.Context, in *PurchaseMi
 	return out, nil
 }
 
+func (c *guestServiceClient) PlayWholeBalance(ctx context.Context, in *PlayWholeBalanceRequest, opts ...grpc.CallOption) (*PlayWholeBalanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PlayWholeBalanceResponse)
+	err := c.cc.Invoke(ctx, GuestService_PlayWholeBalance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *guestServiceClient) GetAutoBilling(ctx context.Context, in *GetAutoBillingRequest, opts ...grpc.CallOption) (*GetAutoBillingResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetAutoBillingResponse)
+	err := c.cc.Invoke(ctx, GuestService_GetAutoBilling_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *guestServiceClient) ListPackages(ctx context.Context, in *ListPackagesRequest, opts ...grpc.CallOption) (*ListPackagesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListPackagesResponse)
@@ -672,8 +703,17 @@ type GuestServiceServer interface {
 	GetMinuteOffer(context.Context, *GetMinuteOfferRequest) (*GetMinuteOfferResponse, error)
 	// Покупка минут (1..720, GuestMinutesController::MAX_MINUTES). idempotency_key ОБЯЗАТЕЛЕН.
 	// Заменяет POST /api/guest/minutes/purchase (AgentTariffPurchaseService::purchaseMinutes; 10/мин).
-	// Автобиллинг агента тоже идёт через этот RPC.
 	PurchaseMinutes(context.Context, *PurchaseMinutesRequest) (*PurchaseMinutesResponse, error)
+	// «Играть на весь баланс»: сервер сам считает минуты на весь основной баланс (pricing.WholeBalanceMinutes,
+	// решение Q-008) и покупает их с основного баланса в той же транзакции, что и блокировка баланса.
+	// idempotency_key ОБЯЗАТЕЛЕН. Заменяет локальный расчёт старого агента (WindowsAgent/Frontend/main.js
+	// renderWholeBalance, обработчик minuteWholeBuy → purchaseMinutes). Лимит — как PurchaseMinutes (10/мин).
+	// Ошибки: FEATURE_DISABLED (клуб не разрешил), TARIFF_UNAVAILABLE (у зоны нет цены часа), INSUFFICIENT_FUNDS
+	// (не хватает и на минуту), COMPUTER_RESERVED, IDEMPOTENCY_*, RATE_LIMITED.
+	PlayWholeBalance(context.Context, *PlayWholeBalanceRequest) (*PlayWholeBalanceResponse, error)
+	// Состояние автобиллинга гостя на этом ПК (после входа и переподключения; дальше — команда AutoBillingChanged).
+	// Покупку делает сервер (решение Q-008); у агента автобиллинга нет. Лимит 60/мин на гостя.
+	GetAutoBilling(context.Context, *GetAutoBillingRequest) (*GetAutoBillingResponse, error)
 	// Сохранённые пакеты времени гостя (TimePackage). Заменяет GET /api/guest/packages (60/мин).
 	ListPackages(context.Context, *ListPackagesRequest) (*ListPackagesResponse, error)
 	// Запуск сохранённого пакета на этом ПК (без оплаты). idempotency_key ОБЯЗАТЕЛЕН.
@@ -728,6 +768,12 @@ func (UnimplementedGuestServiceServer) GetMinuteOffer(context.Context, *GetMinut
 }
 func (UnimplementedGuestServiceServer) PurchaseMinutes(context.Context, *PurchaseMinutesRequest) (*PurchaseMinutesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PurchaseMinutes not implemented")
+}
+func (UnimplementedGuestServiceServer) PlayWholeBalance(context.Context, *PlayWholeBalanceRequest) (*PlayWholeBalanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PlayWholeBalance not implemented")
+}
+func (UnimplementedGuestServiceServer) GetAutoBilling(context.Context, *GetAutoBillingRequest) (*GetAutoBillingResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetAutoBilling not implemented")
 }
 func (UnimplementedGuestServiceServer) ListPackages(context.Context, *ListPackagesRequest) (*ListPackagesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListPackages not implemented")
@@ -897,6 +943,42 @@ func _GuestService_PurchaseMinutes_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GuestService_PlayWholeBalance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PlayWholeBalanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GuestServiceServer).PlayWholeBalance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GuestService_PlayWholeBalance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GuestServiceServer).PlayWholeBalance(ctx, req.(*PlayWholeBalanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GuestService_GetAutoBilling_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetAutoBillingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GuestServiceServer).GetAutoBilling(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GuestService_GetAutoBilling_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GuestServiceServer).GetAutoBilling(ctx, req.(*GetAutoBillingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _GuestService_ListPackages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListPackagesRequest)
 	if err := dec(in); err != nil {
@@ -1057,6 +1139,14 @@ var GuestService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PurchaseMinutes",
 			Handler:    _GuestService_PurchaseMinutes_Handler,
+		},
+		{
+			MethodName: "PlayWholeBalance",
+			Handler:    _GuestService_PlayWholeBalance_Handler,
+		},
+		{
+			MethodName: "GetAutoBilling",
+			Handler:    _GuestService_GetAutoBilling_Handler,
 		},
 		{
 			MethodName: "ListPackages",

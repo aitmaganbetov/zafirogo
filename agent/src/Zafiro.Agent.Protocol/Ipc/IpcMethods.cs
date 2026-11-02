@@ -25,6 +25,8 @@ public static class IpcMethods
         new("agent.GetTranslations", GetTranslationsRequest.Descriptor, GetTranslationsResponse.Descriptor),
         new("agent.ReportActivity", ReportActivityRequest.Descriptor, GetSnapshotRequest.Descriptor),
         new("agent.SignOut", SignOutRequest.Descriptor, Snapshot.Descriptor),
+        new("agent.SetLocale", SetLocaleRequest.Descriptor, Snapshot.Descriptor),
+        new("agent.GetImage", GetImageRequest.Descriptor, GetImageResponse.Descriptor),
 
         new("GuestAuthService/Login", LoginRequest.Descriptor, LoginResponse.Descriptor),
         new("GuestAuthService/Register", RegisterRequest.Descriptor, RegisterResponse.Descriptor),
@@ -41,6 +43,8 @@ public static class IpcMethods
         new("GuestService/PurchaseTariff", PurchaseTariffRequest.Descriptor, PurchaseTariffResponse.Descriptor),
         new("GuestService/GetMinuteOffer", GetMinuteOfferRequest.Descriptor, GetMinuteOfferResponse.Descriptor),
         new("GuestService/PurchaseMinutes", PurchaseMinutesRequest.Descriptor, PurchaseMinutesResponse.Descriptor),
+        new("GuestService/PlayWholeBalance", PlayWholeBalanceRequest.Descriptor, PlayWholeBalanceResponse.Descriptor),
+        new("GuestService/GetAutoBilling", GetAutoBillingRequest.Descriptor, GetAutoBillingResponse.Descriptor),
         new("GuestService/ListPackages", ListPackagesRequest.Descriptor, ListPackagesResponse.Descriptor),
         new("GuestService/StartPackage", StartPackageRequest.Descriptor, StartPackageResponse.Descriptor),
         new("GuestService/EndSession", EndSessionRequest.Descriptor, EndSessionResponse.Descriptor),

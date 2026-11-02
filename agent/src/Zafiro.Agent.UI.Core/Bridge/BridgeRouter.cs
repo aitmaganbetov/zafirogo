@@ -67,7 +67,8 @@ public sealed partial class BridgeRouter
         {
             if (method.StartsWith("ui.", StringComparison.Ordinal))
                 return Result(id, LocalCall(method, parameters));
-            if (!IpcMethods.All.TryGetValue(method, out var ipcMethod))
+            // Картинки — только через виртуальный хост (ImageRoute), не JSON-мостом.
+            if (method == "agent.GetImage" || !IpcMethods.All.TryGetValue(method, out var ipcMethod))
                 return Failure(id, BridgeError(Grpc.Core.StatusCode.Unimplemented));
 
             IMessage request;

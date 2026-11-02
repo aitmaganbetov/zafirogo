@@ -47,11 +47,14 @@ public sealed class AgentChannelFactory
 
     private readonly AgentOptions _options;
     private readonly TrustAnchors _trust;
+    private readonly Func<string>? _locale;
 
-    public AgentChannelFactory(AgentOptions options, TrustAnchors trust)
+    /// <param name="locale">Язык заголовка zafiro-locale на момент вызова (язык гостя или клуба, AG-16); null — <see cref="AgentOptions.Locale"/>.</param>
+    public AgentChannelFactory(AgentOptions options, TrustAnchors trust, Func<string>? locale = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _trust = trust ?? throw new ArgumentNullException(nameof(trust));
+        _locale = locale;
     }
 
     /// <summary>Канал регистрации: TLS без клиентского сертификата (с просроченным сертификатом TLS не поднимется).</summary>
@@ -116,7 +119,8 @@ public sealed class AgentChannelFactory
     {
         md.Add("zafiro-protocol-version", ProtocolVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
         md.Add("zafiro-agent-version", _options.AgentVersion);
-        md.Add("zafiro-locale", _options.Locale);
+        var locale = _locale?.Invoke();
+        md.Add("zafiro-locale", string.IsNullOrEmpty(locale) ? _options.Locale : locale);
         return md;
     }
 

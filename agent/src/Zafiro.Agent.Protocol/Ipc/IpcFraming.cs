@@ -4,19 +4,27 @@ using Zafiro.Agent.Ipc.V1;
 
 namespace Zafiro.Agent.Ipc;
 
-/// <summary>Кадры IPC: 4 байта длины (little-endian) + Envelope (protobuf), не больше 1 МиБ.</summary>
+/// <summary>
+/// Кадры IPC: 4 байта длины (little-endian) + Envelope (protobuf). UI → служба — не больше 1 МиБ
+/// (<see cref="MaxRequestFrameBytes"/>), служба → UI — не больше 4 МиБ (<see cref="MaxFrameBytes"/>: картинка клуба
+/// до 3 МиБ в ответе agent.GetImage, AG-13).
+/// </summary>
 public static class IpcFraming
 {
-    public const int MaxFrameBytes = 1024 * 1024;
+    /// <summary>Предел кадра службы (ответы и события).</summary>
+    public const int MaxFrameBytes = 4 * 1024 * 1024;
 
-    /// <summary>Читает кадр; null — канал закрыт. Слишком большой или испорченный кадр — <see cref="InvalidDataException"/>.</summary>
-    public static async Task<Envelope?> ReadAsync(Stream stream, CancellationToken ct)
+    /// <summary>Предел кадра UI (запросы): служба читает кадры UI с этим пределом.</summary>
+    public const int MaxRequestFrameBytes = 1024 * 1024;
+
+    /// <summary>Читает кадр; null — канал закрыт. Больше <paramref name="maxBytes"/> или испорченный кадр — <see cref="InvalidDataException"/>.</summary>
+    public static async Task<Envelope?> ReadAsync(Stream stream, CancellationToken ct, int maxBytes = MaxFrameBytes)
     {
         ArgumentNullException.ThrowIfNull(stream);
         var header = new byte[4];
         if (!await ReadExactly(stream, header, ct).ConfigureAwait(false)) return null;
         var length = BinaryPrimitives.ReadInt32LittleEndian(header);
-        if (length < 0 || length > MaxFrameBytes) throw new InvalidDataException("IPC frame is too large.");
+        if (length < 0 || length > maxBytes) throw new InvalidDataException("IPC frame is too large.");
         var body = new byte[length];
         if (!await ReadExactly(stream, body, ct).ConfigureAwait(false)) throw new InvalidDataException("IPC frame is truncated.");
         try
@@ -30,12 +38,12 @@ public static class IpcFraming
     }
 
     /// <summary>Пишет кадр (вызывающий сериализует запись в один поток).</summary>
-    public static async Task WriteAsync(Stream stream, Envelope envelope, CancellationToken ct)
+    public static async Task WriteAsync(Stream stream, Envelope envelope, CancellationToken ct, int maxBytes = MaxFrameBytes)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(envelope);
         var size = envelope.CalculateSize();
-        if (size > MaxFrameBytes) throw new InvalidDataException("IPC frame is too large.");
+        if (size > maxBytes) throw new InvalidDataException("IPC frame is too large.");
         var buf = new byte[4 + size];
         BinaryPrimitives.WriteInt32LittleEndian(buf, size);
         envelope.WriteTo(buf.AsSpan(4));

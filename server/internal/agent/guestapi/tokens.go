@@ -310,3 +310,23 @@ func (t *Tokens) RevokeEverywhere(ctx context.Context, userID int64) ([]Guest, e
 	}
 	return out, nil
 }
+
+// ComputerUser — гость, вошедший на ПК сейчас (живой токен ПК); нулевой Guest — никто.
+func (t *Tokens) ComputerUser(ctx context.Context, computerID int64) (Guest, error) {
+	hash, err := t.c.Do(ctx, t.c.B().Get().Key(t.pcKey(computerID)).Build()).ToString()
+	if valkey.IsValkeyNil(err) {
+		return Guest{}, nil
+	}
+	if err != nil {
+		return Guest{}, err
+	}
+	m, err := t.c.Do(ctx, t.c.B().Hgetall().Key(t.tokKey(hash)).Build()).AsStrMap()
+	if err != nil {
+		return Guest{}, err
+	}
+	g, _, ok := parseToken(m)
+	if !ok || g.PC != computerID || !t.now().Before(g.ExpiresAt) {
+		return Guest{}, nil
+	}
+	return g, nil
+}

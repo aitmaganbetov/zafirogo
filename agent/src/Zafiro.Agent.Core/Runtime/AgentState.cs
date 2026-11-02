@@ -29,8 +29,42 @@ public sealed class AgentState
     private string _clubName = "";
     private TimeSpan _statusInterval = TimeSpan.FromSeconds(60);
     private DateTimeOffset? _renewAfterOverride;
+    private AutoBillingStatus? _autoBilling;
+    private string? _guestLocale;
 
     public AgentState(TimeProvider? time = null) => _time = time ?? TimeProvider.System;
+
+    /// <summary>Версия агента (Snapshot.agent_version — профиль лаунчера, AG-17).</summary>
+    public string AgentVersion { get; init; } = "";
+
+    /// <summary>Язык ПК из настроек (Agent:Locale) — пока нет языка гостя и языка клуба.</summary>
+    public string FallbackLocale { get; init; } = "ru";
+
+    /// <summary>
+    /// Язык текстов сервера (заголовок zafiro-locale, AG-16): выбранный гостем на экране (<see cref="SetGuestLocale"/>),
+    /// иначе язык клуба (ClubConfig.default_locale), иначе язык ПК. Старый агент слал Accept-Language языка гостя.
+    /// </summary>
+    public string RequestLocale
+    {
+        get
+        {
+            lock (_gate) return RequestLocaleLocked();
+        }
+    }
+
+    private string RequestLocaleLocked() =>
+        !string.IsNullOrEmpty(_guestLocale) ? _guestLocale
+        : !string.IsNullOrEmpty(_config?.DefaultLocale) ? _config.DefaultLocale
+        : FallbackLocale;
+
+    /// <summary>Автобиллинг вошедшего гостя (решение Q-008: решает сервер). null — неизвестно или гостя нет.</summary>
+    public AutoBillingStatus? AutoBilling
+    {
+        get
+        {
+            lock (_gate) return _autoBilling?.Clone();
+        }
+    }
 
     /// <summary>Любое изменение состояния (для Status и событий UI).</summary>
     public event Action? Changed;
@@ -276,6 +310,7 @@ public sealed class AgentState
             _guest = signIn.Clone();
             if (signIn.Session is not null) _session = signIn.Session.Clone();
             _idleSeconds = 0;
+            _autoBilling = null;
             return true;
         });
     }
@@ -290,9 +325,57 @@ public sealed class AgentState
             if (onlyUserId > 0 && _guest.User?.UserId != onlyUserId) return false;
             user = _guest.User?.UserId ?? 0;
             _guest = null;
+            _autoBilling = null;
+            // После выхода гостя — язык клуба (как экран входа старого агента).
+            _guestLocale = null;
             return true;
         });
         return user;
+    }
+
+    /// <summary>AutoBillingChanged / GetAutoBilling для гостя <paramref name="userId"/> (чужое — игнорируется).</summary>
+    public bool SetAutoBilling(long userId, AutoBillingStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        var applied = false;
+        Mutate(() =>
+        {
+            if (_guest is null || (userId > 0 && _guest.User?.UserId != userId)) return false;
+            if (status.Equals(_autoBilling)) return false;
+            _autoBilling = status.Clone();
+            applied = true;
+            return true;
+        });
+        return applied;
+    }
+
+    /// <summary>
+    /// Язык гостя (agent.SetLocale): только из ClubConfig.languages (до Welcome — формат [a-z]{2,8}); пусто — сброс к
+    /// языку клуба. false — язык не разрешён.
+    /// </summary>
+    public bool SetGuestLocale(string? locale)
+    {
+        var ok = true;
+        Mutate(() =>
+        {
+            var value = string.IsNullOrEmpty(locale) ? null : locale;
+            if (value is not null)
+            {
+                var allowed = _config is { Languages.Count: > 0 }
+                    ? _config.Languages.Any(l => l.Code == value)
+                    : value.Length is >= 2 and <= 8 && value.All(c => c is >= 'a' and <= 'z');
+                if (!allowed)
+                {
+                    ok = false;
+                    return false;
+                }
+            }
+
+            if (value == _guestLocale) return false;
+            _guestLocale = value;
+            return true;
+        });
+        return ok;
     }
 
     /// <summary>BalanceChanged / ответ покупки. Чужой баланс игнорируется.</summary>
@@ -409,6 +492,9 @@ public sealed class AgentState
                 ServerTime = Timestamp.FromDateTimeOffset(_time.GetUtcNow() + _clockOffset),
                 TranslationsVersion = Math.Max(_translationsVersion, _serverTranslationsVersion),
                 ClubName = _clubName,
+                AutoBilling = _guest is null ? null : _autoBilling?.Clone(),
+                AgentVersion = AgentVersion,
+                Locale = RequestLocaleLocked(),
             };
             if (_serviceUntil is { } until) snap.ServiceUntil = Timestamp.FromDateTimeOffset(until);
             return snap;

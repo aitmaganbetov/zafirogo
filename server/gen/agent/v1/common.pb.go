@@ -569,7 +569,11 @@ type ActiveSession struct {
 	// true — сессию открыли на кассе без аккаунта: агент разблокирует ПК без входа.
 	Guest bool `protobuf:"varint,4,opt,name=guest,proto3" json:"guest,omitempty"`
 	// Начало сессии.
-	StartedAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	StartedAt *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	// Что куплено последним в этой сессии (session_purchases.name последней части: название тарифа или пакета,
+	// для поминутной оплаты — зона). Пусто — неизвестно (гостевая сессия с кассы). Показ — профиль лаунчера
+	// («Тариф», в старом агенте поле SessionInfo.TariffName).
+	TariffName    string `protobuf:"bytes,6,opt,name=tariff_name,json=tariffName,proto3" json:"tariff_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -639,6 +643,92 @@ func (x *ActiveSession) GetStartedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *ActiveSession) GetTariffName() string {
+	if x != nil {
+		return x.TariffName
+	}
+	return ""
+}
+
+// Автобиллинг гостя на этом ПК (решение Q-008: решает и покупает сервер, агент только показывает).
+// Правила — как у старого агента (WindowsAgent/Frontend/main.js autoBillingTick, BR-023): гость вошёл, оплаченной
+// сессии нет, клуб включил автобиллинг, у зоны есть цена часа, основного баланса хватает хотя бы на минуту →
+// пауза auto_billing_pause_minutes на выбор тарифа, затем сервер покупает минуты на весь основной баланс
+// (pricing.AutoBilling); после конца тарифа по времени — сразу, без паузы. Гость сам завершил сессию, её
+// завершили в клубе (или перенесли) или покупка не удалась — до нового входа автобиллинг не начинается.
+type AutoBillingStatus struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Клуб включил автобиллинг и у зоны ПК есть цена часа.
+	Enabled bool `protobuf:"varint,1,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	// Автобиллинг ждёт (идёт пауза или вот-вот покупка): агент не выводит гостя по бездействию
+	// (idle_logout_minutes), лаунчер показывает «Поминутная оплата через m:ss».
+	Waiting bool `protobuf:"varint,2,opt,name=waiting,proto3" json:"waiting,omitempty"`
+	// Когда кончится пауза (waiting); пусто — покупка сразу (после конца тарифа).
+	PauseEndsAt *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=pause_ends_at,json=pauseEndsAt,proto3" json:"pause_ends_at,omitempty"`
+	// Остановлен до нового входа гостя.
+	Stopped       bool `protobuf:"varint,4,opt,name=stopped,proto3" json:"stopped,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AutoBillingStatus) Reset() {
+	*x = AutoBillingStatus{}
+	mi := &file_agent_v1_common_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AutoBillingStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AutoBillingStatus) ProtoMessage() {}
+
+func (x *AutoBillingStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_common_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AutoBillingStatus.ProtoReflect.Descriptor instead.
+func (*AutoBillingStatus) Descriptor() ([]byte, []int) {
+	return file_agent_v1_common_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *AutoBillingStatus) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *AutoBillingStatus) GetWaiting() bool {
+	if x != nil {
+		return x.Waiting
+	}
+	return false
+}
+
+func (x *AutoBillingStatus) GetPauseEndsAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.PauseEndsAt
+	}
+	return nil
+}
+
+func (x *AutoBillingStatus) GetStopped() bool {
+	if x != nil {
+		return x.Stopped
+	}
+	return false
+}
+
 // Ссылка на ПК клуба (для карты пересадки, сообщений).
 type ComputerRef struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -656,7 +746,7 @@ type ComputerRef struct {
 
 func (x *ComputerRef) Reset() {
 	*x = ComputerRef{}
-	mi := &file_agent_v1_common_proto_msgTypes[3]
+	mi := &file_agent_v1_common_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -668,7 +758,7 @@ func (x *ComputerRef) String() string {
 func (*ComputerRef) ProtoMessage() {}
 
 func (x *ComputerRef) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_common_proto_msgTypes[3]
+	mi := &file_agent_v1_common_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -681,7 +771,7 @@ func (x *ComputerRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerRef.ProtoReflect.Descriptor instead.
 func (*ComputerRef) Descriptor() ([]byte, []int) {
-	return file_agent_v1_common_proto_rawDescGZIP(), []int{3}
+	return file_agent_v1_common_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ComputerRef) GetComputerId() int64 {
@@ -726,7 +816,7 @@ const file_agent_v1_common_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12!\n" +
 	"\fmasked_phone\x18\x03 \x01(\tR\vmaskedPhone\x122\n" +
-	"\x15discount_basis_points\x18\x04 \x01(\x05R\x13discountBasisPoints\"\xcd\x01\n" +
+	"\x15discount_basis_points\x18\x04 \x01(\x05R\x13discountBasisPoints\"\xee\x01\n" +
 	"\rActiveSession\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x17\n" +
@@ -734,7 +824,14 @@ const file_agent_v1_common_proto_rawDesc = "" +
 	"\aends_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x06endsAt\x12\x14\n" +
 	"\x05guest\x18\x04 \x01(\bR\x05guest\x129\n" +
 	"\n" +
-	"started_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\"\x86\x01\n" +
+	"started_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12\x1f\n" +
+	"\vtariff_name\x18\x06 \x01(\tR\n" +
+	"tariffName\"\xa1\x01\n" +
+	"\x11AutoBillingStatus\x12\x18\n" +
+	"\aenabled\x18\x01 \x01(\bR\aenabled\x12\x18\n" +
+	"\awaiting\x18\x02 \x01(\bR\awaiting\x12>\n" +
+	"\rpause_ends_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vpauseEndsAt\x12\x18\n" +
+	"\astopped\x18\x04 \x01(\bR\astopped\"\x86\x01\n" +
 	"\vComputerRef\x12\x1f\n" +
 	"\vcomputer_id\x18\x01 \x01(\x03R\n" +
 	"computerId\x12\x16\n" +
@@ -814,7 +911,7 @@ func file_agent_v1_common_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_v1_common_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_agent_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_agent_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_agent_v1_common_proto_goTypes = []any{
 	(ErrorCode)(0),                // 0: zafiro.agent.v1.ErrorCode
 	(ComputerState)(0),            // 1: zafiro.agent.v1.ComputerState
@@ -822,17 +919,19 @@ var file_agent_v1_common_proto_goTypes = []any{
 	(*Balance)(nil),               // 3: zafiro.agent.v1.Balance
 	(*GuestUser)(nil),             // 4: zafiro.agent.v1.GuestUser
 	(*ActiveSession)(nil),         // 5: zafiro.agent.v1.ActiveSession
-	(*ComputerRef)(nil),           // 6: zafiro.agent.v1.ComputerRef
-	(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
+	(*AutoBillingStatus)(nil),     // 6: zafiro.agent.v1.AutoBillingStatus
+	(*ComputerRef)(nil),           // 7: zafiro.agent.v1.ComputerRef
+	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
 }
 var file_agent_v1_common_proto_depIdxs = []int32{
-	7, // 0: zafiro.agent.v1.ActiveSession.ends_at:type_name -> google.protobuf.Timestamp
-	7, // 1: zafiro.agent.v1.ActiveSession.started_at:type_name -> google.protobuf.Timestamp
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	8, // 0: zafiro.agent.v1.ActiveSession.ends_at:type_name -> google.protobuf.Timestamp
+	8, // 1: zafiro.agent.v1.ActiveSession.started_at:type_name -> google.protobuf.Timestamp
+	8, // 2: zafiro.agent.v1.AutoBillingStatus.pause_ends_at:type_name -> google.protobuf.Timestamp
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_common_proto_init() }
@@ -846,7 +945,7 @@ func file_agent_v1_common_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_common_proto_rawDesc), len(file_agent_v1_common_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

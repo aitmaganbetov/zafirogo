@@ -59,6 +59,11 @@ func (h *Hooks) CompleteWelcome(ctx context.Context, id identity.Identity, w *ag
 			return err
 		}
 		w.Config = s.clubConfig(ci, langs)
+		if ses := w.GetSession(); ses != nil && ses.GetSessionId() != "" && ses.GetTariffName() == "" {
+			if ses.TariffName, err = sessionTariffName(ctx, q, id.ClubID, ses.GetSessionId()); err != nil {
+				return err
+			}
+		}
 		if w.TranslationsVersion, err = q.GuestTranslationsVersion(ctx, store.GuestTranslationsVersionParams{ClubID: id.ClubID, ComputerID: id.ComputerID}); err != nil {
 			return err
 		}
@@ -115,11 +120,18 @@ func (h *Hooks) FreshBoot(ctx context.Context, id identity.Identity) error {
 //     причины сессию на сервере не меняют: время ведёт сервер (истечение — воркер, пересадка и персонал — свои
 //     RPC/панель), выключение ПК сессию не обрывает («an agent state change … does not erase it»);
 //   - GuestSignedOut — гость вышел на ПК: токен гостя этого ПК отзывается (как POST /api/auth/logout);
+//   - SessionEnded с причиной EXPIRED — автобиллинг покупает сразу (autobilling.go);
 //   - остальное — в лог (ошибки агента, обновления, техрежим).
 func (h *Hooks) HandleEvent(ctx context.Context, id identity.Identity, ev *agentv1.AgentEvent) error {
 	s := h.s
 	switch k := ev.GetKind().(type) {
 	case *agentv1.AgentEvent_SessionEnded:
+		if k.SessionEnded.GetReason() == agentv1.SessionEndReason_SESSION_END_REASON_EXPIRED {
+			// Агент сам увидел конец сессии по часам сервера: автобиллинг покупает сразу (autoAfterTariff), не дожидаясь
+			// воркера истечения.
+			s.abSessionEnded(ctx, id.ComputerID, agentv1.SessionEndReason_SESSION_END_REASON_EXPIRED)
+			return nil
+		}
 		if k.SessionEnded.GetReason() != agentv1.SessionEndReason_SESSION_END_REASON_GUEST || k.SessionEnded.GetSessionId() == "" {
 			return nil
 		}

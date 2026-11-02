@@ -15,9 +15,11 @@
   const t = i18n.t;
   const tc = i18n.tc;
 
-  // Картинки товаров и новостей с сервера не загружаются: у страницы нет сети (только виртуальный хост, CSP;
-  // open-questions/stage5-agent.md AG-13) — локальная заглушка.
+  // Картинки клуба (новости, экран входа) страница берёт с виртуального хоста img.zafiro.invalid: их отдаёт процесс UI
+  // из кэша службы (AG-13), у страницы нет сети. У товаров картинок нет и в старом (ProductResource: колонки нет) —
+  // заглушка, как в старом агенте.
   const placeholderImage = 'product-placeholder.svg';
+  const imageHost = 'https://img.zafiro.invalid/';
   const normalizeProduct = (product) => ({
     id: Z.int64(product.productId) || null,
     name: product.name || null,
@@ -1088,23 +1090,31 @@
     minuteBuy.disabled = minutes === null;
     renderWholeBalance(hourCents, currency);
   };
-  // «На весь баланс»: столько минут, сколько оплачивает основной баланс (цена — как у сервера).
+  // «На весь баланс»: минуты и цену считает сервер по основному балансу (GetMinuteOffer.wholeBalanceMinutes,
+  // pricing.WholeBalanceMinutes — решение Q-008) и сам покупает их (GuestService/PlayWholeBalance).
   const minuteWhole = document.getElementById('minuteWhole');
   const minuteWholeBuy = document.getElementById('minuteWholeBuy');
   let wholeMinutes = 0;
   let wholePrice = '';
-  // Сколько минут оплачивает основной баланс по цене часа зоны — та же формула, что у сервера
-  // (pricing.AffordableMinutes, решение Q-008), целые тиыны (Zafiro.affordableMinutes).
-  const affordableMinutes = () => Z.affordableMinutes(minuteOffer, balances[0] ?? 0);
   const renderWholeBalance = (hourCents, currency) => {
-    wholeMinutes = minuteOffer?.wholeBalance === true ? affordableMinutes() : 0;
+    wholeMinutes = minuteOffer?.wholeBalance === true ? Number(minuteOffer.wholeBalanceMinutes) || 0 : 0;
     minuteWhole.hidden = wholeMinutes < 1;
     if (wholeMinutes >= 1) {
-      wholePrice = formatPrice(Z.minutesPrice(hourCents, wholeMinutes), currency);
+      wholePrice = formatPrice(Z.int64(minuteOffer.wholeBalancePriceTiyn), currency);
       minuteWholeBuy.textContent = t('На весь баланс: :time — :price', { time: formatMinutes(wholeMinutes), price: wholePrice });
     }
   };
-  onBalances = () => { if (minuteOffer?.available) renderMinutes(); };
+  // Баланс изменился — минуты «на весь баланс» пересчитывает сервер.
+  let offerBalance = null;
+  onBalances = () => {
+    if (!minuteOffer?.available) return;
+    if (minuteOffer.wholeBalance === true && balances[0] !== offerBalance) {
+      offerBalance = balances[0];
+      requestMinutes();
+      return;
+    }
+    renderMinutes();
+  };
   minuteWholeBuy.addEventListener('click', async () => {
     if (wholeMinutes < 1 || !webview) return;
     const minutes = wholeMinutes;
@@ -1114,12 +1124,13 @@
     minuteBuy.disabled = true;
     tariffCatalog.querySelectorAll('.tariff-purchase').forEach((item) => { item.disabled = true; });
     setStatus(tariffPageStatus, 'Оформляем тариф…');
-    purchaseTime('GuestService/PurchaseMinutes', { minutes, balanceSource: 'BALANCE_SOURCE_MAIN' });
+    purchaseTime('GuestService/PlayWholeBalance', {});
   });
   const requestMinutes = () => {
     if (!webview || userName === null) return;
     bridge.call('GuestService/GetMinuteOffer').then((result) => {
       minuteOffer = result;
+      offerBalance = balances[0];
     }).catch(() => {
       minuteOffer = null;
     }).finally(renderMinutes);
@@ -1141,57 +1152,28 @@
       item.disabled = false;
     });
     minuteWholeBuy.disabled = false;
-    // Поминутная оплата не началась (нет денег, бронь…): сама больше не пробует до нового входа.
-    if (autoBuying && !ok) autoStopped = true;
-    autoBuying = false;
     renderMinutes();
     setStatus(tariffPageStatus, null);
     toast(message ?? t(ok ? 'Тариф подключён.' : 'Не удалось оформить тариф.'), ok ? 'success' : 'error');
     if (ok) requestPackages();
   };
 
-  // Поминутная оплата сама (настройка клуба): после входа — когда пройдёт пауза на выбор тарифа,
-  // после тарифа — сразу, когда его время вышло. Покупаются минуты на весь основной баланс;
-  // при завершении сессии неиспользованные возвращаются. Клиент сам завершил сессию или её
-  // завершили в клубе — до нового входа поминутная оплата сама не начинается.
-  let autoPauseStart = null;
-  let autoStopped = false;
-  let autoAfterTariff = false;
-  let autoBuying = false;
-  const autoBillingOn = () => minuteOffer?.autoBilling === true && minuteOffer?.available === true;
-  const autoBillingWaits = () => webview && userName !== null && !hasActiveSession && !autoStopped && autoBillingOn() && affordableMinutes() > 0;
-  const startAutoBilling = () => {
-    const minutes = affordableMinutes();
-    if (autoBuying || minutes < 1 || !webview) return;
-    autoBuying = true;
-    autoPauseStart = null;
-    autoAfterTariff = false;
-    setStatus(tariffPageStatus, 'Оформляем тариф…');
-    purchaseTime('GuestService/PurchaseMinutes', { minutes, balanceSource: 'BALANCE_SOURCE_MAIN' });
-  };
+  // Поминутная оплата сама (настройка клуба): после входа — когда пройдёт пауза на выбор тарифа, после тарифа — сразу.
+  // Решает и покупает сервер (решение Q-008, AG-12): состояние приходит в снимке службы (autoBilling), страница только
+  // показывает «Поминутная оплата через m:ss» по часам сервера, как autoBillingTick старого агента.
+  let autoBilling = null;
+  const autoBillingWaits = () => userName !== null && !hasActiveSession && autoBilling?.waiting === true;
+  let autoBillingShown = false;
   const autoBillingTick = () => {
-    if (userName === null) {
-      autoPauseStart = null;
-      autoStopped = false;
-      autoAfterTariff = false;
+    if (!autoBillingWaits()) {
+      if (autoBillingShown && !hasActiveSession) document.getElementById('remainingBig').textContent = t('Нет активной сессии');
+      autoBillingShown = false;
       return;
     }
-    if (hasActiveSession || !autoBillingWaits()) {
-      if (autoPauseStart !== null && !hasActiveSession) document.getElementById('remainingBig').textContent = t('Нет активной сессии');
-      autoPauseStart = null;
-      return;
-    }
-    if (autoAfterTariff) {
-      startAutoBilling();
-      return;
-    }
-    autoPauseStart ??= Date.now();
-    const left = autoPauseStart + (Number(minuteOffer.autoBillingPauseMinutes) || 0) * 60000 - Date.now();
-    if (left <= 0) {
-      startAutoBilling();
-      return;
-    }
-    const seconds = Math.ceil(left / 1000);
+    const endsAt = Z.timestampMs(autoBilling.pauseEndsAt);
+    const left = endsAt === null ? 0 : endsAt - serverNow();
+    const seconds = Math.max(0, Math.ceil(left / 1000));
+    autoBillingShown = true;
     document.getElementById('remainingBig').textContent = t('Поминутная оплата через :time', { time: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` });
   };
   setInterval(autoBillingTick, 1000);
@@ -1266,7 +1248,7 @@
       card.disabled = !latest;
       text.hidden = !latest;
       text.querySelector('strong').textContent = latest?.title ?? '';
-      // Без картинки у новости остаётся встроенная картинка карточки.
+      // Без картинки у новости (или пока её нет в кэше службы) остаётся встроенная картинка карточки.
       const src = latest?.image_url || image.dataset.fallback;
       if (image.getAttribute('src') !== src) image.setAttribute('src', src);
       card.setAttribute('aria-label', latest ? `${t(newsKickers[card.dataset.newsColumn])}: ${latest.title}` : t(newsKickers[card.dataset.newsColumn]));
@@ -1293,6 +1275,8 @@
     document.getElementById('newsOlder').disabled = newsOpen.index >= list.length - 1;
   };
 
+  // Картинки новости нет в кэше службы и сервер недоступен — в окне новости без картинки.
+  document.getElementById('newsImage').addEventListener('error', (event) => { event.target.hidden = true; });
   // Картинка новости не загрузилась (нет связи) — карточка показывает свою встроенную.
   newsCards.forEach((card) => {
     const image = card.querySelector('img');
@@ -1321,8 +1305,8 @@
   // Новости — при входе гостя и при переходе на главную (без опроса по таймеру).
   const newsItem = (item) => ({
     title: item.title || '', body: item.body || '', published_at: item.publishedAt || null,
-    // Картинка новости — с сервера, у страницы нет сети: карточка показывает встроенную (AG-13).
-    image_url: ''
+    // Картинка новости — через кэш службы (img.zafiro.invalid/news/<id>, AG-13); id — только целое.
+    image_url: item.imageUrl && /^[1-9][0-9]{0,18}$/.test(String(item.newsId ?? '')) ? `${imageHost}news/${item.newsId}` : ''
   });
   const requestNews = () => {
     if (!webview || userName === null) return;
@@ -1693,8 +1677,6 @@
   // Сессия закончилась: агент снова поверх рабочего стола и ждёт оплаты; клиент остаётся в своём аккаунте.
   // Перенесено из старого агента: MainWindow.xaml.cs EndSessionLocally(), main.js (sessionEnded, afterSession).
   const endSessionLocally = (reason) => {
-    if (reason === 'expired') autoAfterTariff = true;
-    else if (reason !== 'none') autoStopped = true;
     currentSessionId = null;
     setSessionActive(false);
     clearSessionDetails();
@@ -1746,9 +1728,7 @@
       item.classList.toggle('is-active', active);
       item.setAttribute('aria-pressed', String(active));
     });
-    autoPauseStart = null;
-    autoStopped = false;
-    autoAfterTariff = false;
+    autoBilling = null;
     setView('session');
   };
 
@@ -1814,7 +1794,12 @@
 
     // Сессия по данным сервера (служба держит её по стриму): покупка, продление, перезапуск агента.
     const session = snap.session?.sessionId ? snap.session : null;
-    document.getElementById('profileTariff').textContent = '—';
+    autoBilling = snap.autoBilling ?? null;
+    // Профиль: тариф текущей сессии и версия агента (AG-17, как SessionPayload старого агента).
+    document.getElementById('profileTariff').textContent = session?.tariffName || '—';
+    const profileVersion = document.getElementById('profileVersion');
+    profileVersion.hidden = !snap.agentVersion;
+    if (snap.agentVersion) profileVersion.textContent = t('Версия агента: :version', { version: snap.agentVersion });
     if (session) {
       currentSessionId = session.sessionId;
       sessionEndsAt = Z.timestampMs(session.endsAt);
@@ -1823,7 +1808,6 @@
       showSessionTime();
       setSessionActive(true);
       stopAfterSessionCountdown();
-      autoPauseStart = null;
     } else if (hasActiveSession) {
       // Сессия закончилась не по кнопке: время вышло или её закрыли в клубе.
       const timeIsUp = sessionEndsAt !== null && sessionEndsAt <= serverNow() + 30000;

@@ -74,23 +74,11 @@
   const intDiv = (a, b) => (a - (a % b)) / b;
 
   /**
-   * Цена минут по цене часа (тиыны): floor((hour × minutes + 30) / 60).
+   * Цена минут по цене часа (тиыны): floor((hour × minutes + 30) / 60) — только для показа цены введённых минут
+   * (списывает сервер). «На весь баланс» и автобиллинг считает сервер (решение Q-008, AG-12).
    * Laravel: app/Services/AgentTariffPurchaseService.php minutesPriceInCents(); Go: billing/pricing.MinutesPrice.
    */
   const minutesPrice = (hourTiyn, minutes) => intDiv(hourTiyn * minutes + 30, 60);
-
-  /**
-   * «На весь баланс»: сколько минут оплачивает основной баланс по цене часа (BR-022, решение Q-008 — формула та же,
-   * что у сервера: server/internal/billing/pricing.AffordableMinutes; старый агент: main.js affordableMinutes()).
-   */
-  const affordableMinutes = (offer, balanceTiyn) => {
-    const hour = int64(offer?.pricePerHourTiyn);
-    const balance = int64(balanceTiyn);
-    if (!offer?.available || !(hour > 0) || !(balance > 0)) return 0;
-    let minutes = Math.min(Number(offer.maxMinutes) || 720, intDiv(balance * 60, hour));
-    while (minutes > 0 && minutesPrice(hour, minutes) > balance) minutes--;
-    return minutes;
-  };
 
   // ---------------------------------------------------------------------------------------------
   // Переводы: ключ — русский текст; строки службы (agent.GetTranslations) поверх встроенных (i18n/<язык>.json).
@@ -259,7 +247,6 @@
     formatPrice,
     parseAmount,
     minutesPrice,
-    affordableMinutes,
     fill,
     createI18n,
     intlLocales,

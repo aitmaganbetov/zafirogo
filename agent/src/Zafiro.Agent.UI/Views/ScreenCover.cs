@@ -18,6 +18,7 @@ internal sealed class ScreenCover : IDisposable
     private Window? _keep;
     private bool _shown;
     private string _clubName = "";
+    private ImageSource? _logo;
 
     public ScreenCover()
     {
@@ -37,8 +38,46 @@ internal sealed class ScreenCover : IDisposable
         var value = name?.Trim() ?? "";
         if (value.Length == 0 || value == _clubName) return;
         _clubName = value;
-        foreach (var cover in _covers)
-            if (cover.Content is Grid { Children.Count: > 0 } grid && grid.Children[0] is TextBlock text) text.Text = _clubName;
+        Refresh();
+    }
+
+    /// <summary>Логотип клуба над названием (как Kiosk/ScreenCover.cs старого агента; байты — из службы, AG-13). null — без логотипа.</summary>
+    public void SetLogo(ImageSource? logo)
+    {
+        if (ReferenceEquals(logo, _logo)) return;
+        _logo = logo;
+        Refresh();
+    }
+
+    private void Refresh()
+    {
+        foreach (var cover in _covers) cover.Content = Branding();
+    }
+
+    // Логотип (не больше 480×320) и название клуба по центру — Branding() старого агента.
+    private UIElement Branding()
+    {
+        var panel = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(48),
+            IsHitTestVisible = false,
+        };
+        if (_logo is not null)
+            panel.Children.Add(new Image { Source = _logo, Stretch = Stretch.Uniform, MaxWidth = 480, MaxHeight = 320, Margin = new Thickness(0, 0, 0, 24) });
+        panel.Children.Add(new TextBlock
+        {
+            Text = _clubName,
+            Foreground = new SolidColorBrush(Color.FromRgb(0xE6, 0xE8, 0xEE)),
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 28,
+            FontWeight = FontWeights.SemiBold,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 900,
+        });
+        return panel;
     }
 
     private void OnDisplaysChanged(object? sender, EventArgs e) => Application.Current?.Dispatcher.BeginInvoke(Rebuild);
@@ -65,22 +104,7 @@ internal sealed class ScreenCover : IDisposable
                 Top = monitor.Bounds.Top,
                 Width = monitor.Bounds.Width,
                 Height = monitor.Bounds.Height,
-                Content = new Grid
-                {
-                    Children =
-                    {
-                        new TextBlock
-                        {
-                            Text = _clubName,
-                            Foreground = new SolidColorBrush(Color.FromRgb(0xE6, 0xE8, 0xEE)),
-                            FontFamily = new FontFamily("Segoe UI"),
-                            FontSize = 28,
-                            FontWeight = FontWeights.SemiBold,
-                            HorizontalAlignment = HorizontalAlignment.Center,
-                            VerticalAlignment = VerticalAlignment.Center,
-                        },
-                    },
-                },
+                Content = Branding(),
             };
             // Координаты монитора — в пикселях, у WPF — в DIP: окно встаёт на свой монитор и разворачивается на весь его экран.
             cover.Loaded += (_, _) => cover.WindowState = WindowState.Maximized;

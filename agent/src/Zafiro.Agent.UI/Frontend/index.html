@@ -5,7 +5,7 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
 	<!-- Только свои ресурсы с виртуального хоста UI: внешних адресов нет (картинки с сервера — заглушки, AG-13);
 	     connect-src 'self' — только встроенные переводы i18n/*.json. Остальное режет и сам процесс UI (WebResourceRequested). -->
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'" />
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://img.zafiro.invalid; connect-src 'self'; font-src 'self'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'" />
 	<title data-i18n="Zafiro Agent — Сессия">Zafiro Agent — Сессия</title>
 	<link rel="stylesheet" href="styles.css" />
 	<link rel="stylesheet" href="lock.css" />

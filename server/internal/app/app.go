@@ -49,6 +49,7 @@ import (
 	httpserver "github.com/aitmaganbetov/zafirogo/server/internal/http"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/legacy"
+	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
 	"github.com/aitmaganbetov/zafirogo/server/internal/monitoring"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/pki"
@@ -405,7 +406,9 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	// Счётчики запросов экрана «Сервер» суперадминки (RequestRecorder): HTTP, unary gRPC и сообщения стрима агента.
 	metrics := monitoring.NewRecorder(nil)
 	if a.grpcSrv, err = grpcserver.NewServer(grpcserver.Options{
-		ExtraUnary: []grpc.UnaryServerInterceptor{metrics.UnaryInterceptor()}, ExtraStream: []grpc.StreamServerInterceptor{metrics.StreamInterceptor()},
+		// AG-16: тексты ошибок агента — на языке гостя (zafiro-locale) или клуба.
+		ExtraUnary:        []grpc.UnaryServerInterceptor{metrics.UnaryInterceptor(), guestapi.LocalizeErrors(i18n.NewCatalog(a.AppPool))},
+		ExtraStream:       []grpc.StreamServerInterceptor{metrics.StreamInterceptor()},
 		ServerCertificate: serverCert, ClientCAs: a.CA.ClientCAs(), Certs: a.CertCache,
 		Enrollment: enroll.NewGRPC(a.Enroll), Logger: log,
 	}, func(s *grpc.Server) {
@@ -419,6 +422,10 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	if guestErr != nil {
 		return fmt.Errorf("guest api: %w", guestErr)
 	}
+	// AG-12, AG-17: уведомления агенту через автобиллинг (сессия, баланс) и с названием тарифа в StartSession.
+	guestNotifier := guestSrv.WrapNotifier(notifier)
+	a.Billing.SetNotifier(guestNotifier)
+	a.Cash.Notifier = guestNotifier
 
 	// --- События: WebSocket админки, outbox, вебхуки ---
 	if a.Realtime, err = realtime.NewHandler(realtime.Options{
@@ -467,7 +474,10 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 
 	expire := &worker.ExpireSessions{
 		Pool: a.PlatformPool, Interval: cfg.Workers.ExpireSessions.Interval, Log: log, Now: ro.Now, // dev.fixed_now — те же часы
-		OnExpired: notifyExpired(a.Stream, log),
+		OnExpired: func(ctx context.Context, expired []billingsvc.ExpiredSession) {
+			notifyExpired(a.Stream, log)(ctx, expired)
+			guestSrv.OnExpired(ctx, expired) // AG-12: после конца тарифа автобиллинг покупает сразу
+		},
 	}
 	// Решение Q-011 (docs/DECISIONS.md): суточное сгорание просроченных пакетов времени (ledger + журнал).
 	burnPackages := &worker.BurnPackages{Platform: a.PlatformPool, App: a.AppPool, Log: log}
@@ -493,6 +503,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		{"realtime-hub", a.Realtime.Run},
 		{"expire-sessions", expire.Run},
 		{"burn-expired-packages", burnPackages.Run},
+		{"agent-auto-billing", (&worker.AutoBilling{Platform: a.PlatformPool, Engine: guestSrv, Log: log}).Run}, // AG-12, Q-008
 		{"reencrypt-secrets", (&worker.ReencryptSecrets{Platform: a.PlatformPool, Box: box, Log: log}).Run},
 		{"ensure-partitions", partitions.Run},
 		{"log-retention", (&worker.LogRetention{

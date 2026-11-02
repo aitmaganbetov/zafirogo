@@ -115,6 +115,9 @@
       if (!languages().some((language) => language.code === code)) return;
       chosenLocale = code;
       loadTranslations(code);
+      // Тексты ошибок сервера — на языке гостя (служба шлёт его в zafiro-locale, AG-16); после выхода гостя служба
+      // сама возвращает язык клуба.
+      if (bridge.available) bridge.call('agent.SetLocale', { locale: code }).catch(() => {});
     },
     onSnapshot: (fn) => snapshotHandlers.push(fn),
     onEvent: (fn) => eventHandlers.push(fn),

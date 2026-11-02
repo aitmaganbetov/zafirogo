@@ -405,11 +405,30 @@
   // Снимок службы: какой экран, тексты подключения, QR.
   // ---------------------------------------------------------------------------------------------
 
+  // Картинка клуба на экране входа вместо стандартной (ShowSignInImage старого ClubSetupWindow): байты — из кэша службы
+  // через img.zafiro.invalid (AG-13); нет или не загрузилась — стандартная. signinImageUrl только сообщает, что
+  // картинка есть и сменилась (новое имя файла) — оно же меняет адрес, чтобы WebView2 взял новую.
+  const lockImage = $('lockImage');
+  const standardLockImage = 'gaming-setup.jpg';
+  let shownSigninUrl = null;
+  lockImage.addEventListener('error', () => {
+    if (lockImage.getAttribute('src') !== standardLockImage) lockImage.setAttribute('src', standardLockImage);
+  });
+  const showSigninImage = (url) => {
+    const value = typeof url === 'string' ? url : '';
+    if (value === shownSigninUrl) return;
+    shownSigninUrl = value;
+    const name = value.split('/').pop() ?? '';
+    lockImage.setAttribute('src', value && /^[A-Za-z0-9._-]{1,120}$/.test(name)
+      ? `https://img.zafiro.invalid/signin?v=${encodeURIComponent(name)}` : standardLockImage);
+  };
+
   app.onSnapshot((snap) => {
     const next = document.body.dataset.screen ?? '';
     const changed = next !== screen;
     screen = next;
     renderPc(snap);
+    showSigninImage(snap.config?.signinImageUrl);
     setupForm.hidden = screen !== 'setup';
     loginForm.hidden = screen !== 'login';
     if (screen !== 'login') qr.hidden = true;

@@ -54,6 +54,7 @@ func TestPolicyFor(t *testing.T) {
 		{KindConfigChanged, false, false},
 		{KindQrLoginApproved, false, false},
 		{KindDrain, false, false},
+		{KindAutoBillingChanged, false, false},
 	}
 	for _, c := range cases {
 		p := PolicyFor(c.kind)

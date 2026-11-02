@@ -63,9 +63,10 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
         _time = time ?? TimeProvider.System;
         _random = random ?? Random.Shared;
         _log = loggers.CreateLogger("Zafiro.Agent.Runtime");
-        _channels = new AgentChannelFactory(options, trust);
+        State = new AgentState(_time) { AgentVersion = options.AgentVersion, FallbackLocale = options.Locale };
+        var state = State;
+        _channels = new AgentChannelFactory(options, trust, () => state.RequestLocale);
         _enroller = new Enroller(options, _channels, trust, store, _time, loggers.CreateLogger("Zafiro.Agent.Enroll"));
-        State = new AgentState(_time);
         var dir = string.IsNullOrEmpty(options.DataDirectory) ? null : options.DataDirectory;
         Commands = new CommandJournalStore(dir is null ? null : Path.Combine(dir, "commands.pb"));
         Events = new EventJournalStore(dir is null ? null : Path.Combine(dir, "events.pb"));
@@ -368,6 +369,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
             foreach (var ev in Events.Pending()) outbox.Writer.TryWrite(new AgentMessage { Event = ev });
             foreach (var r in Commands.Undelivered()) SendResult(r);
             if (welcome.TranslationsVersion > State.TranslationsVersion) RaiseUi(new Event { TranslationsUpdated = new TranslationsUpdated { Version = welcome.TranslationsVersion } });
+            RefreshAutoBilling(); // мгновенные AutoBillingChanged, пока стрима не было, потеряны
 
             status = StatusLoop(outbox.Writer, streamCts.Token);
             while (await MoveNext(call.ResponseStream, streamCts.Token).ConfigureAwait(false))
@@ -512,8 +514,31 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
         return ev;
     }
 
-    void IGuestEvents.SignedIn(GuestSignIn signIn, SignInMethod method) =>
+    void IGuestEvents.SignedIn(GuestSignIn signIn, SignInMethod method)
+    {
         RaiseEvent(e => e.GuestSignedIn = new GuestSignedIn { UserId = signIn.User?.UserId ?? 0, Method = method });
+        RefreshAutoBilling();
+    }
+
+    /// <summary>
+    /// Состояние автобиллинга гостя с сервера (после входа и переподключения; дальше — команда AutoBillingChanged).
+    /// Автобиллинг решает и покупает сервер (решение Q-008); служба только не выводит гостя по бездействию, пока он ждёт.
+    /// </summary>
+    private void RefreshAutoBilling()
+    {
+        if (State.GuestToken is null) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Guest.GetAutoBillingAsync(new GetAutoBillingRequest(), CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (AgentRpcException ex)
+            {
+                _log.LogInformation("auto billing state not loaded: {Code}", ex.ErrorCode);
+            }
+        });
+    }
 
     void IGuestEvents.SignedOut(long userId, SignOutReason reason) =>
         RaiseEvent(e => e.GuestSignedOut = new GuestSignedOut { UserId = userId, Reason = reason });
@@ -702,6 +727,10 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
                 RaiseUi(new Event { QrLoginApproved = cmd.QrLoginApproved });
                 return CommandOutcome.Ok();
 
+            case Command.KindOneofCase.AutoBillingChanged:
+                if (cmd.AutoBillingChanged.Status is not null) State.SetAutoBilling(cmd.AutoBillingChanged.UserId, cmd.AutoBillingChanged.Status);
+                return CommandOutcome.Ok();
+
             case Command.KindOneofCase.Drain:
             {
                 var delay = Backoff.Drain(cmd.Drain.ReconnectWithin?.ToTimeSpan(), _random);
@@ -827,7 +856,9 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
         }
 
         var idleMinutes = State.Config?.IdleLogoutMinutes ?? 0;
-        if (idleMinutes > 0 && State.ComputerState == ComputerState.Locked && State.IdleSeconds >= idleMinutes * 60)
+        // Пока ждёт автобиллинг (пауза на выбор тарифа), гостя не выводит (idleLogoutTick старого агента).
+        if (idleMinutes > 0 && State.ComputerState == ComputerState.Locked && State.IdleSeconds >= idleMinutes * 60
+            && State.AutoBilling?.Waiting != true)
         {
             var user = State.SignOut();
             if (user > 0)

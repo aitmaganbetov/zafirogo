@@ -92,8 +92,19 @@ service GuestService {
 
   // Покупка минут (1..720, GuestMinutesController::MAX_MINUTES). idempotency_key ОБЯЗАТЕЛЕН.
   // Заменяет POST /api/guest/minutes/purchase (AgentTariffPurchaseService::purchaseMinutes; 10/мин).
-  // Автобиллинг агента тоже идёт через этот RPC.
   rpc PurchaseMinutes(PurchaseMinutesRequest) returns (PurchaseMinutesResponse);
+
+  // «Играть на весь баланс»: сервер сам считает минуты на весь основной баланс (pricing.WholeBalanceMinutes,
+  // решение Q-008) и покупает их с основного баланса в той же транзакции, что и блокировка баланса.
+  // idempotency_key ОБЯЗАТЕЛЕН. Заменяет локальный расчёт старого агента (WindowsAgent/Frontend/main.js
+  // renderWholeBalance, обработчик minuteWholeBuy → purchaseMinutes). Лимит — как PurchaseMinutes (10/мин).
+  // Ошибки: FEATURE_DISABLED (клуб не разрешил), TARIFF_UNAVAILABLE (у зоны нет цены часа), INSUFFICIENT_FUNDS
+  // (не хватает и на минуту), COMPUTER_RESERVED, IDEMPOTENCY_*, RATE_LIMITED.
+  rpc PlayWholeBalance(PlayWholeBalanceRequest) returns (PlayWholeBalanceResponse);
+
+  // Состояние автобиллинга гостя на этом ПК (после входа и переподключения; дальше — команда AutoBillingChanged).
+  // Покупку делает сервер (решение Q-008); у агента автобиллинга нет. Лимит 60/мин на гостя.
+  rpc GetAutoBilling(GetAutoBillingRequest) returns (GetAutoBillingResponse);
 
   // Сохранённые пакеты времени гостя (TimePackage). Заменяет GET /api/guest/packages (60/мин).
   rpc ListPackages(ListPackagesRequest) returns (ListPackagesResponse);
@@ -395,6 +406,11 @@ message GetMinuteOfferResponse {
   bool auto_billing = 11;
   // Пауза до старта автобиллинга, минуты.
   uint32 auto_billing_pause_minutes = 12;
+  // «На весь баланс»: сколько минут оплачивает основной баланс гостя сейчас (pricing.WholeBalanceMinutes);
+  // 0 — кнопку не показывать (выключено в клубе, нет цены часа или денег).
+  int32 whole_balance_minutes = 13;
+  // Цена этих минут, тиыны (pricing.MinutesPrice).
+  int64 whole_balance_price_tiyn = 14;
 }
 
 // Запрос покупки минут.
@@ -411,6 +427,28 @@ message PurchaseMinutesRequest {
 message PurchaseMinutesResponse {
   // Итог.
   TimePurchase purchase = 1;
+}
+
+// Запрос «играть на весь баланс».
+message PlayWholeBalanceRequest {
+  // UUID идемпотентности (обязателен).
+  string idempotency_key = 1;
+}
+
+// Ответ «играть на весь баланс»: purchase.minutes_added — купленные минуты, charged_main_tiyn — сумма,
+// session.ends_at — конец сессии.
+message PlayWholeBalanceResponse {
+  // Итог.
+  TimePurchase purchase = 1;
+}
+
+// Запрос состояния автобиллинга.
+message GetAutoBillingRequest {}
+
+// Состояние автобиллинга.
+message GetAutoBillingResponse {
+  // Состояние.
+  AutoBillingStatus status = 1;
 }
 
 // Запрос пакетов.

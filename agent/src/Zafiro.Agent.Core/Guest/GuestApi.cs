@@ -148,6 +148,25 @@ public sealed class GuestApi
         return r;
     }
 
+    /// <summary>«Играть на весь баланс»: минуты считает и покупает сервер (решение Q-008).</summary>
+    public async Task<PlayWholeBalanceResponse> PlayWholeBalanceAsync(PlayWholeBalanceRequest request, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        request.IdempotencyKey = Key(request.IdempotencyKey);
+        var r = await Money((i, o) => new GuestService.GuestServiceClient(i).PlayWholeBalanceAsync(request, o), ct).ConfigureAwait(false);
+        OnPurchase(r.Purchase);
+        return r;
+    }
+
+    /// <summary>Состояние автобиллинга гостя (покупает сервер); сохраняется в состоянии ПК.</summary>
+    public async Task<GetAutoBillingResponse> GetAutoBillingAsync(GetAutoBillingRequest request, CancellationToken ct = default)
+    {
+        var user = _state.SignedInUserId;
+        var r = await Call((i, o) => new GuestService.GuestServiceClient(i).GetAutoBillingAsync(request, o), write: false, token: true, ct).ConfigureAwait(false);
+        if (r.Status is not null) _state.SetAutoBilling(user, r.Status);
+        return r;
+    }
+
     public Task<ListPackagesResponse> ListPackagesAsync(ListPackagesRequest request, CancellationToken ct = default) =>
         Call((i, o) => new GuestService.GuestServiceClient(i).ListPackagesAsync(request, o), write: false, token: true, ct);
 
@@ -245,6 +264,10 @@ public sealed class GuestApi
 
     public Task<GetTranslationsResponse> GetTranslationsAsync(GetTranslationsRequest request, CancellationToken ct = default) =>
         Call((i, o) => new AgentService.AgentServiceClient(i).GetTranslationsAsync(request, o), write: false, token: false, ct);
+
+    /// <summary>Картинка клуба (логотип, экран входа, новость) по сертификату ПК — для кэша службы (AG-13).</summary>
+    public Task<GetImageResponse> GetImageAsync(GetImageRequest request, CancellationToken ct = default) =>
+        Call((i, o) => new AgentService.AgentServiceClient(i).GetImageAsync(request, o), write: true, token: false, ct);
 
     /// <summary>PIN сотрудника; если гость вошёл — токен уходит тоже (сервер пишет в журнал, при ком закрыли агент).</summary>
     public Task<VerifyStaffPinResponse> VerifyStaffPinAsync(VerifyStaffPinRequest request, CancellationToken ct = default) =>

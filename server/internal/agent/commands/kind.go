@@ -49,6 +49,7 @@ const (
 	KindChatMessageReceived  Kind = "chat_message_received"
 	KindQrLoginApproved      Kind = "qr_login_approved"
 	KindDrain                Kind = "drain"
+	KindAutoBillingChanged   Kind = "auto_billing_changed"
 )
 
 // KindOf — вид команды; "" — oneof не задан.
@@ -92,6 +93,8 @@ func KindOf(c *agentv1.Command) Kind {
 		return KindQrLoginApproved
 	case *agentv1.Command_Drain:
 		return KindDrain
+	case *agentv1.Command_AutoBillingChanged:
+		return KindAutoBillingChanged
 	default:
 		return ""
 	}

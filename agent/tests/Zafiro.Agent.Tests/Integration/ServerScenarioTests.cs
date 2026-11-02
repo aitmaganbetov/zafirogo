@@ -225,6 +225,46 @@ public sealed class ServerScenarioTests : IDisposable
         Assert.True(end.RefundedMainTiyn + end.RefundedBonusTiyn >= 0);
         Assert.Equal(ComputerState.Locked, runtime.State.ComputerState);
 
+        // 9a. Автобиллинг решает сервер (AG-12): состояние приходит по запросу/команде; гость сам завершил сессию — стоп.
+        var ab = await runtime.Guest.GetAutoBillingAsync(new GetAutoBillingRequest(), cts2.Token);
+        Assert.NotNull(ab.Status);
+        Assert.False(ab.Status.Waiting && ab.Status.Stopped);
+
+        // 9b. «На весь баланс» считает и покупает сервер (AG-12, Q-008): минуты — как в GetMinuteOffer.
+        var offer = await runtime.Guest.GetMinuteOfferAsync(new GetMinuteOfferRequest(), cts2.Token);
+        if (offer.WholeBalance && offer.WholeBalanceMinutes > 0)
+        {
+            var whole = await runtime.Guest.PlayWholeBalanceAsync(new PlayWholeBalanceRequest(), cts2.Token);
+            Assert.Equal(offer.WholeBalanceMinutes, whole.Purchase.MinutesAdded);
+            Assert.Equal(offer.WholeBalancePriceTiyn, whole.Purchase.ChargedMainTiyn);
+            await runtime.Guest.EndSessionAsync(new EndSessionRequest { SessionId = whole.Purchase.Session.SessionId }, cts2.Token);
+        }
+        else
+        {
+            var refused = await Assert.ThrowsAnyAsync<AgentRpcException>(() => runtime.Guest.PlayWholeBalanceAsync(new PlayWholeBalanceRequest(), cts2.Token));
+            Assert.Contains(refused.ErrorCode, new[] { ErrorCode.FeatureDisabled, ErrorCode.InsufficientFunds, ErrorCode.TariffUnavailable });
+            Assert.False(string.IsNullOrEmpty(refused.LocalizedMessage));
+        }
+
+        // 9c. Картинка клуба по сертификату ПК (AG-13): есть — PNG/JPEG, нет — NOT_FOUND.
+        try
+        {
+            var logo = await runtime.Guest.GetImageAsync(new GetImageRequest { Kind = ImageKind.ClubLogo }, cts2.Token);
+            Assert.Contains(logo.ContentType, new[] { "image/png", "image/jpeg" });
+        }
+        catch (AgentRpcException e)
+        {
+            Assert.Equal(Grpc.Core.StatusCode.NotFound, e.StatusCode);
+        }
+
+        // 9d. Язык гостя уходит в zafiro-locale (AG-16): текст ошибки есть на любом языке.
+        Assert.True(runtime.State.SetGuestLocale("en") || runtime.State.Config?.Languages.All(l => l.Code != "en") == true);
+        var badEn = await Assert.ThrowsAnyAsync<AgentRpcException>(() =>
+            runtime.Guest.LoginAsync(new LoginRequest { Phone = Env("ZAFIRO_IT_GUEST_PHONE"), Password = "wrong-password" }, cts2.Token));
+        Assert.Equal(ErrorCode.InvalidCredentials, badEn.ErrorCode);
+        Assert.False(string.IsNullOrEmpty(badEn.LocalizedMessage));
+        runtime.State.SetGuestLocale("");
+
         // 10. Гость выходит: токен отозван на сервере, ПК свободен. (Без выхода токен этого ПК ещё 2 минуты считался бы
         // «вошёл на другом ПК» — AgentSignIns::elsewhere(), — даже после отзыва сертификата.)
         await runtime.Guest.LogoutAsync(new LogoutRequest(), cts2.Token);

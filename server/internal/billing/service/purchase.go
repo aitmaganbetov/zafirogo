@@ -204,16 +204,28 @@ type MinutesPurchaseRequest struct {
 // (стр. 141–150), sell(). Порядок: ПК FOR UPDATE → зона (без блокировки) → нет цены часа → ensureComputerFor →
 // цена (скидка, если клуб применяет её к поминутке и у клиента есть членство) → sell().
 func (s *Service) PurchaseMinutes(ctx context.Context, req MinutesPurchaseRequest) (PurchaseResult, error) {
+	return s.purchaseMinutes(ctx, req, opMinutesPurchase, struct {
+		UserID, ComputerID, Minutes int64
+		Balance                     pricing.BalanceChoice
+	}{req.UserID, req.ComputerID, req.Minutes, req.Balance}, func(*money.Tiyn, pricing.PaymentRules, float64, pricing.Balances) (int64, error) {
+		return req.Minutes, nil
+	})
+}
+
+// minutesResolver — сколько минут покупать: обычная покупка — из запроса, «на весь баланс» — по балансу под
+// блокировкой (whole_balance.go). zonePrice nil — у зоны нет цены часа.
+type minutesResolver func(zonePrice *money.Tiyn, rules pricing.PaymentRules, discount float64, b pricing.Balances) (int64, error)
+
+// purchaseMinutes — общая часть PurchaseMinutes и PurchaseWholeBalance (операция billing_requests op, тело
+// запроса для идемпотентности claimBody); минуты — resolve под блокировкой баланса.
+func (s *Service) purchaseMinutes(ctx context.Context, req MinutesPurchaseRequest, op string, claimBody any, resolve minutesResolver) (PurchaseResult, error) {
 	var (
 		out         PurchaseResult
 		currencyOut string
 	)
 	err := s.tx(ctx, req.ClubID, func(q *store.Queries) error {
 		out = PurchaseResult{}
-		replayed, err := s.claim(ctx, q, req.ClubID, req.IdempotencyKey, opMinutesPurchase, struct {
-			UserID, ComputerID, Minutes int64
-			Balance                     pricing.BalanceChoice
-		}{req.UserID, req.ComputerID, req.Minutes, req.Balance}, &out)
+		replayed, err := s.claim(ctx, q, req.ClubID, req.IdempotencyKey, op, claimBody, &out)
 		if err != nil || replayed {
 			out.Replayed = replayed
 			return err
@@ -251,10 +263,14 @@ func (s *Service) PurchaseMinutes(ctx context.Context, req MinutesPurchaseReques
 		}
 		in := pricing.MinutesPurchaseInput{
 			ZonePricePerHour: zonePrice, Rules: club.rules, DiscountPercent: discount, UserID: req.UserID,
-			Computer: pc.pricing(now), Minutes: req.Minutes, Choice: req.Balance, Now: now,
+			Computer: pc.pricing(now), Choice: req.Balance, Now: now,
 		}
 		quote, err := quoteWithBalance(ctx, q, req.ClubID, req.UserID, func(b pricing.Balances) (pricing.Purchase, error) {
-			in.Balances = b
+			minutes, err := resolve(zonePrice, club.rules, discount, b)
+			if err != nil {
+				return pricing.Purchase{}, err
+			}
+			in.Balances, in.Minutes = b, minutes
 			return pricing.QuoteMinutesPurchase(in)
 		})
 		if err != nil {
@@ -265,7 +281,7 @@ func (s *Service) PurchaseMinutes(ctx context.Context, req MinutesPurchaseReques
 			clubID: req.ClubID, userID: req.UserID, computer: pc, club: club, now: now, quote: quote,
 			part:       part{kind: session.KindMinutes, name: zoneName, zoneID: &zoneID, source: sourceMinutes},
 			ledgerKind: ledger.KindMinutesPurchase, key: req.IdempotencyKey, actor: req.Actor,
-			meta: map[string]any{"zone_id": zoneID, "zone": zoneName, "minutes": req.Minutes, "computer_id": pc.ID},
+			meta: map[string]any{"zone_id": zoneID, "zone": zoneName, "minutes": quote.Minutes, "computer_id": pc.ID},
 		})
 		if err != nil {
 			return err

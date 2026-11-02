@@ -207,6 +207,7 @@ func (s *Server) signIn(ctx context.Context, id identity.Identity, userID int64,
 	if err != nil {
 		return nil, s.fail(ctx, "signIn", err)
 	}
+	s.abSignedIn(ctx, id, userID)
 	out := &agentv1.GuestSignIn{Token: &agentv1.GuestToken{AccessToken: token, ExpiresAt: timestamppb.New(exp)}}
 	err = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
 		if err := s.record(ctx, q, activity.Entry{ClubID: id.ClubID, Event: event, Description: description,
@@ -282,6 +283,9 @@ func (s *Server) profile(ctx context.Context, q *store.Queries, id identity.Iden
 	var sess *agentv1.ActiveSession
 	if as := activeSession(pcRow, now); as != nil && as.GetUserId() == userID {
 		sess = as
+		if sess.TariffName, err = sessionTariffName(ctx, q, id.ClubID, sess.GetSessionId()); err != nil {
+			return nil, nil, nil, err
+		}
 	}
 	gu := &agentv1.GuestUser{UserId: u.ID, Name: u.Name, MaskedPhone: MaskPhone(u.Phone),
 		DiscountBasisPoints: int32(pricing.DiscountBasisPoints(u.Discount))} // #nosec G115 -- 0…10000
@@ -310,6 +314,16 @@ func activeSession(row store.GuestComputerRow, now time.Time) *agentv1.ActiveSes
 		as.UserId = *row.CurrentSessionUserID
 	}
 	return as
+}
+
+// sessionTariffName — название последней части сессии (session_purchases.name, новые сверху): «Тариф» в профиле
+// лаунчера (AG-17; в старом агенте поле SessionInfo.TariffName).
+func sessionTariffName(ctx context.Context, q *store.Queries, clubID int64, sessionID string) (string, error) {
+	rows, err := q.ListSessionPurchases(ctx, store.ListSessionPurchasesParams{ClubID: clubID, SessionID: sessionID})
+	if err != nil || len(rows) == 0 {
+		return "", err
+	}
+	return rows[0].Name, nil
 }
 
 // Register — регистрация на ПК или вступление в клуб существующего аккаунта (POST /api/agent/register,
@@ -415,6 +429,7 @@ func (a *authService) Register(ctx context.Context, req *agentv1.RegisterRequest
 	if err != nil {
 		return nil, s.fail(ctx, "Register", err)
 	}
+	s.abSignedIn(ctx, id, userID)
 	out := &agentv1.GuestSignIn{Token: &agentv1.GuestToken{AccessToken: token, ExpiresAt: timestamppb.New(exp)}}
 	err = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
 		var err error
