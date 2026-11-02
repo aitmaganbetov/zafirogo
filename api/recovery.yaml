@@ -1,0 +1,120 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — recovery
+  version: 0.1.0
+  description: |
+    «Забыли пароль» на сайте: код в Telegram на номер аккаунта (Telegram Gateway), затем код и новый пароль.
+    Laravel: PasswordRecoveryController (routes/web.php:159–163), PasswordRecovery. Телефон между шагами хранит
+    браузер (в старом — session('password_recovery_phone')), поэтому смена пароля принимает телефон в теле.
+    Агент ПК — gRPC GuestAuthService.RequestPasswordResetCode / ResetPassword. Конвенции — api/README.md.
+servers:
+  - url: /
+security: []
+paths:
+  /api/forgot-password:
+    get:
+      operationId: getPasswordRecovery
+      tags: [recovery]
+      summary: Подключено ли восстановление
+      description: PasswordRecoveryController::show() — PasswordRecovery::available() (Telegram Gateway настроен).
+      responses:
+        "200":
+          description: Состояние.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryState"
+    post:
+      operationId: sendPasswordRecoveryCode
+      tags: [recovery]
+      summary: Код в Telegram
+      description: |
+        PasswordRecoveryController::send() (throttle:password-recovery: 10/мин на IP и телефон, 30/мин на IP).
+        Ответ одинаковый, есть ли номер в Zafiro. Ошибки — 422 phone: не подключено, повтор раньше 60 с,
+        5 кодов в час, Telegram не принял номер.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecoveryCodeRequest"
+      responses:
+        "200":
+          description: Код (возможно) отправлен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryCodeSent"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+        "429":
+          $ref: "common.yaml#/components/responses/TooManyRequests"
+  /api/reset-password:
+    post:
+      operationId: resetPasswordByCode
+      tags: [recovery]
+      summary: Новый пароль по коду
+      description: |
+        PasswordRecoveryController::update() (throttle:password-recovery): код — 6 цифр, пароль ≥ 6 и подтверждение.
+        Верный код — новый пароль, все сеансы аккаунта завершаются; неверный — попытка (5 на код), 422 code.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecoveryResetRequest"
+      responses:
+        "200":
+          description: Пароль изменён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryMessage"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+        "429":
+          $ref: "common.yaml#/components/responses/TooManyRequests"
+components:
+  schemas:
+    RecoveryState:
+      type: object
+      required: [available]
+      properties:
+        available:
+          type: boolean
+    RecoveryCodeRequest:
+      type: object
+      properties:
+        phone:
+          type: string
+          description: Номер в любом виде (PhoneNumber::normalize → +7XXXXXXXXXX).
+    RecoveryCodeSent:
+      type: object
+      required: [message, phone, code_minutes, resend_seconds]
+      properties:
+        message:
+          type: string
+        phone:
+          type: string
+          description: Нормализованный номер (для шага «Новый пароль»).
+        code_minutes:
+          type: integer
+        resend_seconds:
+          type: integer
+    RecoveryResetRequest:
+      type: object
+      properties:
+        phone:
+          type: string
+        code:
+          type: string
+        password:
+          type: string
+        password_confirmation:
+          type: string
+    RecoveryMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
