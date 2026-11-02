@@ -164,7 +164,7 @@ jobs:
           Remove-Item $pfx -Force
           exit $code
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: agent-installer
           path: ${{ env.INSTALLER }}
@@ -215,7 +215,7 @@ jobs:
           fi
           go run ./cmd/sign-update "${args[@]}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: agent-${{ env.VERSION }}
           path: |
