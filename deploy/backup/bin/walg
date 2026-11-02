@@ -1,0 +1,43 @@
+#!/bin/sh
+# Обёртка WAL-G: секреты читаются из файлов (Docker/Compose secrets, /run/secrets/*), а не из переменных
+# окружения контейнера — их не видно в `docker inspect`, compose-файле и журналах.
+#
+#   WALG_S3_ACCESS_KEY_FILE, WALG_S3_SECRET_KEY_FILE — ключи S3 (обязательны);
+#   WALG_PGP_KEY_PATH            — родной параметр WAL-G: на сервере БД — ОТКРЫТЫЙ ключ (шифрование),
+#                                  при восстановлении — закрытый;
+#   WALG_PGP_PASSPHRASE_FILE     — пароль закрытого ключа (только восстановление).
+#
+# Подключение к Postgres — по unix-сокету под владельцем кластера (бэкап снимается на хосте БД).
+# Используется в archive_command: '/usr/local/bin/walg wal-push %p'.
+set -eu
+
+read_secret() {
+  # $1 — путь к файлу; печатает содержимое без завершающего перевода строки.
+  if [ ! -r "$1" ]; then
+    echo "walg: нет доступа к файлу секрета $1" >&2
+    exit 2
+  fi
+  tr -d '\r\n' < "$1"
+}
+
+: "${WALG_S3_ACCESS_KEY_FILE:?walg: задайте WALG_S3_ACCESS_KEY_FILE}"
+: "${WALG_S3_SECRET_KEY_FILE:?walg: задайте WALG_S3_SECRET_KEY_FILE}"
+AWS_ACCESS_KEY_ID="$(read_secret "$WALG_S3_ACCESS_KEY_FILE")"
+AWS_SECRET_ACCESS_KEY="$(read_secret "$WALG_S3_SECRET_KEY_FILE")"
+export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+
+if [ -n "${WALG_PGP_PASSPHRASE_FILE:-}" ]; then
+  WALG_PGP_KEY_PASSPHRASE="$(read_secret "$WALG_PGP_PASSPHRASE_FILE")"
+  export WALG_PGP_KEY_PASSPHRASE
+fi
+if [ -z "${WALG_PGP_KEY_PATH:-}" ]; then
+  echo "walg: WALG_PGP_KEY_PATH не задан — копии без шифрования запрещены" >&2
+  exit 2
+fi
+
+export PGHOST="${PGHOST:-/var/run/postgresql}"
+export PGUSER="${PGUSER:-${POSTGRES_USER:-postgres}}"
+export PGDATABASE="${PGDATABASE:-${POSTGRES_DB:-postgres}}"
+export WALG_COMPRESSION_METHOD="${WALG_COMPRESSION_METHOD:-zstd}"
+
+exec /usr/local/bin/wal-g "$@"

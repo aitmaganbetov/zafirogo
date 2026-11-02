@@ -20,6 +20,10 @@ vars:
 
   COMPOSE: docker compose -f docker-compose.dev.yml --env-file .env
   STAGING_COMPOSE: docker compose -f deploy/staging/compose.yaml --env-file deploy/staging/.env.staging
+  # Бэкап (O2): образ Postgres + WAL-G и staging с подключённым deploy/backup/compose.backup.yml.
+  BACKUP_IMAGE: zafiro-postgres-walg:18.6-3.0.9
+  BACKUP_SECRETS_DIR: "{{.ROOT_DIR}}/deploy/backup/secrets"
+  BACKUP_COMPOSE: docker compose -f deploy/staging/compose.yaml -f deploy/backup/compose.backup.yml --env-file deploy/staging/.env.staging
   WEBUI_DIST: server/internal/webui/dist
   BIN: bin/zafiro
 
@@ -326,6 +330,60 @@ tasks:
     dir: server
     cmds:
       - ZAFIRO_STAGING_DIR={{.ROOT_DIR}}/deploy/staging go test -tags staging -count=1 -v -timeout 10m -run '^TestStaging' ./internal/app/
+
+  # ---------- резервные копии (deploy/backup, docs/runbooks/restore.md) ----------
+
+  backup:image:
+    desc: "Образ Postgres 18.6 + WAL-G (deploy/backup/Dockerfile) [BUILD_CA=/путь/ca.crt — прокси с подменой TLS]"
+    cmds:
+      - docker build {{if .BUILD_CA}}--secret id=build_ca,src={{.BUILD_CA}}{{end}} -t {{.BACKUP_IMAGE}} deploy/backup
+
+  backup:secrets:
+    desc: "Секреты бэкапа для staging/учений (ключи S3, пара OpenPGP) в deploy/backup/secrets — идемпотентно"
+    cmds:
+      - deploy/backup/gen-secrets.sh "{{.BACKUP_SECRETS_DIR}}"
+
+  backup:up:
+    desc: "Staging + непрерывный бэкап: Postgres с архивом WAL, сайдкар расписания, S3 (SeaweedFS). Нужны staging:init и backup:image"
+    deps: [staging:init, backup:secrets]
+    env:
+      BACKUP_SECRETS_DIR: "{{.BACKUP_SECRETS_DIR}}"
+    cmds:
+      - "{{.BACKUP_COMPOSE}} up -d --wait postgres backup"
+
+  backup:now:
+    desc: "Внеплановая базовая копия staging (копия, хранение, проверка архива WAL) — например, перед рискованной миграцией"
+    env:
+      BACKUP_SECRETS_DIR: "{{.BACKUP_SECRETS_DIR}}"
+    cmds:
+      - "{{.BACKUP_COMPOSE}} exec -T backup backup-run.sh"
+
+  backup:list:
+    desc: Копии в хранилище staging (имя, время, размер, постоянная ли)
+    env:
+      BACKUP_SECRETS_DIR: "{{.BACKUP_SECRETS_DIR}}"
+    cmds:
+      - "{{.BACKUP_COMPOSE}} exec -T backup walg backup-list --detail"
+
+  backup:restore-drill:
+    desc: "Учения восстановления из копий staging: чистый Postgres ← последняя копия и PITR на T, проверка (goose, деньги, партиции, RLS, amcheck). task backup:restore-drill -- --target-time '2026-11-02 21:30:00+00'"
+    env:
+      BACKUP_SECRETS_DIR: "{{.BACKUP_SECRETS_DIR}}"
+      BACKUP_PG_IMAGE: "{{.BACKUP_IMAGE}}"
+    cmds:
+      - |
+        . deploy/staging/.env.staging
+        WALG_S3_PREFIX="${WALG_S3_PREFIX:-s3://zafiro-backup/pg/staging}" WALG_S3_ENDPOINT="${WALG_S3_ENDPOINT:-http://s3:8333}" \
+        DRILL_NETWORK="${DRILL_NETWORK:-zafirogo-staging_default}" \
+        DRILL_DB_USER="${STG_POSTGRES_USER:-postgres}" DRILL_DB_NAME="${STG_POSTGRES_DB:-zafiro}" \
+        deploy/backup/restore-drill.sh {{.CLI_ARGS}}
+
+  backup:drill-e2e:
+    desc: "Сквозные учения на одноразовом окружении (как CI backup-drill.yml): данные → копия → порча → PITR → проверка. task backup:drill-e2e -- --keep"
+    env:
+      BACKUP_PG_IMAGE: "{{.BACKUP_IMAGE}}"
+    cmds:
+      - deploy/backup/drill-e2e.sh {{.CLI_ARGS}}
 
   clean:
     desc: Удалить артефакты сборки

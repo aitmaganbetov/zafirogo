@@ -1,0 +1,133 @@
+name: backup-drill
+
+# Учения восстановления из резервных копий Postgres (Этап 6, O2; docs/runbooks/restore.md §5).
+#
+# drill-e2e — всегда (вручную, по расписанию, на PR с правками бэкапа/миграций): одноразовое окружение
+#   Postgres 18.6 + WAL-G + SeaweedFS, миграции и демо-данные, базовая копия, «порча» после момента T,
+#   восстановление latest и PITR на T, проверка goose / денег (балансы = Σ проводок, Σ проводок операции = 0,
+#   отпечаток денег до тиына) / партиций / RLS / pg_amcheck. Без доступа к проду и staging.
+#
+# drill-prod — еженедельные учения на настоящих копиях: только при vars.BACKUP_DRILL_PROD == 'true',
+#   на self-hosted раннере в сети хранилища копий, секреты — в окружении GitHub `backup-drill`
+#   (S3 только на чтение + ЗАКРЫТЫЙ ключ OpenPGP). Восстановленная база не покидает раннер и удаляется.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_time:
+        description: "drill-prod: момент PITR (UTC, «2026-11-02 21:30:00+00»); пусто — 5 минут назад"
+        required: false
+        default: ""
+  schedule:
+    # Понедельник 22:41 UTC (03:41 по Астане): после ночной копии, вне часов пик клубов и CI.
+    - cron: "41 22 * * 1"
+  pull_request:
+    paths:
+      - deploy/backup/**
+      - db/migrations/**
+      - .github/workflows/backup-drill.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-drill-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GOOSE_VERSION: v3.29.0
+  BACKUP_PG_IMAGE: zafiro-postgres-walg:18.6-3.0.9
+
+jobs:
+  drill-e2e:
+    name: backup → PITR → проверка (одноразовое окружение)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: goose
+        run: go install github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}
+      - name: образ Postgres + WAL-G
+        run: docker build -t "$BACKUP_PG_IMAGE" deploy/backup
+      - name: учения
+        env:
+          BACKUP_SKIP_BUILD: "1"
+          DRILL_WORK: ${{ runner.temp }}/backup-drill
+        run: deploy/backup/drill-e2e.sh
+      - name: отчёт
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-drill-report
+          path: ${{ runner.temp }}/backup-drill/report.md
+          if-no-files-found: ignore
+          retention-days: 30
+
+  drill-prod:
+    name: учения на копиях прода (self-hosted)
+    if: vars.BACKUP_DRILL_PROD == 'true' && github.event_name != 'pull_request'
+    runs-on: [self-hosted, linux, zafiro-backup-drill]
+    environment: backup-drill
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: goose
+        run: go install github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}
+      - name: образ Postgres + WAL-G
+        run: docker build -t "$BACKUP_PG_IMAGE" deploy/backup
+      - name: секреты в файлы (только на время учений)
+        env:
+          S3_ACCESS_KEY: ${{ secrets.BACKUP_DRILL_S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.BACKUP_DRILL_S3_SECRET_KEY }}
+          PGP_PRIVATE: ${{ secrets.BACKUP_DRILL_PGP_PRIVATE_KEY }}
+          PGP_PASSPHRASE: ${{ secrets.BACKUP_DRILL_PGP_PASSPHRASE }}
+        run: |
+          umask 077
+          d="$RUNNER_TEMP/backup-secrets"
+          mkdir -p "$d"
+          printf '%s' "$S3_ACCESS_KEY" > "$d/s3_access_key"
+          printf '%s' "$S3_SECRET_KEY" > "$d/s3_secret_key"
+          printf '%s\n' "$PGP_PRIVATE" > "$d/walg_pgp_private.asc"
+          printf '%s' "$PGP_PASSPHRASE" > "$d/walg_pgp_passphrase"
+          # Контейнер восстановления читает файлы от uid 999 (postgres): каталог закрыт, файлы — на чтение.
+          chmod 0644 "$d"/*
+      - name: учения (latest + PITR)
+        env:
+          BACKUP_SECRETS_DIR: ${{ runner.temp }}/backup-secrets
+          WALG_S3_PREFIX: ${{ vars.BACKUP_DRILL_S3_PREFIX }}
+          WALG_S3_ENDPOINT: ${{ vars.BACKUP_DRILL_S3_ENDPOINT }}
+          WALG_S3_REGION: ${{ vars.BACKUP_DRILL_S3_REGION }}
+          DRILL_DB_USER: ${{ vars.BACKUP_DRILL_DB_USER }}
+          DRILL_DB_NAME: ${{ vars.BACKUP_DRILL_DB_NAME }}
+          DRILL_REPORT: ${{ runner.temp }}/backup-drill-report.md
+          TARGET_TIME: ${{ inputs.target_time }}
+        run: |
+          args=()
+          if [ -n "$TARGET_TIME" ]; then args+=(--target-time "$TARGET_TIME"); fi
+          status=0
+          deploy/backup/restore-drill.sh "${args[@]}" || status=$?
+          cat "$DRILL_REPORT" >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: убрать секреты
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/backup-secrets"
+      - name: отчёт
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-drill-prod-report
+          path: ${{ runner.temp }}/backup-drill-report.md
+          if-no-files-found: ignore
+          retention-days: 90
