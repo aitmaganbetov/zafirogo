@@ -117,8 +117,8 @@
   истории станет ledger, а `session_purchases` может и дальше чиститься.
 - [ ] `shop_orders`, `transfer_codes` — документы; деньги — через ledger (ключ `shop_order:<id>`, `transfer:<code_id>`).
 - [ ] `club_memberships.total_spent` (лояльность) — проекция по операциям трат (`LoyaltyProgram`), пересчитываемая из ledger.
-- [ ] Перенос: на дату переключения клуба создаётся по одной операции `migration_opening_balance` на каждый ненулевой баланс
-  (основной и бонусный) — история до переноса остаётся в старых таблицах/`activity_logs`.
+- [ ] Перенос: на дату переключения клуба создаются операции `migration_opening_balance` на ненулевые балансы (основной и
+  бонусный; реализовано пачками по 500 клиентов — §10.3) — история до переноса остаётся в старых таблицах/`activity_logs`.
 
 Набросок DDL:
 
@@ -305,6 +305,20 @@ func (s *Store) InClub(ctx context.Context, clubID int64, fn func(q *Queries) er
 
 Счета создаются лениво (`UpsertLedgerAccounts`), уникальность — `UNIQUE NULLS NOT DISTINCT (club_id, kind, user_id)`.
 
+Поиск счетов операции (`UpsertLedgerAccounts`, S5-M3-О3) — по индексу этой уникальности двумя ветками: счета клиента
+`user_id = …`, счета клуба `user_id IS NULL`. Прежнее одно условие `a.user_id IS NOT DISTINCT FROM wanted.user_id` индекс не
+использует: Hash Join с Seq Scan по всем счетам клуба на каждой денежной операции. EXPLAIN (ANALYZE) на синтетике
+(postgres:18.6, клуб с 50 000 клиентов = 100 006 счетов, операция пополнения: `member_main`, `member_bonus`, `cash_drawer`,
+`bonus_fund`, все счета уже есть):
+
+| | План | Buffers | Execution Time (5 прогонов) |
+|---|---|---|---|
+| до | Hash Join ← Seq Scan `ledger_accounts` (100 006 строк, Rows Removed by Join Filter: 99 998) | 972 | 18,9–21,7 мс (первый — 34 мс) |
+| после | 2 × Nested Loop ← Index Scan `ledger_accounts_club_kind_user_unique` (`user_id = …` / `user_id IS NULL`) | 36 | 0,15–0,20 мс |
+
+Время больше не растёт с числом счетов клуба. Новых индексов не нужно (миграции нет): `UNIQUE NULLS NOT DISTINCT` — обычный
+btree, `IS NULL` в нём ищется как условие индекса.
+
 Типовые проводки (реализованы в `billing/balance*.go`; остальные — по тому же образцу у владельцев пакетов):
 
 | Операция (`kind`) | Проводки |
@@ -337,7 +351,8 @@ func (s *Store) InClub(ctx context.Context, clubID int64, fn func(q *Queries) er
   перевода «на весь баланс» получает прежний ответ, а не «Недостаточно средств».
 - id операции выдаётся из `ledger_transaction_id_seq` при захвате ключа — без UPDATE (таблицы только дополняются).
 - Естественные ключи: `top_up_refund:<id прихода>`, `transfer_code:<id кода>`, `initial_balance:<user_id>`,
-  `opening_balance:<user_id>`; для запросов кассы/агента — ключ запроса клиента.
+  при переносе клуба — `opening_balances:<первый user_id>-<последний>` (пачка до 500 клиентов, `migrate.postOpeningBalances`)
+  и `opening_cash_drawer` (остаток кассы); для запросов кассы/агента — ключ запроса клиента.
 
 ### 10.4. Проекция `member_balances` и запрет «просто обновить поле»
 
@@ -351,7 +366,8 @@ func (s *Store) InClub(ctx context.Context, clubID int64, fn func(q *Queries) er
   `UPDATE (created_at, updated_at)` на `member_balances` — колонки баланса недоступны; триггер-сторож `member_balances_guard`
   (`pg_trigger_depth() = 1` → исключение) останавливает и владельца схемы; новая строка — только с нулями.
 - Сверка: `ListMemberBalanceDrift` (агрегат в SQL) — для ночной фоновой задачи.
-- **Перенос данных (ETL):** строки `member_balances` вставляются с нулями, остатки — `billing.MigrateOpeningBalance`.
+- **Перенос данных (ETL):** строки `member_balances` вставляются с нулями, остатки — операциями `migration_opening_balance` по 500 клиентов
+  (`migrate.postOpeningBalances`, ключ `opening_balances:<первый>-<последний>`).
 
 ### 10.5. Только добавление
 

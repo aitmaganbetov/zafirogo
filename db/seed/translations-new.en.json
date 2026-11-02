@@ -80,6 +80,8 @@
     "ПК, ожидающий подтверждения, не найден.": "The PC awaiting approval was not found.",
     "Пароль изменён на другом устройстве. Войдите с новым паролем.": "The password was changed on another device. Sign in with the new password.",
     "Пароль — не длиннее 255 символов.": "The password must not exceed 255 characters.",
+    "Перенесённый клуб :club открыт для работы": "Migrated club :club opened for operation",
+    "Перенесённый клуб :club удалён для повторного переноса": "Migrated club :club deleted for re-migration",
     "Перерегистрация и отключение ПК": "Re-registering and disconnecting PCs",
     "Перерегистрировать": "Re-register",
     "Перерегистрировать ПК «:name»? Агент отключится до ввода нового кода.": "Re-register PC “:name”? The agent will be disconnected until a new code is entered.",

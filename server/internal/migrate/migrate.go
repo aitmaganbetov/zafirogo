@@ -959,10 +959,10 @@ const openingBatch = 500
 
 // postOpeningBalances — входящие остатки клиентов (Q-004, в том числе отрицательные): операции
 // migration_opening_balance по openingBatch клиентов (ключ opening_balances:<первый user_id>-<последний>), счета
-// member_main/member_bonus каждого клиента ±, встречный opening_balance ∓ сумма. По операции на клиента (как
-// billing.MigrateOpeningBalance) было бы 50 000 операций, а поиск счетов операции в ledger (UpsertLedgerAccounts:
-// JOIN по user_id IS NOT DISTINCT FROM — полный просмотр счетов клуба) растёт с числом счетов — квадратично
-// (S5-M3-5: 20+ минут на 50 000 клиентов). Проводки по клиенту и проекция member_balances — те же.
+// member_main/member_bonus каждого клиента ±, встречный opening_balance ∓ сумма. По операции на клиента (ключ
+// opening_balance:<user_id>) было бы 50 000 операций, и до S5-M3-О3 поиск счетов операции (UpsertLedgerAccounts)
+// просматривал все счета клуба — квадратично (S5-M3-5: 20+ минут на 50 000 клиентов). Пачки остаются: меньше
+// операций и строк ledger_idempotency. Проводки по клиенту и проекция member_balances — те же.
 func (r *run) postOpeningBalances(ctx context.Context, q *store.Queries) (main, bonus money.Tiyn, clients int, err error) {
 	list := slices.Clone(r.balances)
 	slices.SortFunc(list, func(a, b openingBalance) int { return cmp.Compare(a.UserID, b.UserID) })

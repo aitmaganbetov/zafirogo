@@ -462,25 +462,6 @@ func SetInitialBalance(ctx context.Context, q *store.Queries, p InitialBalancePa
 	})
 }
 
-// MigrateOpeningBalance — входящий остаток клиента при переносе клуба из MySQL (tools/migrate-from-mysql):
-// операция migration_opening_balance с ключом "opening_balance:<user_id>", счёт opening_balance.
-// Допускает отрицательные остатки старых данных (Q-004).
-func MigrateOpeningBalance(ctx context.Context, q *store.Queries, clubID, userID int64, main, bonus money.Tiyn) (ledger.Result, error) {
-	if main == 0 && bonus == 0 {
-		return ledger.Result{}, nil
-	}
-	deltas := map[ledger.Account]money.Tiyn{
-		ledger.Main(userID):                              main,
-		ledger.Bonus(userID):                             bonus,
-		ledger.ClubAccount(ledger.AccountOpeningBalance): -(main + bonus),
-	}
-	return ledger.Post(ctx, q, ledger.Operation{
-		ClubID: clubID, Kind: ledger.KindMigrationOpeningBalance,
-		IdempotencyKey: "opening_balance:" + strconv.FormatInt(userID, 10),
-		Entries:        entriesOf(deltas),
-	})
-}
-
 // ---------------------------------------------------------------------------
 // Списание за покупку и возврат (общие для тарифов, минут, магазина, сессий)
 // ---------------------------------------------------------------------------

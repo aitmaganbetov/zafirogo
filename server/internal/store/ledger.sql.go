@@ -491,10 +491,15 @@ WITH wanted AS (
 )
 SELECT inserted.id, inserted.kind::text AS kind, COALESCE(inserted.user_id, 0)::bigint AS user_id FROM inserted
 UNION ALL
-SELECT a.id, a.kind::text AS kind, COALESCE(a.user_id, 0)::bigint AS user_id
-FROM ledger_accounts a
-JOIN wanted ON a.kind = wanted.kind AND a.user_id IS NOT DISTINCT FROM wanted.user_id
-WHERE a.club_id = $3
+SELECT a.id, a.kind::text AS kind, a.user_id::bigint AS user_id
+FROM wanted
+JOIN ledger_accounts a ON a.club_id = $3 AND a.kind = wanted.kind AND a.user_id = wanted.user_id
+WHERE wanted.user_id IS NOT NULL
+UNION ALL
+SELECT a.id, a.kind::text AS kind, 0::bigint AS user_id
+FROM wanted
+JOIN ledger_accounts a ON a.club_id = $3 AND a.kind = wanted.kind AND a.user_id IS NULL
+WHERE wanted.user_id IS NULL
 `
 
 type UpsertLedgerAccountsParams struct {
@@ -511,6 +516,9 @@ type UpsertLedgerAccountsRow struct {
 
 // Счета операции: создаёт недостающие и возвращает id всех. user_id = 0 — счёт клуба (NULL).
 // Счёт, вставленный параллельной транзакцией, этот снимок может не увидеть — Go повторяет запрос.
+// Существующие счета — двумя ветками по ledger_accounts_club_kind_user_unique (club_id, kind, user_id): счёт
+// клиента — по user_id = …, счёт клуба — по user_id IS NULL. Одно условие IS NOT DISTINCT FROM индекс не
+// использует — просмотр всех счетов клуба на каждой операции (S5-M3-О3, docs/schema-changes.md §10.3).
 func (q *Queries) UpsertLedgerAccounts(ctx context.Context, arg UpsertLedgerAccountsParams) ([]UpsertLedgerAccountsRow, error) {
 	rows, err := q.db.Query(ctx, upsertLedgerAccounts, arg.Kinds, arg.UserIds, arg.ClubID)
 	if err != nil {

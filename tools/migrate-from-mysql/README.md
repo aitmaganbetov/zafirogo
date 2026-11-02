@@ -122,7 +122,7 @@ go run ./cmd/migrate-from-mysql purge  --club zafiro-arena --confirm zafiro-aren
 | `clubs` | без `installation_key*` (Q-050: ключ установки выпускается заново); `settings` — как есть (v1); `migration_state = imported` (0027) |
 | `club_subscriptions` | до `go-live` — `suspended` (клуб закрыт), статус после `go-live` — в записи аудита переноса (S5-M3-2) |
 | `club_memberships` (Q-027), `club_invitations` | как есть |
-| `member_balances` | строка с нулями (новый id: роль платформы вставляет только `club_id, user_id`, даты — 0004), остаток — `billing.MigrateOpeningBalance` |
+| `member_balances` | строка с нулями (новый id: роль платформы вставляет только `club_id, user_id`, даты — 0004), остаток — проводкой `migration_opening_balance` (см. «Деньги в ledger») |
 | склад, касса, зоны, ПК, тарифы, сессии, пакеты, брони, друзья, чат, заказы, новости клуба, задачи | как есть (id сохраняются) |
 | `activity_logs` | целиком (старый код не чистил), партиции под старые даты |
 | `club_request_metrics`, `club_load_snapshots` | как есть (Q-083 «по желанию») |

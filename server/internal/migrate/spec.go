@@ -74,8 +74,8 @@ func coreTables() []table {
 				// Роль zafiro_platform вставляет только (club_id, user_id, created_at, updated_at) — 0004_rls.sql;
 				// на id строки баланса никто не ссылается (ключ — club_id, user_id).
 				"id":            "новый id: INSERT роли платформы — только club_id, user_id, даты (0004)",
-				"balance":       "входящий остаток — billing.MigrateOpeningBalance (ledger)",
-				"bonus_balance": "входящий остаток — billing.MigrateOpeningBalance (ledger)",
+				"balance":       "входящий остаток — проводкой migration_opening_balance (ledger)",
+				"bonus_balance": "входящий остаток — проводкой migration_opening_balance (ledger)",
 			}},
 		{Name: "club_invitations", Where: clubScope, OrderBy: "id", UserRefs: []string{"invited_by"}},
 		{Name: "product_categories", Where: clubScope, OrderBy: "id"},

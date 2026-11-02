@@ -22,6 +22,9 @@ WHERE club_id = sqlc.arg(club_id) AND idempotency_key = sqlc.arg(idempotency_key
 -- name: UpsertLedgerAccounts :many
 -- Счета операции: создаёт недостающие и возвращает id всех. user_id = 0 — счёт клуба (NULL).
 -- Счёт, вставленный параллельной транзакцией, этот снимок может не увидеть — Go повторяет запрос.
+-- Существующие счета — двумя ветками по ledger_accounts_club_kind_user_unique (club_id, kind, user_id): счёт
+-- клиента — по user_id = …, счёт клуба — по user_id IS NULL. Одно условие IS NOT DISTINCT FROM индекс не
+-- использует — просмотр всех счетов клуба на каждой операции (S5-M3-О3, docs/schema-changes.md §10.3).
 WITH wanted AS (
     -- unnest в списке выборки: массивы одной длины разворачиваются попарно.
     SELECT w.kind, NULLIF(w.user_id, 0) AS user_id
@@ -34,10 +37,15 @@ WITH wanted AS (
 )
 SELECT inserted.id, inserted.kind::text AS kind, COALESCE(inserted.user_id, 0)::bigint AS user_id FROM inserted
 UNION ALL
-SELECT a.id, a.kind::text AS kind, COALESCE(a.user_id, 0)::bigint AS user_id
-FROM ledger_accounts a
-JOIN wanted ON a.kind = wanted.kind AND a.user_id IS NOT DISTINCT FROM wanted.user_id
-WHERE a.club_id = sqlc.arg(club_id);
+SELECT a.id, a.kind::text AS kind, a.user_id::bigint AS user_id
+FROM wanted
+JOIN ledger_accounts a ON a.club_id = sqlc.arg(club_id) AND a.kind = wanted.kind AND a.user_id = wanted.user_id
+WHERE wanted.user_id IS NOT NULL
+UNION ALL
+SELECT a.id, a.kind::text AS kind, 0::bigint AS user_id
+FROM wanted
+JOIN ledger_accounts a ON a.club_id = sqlc.arg(club_id) AND a.kind = wanted.kind AND a.user_id IS NULL
+WHERE wanted.user_id IS NULL;
 
 -- name: InsertLedgerTransaction :exec
 INSERT INTO ledger_transactions (id, club_id, kind, idempotency_key, actor_user_id, cash_shift_id,
