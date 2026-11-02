@@ -1,0 +1,124 @@
+# Выпуск агента ПК: установщик → sha256 и размер → манифест <установщик>.update.json с подписью Ed25519
+# (решение «Обновления агента», docs/agent-protocol.md §6). Манифест читает кабинет суперадмина
+# (server/internal/http/sections/superadmin/release.go) и проверяет подпись открытым ключом agent.update.public_keys;
+# без манифеста с верной подписью автообновление не включается.
+#
+# Приватный ключ — только в секрете окружения `agent-release` (AGENT_UPDATE_SIGNING_KEY: PEM PKCS#8 из
+# `openssl genpkey -algorithm ed25519` или base64 seed из `go run ./cmd/sign-update -genkey -key-id <id>`).
+# Переменные репозитория: AGENT_UPDATE_KEY_ID (key_id ключа) и AGENT_UPDATE_PUBLIC_KEY (key_id:base64 — то же
+# значение, что в agent.update.public_keys сервера): подпись проверяется им до публикации.
+#
+# Сборка установщика — заготовка: агент C# ещё не перенесён (решение 5 CLAUDE.md). Пока установщик берётся по
+# ссылке (installer_url, например выпуск WindowsAgent старого репозитория); когда агент появится здесь, шаг
+# «Установщик» заменит сборка (windows-latest, Native AOT, Authenticode) с выходом в тот же путь.
+name: agent-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Версия агента (три числа через точку, например 1.2.0)
+        required: true
+      channel:
+        description: Канал обновлений
+        required: true
+        default: stable
+      installer_url:
+        description: https-адрес готового установщика (пока агент не собирается здесь)
+        required: true
+  push:
+    tags: ["agent-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: sign and publish
+    runs-on: ubuntu-24.04
+    environment: agent-release
+    permissions:
+      contents: write # создание выпуска agent-v<версия>
+    env:
+      # Входы — через env, не подстановкой в скрипт (защита от инъекции в run).
+      INPUT_VERSION: ${{ inputs.version }}
+      INPUT_CHANNEL: ${{ inputs.channel }}
+      INPUT_INSTALLER_URL: ${{ inputs.installer_url }}
+      REF_NAME: ${{ github.ref_name }}
+      KEY_ID: ${{ vars.AGENT_UPDATE_KEY_ID }}
+      EXPECT_PUBLIC_KEY: ${{ vars.AGENT_UPDATE_PUBLIC_KEY }}
+      INSTALLER_URL_VAR: ${{ vars.AGENT_INSTALLER_URL }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Версия и канал
+        run: |
+          version="${INPUT_VERSION:-${REF_NAME#agent-v}}"
+          channel="${INPUT_CHANNEL:-stable}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}$'; then
+            echo "::error::версия «$version»: ожидается три числа через точку"; exit 1
+          fi
+          if [ -z "$KEY_ID" ]; then
+            echo "::error::не задана переменная репозитория AGENT_UPDATE_KEY_ID"; exit 1
+          fi
+          {
+            echo "VERSION=$version"
+            echo "CHANNEL=$channel"
+            echo "INSTALLER=$RUNNER_TEMP/release/ZafiroAgentSetup-$version.exe"
+          } >> "$GITHUB_ENV"
+
+      # Заготовка сборки: путь к артефакту — $INSTALLER. Источник — вход installer_url (запуск вручную) или переменная
+      # AGENT_INSTALLER_URL с {version} (запуск по тегу).
+      - name: Установщик
+        run: |
+          url="${INPUT_INSTALLER_URL:-${INSTALLER_URL_VAR//\{version\}/$VERSION}}"
+          case "$url" in
+            https://*) ;;
+            *) echo "::error::нужен https-адрес установщика (installer_url или AGENT_INSTALLER_URL)"; exit 1 ;;
+          esac
+          mkdir -p "$(dirname "$INSTALLER")"
+          curl --fail --silent --show-error --location --proto '=https' --max-filesize 1073741824 -o "$INSTALLER" "$url"
+          test -s "$INSTALLER"
+
+      - name: Подпись (sha256, размер, Ed25519) и проверка ключом сервера
+        working-directory: server
+        env:
+          AGENT_UPDATE_SIGNING_KEY: ${{ secrets.AGENT_UPDATE_SIGNING_KEY }}
+        run: |
+          args=(-file "$INSTALLER" -version "$VERSION" -channel "$CHANNEL" -key-id "$KEY_ID")
+          if [ -n "$EXPECT_PUBLIC_KEY" ]; then
+            args+=(-expect-public-key "$EXPECT_PUBLIC_KEY")
+          fi
+          go run ./cmd/sign-update "${args[@]}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ env.VERSION }}
+          path: |
+            ${{ env.INSTALLER }}
+            ${{ env.INSTALLER }}.update.json
+          if-no-files-found: error
+
+      - name: Выпуск agent-v<версия>
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="agent-v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$INSTALLER" "$INSTALLER.update.json" --clobber
+          else
+            gh release create "$tag" "$INSTALLER" "$INSTALLER.update.json" --title "Агент $VERSION" \
+              --notes "Канал $CHANNEL, ключ подписи $KEY_ID. Манифест: $(basename "$INSTALLER").update.json." \
+              --target "$GITHUB_SHA"
+          fi
