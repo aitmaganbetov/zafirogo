@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +39,10 @@ func StartMySQL(t testing.TB) (*sql.DB, string) {
 		testcontainers.WithCmd("--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"),
 		testcontainers.WithExposedPorts("3306/tcp"),
 		testcontainers.WithFiles(
+			// Клиент mysql скрипта инициализации — utf8mb4 (в дампе нет SET NAMES: без этого кириллица в демо-данных
+			// загружалась бы как latin1 → «Ð½Ð°…»).
+			testcontainers.ContainerFile{Reader: strings.NewReader("[client]\ndefault-character-set=utf8mb4\n"),
+				ContainerFilePath: "/etc/mysql/conf.d/client-utf8mb4.cnf", FileMode: 0o644},
 			testcontainers.ContainerFile{HostFilePath: Testdata("schema.sql"), ContainerFilePath: "/docker-entrypoint-initdb.d/01-schema.sql", FileMode: 0o644},
 			testcontainers.ContainerFile{HostFilePath: Testdata("demo-data.sql"), ContainerFilePath: "/docker-entrypoint-initdb.d/02-data.sql", FileMode: 0o644},
 		),

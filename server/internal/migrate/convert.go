@@ -52,7 +52,9 @@ type column struct {
 	Cast  string // тип Postgres для приведения текста
 	My    mysqlColumn
 	PG    pgColumn
-	Index int // позиция в строке MySQL
+	Index int // позиция в строке MySQL; −1 — вычисляемая колонка (Const)
+	// Const — значение вычисляемой колонки (table.Const).
+	Const *string
 }
 
 // planColumns сопоставляет колонки MySQL и Postgres. Колонка MySQL без пары и не из omit — ошибка схемы.

@@ -44,6 +44,7 @@ const (
 	CodeMinutesNotMember  = "minutes"
 	CodeVerifyMismatch    = "verify"
 	CodeExtension         = "extension"
+	CodeFreeze            = "freeze" // заморозка клуба (подписка приостановлена в старом Laravel)
 	maxSamples            = 5
 	maxFindingValueLength = 80
 )
@@ -67,6 +68,8 @@ type TableStat struct {
 	Source int64  `json:"source"`
 	// Written — вставлено в Postgres (apply); у платформенных таблиц меньше Source, если строки уже были.
 	Written int64 `json:"written,omitempty"`
+	// Skipped — строк источника, отброшенных правилом таблицы (table.Transform; например, истёкшие токены).
+	Skipped int64 `json:"skipped,omitempty"`
 	// Target — строк клуба в Postgres (verify).
 	Target int64 `json:"target,omitempty"`
 	// Converted — что преобразовано (колонка → вид), для отчёта плана.

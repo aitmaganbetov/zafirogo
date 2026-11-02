@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -46,6 +47,8 @@ type Env struct {
 	Target  PGQuerier
 	Options *Options
 	Report  *Report
+
+	run *run // ядро (для расширений этого пакета: копирование таблиц теми же преобразованиями)
 }
 
 // Add — находка расширения в общем отчёте.
@@ -124,6 +127,11 @@ func Plan(ctx context.Context, my *sql.DB, pg *pgxpool.Pool, o Options) (*Report
 	}
 	if err := r.partitionsPlan(ctx); err != nil {
 		return r.rep, err
+	}
+	if len(o.Extensions) > 0 {
+		if err := r.platformCheck(ctx); err != nil {
+			return r.rep, err
+		}
 	}
 	for _, ext := range o.Extensions {
 		if err := ext.Plan(ctx, r.env()); err != nil {
@@ -256,7 +264,7 @@ func Verify(ctx context.Context, my *sql.DB, pg *pgxpool.Pool, o Options) (*Repo
 }
 
 func (r *run) env() *Env {
-	return &Env{ClubID: r.club.ID, ClubSlug: r.club.Slug, Source: r.src.conn, Target: r.pg, Options: r.o, Report: r.rep}
+	return &Env{ClubID: r.club.ID, ClubSlug: r.club.Slug, Source: r.src.conn, Target: r.pg, Options: r.o, Report: r.rep, run: r}
 }
 
 // setPlatformRole — SET LOCAL ROLE zafiro_platform, если логин в ней состоит (PD-9: data-миграции под ролью
@@ -293,6 +301,20 @@ func (r *run) preflight(ctx context.Context) error {
 		return err
 	}
 	return r.slugConflicts(ctx)
+}
+
+// platformCheck — платформенный шаг (языки, переводы, настройки платформы) выполнен до первого клуба.
+func (r *run) platformCheck(ctx context.Context) error {
+	var done bool
+	if err := r.pg.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM audit_log WHERE club_id IS NULL AND action = $1)", platformAuditAction).
+		Scan(&done); err != nil {
+		return fmt.Errorf("pg: platform audit: %w", err)
+	}
+	if !done {
+		r.rep.add(Warning, CodePlatform, "", "", "", "",
+			"платформенный шаг не выполнен: сначала migrate-from-mysql platform apply (языки, переводы, настройки платформы)")
+	}
+	return nil
 }
 
 func (r *run) alreadyMigrated(ctx context.Context) error {
@@ -363,7 +385,18 @@ func (r *run) danglingUsers(ctx context.Context, where string, args []any) error
 }
 
 func (r *run) skippedInfo(ctx context.Context) error {
+	handled := map[string]bool{}
+	for _, ext := range r.o.Extensions {
+		if h, ok := ext.(tableHandler); ok {
+			for _, name := range h.Tables() {
+				handled[name] = true
+			}
+		}
+	}
 	for _, s := range skippedTables {
+		if handled[s.Name] {
+			continue
+		}
 		n, err := r.src.count(ctx, s.Name, s.Where, []any{r.club.ID})
 		if err != nil {
 			return err
@@ -411,6 +444,15 @@ func (r *run) copyTable(ctx context.Context, t table) error {
 	for _, name := range unmapped {
 		r.rep.add(Blocker, CodeUnmappedColumn, t.Name, name, "", "", "колонка MySQL без пары в Postgres (схемы разошлись)")
 	}
+	for _, name := range sortedKeys(t.Const) {
+		pc, ok := findPGColumn(pgCols, name)
+		if !ok {
+			return fmt.Errorf("pg: %s.%s not found", t.Name, name)
+		}
+		v := t.Const[name]
+		cols = append(cols, column{Name: name, Kind: kindText, Cast: pc.Type, PG: pc, Index: -1, Const: &v})
+		stat.Converted[name] = "вычисляется"
+	}
 	idx := make(map[string]int, len(myCols))
 	for i, c := range myCols {
 		idx[c.Name] = i
@@ -436,9 +478,23 @@ func (r *run) copyTable(ctx context.Context, t table) error {
 		if err := r.transform(t, row, idx, rowID); err != nil {
 			return err
 		}
+		if t.Transform != nil {
+			keep, err := t.Transform(row, idx, rowID)
+			if err != nil {
+				return err
+			}
+			if !keep {
+				stat.Skipped++
+				return nil
+			}
+		}
 		out := make([]*string, len(cols))
 		for i := range cols {
 			c := &cols[i]
+			if c.Index < 0 {
+				out[i] = c.Const
+				continue
+			}
 			raw := row[c.Index]
 			v, err := c.convert(raw, r.o.SourceTZ)
 			if err != nil {
@@ -477,6 +533,24 @@ func orEmpty(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func findPGColumn(cols []pgColumn, name string) (pgColumn, bool) {
+	for _, c := range cols {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return pgColumn{}, false
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
 }
 
 func colIndex(cols []column, name string) int {
@@ -697,6 +771,8 @@ func (r *run) transform(t table, row []*string, idx map[string]int, rowID string
 	switch t.Name {
 	case "clubs":
 		return r.checkClubSettings(row, idx, set)
+	case "club_subscriptions":
+		r.thawSubscription(row, idx, set, rowID)
 	case "club_memberships":
 		// Q-027: не-сотруднические роли → client (ClubRoles::label() показывал их «Клиент»).
 		role := deref(get("role"))
@@ -737,6 +813,28 @@ func (r *run) transform(t table, row []*string, idx map[string]int, rowID string
 		}
 	}
 	return nil
+}
+
+// thawSubscription — заморозка клуба в старом Laravel делается приостановкой подписки в суперадминке
+// (Superadmin\ClubController::suspend(): status = 'suspended', canceled_at = now(); срок не меняется). В zafirogo
+// подписка возвращается в статус до заморозки (Options.ThawSubscription), canceled_at — NULL (у действующей подписки
+// его нет: extend() обнуляет). Без флага приостановленная подписка переносится как есть — с предупреждением.
+func (r *run) thawSubscription(row []*string, idx map[string]int, set func(string, string), rowID string) {
+	status := deref(row[idx["status"]])
+	if status != "suspended" {
+		r.rep.add(Info, CodeFreeze, "club_subscriptions", "status", status, rowID,
+			"подписка не приостановлена: клуб не заморожен в старом Laravel? (README: порядок перевода)")
+		return
+	}
+	if r.o.ThawSubscription == "" {
+		r.rep.add(Warning, CodeFreeze, "club_subscriptions", "status", status, rowID,
+			"подписка приостановлена (заморозка?) и переносится так — клуб в zafirogo будет заблокирован; укажите --thaw-subscription")
+		return
+	}
+	set("status", r.o.ThawSubscription)
+	row[idx["canceled_at"]] = nil
+	r.rep.add(Info, CodeFreeze, "club_subscriptions", "status", "suspended → "+r.o.ThawSubscription, rowID,
+		"заморозка снята: подписка в zafirogo — в статусе до приостановки")
 }
 
 // postOpenings — входящие остатки в ledger: балансы клиентов (billing.MigrateOpeningBalance, Q-004 — в том числе

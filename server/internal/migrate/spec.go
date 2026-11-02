@@ -2,8 +2,11 @@ package migrate
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
 )
 
 // table — правило переноса одной таблицы: какие строки клуба читать в MySQL и как писать в Postgres.
@@ -28,6 +31,16 @@ type table struct {
 	Partitioned bool
 	// NoID — у таблицы нет колонки id (составной ключ).
 	NoID bool
+	// Transform — правило строки расширения (M2) до преобразования типов: значения MySQL текстом, можно менять
+	// (row[idx[колонка]]); false — строка не переносится (TableStat.Skipped).
+	Transform func(row []*string, idx map[string]int, rowID string) (bool, error)
+	// Const — колонки Postgres без пары в MySQL с постоянным значением (текст, приводится к типу колонки).
+	Const map[string]string
+}
+
+// tableHandler — расширение, которое переносит таблицы из skippedTables (их нет в списке «не переносится»).
+type tableHandler interface {
+	Tables() []string
 }
 
 func clubScope(*Options) (string, []any) { return "club_id = ?", []any{clubArg} }
@@ -126,8 +139,19 @@ type Options struct {
 	LegacySettingsFile []byte
 	// BatchSize — строк в одной вставке.
 	BatchSize int
-	// Extensions — расширения (M2): производные данные после ядра.
+	// Extensions — расширения (M2): производные данные после ядра (DefaultExtensions).
 	Extensions []Extension
+	// LaravelKeys — APP_KEY старого Laravel (и APP_PREVIOUS_KEYS): расшифровка секретов (Q-050). nil — секреты
+	// не переносятся (блокер, если они есть).
+	LaravelKeys *LaravelKeys
+	// DataKeys — связка ключей данных нового сервера (security.data_keys): шифрование перенесённых секретов.
+	DataKeys *secretbox.Box
+	// ThawSubscription — статус подписки клуба до заморозки ("active" или "trialing"): приостановленная на время
+	// перевода подписка (status = suspended) переносится в этом статусе. "" — как есть.
+	ThawSubscription string
+	// LaravelStorage — корень диска 'local' старого Laravel (storage/app/private): логотипы, картинки входа и
+	// новостей. "" — файлы не переносятся (предупреждение).
+	LaravelStorage string
 }
 
 func (o *Options) normalize() {
@@ -158,7 +182,7 @@ func (o *Options) mysqlTime(t time.Time) string { return t.In(o.SourceTZ).Format
 func usersWhere(tables []table, o *Options) (string, []any) {
 	var parts []string
 	var args []any
-	for _, t := range tables {
+	for _, t := range append(slices.Clone(tables), userRefTablesM2()...) {
 		if len(t.UserRefs) == 0 || t.Where == nil {
 			continue
 		}

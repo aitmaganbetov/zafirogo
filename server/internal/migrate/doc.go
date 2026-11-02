@@ -10,6 +10,14 @@
 //     коммита. Повторный запуск для перенесённого клуба — ErrAlreadyMigrated, ничего не меняется;
 //   - Verify — сверка после переноса (число строк, балансы, total_spent, склад, касса, ПК, ledger).
 //
-// Производные данные (JSON v2, tariff_sales, income_kind, zone_id/source, токены и ключи, секреты APP_KEY,
-// файлы) — расширения (Extension, M2).
+// Производные данные (M2) — расширения (Extension, DefaultExtensions) в той же транзакции и сверке:
+//   - JSONv2 — receipt_data, shop_orders.items, уровни и нормализация clubs.settings (Q-003, Q-023, BQ-3, CQ-9);
+//   - Derived — tariff_sales (Q-007), cash_transactions.income_kind/payment_method (CSQ-2, Q-013),
+//     session_purchases.zone_id/source идущих сессий (SV-3) из activity_logs;
+//   - Integrations — api_keys, api_idempotency_keys, webhook_endpoints (секрет: LaravelKeys → secretbox, Q-050),
+//     webhook_deliveries, personal_access_tokens → mobile_api_tokens;
+//   - Files — логотип, картинка входа, картинки новостей с диска старого Laravel (Q-085).
+//
+// Платформенный шаг (PlatformPlan/PlatformApply/PlatformVerify) — один раз перед первым клубом: языки, переводы,
+// platform_settings (токены Telegram — Q-050), новости и журнал платформы, тарифы платформы.
 package migrate

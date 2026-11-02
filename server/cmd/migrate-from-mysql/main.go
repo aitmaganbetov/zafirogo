@@ -4,11 +4,14 @@
 //	migrate-from-mysql plan   --club <id|slug>   # сухой прогон: отчёт о данных, ничего не пишет
 //	migrate-from-mysql apply  --club <id|slug>   # перенос одной транзакцией (со сверкой до коммита)
 //	migrate-from-mysql verify --club <id|slug>   # сверка перенесённого клуба с MySQL
+//	migrate-from-mysql platform plan|apply|verify # платформа: языки, переводы, настройки, новости, тарифы (один раз)
 //
 // Строки подключения — из окружения (секреты не в аргументах команды: их видно в списке процессов):
 // ZAFIRO_MIGRATE_MYSQL_DSN (go-sql-driver: user:pass@tcp(host:3306)/db, лучше логин только для чтения) и
 // ZAFIRO_MIGRATE_PG_DSN (логин владельца схемы с членством в zafiro_platform, PD-9). Флаги --mysql/--pg —
-// для локальной отладки.
+// для локальной отладки. Секреты (решение Q-050) — тоже из окружения: ZAFIRO_MIGRATE_LARAVEL_APP_KEY (APP_KEY старого
+// Laravel, "base64:…"), ZAFIRO_MIGRATE_LARAVEL_PREVIOUS_KEYS (APP_PREVIOUS_KEYS, если ключ ротировали) и
+// ZAFIRO_SECURITY_DATA_KEYS (ключи данных нового сервера, та же переменная, что у сервера: "kid:секрет,…").
 //
 // Коды выхода: 0 — успех; 1 — ошибка; 2 — неверные аргументы; 3 — блокеры в данных (ничего не записано);
 // 4 — расхождение сверки (apply откатан); 5 — клуб уже перенесён (apply ничего не делает).
@@ -24,13 +27,16 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
+	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
 	"github.com/aitmaganbetov/zafirogo/server/internal/migrate"
+	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
 )
 
 const (
@@ -47,8 +53,13 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	platform := len(args) > 0 && args[0] == "platform"
+	if platform {
+		args = args[1:]
+	}
 	if len(args) == 0 || (args[0] != "plan" && args[0] != "apply" && args[0] != "verify") {
 		fmt.Fprintln(stderr, "usage: migrate-from-mysql plan|apply|verify --club <id|slug> [flags]")
+		fmt.Fprintln(stderr, "       migrate-from-mysql platform plan|apply|verify [flags]")
 		return exitUsage
 	}
 	mode := args[0]
@@ -61,12 +72,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 	retention := fs.Duration("api-log-retention", 2160*time.Hour, "срок хранения api_request_logs (integrations.request_log_retention)")
 	reserve := fs.Int64("id-reserve", 1_000_000_000, "запас последовательностей id над максимальным id MySQL (Q-029)")
 	legacySettings := fs.String("legacy-settings", "", "storage/app/settings.json старого проекта для клуба legacy без settings (Q-022)")
+	storage := fs.String("laravel-storage", "", "диск 'local' старого Laravel (storage/app/private): логотипы, картинки входа и новостей")
+	seed := fs.String("translations-seed", "", "platform: каталог db/seed с translations-new.{ru,kk,en}.json (строки, которых нет)")
+	thaw := fs.String("thaw-subscription", "", "статус подписки до заморозки (active|trialing): приостановленная подписка переносится в нём")
+	coreOnly := fs.Bool("core-only", false, "только ядро (без расширений M2) — для отладки")
 	batch := fs.Int("batch-size", 2000, "строк в одной вставке")
 	jsonOut := fs.String("json", "", "файл для отчёта в JSON")
 	if err := fs.Parse(args[1:]); err != nil {
 		return exitUsage
 	}
-	if *clubRef == "" || *mysqlDSN == "" || *pgDSN == "" {
+	if (*clubRef == "" && !platform) || *mysqlDSN == "" || *pgDSN == "" {
 		fmt.Fprintln(stderr, "нужны --club, DSN MySQL и DSN Postgres (ZAFIRO_MIGRATE_MYSQL_DSN, ZAFIRO_MIGRATE_PG_DSN)")
 		return exitUsage
 	}
@@ -75,7 +90,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "--source-tz: %v\n", err)
 		return exitUsage
 	}
-	opts := migrate.Options{Club: *clubRef, SourceTZ: loc, APILogRetention: *retention, IDReserve: *reserve, BatchSize: *batch}
+	if *storage != "" {
+		if st, err := os.Stat(*storage); err != nil || !st.IsDir() { // #nosec G304 G703 -- путь задаёт оператор переноса
+			fmt.Fprintln(stderr, "--laravel-storage: нет такого каталога")
+			return exitUsage
+		}
+	}
+	if *thaw != "" && *thaw != "active" && *thaw != "trialing" {
+		fmt.Fprintln(stderr, "--thaw-subscription: active или trialing")
+		return exitUsage
+	}
+	laravelKeys, dataKeys, err := secretKeys()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitUsage
+	}
+	opts := migrate.Options{Club: *clubRef, SourceTZ: loc, APILogRetention: *retention, IDReserve: *reserve, BatchSize: *batch,
+		LaravelKeys: laravelKeys, DataKeys: dataKeys, LaravelStorage: *storage, ThawSubscription: *thaw}
+	if !*coreOnly {
+		opts.Extensions = migrate.DefaultExtensions()
+	}
 	if *legacySettings != "" {
 		b, err := os.ReadFile(*legacySettings) // #nosec G304 G703 -- путь задаёт оператор переноса
 		if err != nil {
@@ -83,6 +117,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return exitUsage
 		}
 		opts.LegacySettingsFile = b
+	}
+	popts := migrate.PlatformOptions{SourceTZ: loc, IDReserve: *reserve, BatchSize: *batch, LaravelKeys: laravelKeys,
+		DataKeys: dataKeys, LaravelStorage: *storage}
+	if platform && *seed != "" {
+		if popts.TranslationsSeed, err = i18n.LoadSeed(*seed); err != nil {
+			fmt.Fprintf(stderr, "--translations-seed: %v\n", err)
+			return exitUsage
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -102,12 +144,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer pg.Close()
 
 	var report *migrate.Report
-	switch mode {
-	case "plan":
+	switch {
+	case platform && mode == "plan":
+		report, err = migrate.PlatformPlan(ctx, my, pg, popts)
+	case platform && mode == "apply":
+		report, err = migrate.PlatformApply(ctx, my, pg, popts)
+	case platform:
+		report, err = migrate.PlatformVerify(ctx, my, pg, popts)
+	case mode == "plan":
 		report, err = migrate.Plan(ctx, my, pg, opts)
-	case "apply":
+	case mode == "apply":
 		report, err = migrate.Apply(ctx, my, pg, opts)
-	case "verify":
+	default:
 		report, err = migrate.Verify(ctx, my, pg, opts)
 	}
 	if report != nil {
@@ -133,10 +181,44 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case err != nil:
 		fmt.Fprintf(stderr, "ошибка: %v\n", err)
 		return exitError
-	case mode == "plan" && report.Count(migrate.Blocker) > 0:
+	case mode == "plan" && report != nil && report.Count(migrate.Blocker) > 0:
 		return exitBlocked
 	}
 	return exitOK
+}
+
+// secretKeys — ключи из окружения (не из аргументов: их видно в списке процессов). Пустые переменные — nil
+// (секреты не переносятся: при наличии секретов в данных — блокер в отчёте).
+func secretKeys() (*migrate.LaravelKeys, *secretbox.Box, error) {
+	var laravel *migrate.LaravelKeys
+	if v := os.Getenv("ZAFIRO_MIGRATE_LARAVEL_APP_KEY"); v != "" {
+		k, err := migrate.ParseLaravelKeys(v, os.Getenv("ZAFIRO_MIGRATE_LARAVEL_PREVIOUS_KEYS"))
+		if err != nil {
+			return nil, nil, errors.New("ZAFIRO_MIGRATE_LARAVEL_APP_KEY / _PREVIOUS_KEYS: ожидается \"base64:…\" на 32 байта (AES-256-CBC)")
+		}
+		laravel = k
+	}
+	var box *secretbox.Box
+	if v := os.Getenv("ZAFIRO_SECURITY_DATA_KEYS"); v != "" {
+		var keys []secretbox.Key
+		for part := range strings.SplitSeq(v, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			id, secret, ok := strings.Cut(part, ":")
+			if !ok || id == "" || secret == "" {
+				return nil, nil, errors.New("ZAFIRO_SECURITY_DATA_KEYS: ожидается kid:секрет[,kid:секрет]")
+			}
+			keys = append(keys, secretbox.Key{ID: id, Secret: secret})
+		}
+		b, err := secretbox.NewKeyring(keys, "")
+		if err != nil {
+			return nil, nil, errors.New("ZAFIRO_SECURITY_DATA_KEYS: " + err.Error())
+		}
+		box = b
+	}
+	return laravel, box, nil
 }
 
 // openMySQL — подключение к MySQL старого проекта: время и деньги читаются строками (parseTime выключен),

@@ -1,0 +1,44 @@
+{
+    "php": "8.4.27",
+    "laravel": "13.35.0",
+    "app_key": "base64:AQEBAQEBAQEBAQEBAQEBAQICAgICAgICAgICAgICAgI=",
+    "previous_keys": "base64:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+    "cases": [
+        {
+            "name": "webhook_secret",
+            "plain": "whsec_Ab1Ab1Ab1Ab1Ab1Ab1Ab1Ab1Ab1Ab1Ab1Ab1Ab1x",
+            "unserialize": false,
+            "payload": "eyJpdiI6InVMVjdzN2JaM3h4enBZZ3psaWdYUnc9PSIsInZhbHVlIjoibC9MSi9LTGpUblF3MXJzdjhRMUJoaGZhTHhXSUJ3VlkrS01NWk9qb3hVS0FaWWR5b0xkR0xZSGxmZWZvU2kyMiIsIm1hYyI6IjI5YWMyZDcxMTU3NzA1OWFlMjZmNjQ5ZTllMzhkZmM5NTQ0Y2E4ZTNlZjg0MDBkNDMxODE2YWVlYjZhMTdkNmMiLCJ0YWciOiIifQ=="
+        },
+        {
+            "name": "telegram_token",
+            "plain": "123456789:AAH-telegram_Token-ЖЁ",
+            "unserialize": false,
+            "payload": "eyJpdiI6InJCTENyZjZRb0lLOVZ1eGEzUnpyUFE9PSIsInZhbHVlIjoiaXlqWU1wc3FnNDg1Y3FtWEFsNE9NZXh1aGdaZUJMNTF1eGZXM3haY3ZtTlJrU0lYR2k3Z2tUc3UzSUY2Z0R2eSIsIm1hYyI6IjVjYzg4MWNiOWQ5NDJlZjcxOTZlM2FlY2ZhOWM1ZTBiZjAzNGM4NTY0MDcwYmEyNDliMWFiNWViZjU3YjRmNzgiLCJ0YWciOiIifQ=="
+        },
+        {
+            "name": "block",
+            "plain": "0123456789abcdef",
+            "unserialize": false,
+            "payload": "eyJpdiI6IlY2NktPYUoxZHc1S3NKYVpwZlNkMGc9PSIsInZhbHVlIjoiUUY3OHRuNFdsdUMzZWVPRitJaU1BRGkvYUJtN2FEaWs0VVNDektaUjlkZz0iLCJtYWMiOiI3ZGFiYmJjZDMyNTBhOTY3YzM5MTM4Y2M4ZGQ2ZWJkNTc1MTM4NjllOWY2N2RiYzIwMmUzMjBlZGJiMTg3YWQ4IiwidGFnIjoiIn0="
+        },
+        {
+            "name": "empty",
+            "plain": "",
+            "unserialize": false,
+            "payload": "eyJpdiI6IlRZK3I1RlJRbmpiM0xONms2aUlBNFE9PSIsInZhbHVlIjoiMHhiem5qNjV5ZzhrVi9zMWJGQWJwQT09IiwibWFjIjoiMzZmOWZmN2VhZDc2ZDM5ZDE2NDY5YWE1ZmM2OGJhMmJhYmYzYzJjM2U4YjlmYWJlMmQwMTNhYTMxMmNmZjg3YSIsInRhZyI6IiJ9"
+        },
+        {
+            "name": "serialized",
+            "plain": "whsec_serialized \"кавычки\";",
+            "unserialize": true,
+            "payload": "eyJpdiI6InFvTUdlY0hvcER2dXZUTCtCbWFDcVE9PSIsInZhbHVlIjoicVFXaE93VXMvbWVDZmxML0NCenpwZE1KREFjOURyOXc1RmVJK0llNHg0ZE5SUDJCQmxSbThkWmorV1FrR1pLbCIsIm1hYyI6IjhjYjIwOGQzMWM2ZmYwZmQ3MTZmY2QwY2NlNzkzZGQ4ZWYwY2FjNDU2ZjM0YWZhYjVlYWMyMzMyMzM1YmQ5YzciLCJ0YWciOiIifQ=="
+        },
+        {
+            "name": "previous_key",
+            "plain": "whsec_previous",
+            "unserialize": false,
+            "payload": "eyJpdiI6ImtEQytMTmE0UmMzMjlwUzE0ZkJibmc9PSIsInZhbHVlIjoiSUhPVDY0MWl3ZnpsZU05dmE5Q3lyUT09IiwibWFjIjoiZThlZjAyMjM1M2RiODYzOGEwMTgwM2ExZjJhYWMxZTc5MjlhNzllYmM4YTI2YmU1ODVkMTdkYjdmZmNlMzNhNSIsInRhZyI6IiJ9"
+        }
+    ]
+}
