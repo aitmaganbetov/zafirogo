@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
+using Zafiro.Agent.Core.Health;
 using Zafiro.Agent.Core.Platform;
 using Zafiro.Agent.V1;
 
@@ -40,6 +41,8 @@ public sealed partial class WindowsPlatform : IPlatform
     };
 
     public string UpdateDirectory { get; }
+
+    public IHealthProbe Health { get; } = new WindowsHealthProbe();
 
     public DeviceInfo GetDeviceInfo(string agentVersion, bool diskless)
     {

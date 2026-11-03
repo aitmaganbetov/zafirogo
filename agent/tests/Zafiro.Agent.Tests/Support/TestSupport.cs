@@ -3,6 +3,7 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Logging.Abstractions;
 using Zafiro.Agent.Core;
 using Zafiro.Agent.Core.Credentials;
+using Zafiro.Agent.Core.Health;
 using Zafiro.Agent.Core.Platform;
 using Zafiro.Agent.Core.Runtime;
 using Zafiro.Agent.Core.Transport;
@@ -49,6 +50,11 @@ public sealed class FakePlatform : IPlatform
     public AgentCapabilities Capabilities { get; } = new() { SelfUpdate = true, WakeOnLan = true, PowerControl = true, ShowMessage = true, ServiceMode = true };
 
     public string UpdateDirectory { get; }
+
+    /// <summary>Здоровье ПК: управляемый тестом источник.</summary>
+    public FakeHealthProbe FakeHealth { get; } = new();
+
+    public IHealthProbe Health => FakeHealth;
 
     public static string RandomMac()
     {
@@ -98,6 +104,69 @@ public sealed class FakePlatform : IPlatform
     {
         Interlocked.Increment(ref Installs);
         return Task.FromResult(true);
+    }
+}
+
+/// <summary>Источник здоровья для тестов: значения задаёт тест, любой источник можно «сломать».</summary>
+public sealed class FakeHealthProbe : IHealthProbe
+{
+    private readonly object _gate = new();
+    private readonly List<PeripheralDevice> _present =
+    [
+        new(PeripheralKind.Mouse, "Logitech G102"),
+        new(PeripheralKind.Keyboard, "HyperX Alloy"),
+        new(PeripheralKind.Headset, "Наушники (HyperX Cloud II)"),
+        new(PeripheralKind.Monitor, "VG248"),
+    ];
+
+    public int CpuTemp = 650;
+    public int SmartCalls;
+    public int CrashCalls;
+    public int PeripheralCalls;
+    public DiskSmart Smart = DiskSmart.Ok;
+    public Exception? CpuFails;
+    public Exception? GpuFails;
+    public Exception? PeripheralsFail;
+    public bool HangPeripherals;
+
+    public void Unplug(PeripheralKind kind)
+    {
+        lock (_gate) _present.RemoveAll(p => p.Kind == kind);
+    }
+
+    public void Plug(PeripheralKind kind, string name)
+    {
+        lock (_gate) _present.Add(new PeripheralDevice(kind, name));
+    }
+
+    public int CpuTemperatureDeciCelsius() => CpuFails is { } e ? throw e : Volatile.Read(ref CpuTemp);
+
+    public GpuReading? Gpu() => GpuFails is { } e ? throw e : new GpuReading(710, 4200, 3100, true);
+
+    public IReadOnlyList<DiskSpace> Disks() => [new DiskSpace("C:", true, 476_000, 120_000), new DiskSpace("D:", false, 953_000, 800_000)];
+
+    public IReadOnlyDictionary<string, DiskSmart> SmartStatus(IReadOnlyList<DiskSpace> disks)
+    {
+        Interlocked.Increment(ref SmartCalls);
+        return new Dictionary<string, DiskSmart> { ["C:"] = Smart, ["D:"] = DiskSmart.Ok };
+    }
+
+    public PeripheralScan Peripherals()
+    {
+        Interlocked.Increment(ref PeripheralCalls);
+        if (PeripheralsFail is { } e) throw e;
+        while (Volatile.Read(ref HangPeripherals)) Thread.Sleep(10);
+        lock (_gate) return new PeripheralScan([PeripheralKind.Mouse, PeripheralKind.Keyboard, PeripheralKind.Headset, PeripheralKind.Monitor], _present.ToList());
+    }
+
+    public uint LinkSpeedMbps(string? serverHost) => 1000;
+
+    public ulong UptimeSeconds() => 3600;
+
+    public CrashCounts? Crashes(DateTimeOffset since)
+    {
+        Interlocked.Increment(ref CrashCalls);
+        return new CrashCounts(2, 1);
     }
 }
 

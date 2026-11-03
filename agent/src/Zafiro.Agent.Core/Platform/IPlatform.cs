@@ -1,3 +1,4 @@
+using Zafiro.Agent.Core.Health;
 using Zafiro.Agent.V1;
 
 namespace Zafiro.Agent.Core.Platform;
@@ -16,6 +17,9 @@ public interface IPlatform
 
     /// <summary>Загрузка ПК (Status.load). idle_seconds заполняет служба по данным UI.</summary>
     ComputerLoad GetLoad();
+
+    /// <summary>Источники здоровья ПК (Status.health, §14.10). Нет источников — <see cref="NullHealthProbe"/>.</summary>
+    IHealthProbe Health { get; }
 
     /// <summary>Что умеет агент на этой платформе (Hello.capabilities).</summary>
     AgentCapabilities Capabilities { get; }

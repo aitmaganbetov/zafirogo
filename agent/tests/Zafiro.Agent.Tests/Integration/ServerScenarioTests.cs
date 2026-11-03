@@ -51,7 +51,11 @@ public sealed class ServerScenarioTests : IDisposable
 
     private AgentRuntime NewRuntime(FakePlatform platform, string dataDir)
     {
-        var options = new AgentOptions { EnrollEndpoint = _enrollEndpoint, RootCaPem = _rootCa, DataDirectory = dataDir, Locale = "ru", AgentVersion = "2.0.0" };
+        var options = new AgentOptions
+        {
+            EnrollEndpoint = _enrollEndpoint, RootCaPem = _rootCa, DataDirectory = dataDir, Locale = "ru", AgentVersion = "2.0.0",
+            HealthPollInterval = TimeSpan.FromSeconds(1),
+        };
         var store = new FileCredentialStore(Path.Combine(dataDir, "creds"), () => platform.GetDeviceInfo("2.0.0", false).HardwareUuid);
         return new AgentRuntime(options, store, platform, TrustAnchors.FromPem(_rootCa), new UpdateVerifier(new Dictionary<string, byte[]>()),
             installer: null, new XunitLoggerFactory(_out));
@@ -84,6 +88,75 @@ public sealed class ServerScenarioTests : IDisposable
             if (DateTime.UtcNow > deadline) Assert.Fail("timeout: " + what);
             await Task.Delay(100);
         }
+    }
+
+    /// <summary>
+    /// Здоровье ПК (Status.health, §14.10): первый снимок уходит в Status сразу после подключения, отключение гарнитуры —
+    /// Status с health сразу (не через status_interval 60 с); сервер принимает его, стрим не рвётся (команда из панели
+    /// доходит после этого), панель показывает измерения (если её API уже есть на стенде).
+    /// </summary>
+    [Fact]
+    public async Task Здоровье_ПК_доходит_до_сервера()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var owner = await OwnerToken();
+        var zone = long.Parse(Env("ZAFIRO_IT_ZONE_ID"), System.Globalization.CultureInfo.InvariantCulture);
+        var code = (await Panel(HttpMethod.Post, "/api/agent-enrollment/codes", owner, new { zone_id = zone }))["code"]!.GetValue<string>();
+
+        var platform = new FakePlatform();
+        await using var runtime = NewRuntime(platform, Path.Combine(_dir.Path, "health"));
+        var sent = new List<(DateTime At, Status Status)>();
+        runtime.StatusSent += s =>
+        {
+            if (s.Health is not null) lock (sent) sent.Add((DateTime.UtcNow, s));
+        };
+        var shown = new List<string>();
+        runtime.UiEvent += e =>
+        {
+            if (e.KindCase == Event.KindOneofCase.ShowMessage) lock (shown) shown.Add(e.ShowMessage.Text);
+        };
+        await runtime.EnrollWithCodeAsync(code, cts.Token);
+        var computerId = runtime.Credentials!.Stored.ComputerId;
+        var run = runtime.RunAsync(cts.Token);
+        await WaitUntil(() => runtime.State.Connection == Connection.Online, "Welcome");
+        await WaitUntil(() => { lock (sent) return sent.Count >= 1; }, "first Status with health");
+        Status first;
+        lock (sent) first = sent[0].Status;
+        Assert.Equal(650, first.Health.CpuTempDecicelsius);
+        Assert.Equal(4, first.Health.Peripherals.Count);
+
+        // Отключение гарнитуры: Status с health — через опрос (1 с) + не чаще 1 Status в 2 с, а не через 60 с.
+        int before;
+        lock (sent) before = sent.Count;
+        var unplugged = DateTime.UtcNow;
+        platform.FakeHealth.Unplug(PeripheralKind.Headset);
+        await WaitUntil(() => { lock (sent) return sent.Count > before; }, "Status with health after the headset was unplugged", 15);
+        (DateTime At, Status Status) urgent;
+        lock (sent) urgent = sent[before];
+        Assert.True(urgent.At - unplugged < TimeSpan.FromSeconds(10), $"health status came after {urgent.At - unplugged}");
+        Assert.False(urgent.Status.Health.Peripherals.Single(p => p.Kind == PeripheralKind.Headset).Connected);
+
+        // Сервер принял: стрим жив, команда из панели доходит.
+        await Task.Delay(1500);
+        Assert.Equal(Connection.Online, runtime.State.Connection);
+        await Panel(HttpMethod.Post, "/api/club-computers/notify", owner, new { computer_ids = new[] { computerId }, message = "Проверка здоровья" });
+        await WaitUntil(() => { lock (shown) return shown.Contains("Проверка здоровья"); }, "ShowMessage after health");
+
+        // Панель (Этап 7, пишется параллельно): если API уже есть — те же измерения.
+        using (var req = new HttpRequestMessage(HttpMethod.Get, $"/api/club-computers/{computerId}/health"))
+        {
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", owner);
+            using var resp = await _http.SendAsync(req);
+            var text = await resp.Content.ReadAsStringAsync();
+            _out.WriteLine($"GET health: {(int)resp.StatusCode} {text}");
+            if (resp.IsSuccessStatusCode && JsonNode.Parse(text)?["health"] is JsonObject health)
+            {
+                Assert.Equal(650, health["cpu_temp_deci"]!.GetValue<long>());
+            }
+        }
+
+        await cts.CancelAsync();
+        await run;
     }
 
     [Fact]

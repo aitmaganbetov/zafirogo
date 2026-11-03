@@ -44,4 +44,10 @@ public sealed class AgentOptions
 
     /// <summary>Как часто проверять продление сертификата, истечение сессии и техрежима.</summary>
     public TimeSpan HousekeepingInterval { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>Как часто опрашивать периферию (подключение/отключение — Status сразу). Полный снимок здоровья — раз в status_interval.</summary>
+    public TimeSpan HealthPollInterval { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>Сколько ждать источники здоровья за один сбор; дольше — сбор считается зависшим, health не шлётся.</summary>
+    public TimeSpan HealthSourceTimeout { get; set; } = TimeSpan.FromSeconds(20);
 }

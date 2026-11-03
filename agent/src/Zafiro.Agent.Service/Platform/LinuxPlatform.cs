@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net.NetworkInformation;
 using Microsoft.Extensions.Logging;
+using Zafiro.Agent.Core.Health;
 using Zafiro.Agent.Core.Platform;
 using Zafiro.Agent.V1;
 
@@ -31,6 +32,8 @@ public sealed class LinuxPlatform : IPlatform
     };
 
     public string UpdateDirectory { get; }
+
+    public IHealthProbe Health { get; } = new LinuxHealthProbe();
 
     public DeviceInfo GetDeviceInfo(string agentVersion, bool diskless)
     {

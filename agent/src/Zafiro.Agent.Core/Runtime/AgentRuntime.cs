@@ -6,6 +6,7 @@ using Zafiro.Agent.Core.Credentials;
 using Zafiro.Agent.Core.Enrollment;
 using Zafiro.Agent.Core.Errors;
 using Zafiro.Agent.Core.Guest;
+using Zafiro.Agent.Core.Health;
 using Zafiro.Agent.Core.Platform;
 using Zafiro.Agent.Core.Journal;
 using Zafiro.Agent.Core.Transport;
@@ -39,6 +40,8 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
     private readonly object _gate = new();
     private readonly string _bootId;
     private readonly DeviceInfo _device;
+    private readonly HealthMonitor _health;
+    private readonly HealthGate _healthGate = new();
 
     private AgentCredentials? _creds;
     private AgentChannel? _channel;
@@ -74,7 +77,17 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
         _bootId = platform.GetBootId();
         _device = platform.GetDeviceInfo(options.AgentVersion, options.Diskless);
         State.Changed += OnStateChanged;
+        var collector = new HealthCollector(platform.Health ?? NullHealthProbe.Instance, _time, loggers.CreateLogger("Zafiro.Agent.Health"));
+        _health = new HealthMonitor(collector, () => HealthCollectInterval, ServerHost, options.HealthPollInterval, options.HealthSourceTimeout, _time,
+            loggers.CreateLogger("Zafiro.Agent.Health"));
+        _health.Urgent += OnHealthUrgent;
     }
+
+    /// <summary>Здоровье ПК (последний снимок) — для тестов и диагностики.</summary>
+    public HealthMonitor Health => _health;
+
+    /// <summary>Status ушёл в стрим (для тестов).</summary>
+    internal event Action<Zafiro.Agent.V1.Status>? StatusSent;
 
     /// <summary>Состояние ПК (для UI и тестов).</summary>
     public AgentState State { get; }
@@ -170,6 +183,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         var housekeeping = Task.Run(() => HousekeepingLoop(cancellationToken), CancellationToken.None);
+        var health = Task.Run(() => _health.RunAsync(cancellationToken), CancellationToken.None);
         var attempt = 0;
         try
         {
@@ -276,12 +290,15 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
         }
         finally
         {
-            try
+            foreach (var t in new[] { housekeeping, health })
             {
-                await housekeeping.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
+                try
+                {
+                    await t.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
             }
         }
     }
@@ -365,7 +382,8 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
                 _log.LogInformation("connected with the renewed certificate, previous key removed");
             }
 
-            outbox.Writer.TryWrite(new AgentMessage { Status = State.BuildStatus(_platform.GetLoad()) });
+            _healthGate.Reset(); // первый Status нового стрима — с health
+            outbox.Writer.TryWrite(new AgentMessage { Status = NextStatus() });
             foreach (var ev in Events.Pending()) outbox.Writer.TryWrite(new AgentMessage { Event = ev });
             foreach (var r in Commands.Undelivered()) SendResult(r);
             if (welcome.TranslationsVersion > State.TranslationsVersion) RaiseUi(new Event { TranslationsUpdated = new TranslationsUpdated { Version = welcome.TranslationsVersion } });
@@ -440,6 +458,42 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
         }
     }
 
+    /// <summary>Полный снимок здоровья — раз в status_interval, но не чаще 30 с и не реже 10 мин (бюджет CPU, §14.10).</summary>
+    private TimeSpan HealthCollectInterval => TimeSpan.FromTicks(Math.Clamp(State.StatusInterval.Ticks, TimeSpan.FromSeconds(30).Ticks, TimeSpan.FromMinutes(10).Ticks));
+
+    /// <summary>Хост сервера стрима — по нему выбирается сетевой интерфейс для link_speed_mbps.</summary>
+    private string? ServerHost()
+    {
+        var endpoint = Credentials?.Stored.AgentEndpoint;
+        if (string.IsNullOrEmpty(endpoint)) endpoint = _options.EnrollEndpoint;
+        try
+        {
+            return AgentChannelFactory.ToAddress(endpoint).Host;
+        }
+        catch (Exception ex) when (ex is ArgumentException or UriFormatException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Периферия или SMART изменились — Status с health сразу (не чаще 1 в 2 с, как любой Status).</summary>
+    private void OnHealthUrgent()
+    {
+        _healthGate.MarkUrgent();
+        _statusSignal.Writer.TryWrite(true);
+    }
+
+    /// <summary>Status для стрима: health — по <see cref="HealthGate"/> (раз в интервал, сразу при срочном изменении).</summary>
+    internal Zafiro.Agent.V1.Status NextStatus()
+    {
+        var status = State.BuildStatus(_platform.GetLoad());
+        var interval = State.StatusInterval;
+        var health = _healthGate.Take(_health.Latest, _time.GetUtcNow(), interval, HealthCollectInterval * 3);
+        if (health is not null) status.Health = health;
+        StatusSent?.Invoke(status);
+        return status;
+    }
+
     /// <summary>Status: сразу после Welcome, при изменении состояния (не чаще 1 в 2 с) и не реже status_interval.</summary>
     private async Task StatusLoop(ChannelWriter<AgentMessage> writer, CancellationToken ct)
     {
@@ -461,7 +515,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
             _statusSignal.Reader.TryRead(out _);
             var gap = _time.GetUtcNow() - last;
             if (gap < minGap) await Task.Delay(minGap - gap, _time, ct).ConfigureAwait(false);
-            writer.TryWrite(new AgentMessage { Status = State.BuildStatus(_platform.GetLoad()) });
+            writer.TryWrite(new AgentMessage { Status = NextStatus() });
             last = _time.GetUtcNow();
         }
     }
@@ -921,6 +975,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
     public ValueTask DisposeAsync()
     {
         State.Changed -= OnStateChanged;
+        _health.Urgent -= OnHealthUrgent;
         Credentials?.Dispose();
         _wake.Dispose();
         _enrollGate.Dispose();
