@@ -3,6 +3,7 @@ package monitoring
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -53,5 +54,18 @@ func TestChannelsAndMiddleware(t *testing.T) {
 	}
 	if club.Panel != 1 || club.Errors != 1 {
 		t.Fatalf("middleware: %+v", d)
+	}
+}
+
+// Flush пишет строки в одном порядке на всех инстансах (иначе UPSERT двух инстансов в одну секунду — deadlock).
+func TestSortedKeysStableOrder(t *testing.T) {
+	m := map[string]int{"panel": 1, "agent": 2, "api": 3, "guest": 4}
+	for range 20 {
+		if got := sortedKeys(m); !slices.Equal(got, []string{"agent", "api", "guest", "panel"}) {
+			t.Fatalf("sortedKeys = %v", got)
+		}
+	}
+	if got := sortedKeys(map[int64]bool{30: true, 10: true, 20: true}); !slices.Equal(got, []int64{10, 20, 30}) {
+		t.Fatalf("sortedKeys = %v", got)
 	}
 }

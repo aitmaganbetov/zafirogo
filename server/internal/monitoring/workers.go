@@ -1,8 +1,10 @@
 package monitoring
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -86,8 +88,13 @@ func (w *Workers) Flush(ctx context.Context, now time.Time) error {
 		return nil
 	}
 	err := db.InPlatformTx(ctx, w.Platform, func(q *store.Queries) error {
-		for minute, chs := range d.Channels {
-			for ch, t := range chs {
+		// Строки — в одном порядке на всех инстансах (минута, канал / минута, клуб): инстансы сбрасывают счётчики в
+		// одну и ту же секунду, и UPSERT одних строк в разном порядке (обход map) давал deadlock — нагрузочный тест
+		// O4 (docs/load-test.md): 14 deadlock за час на двух инстансах.
+		for _, minute := range sortedKeys(d.Channels) {
+			chs := d.Channels[minute]
+			for _, ch := range sortedKeys(chs) {
+				t := chs[ch]
 				if err := q.MonitoringAddRequests(ctx, store.MonitoringAddRequestsParams{
 					Minute: minute, Channel: ch, Requests: t.Requests, Errors: t.Errors, DurationMs: t.DurationMs,
 				}); err != nil {
@@ -95,8 +102,10 @@ func (w *Workers) Flush(ctx context.Context, now time.Time) error {
 				}
 			}
 		}
-		for minute, clubs := range d.Clubs {
-			for club, t := range clubs {
+		for _, minute := range sortedKeys(d.Clubs) {
+			clubs := d.Clubs[minute]
+			for _, club := range sortedKeys(clubs) {
+				t := clubs[club]
 				if err := q.MonitoringAddClubRequests(ctx, store.MonitoringAddClubRequestsParams{
 					ClubID: club, Minute: minute, AgentRequests: t.Agent, ApiRequests: t.API, PanelRequests: t.Panel,
 					GuestRequests: t.Guest, Errors: t.Errors, DurationMs: t.DurationMs,
@@ -227,4 +236,14 @@ func (w *Workers) Prune(ctx context.Context, now time.Time) (bool, error) {
 			return err
 		})
 	})
+}
+
+// sortedKeys — ключи map по возрастанию (порядок блокировок строк в Flush).
+func sortedKeys[K cmp.Ordered, V any](m map[K]V) []K {
+	keys := make([]K, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
 }
