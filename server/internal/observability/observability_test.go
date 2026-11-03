@@ -269,3 +269,25 @@ func TestNilObserverIsNoop(t *testing.T) {
 	o.SetSources(Sources{})
 	_ = o.TrackWorker("x", func(context.Context) error { return nil })(context.Background())
 }
+
+// S6-O4-10: отставание автобиллинга — из источника AutoBillingBacklog (число просроченных и возраст старейшего).
+func TestAutoBillingBacklogMetrics(t *testing.T) {
+	o := newTestObserver(t)
+	o.SetSources(Sources{AutoBillingBacklog: func(context.Context) (int64, time.Duration, error) {
+		return 1234, 42 * time.Second, nil
+	}})
+	srv := httptest.NewServer(o.Handler())
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/metrics") //nolint:noctx // тест
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var b bytes.Buffer
+	_, _ = b.ReadFrom(resp.Body)
+	for _, want := range []string{"zafiro_agent_auto_billing_due_computers 1234", "zafiro_agent_auto_billing_oldest_due_age_seconds 42"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("/metrics has no %q", want)
+		}
+	}
+}

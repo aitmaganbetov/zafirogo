@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/valkey-io/valkey-go"
@@ -17,7 +18,8 @@ import (
 //	<p>gen              — счётчик поколений соединений (монотонный, не меньше текущего времени в мкс);
 //	<p>pc:<computer>    — владелец стрима "<instance>|<gen>", TTL = Options.TTL (90 с), продлевается инстансом;
 //	<p>club:<club>      — hash computer_id → State (JSON) для карты клуба;
-//	<p>online           — zset "<club>:<computer>" → крайний срок (мс Valkey): после него Sweeper проверяет ПК.
+//	<p>online           — zset "<club>:<computer>" → крайний срок (мс Valkey): после него Sweeper проверяет ПК;
+//	<p>guest:<club>:<user>, <p>guests:since — индекс «гость → ПК» для уведомлений о балансе (guests.go).
 //
 // Скрипты обращаются к ключам, вычисленным внутри (pc:, club:) — рассчитано на Valkey без кластера
 // (один primary + реплика; 50 000 ПК ≈ 2 000 операций/с). См. docs/open-questions/stage2-agent-stream.md AS-6.
@@ -33,6 +35,8 @@ type Store struct {
 	c      valkey.Client
 	prefix string
 	ttl    time.Duration
+	// lists — вызовы List (ListCalls; тесты пути «гость → ПК» без чтения всего клуба).
+	lists atomic.Int64
 }
 
 // NewStore создаёт хранилище. ttl — сколько ПК считается в сети без продления (≥ 3 периодов продления).
@@ -131,7 +135,10 @@ redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 local t = redis.call('TIME')
 local nowms = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 redis.call('ZADD', KEYS[3], string.format('%.0f', nowms + tonumber(ARGV[2])), ARGV[5])
-if ARGV[4] ~= '' then redis.call('HSET', KEYS[2], ARGV[3], ARGV[4]) end
+if ARGV[4] ~= '' then
+  redis.call('HSET', KEYS[2], ARGV[3], ARGV[4])
+  ` + guestIndexLua + `
+end
 return 1
 `)
 
@@ -152,10 +159,14 @@ func (s *Store) refreshExec(it RefreshItem) (valkey.LuaExec, error) {
 		}
 		js = string(b)
 	}
+	var signedIn int64
+	if it.State != nil {
+		signedIn = it.State.SignedInUserID
+	}
 	return valkey.LuaExec{
-		Keys: []string{s.pcKey(it.ComputerID), s.clubKey(it.ClubID), s.onlineKey()},
+		Keys: s.guestIndexKeys([]string{s.pcKey(it.ComputerID), s.clubKey(it.ClubID), s.onlineKey()}, it.ClubID, signedIn),
 		Args: []string{it.Owner.String(), strconv.FormatInt(s.ttl.Milliseconds(), 10),
-			strconv.FormatInt(it.ComputerID, 10), js, member(it.ClubID, it.ComputerID)},
+			strconv.FormatInt(it.ComputerID, 10), js, member(it.ClubID, it.ComputerID), s.guestIndexTTLArg()},
 	}, nil
 }
 
@@ -210,7 +221,10 @@ redis.call('DEL', KEYS[1])
 local t = redis.call('TIME')
 local nowms = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 redis.call('ZADD', KEYS[3], string.format('%.0f', nowms + tonumber(ARGV[2])), ARGV[5])
-if ARGV[4] ~= '' then redis.call('HSET', KEYS[2], ARGV[3], ARGV[4]) end
+if ARGV[4] ~= '' then
+  redis.call('HSET', KEYS[2], ARGV[3], ARGV[4])
+  ` + guestIndexLua + `
+end
 return 1
 `)
 
@@ -224,9 +238,9 @@ func (s *Store) Release(ctx context.Context, own Owner, st State, grace time.Dur
 		return false, err
 	}
 	n, err := releaseScript.Exec(ctx, s.c,
-		[]string{s.pcKey(st.ComputerID), s.clubKey(st.ClubID), s.onlineKey()},
+		s.guestIndexKeys([]string{s.pcKey(st.ComputerID), s.clubKey(st.ClubID), s.onlineKey()}, st.ClubID, st.SignedInUserID),
 		[]string{own.String(), strconv.FormatInt(grace.Milliseconds(), 10), strconv.FormatInt(st.ComputerID, 10),
-			string(b), member(st.ClubID, st.ComputerID)}).AsInt64()
+			string(b), member(st.ClubID, st.ComputerID), s.guestIndexTTLArg()}).AsInt64()
 	if err != nil {
 		return false, fmt.Errorf("presence: release: %w", err)
 	}
@@ -271,6 +285,7 @@ func (s *Store) Get(ctx context.Context, clubID, computerID int64) (State, bool,
 // List — все ПК клуба, о которых есть живой снимок (в сети или в ожидании переподключения).
 // Размер — число ПК клуба (сотни), поэтому без пагинации.
 func (s *Store) List(ctx context.Context, clubID int64) ([]State, error) {
+	s.lists.Add(1)
 	m, err := s.c.Do(ctx, s.c.B().Hgetall().Key(s.clubKey(clubID)).Build()).AsStrMap()
 	if err != nil {
 		return nil, fmt.Errorf("presence: list: %w", err)

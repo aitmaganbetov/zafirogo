@@ -19,12 +19,18 @@ type Sources struct {
 	Platform *pgxpool.Pool
 	// LocalStreams — открытые потоки агентов на этом инстансе (stream.Service.LocalStreams).
 	LocalStreams func() int
+	// StreamRebalanceRequested — сколько ПК этот инстанс попросил переподключиться ради перебалансировки
+	// (stream.Service.RebalanceRequested, S6-O4-12).
+	StreamRebalanceRequested func() uint64
 	// OnlineComputers — ПК на связи по всей платформе (агрегат, без разбивки по клубам).
 	OnlineComputers func(ctx context.Context) (int64, error)
 	// NATS — соединение NATS (состояние и число переподключений).
 	NATS *nats.Conn
 	// Certificates — сертификаты, чей срок нужно отслеживать: метка cert → сертификат.
 	Certificates map[string]*x509.Certificate
+	// AutoBillingBacklog — отставание автобиллинга (guestapi.Server.AutoBillingBacklog): ПК, чей срок пересмотра
+	// пришёл, и возраст самого старого срока. Общее для кластера (zset в Valkey).
+	AutoBillingBacklog func(ctx context.Context) (due int64, oldest time.Duration, err error)
 }
 
 // SetSources задаёт источники (вызывается один раз после сборки App).
@@ -62,24 +68,30 @@ type dbValues struct {
 	webhookPending, webhookRetrying, webhookOldest float64
 	onlineOK                                       bool
 	online                                         float64
+	autoBillingOK                                  bool
+	autoBillingDue, autoBillingOldest              float64
 	leaders                                        map[string]float64
 }
 
 var (
-	descPoolAcquired  = desc("db_pool_acquired_connections", "Занятые соединения пула.", "pool")
-	descPoolIdle      = desc("db_pool_idle_connections", "Свободные соединения пула.", "pool")
-	descPoolTotal     = desc("db_pool_total_connections", "Все соединения пула.", "pool")
-	descPoolMax       = desc("db_pool_max_connections", "Предел соединений пула.", "pool")
-	descPoolWaits     = desc("db_pool_acquire_waits_total", "Захваты соединения, которым пришлось ждать (пул был пуст).", "pool")
-	descPoolWaitTime  = desc("db_pool_acquire_wait_seconds_total", "Суммарное время ожидания соединения в пустом пуле.", "pool")
-	descPoolCanceled  = desc("db_pool_acquire_canceled_total", "Захваты соединения, отменённые до получения (таймаут запроса).", "pool")
-	descStreams       = desc("agent_streams_active", "Открытые потоки Connect агентов на этом инстансе.")
+	descPoolAcquired = desc("db_pool_acquired_connections", "Занятые соединения пула.", "pool")
+	descPoolIdle     = desc("db_pool_idle_connections", "Свободные соединения пула.", "pool")
+	descPoolTotal    = desc("db_pool_total_connections", "Все соединения пула.", "pool")
+	descPoolMax      = desc("db_pool_max_connections", "Предел соединений пула.", "pool")
+	descPoolWaits    = desc("db_pool_acquire_waits_total", "Захваты соединения, которым пришлось ждать (пул был пуст).", "pool")
+	descPoolWaitTime = desc("db_pool_acquire_wait_seconds_total", "Суммарное время ожидания соединения в пустом пуле.", "pool")
+	descPoolCanceled = desc("db_pool_acquire_canceled_total", "Захваты соединения, отменённые до получения (таймаут запроса).", "pool")
+	descStreams      = desc("agent_streams_active", "Открытые потоки Connect агентов на этом инстансе.")
+	descRebalance    = desc("agent_stream_rebalance_requested_total",
+		"ПК, которых этот инстанс попросил переподключиться (Drain) ради перебалансировки потоков между инстансами.")
 	descOnline        = desc("agent_online_computers", "ПК на связи по всей платформе (присутствие в Valkey; агрегат).")
 	descOutboxPending = desc("outbox_pending_events", "Неопубликованные события outbox (все клубы).")
 	descOutboxOldest  = desc("outbox_oldest_unpublished_age_seconds", "Возраст самого старого неопубликованного события outbox.")
 	descWebhookPend   = desc("webhook_deliveries_pending", "Доставки вебхуков в очереди (status=pending).")
 	descWebhookRetry  = desc("webhook_deliveries_retrying", "Доставки в очереди после неудачной попытки (attempts > 0).")
 	descWebhookOldest = desc("webhook_oldest_pending_age_seconds", "Возраст самой старой доставки вебхука в очереди.")
+	descABDue         = desc("agent_auto_billing_due_computers", "ПК, чей срок пересмотра автобиллинга пришёл (zset ab:due, весь кластер).")
+	descABOldest      = desc("agent_auto_billing_oldest_due_age_seconds", "На сколько просрочен самый старый срок пересмотра автобиллинга (0 — нет просроченных).")
 	descLeader        = desc("worker_leader", "Этот инстанс держит advisory lock задачи (лидер постоянного воркера).", "job")
 	descNATSConnected = desc("nats_connected", "Соединение NATS установлено (1) или нет (0).")
 	descNATSReconn    = desc("nats_reconnects_total", "Переподключения NATS с запуска.")
@@ -97,9 +109,10 @@ type sourceCollector struct{ o *Observer }
 func (c *sourceCollector) Describe(ch chan<- *prometheus.Desc) {
 	for _, d := range []*prometheus.Desc{descPoolAcquired, descPoolIdle, descPoolTotal, descPoolMax, descPoolWaits,
 		descPoolWaitTime, descPoolCanceled, descStreams, descOnline, descOutboxPending, descOutboxOldest, descWebhookPend,
-		descWebhookRetry, descWebhookOldest, descLeader, descNATSConnected, descNATSReconn, descCertExpiry} {
+		descWebhookRetry, descWebhookOldest, descABDue, descABOldest, descLeader, descNATSConnected, descNATSReconn, descCertExpiry} {
 		ch <- d
 	}
+	ch <- descRebalance
 }
 
 func (c *sourceCollector) Collect(ch chan<- prometheus.Metric) {
@@ -120,6 +133,9 @@ func (c *sourceCollector) Collect(ch chan<- prometheus.Metric) {
 	if s.LocalStreams != nil {
 		ch <- prometheus.MustNewConstMetric(descStreams, prometheus.GaugeValue, float64(s.LocalStreams()))
 	}
+	if s.StreamRebalanceRequested != nil {
+		ch <- prometheus.MustNewConstMetric(descRebalance, prometheus.CounterValue, float64(s.StreamRebalanceRequested()))
+	}
 	if s.NATS != nil {
 		connected := 0.0
 		if s.NATS.IsConnected() {
@@ -137,6 +153,10 @@ func (c *sourceCollector) Collect(ch chan<- prometheus.Metric) {
 	v := c.o.cached(s)
 	if v.onlineOK {
 		ch <- prometheus.MustNewConstMetric(descOnline, prometheus.GaugeValue, v.online)
+	}
+	if v.autoBillingOK {
+		ch <- prometheus.MustNewConstMetric(descABDue, prometheus.GaugeValue, v.autoBillingDue)
+		ch <- prometheus.MustNewConstMetric(descABOldest, prometheus.GaugeValue, v.autoBillingOldest)
 	}
 	if v.outboxOK {
 		ch <- prometheus.MustNewConstMetric(descOutboxPending, prometheus.GaugeValue, v.outboxPending)
@@ -185,6 +205,13 @@ func (o *Observer) cached(s Sources) dbValues {
 			v.onlineOK, v.online = true, float64(n)
 		} else {
 			o.m.collectErr.WithLabelValues("presence").Inc()
+		}
+	}
+	if s.AutoBillingBacklog != nil {
+		if n, oldest, err := s.AutoBillingBacklog(ctx); err == nil {
+			v.autoBillingOK, v.autoBillingDue, v.autoBillingOldest = true, float64(n), oldest.Seconds()
+		} else {
+			o.m.collectErr.WithLabelValues("auto_billing").Inc()
 		}
 	}
 	if s.Platform != nil {

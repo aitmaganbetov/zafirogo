@@ -51,6 +51,11 @@ groups:
         expr: max(zafiro_webhook_deliveries_pending)
       - record: zafiro:webhook_oldest_seconds
         expr: max(zafiro_webhook_oldest_pending_age_seconds)
+      # Автобиллинг (S6-O4-10): zset ab:due общий для кластера — все инстансы отдают одно и то же.
+      - record: zafiro:auto_billing_due
+        expr: max(zafiro_agent_auto_billing_due_computers)
+      - record: zafiro:auto_billing_oldest_due_seconds
+        expr: max(zafiro_agent_auto_billing_oldest_due_age_seconds)
       - record: zafiro:webhook_attempts:rate5m
         expr: sum by (result) (rate(zafiro_webhook_delivery_attempts_total[5m]))
 

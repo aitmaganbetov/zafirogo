@@ -63,6 +63,7 @@ type conn struct {
 	lastRefresh  time.Time
 	maxSent      uint64
 	resync       bool
+	rebalanced   bool // уже попросили переподключиться ради перебалансировки (rebalance.go)
 	inflight     map[string]*inflight
 }
 

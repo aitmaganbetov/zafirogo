@@ -53,6 +53,27 @@ tests:
               description: "Админка (WebSocket) и вебхуки не получают событий. Публикатор outbox не работает или NATS недоступен."
               runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-outbox-lag
 
+  # Автобиллинг отстаёт: старейший срок просрочен на 45 с (оба инстанса отдают одно и то же) 5 минут — warning;
+  # кратковременный всплеск (2 минуты) — нет.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_agent_auto_billing_oldest_due_age_seconds{job="zafiro", instance="app1:9090"}'
+        values: '1 45 45 1 1 45x8'
+      - series: 'zafiro_agent_auto_billing_oldest_due_age_seconds{job="zafiro", instance="app2:9090"}'
+        values: '1 45 45 1 1 45x8'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ZafiroAutoBillingLag
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: ZafiroAutoBillingLag
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Автобиллинг отстаёт: старейший срок пересмотра просрочен на 45s"
+              description: "Гости ждут покупки времени после паузы или конца тарифа дольше обычного. Деньги не теряются (покупка идемпотентна), но время гостя не начинается."
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-auto-billing-lag
+
   # Ошибка запроса ledger — сразу critical.
   - interval: 1m
     input_series:

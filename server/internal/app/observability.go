@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/guestapi"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/observability"
@@ -52,7 +53,7 @@ func onlineComputers(st *presence.Store) func(ctx context.Context) (int64, error
 }
 
 // setObservabilitySources — источники показателей, читаемых при сборе /metrics.
-func (a *App) setObservabilitySources(serverCert tls.Certificate) {
+func (a *App) setObservabilitySources(serverCert tls.Certificate, guest *guestapi.Server) {
 	certs := map[string]*x509.Certificate{}
 	if a.CA != nil {
 		certs["agent_ca"] = a.CA.Certificate()
@@ -64,12 +65,18 @@ func (a *App) setObservabilitySources(serverCert tls.Certificate) {
 	if leaf != nil {
 		certs["agent_server"] = leaf
 	}
+	var abBacklog func(context.Context) (int64, time.Duration, error)
+	if guest != nil {
+		abBacklog = guest.AutoBillingBacklog // S6-O4-10: отставание автобиллинга (zset ab:due)
+	}
 	a.Obs.SetSources(observability.Sources{
-		Pools:           map[string]*pgxpool.Pool{"app": a.AppPool, "platform": a.PlatformPool},
-		Platform:        a.PlatformPool,
-		LocalStreams:    a.Stream.LocalStreams,
-		OnlineComputers: onlineComputers(a.Stream.Presence()),
-		NATS:            a.NATS,
-		Certificates:    certs,
+		Pools:                    map[string]*pgxpool.Pool{"app": a.AppPool, "platform": a.PlatformPool},
+		Platform:                 a.PlatformPool,
+		LocalStreams:             a.Stream.LocalStreams,
+		StreamRebalanceRequested: a.Stream.RebalanceRequested,
+		OnlineComputers:          onlineComputers(a.Stream.Presence()),
+		NATS:                     a.NATS,
+		Certificates:             certs,
+		AutoBillingBacklog:       abBacklog,
 	})
 }

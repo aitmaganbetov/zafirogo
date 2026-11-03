@@ -133,6 +133,7 @@ func (e *testEnv) config(t *testing.T, pkiDir string, extra ...string) *config.C
 		"ZAFIRO_SHUTDOWN_TIMEOUT=20s",
 		"ZAFIRO_AGENT_SWEEPER_INTERVAL=200ms",
 		"ZAFIRO_AGENT_STREAM_OFFLINE_GRACE=300ms",
+		"ZAFIRO_AGENT_STREAM_REBALANCE_RECONNECT_WITHIN=100ms", // < offline_grace (config.validateRebalance)
 	}, extra...)
 	cfg, err := config.Load("", func() []string { return env })
 	if err != nil {

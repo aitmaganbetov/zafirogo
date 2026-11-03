@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -57,8 +58,14 @@ const (
 	AutoBillingRecheck = 30 * time.Second
 	// AutoBillingRetry — повтор после сбоя (БД, Valkey), не после отказа покупки.
 	AutoBillingRetry = 10 * time.Second
-	// AutoBillingBatch — сколько ПК пересматривать за тик.
+	// AutoBillingBatch — сколько ПК выбирать из zset за раз (тик берёт пакеты, пока есть просроченные и не вышел
+	// бюджет тика).
 	AutoBillingBatch = 200
+	// DefaultAutoBillingWorkers — сколько ПК (разных гостей) пересматривать параллельно: каждый — тенантная
+	// транзакция чтения (и иногда покупка); пул zafiro_app — не меньше 16 соединений (db.ParsePoolConfig).
+	DefaultAutoBillingWorkers = 8
+	// DefaultAutoBillingTickBudget — сколько тик (период 1 с) выбирает новые пакеты; начатый пакет доделывается.
+	DefaultAutoBillingTickBudget = 800 * time.Millisecond
 )
 
 func (s *Server) abKey(pc int64) string { return s.o.KeyPrefix + "ab:" + strconv.FormatInt(pc, 10) }
@@ -186,7 +193,8 @@ func (n *abNotifier) SessionEnded(ctx context.Context, clubID, computerID int64,
 func (n *abNotifier) BalanceChanged(ctx context.Context, clubID, userID int64, b *agentv1.Balance) error {
 	s := n.s
 	if s.o.Presence != nil {
-		if pcs, err := s.o.Presence.List(ctx, clubID); err == nil {
+		// ПК гостя — по индексу «гость → ПК» (S6-O4-11), не разбором снимков всего клуба.
+		if pcs, err := s.o.Presence.SignedInOrList(ctx, clubID, userID); err == nil {
 			for _, st := range pcs {
 				if st.SignedInUserID == userID {
 					_ = s.abUpdate(ctx, st.ComputerID, 0, ms(s.o.Now()))
@@ -321,29 +329,131 @@ func statusFields(st *agentv1.AutoBillingStatus) []string {
 	return []string{"en", b(st.GetEnabled()), "w", b(st.GetWaiting()), "pe", pe}
 }
 
-// TickAutoBilling — один проход: пересмотреть ПК, срок которых пришёл (не больше AutoBillingBatch). Вызывать только у
-// одного исполнителя на кластер (worker.AutoBilling). n — сколько ПК пересмотрено.
+// TickAutoBilling — один проход: пересмотреть ПК, срок которых пришёл к началу тика. Пакеты по AutoBillingBatch
+// выбираются, пока просроченные есть и не вышел бюджет тика (Options.AutoBillingTickBudget; начатый пакет
+// доделывается), — на 50 000 ПК просроченные не копятся (S6-O4-10). Внутри пакета ПК разных гостей пересматриваются
+// параллельно (Options.AutoBillingWorkers), ПК одного гостя — по очереди в порядке срока, как раньше. Вызывать
+// только у одного исполнителя на кластер (worker.AutoBilling). n — сколько ПК пересмотрено.
 func (s *Server) TickAutoBilling(ctx context.Context) (int, error) {
 	vc := s.o.Valkey
+	started := time.Now() // бюджет — по настоящим часам (s.o.Now в тестах стоит на месте)
 	now := s.o.Now()
-	pcs, err := vc.Do(ctx, vc.B().Zrangebyscore().Key(s.abDue()).Min("-inf").Max(ms(now)).Limit(0, AutoBillingBatch).Build()).AsStrSlice()
-	if err != nil {
-		return 0, err
-	}
+	seen := map[string]struct{}{}
 	var errs []error
-	for _, raw := range pcs {
-		pc, err := strconv.ParseInt(raw, 10, 64)
+	n := 0
+	for ctx.Err() == nil {
+		pcs, err := vc.Do(ctx, vc.B().Zrangebyscore().Key(s.abDue()).Min("-inf").Max(ms(now)).Limit(0, AutoBillingBatch).Build()).AsStrSlice()
 		if err != nil {
-			_ = vc.Do(ctx, vc.B().Zrem().Key(s.abDue()).Member(raw).Build()).Error()
-			continue
-		}
-		if err := s.abProcess(ctx, pc); err != nil && ctx.Err() == nil {
 			errs = append(errs, err)
-			// Сбой — повтор позже, а не в каждом тике.
-			_ = vc.Do(ctx, vc.B().Zadd().Key(s.abDue()).ScoreMember().ScoreMember(float64(now.Add(AutoBillingRetry).UnixMilli()), raw).Build()).Error()
+			break
+		}
+		// ПК, уже пересмотренный в этом тике, второй раз не берётся (его срок мог остаться прежним, например,
+		// если состояние исчезло между чтением и записью) — иначе тик крутился бы на нём.
+		fresh := pcs[:0:0]
+		for _, raw := range pcs {
+			if _, ok := seen[raw]; !ok {
+				seen[raw] = struct{}{}
+				fresh = append(fresh, raw)
+			}
+		}
+		if len(fresh) == 0 {
+			break
+		}
+		errs = append(errs, s.abBatch(ctx, fresh, now)...)
+		n += len(fresh)
+		if len(pcs) < AutoBillingBatch || time.Since(started) >= s.o.AutoBillingTickBudget {
+			break
 		}
 	}
-	return len(pcs), errors.Join(errs...)
+	return n, errors.Join(errs...)
+}
+
+// abBatch — пересмотр пакета ПК (в порядке срока). ПК одного гостя (по состоянию в Valkey) — одной очередью по
+// порядку: две покупки одного гостя на разных ПК не идут параллельно; разные гости — в AutoBillingWorkers потоков.
+func (s *Server) abBatch(ctx context.Context, pcs []string, now time.Time) []error {
+	vc := s.o.Valkey
+	cmds := make(valkey.Commands, len(pcs))
+	for i, raw := range pcs {
+		cmds[i] = vc.B().Hget().Key(s.o.KeyPrefix + "ab:" + raw).Field("user").Build()
+	}
+	groups := map[string]int{}
+	var queues [][]string
+	for i, r := range vc.DoMulti(ctx, cmds...) {
+		g := "pc:" + pcs[i] // гость неизвестен (нет состояния, сбой) — отдельная очередь; abProcess разберётся
+		if u, err := r.ToString(); err == nil && u != "" {
+			g = "user:" + u
+		}
+		k, ok := groups[g]
+		if !ok {
+			k = len(queues)
+			groups[g] = k
+			queues = append(queues, nil)
+		}
+		queues[k] = append(queues[k], pcs[i])
+	}
+	var (
+		mu   sync.Mutex
+		errs []error
+		wg   sync.WaitGroup
+	)
+	next := make(chan []string)
+	for range min(s.o.AutoBillingWorkers, len(queues)) {
+		wg.Go(func() {
+			for q := range next {
+				for _, raw := range q {
+					if err := s.abOne(ctx, raw, now); err != nil {
+						mu.Lock()
+						errs = append(errs, err)
+						mu.Unlock()
+					}
+				}
+			}
+		})
+	}
+	for _, q := range queues {
+		next <- q
+	}
+	close(next)
+	wg.Wait()
+	return errs
+}
+
+// abOne — пересмотр одного ПК из zset; сбой — повтор через AutoBillingRetry, а не в каждом тике.
+func (s *Server) abOne(ctx context.Context, raw string, now time.Time) error {
+	vc := s.o.Valkey
+	pc, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		_ = vc.Do(ctx, vc.B().Zrem().Key(s.abDue()).Member(raw).Build()).Error()
+		return nil
+	}
+	if err := s.abProcess(ctx, pc); err != nil && ctx.Err() == nil {
+		_ = vc.Do(ctx, vc.B().Zadd().Key(s.abDue()).ScoreMember().ScoreMember(float64(now.Add(AutoBillingRetry).UnixMilli()), raw).Build()).Error()
+		return err
+	}
+	return nil
+}
+
+// AutoBillingBacklog — отставание автобиллинга (метрики zafiro_agent_auto_billing_*): сколько ПК ждут пересмотра
+// (срок пришёл) и насколько просрочен самый старый срок. Ключ общий для кластера — все инстансы видят одно и то же.
+func (s *Server) AutoBillingBacklog(ctx context.Context) (due int64, oldest time.Duration, err error) {
+	vc := s.o.Valkey
+	now := s.o.Now()
+	res := vc.DoMulti(ctx,
+		vc.B().Zcount().Key(s.abDue()).Min("-inf").Max(ms(now)).Build(),
+		vc.B().Zrange().Key(s.abDue()).Min("0").Max("0").Withscores().Build())
+	if due, err = res[0].AsInt64(); err != nil {
+		return 0, 0, err
+	}
+	first, err := res[1].AsZScores()
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(first) > 0 {
+		if at := time.UnixMilli(int64(first[0].Score)); at.Before(now) {
+			oldest = now.Sub(at)
+		}
+	}
+	return due, oldest, nil
 }
 
 // abProcess — шаг автобиллинга ПК (autoBillingTick старого агента).

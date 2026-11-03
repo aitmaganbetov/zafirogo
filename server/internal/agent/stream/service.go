@@ -73,6 +73,9 @@ type Options struct {
 	Results  ResultHandler
 	Presence PresenceListener
 
+	// Rebalance — автоматическая перебалансировка потоков между инстансами (rebalance.go, S6-O4-12).
+	Rebalance RebalanceOptions
+
 	Now func() time.Time
 	Log *slog.Logger
 }
@@ -91,6 +94,7 @@ func (o *Options) defaults() {
 	set(&o.AckTimeout, DefaultAckTimeout)
 	set(&o.MinStatusGap, DefaultMinStatusGap)
 	set(&o.TickEvery, DefaultTickEvery)
+	o.Rebalance.defaults()
 	if o.SubjectPrefix == "" {
 		o.SubjectPrefix = commands.DefaultSubjectPrefix
 	}
@@ -117,9 +121,10 @@ type Service struct {
 	mu    sync.RWMutex
 	conns map[int64]*conn
 
-	closing atomic.Bool
-	stop    chan struct{}
-	wg      sync.WaitGroup
+	closing    atomic.Bool
+	rebalanced atomic.Uint64 // ПК, которых попросили переподключиться ради перебалансировки
+	stop       chan struct{}
+	wg         sync.WaitGroup
 }
 
 // New создаёт сервис, подписывается на subject инстанса в NATS и запускает тикер присутствия.
@@ -213,6 +218,7 @@ func (s *Service) Kick(ctx context.Context, clubID, computerID int64, certSerial
 // перезапуск, agent.proto п. 8). Затем вызывающий делает GracefulStop gRPC-сервера и Close.
 func (s *Service) Drain(within time.Duration) {
 	s.closing.Store(true)
+	s.unpublishStreams() // остальные инстансы перестают считать этот живым (перебалансировка)
 	msg := &agentv1.ServerMessage{Payload: &agentv1.ServerMessage_Command{Command: &agentv1.Command{
 		Kind: &agentv1.Command_Drain{Drain: &agentv1.Drain{ReconnectWithin: durationpb.New(within)}},
 	}}}
@@ -223,7 +229,9 @@ func (s *Service) Drain(within time.Duration) {
 
 // Close останавливает тикер и подписку и закрывает оставшиеся стримы (UNAVAILABLE).
 func (s *Service) Close() {
-	s.closing.Store(true)
+	if !s.closing.Swap(true) {
+		s.unpublishStreams()
+	}
 	select {
 	case <-s.stop:
 	default:

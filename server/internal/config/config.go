@@ -288,6 +288,15 @@ type AgentStream struct {
 	SubjectPrefix  string        `koanf:"subject_prefix"`
 	// DrainWithin — окно, в котором агенты переподключаются при плановой остановке (Drain).
 	DrainWithin time.Duration `koanf:"drain_within"`
+	// Rebalance* — автоматическая перебалансировка потоков между инстансами (stream.RebalanceOptions,
+	// docs/agent-protocol.md §13.6): инстанс, у которого потоков больше Threshold × среднего и не меньше чем
+	// на MinExcess, раз в Interval просит до Batch простаивающих ПК переподключиться (Drain с окном ReconnectWithin).
+	RebalanceEnabled         bool          `koanf:"rebalance_enabled"`
+	RebalanceInterval        time.Duration `koanf:"rebalance_interval"`
+	RebalanceThreshold       float64       `koanf:"rebalance_threshold"`
+	RebalanceMinExcess       int           `koanf:"rebalance_min_excess"`
+	RebalanceBatch           int           `koanf:"rebalance_batch"`
+	RebalanceReconnectWithin time.Duration `koanf:"rebalance_reconnect_within"`
 }
 
 // Sweeper — фоновая проверка присутствия (presence.Sweeper).
@@ -524,42 +533,48 @@ func Defaults() map[string]any {
 		"ratelimit.disable":   []string{},
 		"ratelimit.fail_open": false,
 
-		"agent.instance_id":                   "",
-		"agent.grpc.listen":                   ":8443",
-		"agent.grpc.endpoint":                 "localhost:8443",
-		"agent.grpc.proxy_trusted":            []string{},
-		"agent.grpc.proxy_header_timeout":     "5s",
-		"agent.pki.ca_cert_file":              "",
-		"agent.pki.ca_key_file":               "",
-		"agent.pki.server_cert_file":          "",
-		"agent.pki.server_key_file":           "",
-		"agent.pki.extra_trust_files":         []string{},
-		"agent.pki.dev_dir":                   "",
-		"agent.pki.dev_hosts":                 []string{},
-		"agent.enroll.code_pepper":            "",
-		"agent.enroll.code_ttl":               "15m",
-		"agent.enroll.diskless_cert_lifetime": "24h",
-		"agent.update.public_keys":            []string{},
-		"agent.cert.lifetime":                 "720h",
-		"agent.cert_cache.refresh":            "5s",
-		"agent.cert_cache.full_reload":        "10m",
-		"agent.stream.presence_ttl":           "90s",
-		"agent.stream.offline_grace":          "15s",
-		"agent.stream.hello_timeout":          "10s",
-		"agent.stream.status_interval":        "60s",
-		"agent.stream.state_debounce":         "5s",
-		"agent.stream.ack_timeout":            "30s",
-		"agent.stream.key_prefix":             "zafiro:agent:",
-		"agent.stream.subject_prefix":         "zafiro.agent",
-		"agent.stream.drain_within":           "10s",
-		"agent.guest.token_ttl":               "0s",
-		"agent.guest.idempotency_ttl":         "0s",
-		"agent.guest.qr_base_url":             "",
-		"agent.guest.public_base_url":         "",
-		"agent.guest.qr_poll_every":           "0s",
-		"agent.sweeper.interval":              "5s",
-		"agent.sweeper.reconcile_every":       "5m",
-		"agent.sweeper.command_retention":     "168h",
+		"agent.instance_id":                       "",
+		"agent.grpc.listen":                       ":8443",
+		"agent.grpc.endpoint":                     "localhost:8443",
+		"agent.grpc.proxy_trusted":                []string{},
+		"agent.grpc.proxy_header_timeout":         "5s",
+		"agent.pki.ca_cert_file":                  "",
+		"agent.pki.ca_key_file":                   "",
+		"agent.pki.server_cert_file":              "",
+		"agent.pki.server_key_file":               "",
+		"agent.pki.extra_trust_files":             []string{},
+		"agent.pki.dev_dir":                       "",
+		"agent.pki.dev_hosts":                     []string{},
+		"agent.enroll.code_pepper":                "",
+		"agent.enroll.code_ttl":                   "15m",
+		"agent.enroll.diskless_cert_lifetime":     "24h",
+		"agent.update.public_keys":                []string{},
+		"agent.cert.lifetime":                     "720h",
+		"agent.cert_cache.refresh":                "5s",
+		"agent.cert_cache.full_reload":            "10m",
+		"agent.stream.presence_ttl":               "90s",
+		"agent.stream.offline_grace":              "15s",
+		"agent.stream.hello_timeout":              "10s",
+		"agent.stream.status_interval":            "60s",
+		"agent.stream.state_debounce":             "5s",
+		"agent.stream.ack_timeout":                "30s",
+		"agent.stream.key_prefix":                 "zafiro:agent:",
+		"agent.stream.subject_prefix":             "zafiro.agent",
+		"agent.stream.drain_within":               "10s",
+		"agent.stream.rebalance_enabled":          true,
+		"agent.stream.rebalance_interval":         "15s",
+		"agent.stream.rebalance_threshold":        1.2,
+		"agent.stream.rebalance_min_excess":       50,
+		"agent.stream.rebalance_batch":            100,
+		"agent.stream.rebalance_reconnect_within": "3s",
+		"agent.guest.token_ttl":                   "0s",
+		"agent.guest.idempotency_ttl":             "0s",
+		"agent.guest.qr_base_url":                 "",
+		"agent.guest.public_base_url":             "",
+		"agent.guest.qr_poll_every":               "0s",
+		"agent.sweeper.interval":                  "5s",
+		"agent.sweeper.reconcile_every":           "5m",
+		"agent.sweeper.command_retention":         "168h",
 
 		"events.stream.max_age":    "72h",
 		"events.stream.duplicates": "10m",
@@ -750,6 +765,29 @@ var keyIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,16}$`)
 // updateKeyIDRe — key_id ключа подписи обновлений агента (UpdateAvailable.key_id, например "2026-10").
 var updateKeyIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,32}$`)
 
+// validateRebalance — agent.stream.rebalance_* (проверяются и при выключенной перебалансировке: включить её
+// можно одной переменной, и ошибка не должна всплыть только тогда).
+func (c *Config) validateRebalance(add func(format string, args ...any)) {
+	st := c.Agent.Stream
+	if st.RebalanceInterval < time.Second {
+		add("agent.stream.rebalance_interval: должен быть ≥ 1s")
+	}
+	if !(st.RebalanceThreshold >= 1.05 && st.RebalanceThreshold <= 10) { // !(…) ловит и NaN
+		add("agent.stream.rebalance_threshold: ожидается 1.05..10 (доля от среднего числа потоков)")
+	}
+	if st.RebalanceMinExcess < 1 {
+		add("agent.stream.rebalance_min_excess: должен быть ≥ 1")
+	}
+	if st.RebalanceBatch < 1 || st.RebalanceBatch > 10000 {
+		add("agent.stream.rebalance_batch: ожидается 1..10000")
+	}
+	// ПК в окне переподключения не должен успеть стать «офлайн» (offline_grace) и вернуться до следующего решения.
+	if st.RebalanceReconnectWithin <= 0 || st.RebalanceReconnectWithin >= st.OfflineGrace ||
+		st.RebalanceReconnectWithin >= st.RebalanceInterval {
+		add("agent.stream.rebalance_reconnect_within: должен быть > 0 и меньше agent.stream.offline_grace и agent.stream.rebalance_interval")
+	}
+}
+
 // defaultInstanceID — имя хоста, приведённое к [A-Za-z0-9_-]{1,64}.
 func defaultInstanceID() string {
 	h, err := os.Hostname()
@@ -859,6 +897,7 @@ func (c *Config) Validate() error {
 	if c.Agent.Stream.DrainWithin < 0 {
 		add("agent.stream.drain_within: должен быть ≥ 0")
 	}
+	c.validateRebalance(add)
 	if c.Realtime.MaxLifetime < 0 {
 		add("realtime.max_lifetime: должен быть ≥ 0")
 	}

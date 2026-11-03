@@ -461,3 +461,41 @@ func TestIntegrationsUpstream(t *testing.T) {
 		t.Errorf("invalid legacy_upstream: %v", err)
 	}
 }
+
+func TestAgentStreamRebalance(t *testing.T) {
+	cfg, err := Load("", environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := cfg.Agent.Stream
+	if !st.RebalanceEnabled || st.RebalanceInterval != 15*time.Second || st.RebalanceThreshold != 1.2 ||
+		st.RebalanceMinExcess != 50 || st.RebalanceBatch != 100 || st.RebalanceReconnectWithin != 3*time.Second {
+		t.Errorf("rebalance defaults = %+v", st)
+	}
+	cfg, err = Load("", environ("ZAFIRO_AGENT_STREAM_REBALANCE_ENABLED=false", "ZAFIRO_AGENT_STREAM_REBALANCE_THRESHOLD=1.5",
+		"ZAFIRO_AGENT_STREAM_REBALANCE_BATCH=20"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Agent.Stream.RebalanceEnabled || cfg.Agent.Stream.RebalanceThreshold != 1.5 || cfg.Agent.Stream.RebalanceBatch != 20 {
+		t.Errorf("rebalance env = %+v", cfg.Agent.Stream)
+	}
+	bad := map[string][]string{
+		"interval":           {"ZAFIRO_AGENT_STREAM_REBALANCE_INTERVAL=500ms"},
+		"threshold 1":        {"ZAFIRO_AGENT_STREAM_REBALANCE_THRESHOLD=1"},
+		"threshold NaN":      {"ZAFIRO_AGENT_STREAM_REBALANCE_THRESHOLD=NaN"},
+		"min excess":         {"ZAFIRO_AGENT_STREAM_REBALANCE_MIN_EXCESS=0"},
+		"batch":              {"ZAFIRO_AGENT_STREAM_REBALANCE_BATCH=0"},
+		"within ≥ grace":     {"ZAFIRO_AGENT_STREAM_REBALANCE_RECONNECT_WITHIN=15s"},
+		"within ≥ interval":  {"ZAFIRO_AGENT_STREAM_REBALANCE_INTERVAL=2s", "ZAFIRO_AGENT_STREAM_REBALANCE_RECONNECT_WITHIN=2s"},
+		"within 0, disabled": {"ZAFIRO_AGENT_STREAM_REBALANCE_ENABLED=false", "ZAFIRO_AGENT_STREAM_REBALANCE_RECONNECT_WITHIN=0s"},
+	}
+	for name, kv := range bad {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load("", environ(kv...))
+			if err == nil || !strings.Contains(err.Error(), "agent.stream.rebalance_") {
+				t.Fatalf("expected rebalance validation error, got %v", err)
+			}
+		})
+	}
+}

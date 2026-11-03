@@ -38,7 +38,8 @@ Telegram Q-060) не меняется и работает параллельно
 |---|---|---|---|
 | HTTP | `http_requests_total`, `http_request_duration_seconds`, `http_requests_in_flight` | `method`, `route`, `code` | middleware `Observer.HTTPMiddleware` сразу после `middleware.RequestID`; `route` — шаблон chi, `spa` (страницы фронта), `unmatched_api` (неизвестный `/api`, старый REST мобильных до маршрутизации). WebSocket `/ws` — без гистограммы. |
 | gRPC | `grpc_requests_total`, `grpc_request_duration_seconds` (unary), `grpc_streams_active`, `grpc_stream_messages_received_total` | `method`, `code` | внешние перехватчики (`grpcserver.Options.OuterUnary/OuterStream`) — до проверки сертификата: отказы UNAUTHENTICATED и паники видны |
-| Агенты | `agent_streams_active` (инстанс, при сборе), `agent_online_computers` (платформа, при сборе: `ZCOUNT` zset присутствия) | — | `stream.Service.LocalStreams`, presence |
+| Агенты | `agent_streams_active` (инстанс, при сборе), `agent_online_computers` (платформа, при сборе: `ZCOUNT` zset присутствия), `agent_stream_rebalance_requested_total` (счётчик инстанса: ПК, которых попросили переподключиться ради перебалансировки) | — | `stream.Service.LocalStreams`, `stream.Service.RebalanceRequested`, presence |
+| Автобиллинг | `agent_auto_billing_due_computers`, `agent_auto_billing_oldest_due_age_seconds` (платформа, при сборе) | — | zset `zafiro:guest:ab:due` (`guestapi.DefaultKeyPrefix`) (`guestapi.Server.AutoBillingBacklog`: `ZCOUNT` по сроку ≤ сейчас и самый ранний срок) — сколько ПК ждут пересмотра и насколько просрочен старейший срок |
 | Команды агентам | `agent_commands_total` | `event` = issued / redelivered / accepted / completed / expired, `result` (для completed: succeeded / failed / duplicate) | трассировщик pgx по запросам `InsertAgentCommand`, `ListPendingAgentCommands`, `AcceptAgentCommand`, `CompleteAgentCommand`, `ExpireAgentCommands` |
 | Outbox | `outbox_pending_events`, `outbox_oldest_unpublished_age_seconds` (при сборе), `outbox_publish_failures_total`, `nats_messages_published_total` | — | `outbox_events` (индекс неопубликованных), запросы `MarkOutboxAttemptFailed` / `MarkOutboxPublished` |
 | Вебхуки | `webhook_deliveries_pending`, `webhook_deliveries_retrying`, `webhook_oldest_pending_age_seconds` (при сборе), `webhook_delivery_attempts_total` | `result` = delivered / retry / failed / skipped | `webhook_deliveries` (status=pending), запросы `SaveWebhookAttempt`, `SkipWebhookDelivery` |
@@ -114,8 +115,11 @@ p95 денежных эндпоинтов > 1 с или в 3 раза выше �
 1. Один инстанс или все: `zafiro_agent_streams_active` по инстансам. Упал инстанс — см. ZafiroInstanceDown.
 2. Все: балансировщик L4 (порт агентов 8443, PROXY protocol), сертификат сервера (`ZafiroCertificate*`), сеть провайдера.
 3. `grpc_requests_total{method=~".*/Connect", code=…}`: Unauthenticated — сертификаты ПК (отзыв, CA), Unavailable — сервер.
-4. Дисбаланс после выкладки: потоки перераспределяются командой Drain (`agent.stream.drain_within`); перезапуск
-   перегруженного инстанса с graceful shutdown разгрузит его.
+4. Дисбаланс после выкладки: потоки выравниваются автоматически (`agent.stream.rebalance_*`, `docs/agent-protocol.md`
+   §13.6) — `zafiro_agent_stream_rebalance_requested_total` перегруженного инстанса растёт. Не растёт: перебалансировка
+   выключена (`rebalance_enabled`), инстансы не видят друг друга в Valkey (разный `agent.stream.key_prefix`, предупреждения
+   `agent streams publish failed`) или почти все ПК перегруженного инстанса заняты гостями (их не трогают — выровняется
+   по мере освобождения). Перезапуск перегруженного инстанса с graceful shutdown разгрузит его сразу.
 
 <a id="rb-agent-commands"></a>
 ### ZafiroAgentCommandsExpiring (warning)
@@ -144,6 +148,20 @@ p95 денежных эндпоинтов > 1 с или в 3 раза выше �
 2. Ни один инстанс не берёт лок — проверьте, не висит ли сессия Postgres с локом (`pg_locks` advisory + `pg_stat_activity`);
    при необходимости `pg_terminate_backend` зависшего соединения (лок снимется, задачу возьмёт другой инстанс).
 3. `dev.disable_workers` в проде запрещён валидацией — отсутствие задачи в прод-конфигурации невозможно.
+
+<a id="rb-auto-billing-lag"></a>
+### ZafiroAutoBillingLag (warning)
+Старейший срок пересмотра автобиллинга просрочен больше 30 с в течение 5 минут (`zafiro:auto_billing_oldest_due_seconds`;
+в норме < 2 с). Гости после паузы или конца тарифа ждут покупки времени; деньги не теряются (покупка идемпотентна
+по ключу ПК + вход + шаг). Тик (`agent:auto-billing`, раз в 1 с, один исполнитель на кластер) выбирает пакеты по 200
+ПК, пока просроченные есть и не прошло 800 мс; ПК разных гостей — в 8 потоков (`guestapi.DefaultAutoBillingWorkers`).
+1. Задача вообще идёт? `zafiro_worker_last_run_timestamp_seconds{job="agent:auto-billing"}` и `ZafiroWorkerNotRunning`
+   / `ZafiroMoneyWorkerMissing`. Нет — см. [rb-worker-not-running](#rb-worker-not-running).
+2. Идёт, но не успевает: `zafiro:auto_billing_due` растёт, `worker_run_duration_seconds{job="agent:auto-billing"}` ≈ 1 с.
+   Узкое место — тенантные транзакции чтения (по одной на ПК): пул `app` лидера (`ZafiroDBPool*`), `db_query_duration_seconds`,
+   CPU Postgres. Замер: ≈ 1 300 ПК/с на стенде 4 vCPU (`docs/load-test.md` «Автобиллинг на 50 000 ПК»).
+3. Ошибки тика (`auto billing tick failed`, `worker_errors_total{job="agent:auto-billing"}`) — сбойные ПК повторяются
+   через 10 с и не держат очередь; массовые — Valkey или Postgres недоступны.
 
 <a id="rb-db-pool"></a>
 ### ZafiroDBPoolExhausted (critical), ZafiroDBPoolHigh (warning)

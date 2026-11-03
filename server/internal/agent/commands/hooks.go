@@ -50,8 +50,9 @@ func (n *Notifier) SessionEnded(ctx context.Context, clubID, computerID int64, e
 }
 
 // BalanceChanged — BalanceChanged на все ПК клуба, где сейчас вошёл этот гость (по Status.signed_in_user_id).
+// ПК гостя — по индексу «гость → ПК» (presence.SignedIn, S6-O4-11), а не разбором снимков всего клуба.
 func (n *Notifier) BalanceChanged(ctx context.Context, clubID, userID int64, b *agentv1.Balance) error {
-	pcs, err := n.Presence.List(ctx, clubID)
+	pcs, err := n.Presence.SignedInOrList(ctx, clubID, userID)
 	if err != nil {
 		return err
 	}

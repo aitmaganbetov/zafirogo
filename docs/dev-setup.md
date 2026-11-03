@@ -90,7 +90,7 @@ NATS и gRPC. Нужен для смоук-теста собранного би�
 | `ZAFIRO_AGENT_ENROLL_DISKLESS_CERT_LIFETIME` | `24h` | сертификат бездискового ПК по ключу образа (Q-037) |
 | `ZAFIRO_AGENT_UPDATE_PUBLIC_KEYS` | пусто | открытые ключи Ed25519 подписи обновлений агента `key_id:base64,…`; пусто — обновления не рассылаются |
 | `ZAFIRO_AGENT_CERT_LIFETIME` | `720h` | срок сертификата ПК; кэш: `ZAFIRO_AGENT_CERT_CACHE_REFRESH` 5s, `_FULL_RELOAD` 10m |
-| `ZAFIRO_AGENT_STREAM_*` | AS-12 | `PRESENCE_TTL` 90s, `OFFLINE_GRACE` 15s, `HELLO_TIMEOUT` 10s, `STATUS_INTERVAL` 60s, `STATE_DEBOUNCE` 5s, `ACK_TIMEOUT` 30s, `KEY_PREFIX`, `SUBJECT_PREFIX`, `DRAIN_WITHIN` 10s |
+| `ZAFIRO_AGENT_STREAM_*` | AS-12 | `PRESENCE_TTL` 90s, `OFFLINE_GRACE` 15s, `HELLO_TIMEOUT` 10s, `STATUS_INTERVAL` 60s, `STATE_DEBOUNCE` 5s, `ACK_TIMEOUT` 30s, `KEY_PREFIX`, `SUBJECT_PREFIX`, `DRAIN_WITHIN` 10s, `REBALANCE_ENABLED` true, `REBALANCE_INTERVAL` 15s, `REBALANCE_THRESHOLD` 1.2, `REBALANCE_MIN_EXCESS` 50, `REBALANCE_BATCH` 100, `REBALANCE_RECONNECT_WITHIN` 3s (§13.6 `docs/agent-protocol.md`) |
 | `ZAFIRO_AGENT_GUEST_TOKEN_TTL`, `_IDEMPOTENCY_TTL`, `_QR_BASE_URL`, `_PUBLIC_BASE_URL`, `_QR_POLL_EVERY` | пакета (12h, 24h, `https://zafiro.kz`, = QR, 3s) | API гостя на ПК |
 | `ZAFIRO_AGENT_SWEEPER_INTERVAL`, `_RECONCILE_EVERY`, `_COMMAND_RETENTION` | `5s`, `5m`, `168h` | офлайн ПК и очистка команд |
 | `ZAFIRO_EVENTS_STREAM_MAX_AGE`, `_DUPLICATES`, `_REPLICAS` | `72h`, `10m`, `1` | поток `zafiro-events` |

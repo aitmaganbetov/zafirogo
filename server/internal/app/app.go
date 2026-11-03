@@ -426,6 +426,12 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		HelloTimeout: cfg.Agent.Stream.HelloTimeout, StatusInterval: cfg.Agent.Stream.StatusInterval,
 		StateDebounce: cfg.Agent.Stream.StateDebounce, AckTimeout: cfg.Agent.Stream.AckTimeout,
 		Events: hooks, Welcome: hooks, UpdateKeys: updateKeys,
+		// S6-O4-12: потоки после перезапуска/добавления инстанса выравниваются сами (docs/agent-protocol.md §13.6).
+		Rebalance: stream.RebalanceOptions{
+			Enabled: cfg.Agent.Stream.RebalanceEnabled, Interval: cfg.Agent.Stream.RebalanceInterval,
+			Threshold: cfg.Agent.Stream.RebalanceThreshold, MinExcess: cfg.Agent.Stream.RebalanceMinExcess,
+			Batch: cfg.Agent.Stream.RebalanceBatch, ReconnectWithin: cfg.Agent.Stream.RebalanceReconnectWithin,
+		},
 		// Присутствие → событие computer.state для карты клуба (вместо опроса /club-map/state, Этап 3).
 		Presence: presenceEvents,
 		// TODO(B2): Results (stream.ResultHandler) —
@@ -561,6 +567,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		{"expire-subscriptions", expireSubs.Run},
 		{"agent-cert-cache", a.CertCache.Run},
 		{"agent-presence-sweeper", sweeper.Run},
+		{"agent-stream-rebalance", a.Stream.RunRebalance}, // на каждом инстансе свой (не «один исполнитель»)
 		{"outbox-publisher", publisher.Run},
 		{"webhook-consumer", consumer.Run},
 		{"webhook-deliverer", deliverer.Run},
@@ -582,7 +589,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	for i := range a.workers {
 		a.workers[i].run = a.Obs.TrackWorker(a.workers[i].name, a.workers[i].run) // worker_up, worker_errors_total
 	}
-	a.setObservabilitySources(serverCert)
+	a.setObservabilitySources(serverCert, guestSrv)
 
 	ro.Auth = a.Auth
 	ro.Limiter = a.Limiter

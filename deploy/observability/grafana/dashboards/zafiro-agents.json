@@ -393,7 +393,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "",
+      "description": "Открытые потоки по инстансам (стопкой) и сколько ПК инстанс попросил переподключиться за 5 мин ради перебалансировки (правая ось, docs/agent-protocol.md §13.6).",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -409,6 +409,15 @@
           },
           "expr": "zafiro_agent_streams_active{instance=~\"$instance\"}",
           "legendFormat": "{{instance}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(zafiro_agent_stream_rebalance_requested_total{instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{instance}}: перебалансировка за 5 мин"
         }
       ],
       "fieldConfig": {
@@ -426,7 +435,35 @@
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none",
+                  "group": "B"
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.drawStyle",
+                "value": "bars"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 40
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {

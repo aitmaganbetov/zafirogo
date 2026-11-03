@@ -151,6 +151,16 @@ groups:
           summary: "Денежная фоновая задача не запускалась 15 минут"
           runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-worker-not-running
 
+      - alert: ZafiroAutoBillingLag
+        # Тик (1 с) разбирает просроченные пакетами в пределах 800 мс; в норме старейший срок просрочен < 2 с.
+        expr: zafiro:auto_billing_oldest_due_seconds > 30
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Автобиллинг отстаёт: старейший срок пересмотра просрочен на {{ $value | humanizeDuration }}"
+          description: "Гости ждут покупки времени после паузы или конца тарифа дольше обычного. Деньги не теряются (покупка идемпотентна), но время гостя не начинается."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-auto-billing-lag
+
       - alert: ZafiroWorkerErrors
         expr: sum by (job) (increase(zafiro_worker_errors_total[15m])) > 3
         for: 5m

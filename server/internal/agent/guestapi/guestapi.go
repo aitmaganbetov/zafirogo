@@ -91,6 +91,10 @@ type Options struct {
 	PublicBaseURL string
 	// QRPollEvery — период перечитывания статуса в WatchQrLogin (0 — DefaultQRPollEvery).
 	QRPollEvery time.Duration
+	// AutoBillingWorkers — параллельность пересмотра автобиллинга в тике (0 — DefaultAutoBillingWorkers).
+	AutoBillingWorkers int
+	// AutoBillingTickBudget — сколько тик автобиллинга выбирает новые пакеты (0 — DefaultAutoBillingTickBudget).
+	AutoBillingTickBudget time.Duration
 
 	Now func() time.Time
 	Log *slog.Logger
@@ -114,6 +118,12 @@ func (o *Options) defaults() {
 	}
 	if o.QRPollEvery <= 0 {
 		o.QRPollEvery = DefaultQRPollEvery
+	}
+	if o.AutoBillingWorkers <= 0 {
+		o.AutoBillingWorkers = DefaultAutoBillingWorkers
+	}
+	if o.AutoBillingTickBudget <= 0 {
+		o.AutoBillingTickBudget = DefaultAutoBillingTickBudget
 	}
 	if o.Now == nil {
 		o.Now = time.Now
