@@ -38,7 +38,7 @@
                    ┌──────────────────────── балансировщик (nginx 1.30.5) ─────────────────────────┐
 браузер, SPA,      │ :443  TLS терминируется здесь, HSTS, X-Forwarded-For := адрес клиента        │
 мобильные, /api/v1 │       app./superadmin./wiki. → zafirogo; основной домен → Laravel, кроме     │──► zafiro ×N :8080
-                   │       /api/(auth|guest|staff)/ → zafirogo, /api/v1/ → по карте ключей          │
+                   │       /api/(auth|guest|staff|v1)/ → zafirogo (чужие клубы — прокси в Laravel)  │
 агенты ПК (mTLS)   │ :8443 L4-проброс TCP без расшифровки + PROXY protocol v1                      │──► zafiro ×N :8443
                    └───────────────────────────────────────────────────────────────────────────────┘
                                  zafiro ×N ──► Postgres (2 логина: zafiro_app, zafiro_platform)
