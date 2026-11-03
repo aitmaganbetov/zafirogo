@@ -230,6 +230,86 @@ message Status {
   ComputerLoad load = 4;
   // Время на ПК в момент отправки (для оценки рассинхрона часов).
   google.protobuf.Timestamp observed_at = 5;
+  // Здоровье ПК (Этап 7): температуры, диски, периферия, сеть, сбои. Агент кладёт его в Status раз в
+  // status_interval и сразу — при подключении/отключении периферии или смене SMART диска; между ними
+  // Status без health не означает «здоровье неизвестно» — сервер держит последнее присланное.
+  ComputerHealth health = 6;
+}
+
+// Здоровье ПК. Ни одно поле не обязательно: агент заполняет то, что смог измерить на этом ПК
+// (без драйверов ядра — только штатные источники Windows и драйвера видеокарты).
+message ComputerHealth {
+  // Температура CPU, десятые доли °C; 0 — не измерено (на многих платах Windows её не отдаёт).
+  int32 cpu_temp_decicelsius = 1;
+  // Температура GPU, десятые доли °C; 0 — не измерено.
+  int32 gpu_temp_decicelsius = 2;
+  // Загрузка GPU, сотые доли процента (0..10000); есть, только если gpu_measured.
+  uint32 gpu_load_basis_points = 3;
+  // Занятая память GPU, сотые доли процента (0..10000); есть, только если gpu_measured.
+  uint32 gpu_memory_basis_points = 4;
+  // Загрузка и память GPU измерены (иначе поля 3–4 не заполнены).
+  bool gpu_measured = 5;
+  // Локальные диски (не сетевые, не съёмные).
+  repeated DiskHealth disks = 6;
+  // Периферия, которую агент проверяет (мышь, клавиатура, гарнитура, монитор).
+  repeated Peripheral peripherals = 7;
+  // Скорость основного сетевого подключения, Мбит/с; 0 — не измерено.
+  uint32 link_speed_mbps = 8;
+  // Сколько секунд Windows работает с последней загрузки.
+  uint64 uptime_seconds = 9;
+  // Внезапных выключений за 7 суток (журнал System: Kernel-Power 41, EventLog 6008).
+  uint32 unexpected_shutdowns_7d = 10;
+  // «Синих экранов» за 7 суток (журнал System: BugCheck 1001).
+  uint32 bugchecks_7d = 11;
+}
+
+// Локальный диск.
+message DiskHealth {
+  // Буква/точка монтирования («C:»).
+  string mount = 1;
+  // Системный диск (на нём Windows).
+  bool system = 2;
+  // Объём и свободное место, МБ.
+  uint64 total_mb = 3;
+  uint64 free_mb = 4;
+  // Состояние по SMART/Storage Spaces.
+  DiskSmart smart = 5;
+}
+
+// Состояние диска по SMART (MSFT_PhysicalDisk.HealthStatus / предсказание отказа).
+enum DiskSmart {
+  // Не измерено.
+  DISK_SMART_UNSPECIFIED = 0;
+  // Исправен.
+  DISK_SMART_OK = 1;
+  // Предупреждение (деградация, рост переназначенных секторов).
+  DISK_SMART_WARNING = 2;
+  // Предсказан отказ.
+  DISK_SMART_FAILING = 3;
+}
+
+// Периферийное устройство.
+message Peripheral {
+  // Вид устройства.
+  PeripheralKind kind = 1;
+  // Подключено сейчас.
+  bool connected = 2;
+  // Название устройства (из Windows; для показа админу), до 128 символов.
+  string name = 3;
+}
+
+// Вид периферии.
+enum PeripheralKind {
+  // Не задано.
+  PERIPHERAL_KIND_UNSPECIFIED = 0;
+  // Мышь.
+  PERIPHERAL_KIND_MOUSE = 1;
+  // Клавиатура.
+  PERIPHERAL_KIND_KEYBOARD = 2;
+  // Гарнитура / наушники (аудиоустройство вывода, кроме встроенного).
+  PERIPHERAL_KIND_HEADSET = 3;
+  // Монитор.
+  PERIPHERAL_KIND_MONITOR = 4;
 }
 
 // Загрузка ПК. Значения в процентах * 100 (0..10000), чтобы не использовать float.
