@@ -71,3 +71,18 @@ FROM club_invitations
 WHERE club_id = sqlc.arg(club_id) AND accepted_at IS NULL
   AND expires_at >= sqlc.arg(now) AND expires_at <= sqlc.arg(until)
 ORDER BY expires_at, id;
+
+-- name: NotificationComputerHealth :many
+-- Новое (Этап 7, S7-H-11): открытые проблемы здоровья ПК (computer_health_events, cleared_at IS NULL) — строка на ПК,
+-- свежие сверху, не больше page_size ПК (частичный индекс computer_health_events_open_index). Виды — по алфавиту,
+-- подробности — {вид: details на момент появления}.
+SELECT e.computer_id, c.number, c.display_name, c.device_name,
+       max(e.raised_at)::timestamptz AS last_raised_at,
+       array_agg(e.kind::text ORDER BY e.kind)::text[] AS kinds,
+       jsonb_object_agg(e.kind, e.details)::jsonb AS details
+FROM computer_health_events e
+JOIN club_computers c ON c.club_id = e.club_id AND c.id = e.computer_id
+WHERE e.club_id = sqlc.arg(club_id) AND e.cleared_at IS NULL
+GROUP BY e.computer_id, c.number, c.display_name, c.device_name
+ORDER BY last_raised_at DESC, e.computer_id
+LIMIT sqlc.arg(page_size);

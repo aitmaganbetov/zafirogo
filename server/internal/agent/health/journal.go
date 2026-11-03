@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
+	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -46,7 +47,9 @@ func (j *Journal) Open(ctx context.Context, clubID, computerID int64) ([]Open, e
 	return out, nil
 }
 
-// Record пишет переходы одной транзакцией (всё или ничего: не записалось — трекер повторит).
+// Record пишет переходы одной транзакцией (всё или ничего: не записалось — трекер повторит). Если строка журнала
+// действительно вставлена или закрыта — в той же транзакции событие notifications.changed (колокольчик панели:
+// «Проблемы с ПК», S7-H-11): не чаще реальных переходов, которые уже защищены от дребезга трекером.
 func (j *Journal) Record(ctx context.Context, clubID, computerID int64, trs []Transition, at time.Time) error {
 	if len(trs) == 0 {
 		return nil
@@ -77,7 +80,11 @@ func (j *Journal) Record(ctx context.Context, clubID, computerID int64, trs []Tr
 			}
 			n += rows
 		}
-		return nil
+		if n == 0 {
+			return nil
+		}
+		_, err := outbox.Add(ctx, q, outbox.Event{ClubID: clubID, Type: "notifications.changed", Data: map[string]any{}})
+		return err
 	})
 	if err != nil {
 		return fmt.Errorf("health: record: %w", err)

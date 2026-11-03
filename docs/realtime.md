@@ -96,7 +96,7 @@ ordered consumer club.>, только новые            фильтр club.*.
 
 | Тип | `data` | Когда |
 |---|---|---|
-| `notifications.changed` | `{}` | изменилось что-то, из чего строится колокольчик (`ClubNotifications::for()`): журнал из списка событий колокольчика, чат, заказ, остаток, ПК офлайн. Клиент перечитывает `GET /notifications` (список зависит от роли и `notifications_seen_at`) |
+| `notifications.changed` | `{}` | изменилось что-то, из чего строится колокольчик (`ClubNotifications::for()`): журнал из списка событий колокольчика, чат, заказ, остаток, ПК офлайн, переход проблемы здоровья ПК (`health.Journal.Record`, только при вставке или закрытии строки `computer_health_events`). Клиент перечитывает `GET /notifications` (список зависит от роли и `notifications_seen_at`) |
 | `computer.state` | `{"computer_id": 7, "status": "online\|offline\|busy\|maintenance", "session": {"user_id": 5, "ends_at": "…"} \| null, "reserved": bool, "maintenance": bool, "agent_version": "1.2.3"}` | дифф одного ПК (поля как у элемента `computerStates` старого `/club-map/state`); пишется только при изменении состояния, не на heartbeat |
 | `computer.load` | `{"computer_id": 7, "load": {"cpu_bp": 4250, "ram_bp": 6100, "idle_seconds": 30} \| отсутствует, "problems": ["cpu_hot"], "rtt_ms": 18}` | Этап 7: загрузка и проблемы здоровья ПК (поля как `load`/`problems`/`rtt_ms` у `ComputerState`). **Не через outbox** — §7; не чаще раза в 15 с на ПК и только при заметном изменении |
 | `computer.session.expired` | `{"computer_id": 7, "session_id": 123}` | воркер истечения сессий |

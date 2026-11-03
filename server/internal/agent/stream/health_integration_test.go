@@ -59,6 +59,16 @@ func healthRows(t *testing.T, pc int64) (open, total int) {
 	return
 }
 
+// bellEvents — события колокольчика клуба в outbox (S7-H-11: переход в журнале здоровья → notifications.changed).
+func bellEvents(t *testing.T, club int64) (n int) {
+	t.Helper()
+	if err := testEnv.db.Owner.QueryRow(context.Background(), `SELECT count(*) FROM outbox_events
+		WHERE club_id = $1 AND type = 'notifications.changed'`, club).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return
+}
+
 func healthTune(live *liveRecorder) func(*Options) {
 	return func(o *Options) {
 		th := health.Defaults()
@@ -92,6 +102,9 @@ func TestHealthStatusToSnapshotAndHistory(t *testing.T) {
 	if open, total := healthRows(t, pc); open != 2 || total != 2 {
 		t.Fatalf("history after raise: open %d, total %d", open, total)
 	}
+	if n := bellEvents(t, club); n != 1 {
+		t.Fatalf("bell events after raise: %d, want 1 (one transaction of transitions)", n)
+	}
 	var details string
 	if err := testEnv.db.Owner.QueryRow(ctx, `SELECT details::text FROM computer_health_events WHERE computer_id = $1 AND kind = 'cpu_hot'`,
 		pc).Scan(&details); err != nil || details != `{"temp_deci": 955, "threshold_c": 90}` {
@@ -121,6 +134,9 @@ func TestHealthStatusToSnapshotAndHistory(t *testing.T) {
 	}
 	if open, total := healthRows(t, pc); open != 2 || total != 2 {
 		t.Fatalf("history after repeats: open %d, total %d", open, total)
+	}
+	if n := bellEvents(t, club); n != 1 {
+		t.Fatalf("bell events after repeats: %d, want 1 (no transition — no event)", n)
 	}
 	if live.count() != lives {
 		t.Fatalf("live updates without notable change: %d → %d", lives, live.count())

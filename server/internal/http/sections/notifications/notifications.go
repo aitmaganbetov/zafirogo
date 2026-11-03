@@ -2,13 +2,14 @@
 //
 // Laravel: app/Http/Controllers/NotificationController.php, app/Services/ClubNotifications.php for().
 // Уведомления выводятся из данных: журнал (события колокольчика), подписка, приглашения, чат, заказы, низкий
-// остаток, ПК не на связи. Обновление — событие notifications.changed (вместо опроса раз в 60 с).
+// остаток, ПК не на связи; новое (Этап 7, S7-H-11) — открытые проблемы здоровья ПК. Обновление — событие notifications.changed (вместо опроса раз в 60 с).
 // «Новая версия агента» — релиз из platform_settings 'agent_release' (AgentUpdate::status()).
 package notifications
 
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
 	"github.com/aitmaganbetov/zafirogo/server/internal/club"
 	"github.com/aitmaganbetov/zafirogo/server/internal/clubmap"
@@ -55,6 +57,8 @@ const (
 	activityDays = 7
 	// heartbeatTimeout — ClubComputer::HEARTBEAT_TIMEOUT_SECONDS.
 	heartbeatTimeout = 90 * time.Second
+	// healthComputers — новое (S7-H-11): не больше стольких ПК с проблемами здоровья (свежие); все — на карте клуба.
+	healthComputers = 10
 )
 
 var managers = []string{permissions.RoleOwner, permissions.RoleAdmin, permissions.RoleManager}
@@ -130,6 +134,9 @@ func (h *handlers) ListNotifications(ctx context.Context, _ notificationsapi.Lis
 		}
 		if isManager || role == permissions.RoleOperator {
 			if items, err = h.offline(ctx, q, p.ClubID, now, items); err != nil {
+				return err
+			}
+			if items, err = h.computerHealth(ctx, q, p.ClubID, items); err != nil {
 				return err
 			}
 		}
@@ -295,6 +302,55 @@ func (h *handlers) offline(ctx context.Context, q *store.Queries, clubID int64, 
 		Title: h.d.T(ctx, "Не на связи: :count ПК", map[string]string{"count": strconv.Itoa(n)}),
 		Body:  h.listWithMore(ctx, strings.Join(names, ", "), n-5), Url: "/club-computers",
 	}}), nil
+}
+
+// problemLabels — подписи проблем здоровья (те же ключи, что web/src/features/clubmap/healthText.ts problemLabel()).
+var problemLabels = map[string]string{
+	health.KindCPUHot:      "Перегрев CPU",
+	health.KindGPUHot:      "Перегрев GPU",
+	health.KindDiskLow:     "Мало места на диске",
+	health.KindDiskSmart:   "Диск неисправен (SMART)",
+	health.KindMouse:       "Мышь не подключена",
+	health.KindKeyboard:    "Клавиатура не подключена",
+	health.KindMonitor:     "Монитор не подключён",
+	health.KindNetworkSlow: "Скорость сети упала",
+	health.KindUnstable:    "Нестабильная работа: сбои за 7 суток",
+}
+
+// computerHealth — новое (Этап 7, S7-H-11): пункт на ПК с открытыми проблемами здоровья (computer_health_events):
+// «Проблемы с ПК 7» — «Перегрев CPU (92 °C), Мышь не подключена», переход — карта клуба с карточкой этого ПК. Время
+// пункта — последнее появление проблемы: снятая и снова появившаяся проблема — снова непрочитана.
+func (h *handlers) computerHealth(ctx context.Context, q *store.Queries, clubID int64, items []item) ([]item, error) {
+	rows, err := q.NotificationComputerHealth(ctx, store.NotificationComputerHealthParams{ClubID: clubID, PageSize: healthComputers})
+	if err != nil {
+		return items, err
+	}
+	for _, r := range rows {
+		var details map[string]struct {
+			TempDeci *int64 `json:"temp_deci"`
+		}
+		_ = json.Unmarshal(r.Details, &details)
+		problems := make([]string, 0, len(r.Kinds))
+		for _, kind := range r.Kinds {
+			label := kind // вид новее сервера — как problemLabel() фронта
+			if key, ok := problemLabels[kind]; ok {
+				label = h.d.T(ctx, key, nil)
+			}
+			if d := details[kind].TempDeci; d != nil && (kind == health.KindCPUHot || kind == health.KindGPUHot) {
+				// Десятые °C → целые, как deg() карты (Math.round(deci / 10)).
+				label = h.d.T(ctx, ":problem (:value °C)", map[string]string{"problem": label, "value": strconv.FormatInt(int64(math.Round(float64(*d)/10)), 10)})
+			}
+			problems = append(problems, label)
+		}
+		id := strconv.FormatInt(r.ComputerID, 10)
+		// id меняется с каждой новой проблемой ПК: звук колокольчика помнит уже прозвучавшие id (как chat-/order-).
+		items = append(items, item{at: r.LastRaisedAt, Notification: notificationsapi.Notification{
+			Id: "computer-health-" + id + "-" + strconv.FormatInt(r.LastRaisedAt.UnixMicro(), 10), Icon: "fa-triangle-exclamation",
+			Title: h.d.T(ctx, "Проблемы с ПК :computer", map[string]string{"computer": club.ComputerName(r.DisplayName, r.DeviceName, r.Number)}),
+			Body:  strings.Join(problems, ", "), Url: "/club-map?computer=" + id,
+		}})
+	}
+	return items, nil
 }
 
 func (h *handlers) subscription(ctx context.Context, q *store.Queries, info club.Info, now time.Time, items []item) ([]item, error) {

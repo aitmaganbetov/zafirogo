@@ -1175,7 +1175,17 @@ RPC, поля и вид команды; `buf breaking` против прошло
   `Ping`; время до `CommandResult` с тем же `command_id` — `rtt_ms` в снимке (с ближайшим Status). Агент уже отвечает на
   Ping (§14) — менять протокол не понадобилось.
 
-### 16.4. Настройки
+### 16.4. Колокольчик «Проблемы с ПК»
+
+Открытые проблемы (`computer_health_events`, `cleared_at IS NULL`) показываются в колокольчике панели клуба
+(`GET /api/notifications`) тем же ролям, что «Не на связи» (владелец, админ, менеджер, оператор): один пункт на ПК
+(не больше 10, свежие сверху) — «Проблемы с ПК PC-07: Перегрев CPU (92 °C), Мышь не подключена», переход — карта клуба с
+карточкой этого ПК (`/club-map?computer=<id>`). Время пункта — последнее появление проблемы: новая или снова появившаяся
+проблема — снова непрочитано. `health.Journal.Record` пишет `notifications.changed` в outbox в той же транзакции, что
+переходы, и только если строка журнала вставлена или закрыта — не чаще подтверждённых переходов. Решение —
+[`open-questions/stage7-health.md`](open-questions/stage7-health.md) S7-H-11.
+
+### 16.5. Настройки
 
 `agent.health.enabled` (true), `cpu_temp_c` (90), `gpu_temp_c` (85), `temp_hysteresis_c` (5),
 `system_disk_free_percent` (10), `system_disk_free_gb` (10), `other_disk_free_percent` (5), `link_full_mbps` (1000),

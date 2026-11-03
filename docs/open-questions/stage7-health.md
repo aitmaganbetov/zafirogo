@@ -81,8 +81,22 @@
 
 ## Открытые
 
-- [ ] **S7-H-11. Уведомления о проблемах.** Колокольчик / Telegram о новой проблеме (например, SMART failing) не делались —
-  нужно решение владельца (кому и о каких проблемах). Переходы уже есть в журнале, хук — `health.Journal.Record`.
-- [ ] **S7-H-12. Метрики Prometheus.** Счётчики есть в коде (`Service.LivePublished`, `HealthDropped`,
-  `HealthJournal().Writes`), но не выведены в `/metrics` (`internal/observability` — область оркестратора); при выводе —
-  строка в `docs/observability.md`.
+- [x] **S7-H-11. Уведомления о проблемах.** Решение владельца: прямо в веб-панели клуба, в существующем колокольчике
+  (Telegram не нужен). Сделано: источник «Проблемы с ПК» (`sections/notifications` `computerHealth`, запрос
+  `NotificationComputerHealth`) — открытые строки `computer_health_events` своего клуба, **один пункт на ПК** (читаемее,
+  чем пункт на вид проблемы: у ПК без мыши и клавиатуры — одна строка): «Проблемы с ПК PC-07» — «Перегрев CPU (92 °C),
+  Мышь не подключена» (подписи — те же ключи, что `healthText.ts` карты; температура — из details на момент появления,
+  округление как `deg()` карты), иконка `fa-triangle-exclamation` (как значок ⚠ карты), переход —
+  `/club-map?computer=<id>` (карта открывает карточку ПК). Агрегат — в SQL (`GROUP BY` ПК по частичному индексу
+  `computer_health_events_open_index`), не больше 10 ПК, свежие сверху (все — на карте). Видят те же роли, что «Не на
+  связи» (владелец, админ, менеджер, оператор). Время пункта — последнее появление проблемы ПК: «прочитано» — как у
+  остальных (`notifications_seen_at`), новая или снова появившаяся проблема — снова непрочитано; id пункта меняется с
+  каждой новой проблемой (звук колокольчика помнит прозвучавшие id). Обновление без опроса: `health.Journal.Record` в той
+  же транзакции, что переходы, пишет `notifications.changed` в outbox — только если строка журнала действительно
+  вставлена или закрыта (переходы уже без дребезга: `raise_after` / `clear_after`). Тесты:
+  `http/computer_health_bell_integration_test.go`, `stream/health_integration_test.go` (одно событие на появление, ни
+  одного на повторы), `NotificationsMenu.test.tsx`, `ClubMapPage.test.tsx` («opens the PC card from the ?computer=
+  link»), `logic.test.ts`.
+- [x] **S7-H-12. Метрики Prometheus.** Не делаем — решение владельца: метрики здоровья ПК в Prometheus не нужны (о
+  проблемах сообщает колокольчик, S7-H-11). Счётчики в коде (`Service.LivePublished`, `HealthDropped`,
+  `HealthJournal().Writes`) остаются для тестов и замеров (`docs/load-test.md`).

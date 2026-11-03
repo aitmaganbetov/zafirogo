@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canvasHeight, collides, computerClasses, formatPreviewSum, guestPreview, snapComputer, snapSize, snapZone } from './logic';
+import { canvasHeight, collides, computerClasses, computerParam, formatPreviewSum, guestPreview, snapComputer, snapSize, snapZone } from './logic';
 
 describe('club map logic', () => {
   it('canvas height: not lower than 430', () => {
@@ -39,5 +39,16 @@ describe('club map logic', () => {
     expect(formatPreviewSum(160000, 'en')).toBe('1,600');
     expect(formatPreviewSum(11667, 'en')).toBe('116.67');
     expect(formatPreviewSum(11650, 'en')).toBe('116.5');
+  });
+
+  it('computer search param: positive integer or nothing', () => {
+    expect(computerParam('7')).toBe(7);
+    expect(computerParam(7)).toBe(7);
+    expect(computerParam(undefined)).toBeUndefined();
+    expect(computerParam('')).toBeUndefined();
+    expect(computerParam('0')).toBeUndefined();
+    expect(computerParam('-3')).toBeUndefined();
+    expect(computerParam('1.5')).toBeUndefined();
+    expect(computerParam('abc')).toBeUndefined();
   });
 });

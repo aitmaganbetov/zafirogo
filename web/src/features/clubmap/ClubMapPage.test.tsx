@@ -27,14 +27,14 @@ const page: Page = {
   booking_start: '2026-10-15T13:00',
 };
 
-function setup() {
+function setup(computer?: number) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   qc.setQueryData(clubMapKey, page);
   const rt = new RealtimeClient();
   render(
     <QueryClientProvider client={qc}>
       <RealtimeContext.Provider value={rt}>
-        <ClubMapPage />
+        <ClubMapPage computer={computer} />
       </RealtimeContext.Provider>
     </QueryClientProvider>,
   );
@@ -66,6 +66,35 @@ describe('ClubMapPage', () => {
     expect(document.getElementById('computer-info-session-user')?.textContent).toBe('Айгерим · +77010000001');
     fireEvent.click(pc);
     expect(document.getElementById('computer-controls')?.className).not.toContain('show');
+  });
+
+  // Переход из колокольчика «Проблемы с ПК» (/club-map?computer=8) — открыта карточка этого ПК, без выделения.
+  it('opens the PC card from the ?computer= link', () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    setup(8);
+    expect(document.getElementById('computer-info-panel')?.hidden).toBe(false);
+    expect(document.getElementById('computer-info-name')?.textContent).toBe('VIP-02 (#2)');
+    expect(document.getElementById('computer-controls')?.className).not.toContain('show');
+  });
+
+  it('switches the PC card when the ?computer= link changes on an open map', () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    qc.setQueryData(clubMapKey, page);
+    const rt = new RealtimeClient();
+    const view = (computer?: number) => (
+      <QueryClientProvider client={qc}>
+        <RealtimeContext.Provider value={rt}>
+          <ClubMapPage computer={computer} />
+        </RealtimeContext.Provider>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view());
+    expect(document.getElementById('computer-info-panel')?.hidden).toBe(true);
+    rerender(view(7));
+    expect(document.getElementById('computer-info-name')?.textContent).toBe('VIP-01 (#1)');
+    rerender(view(8));
+    expect(document.getElementById('computer-info-name')?.textContent).toBe('VIP-02 (#2)');
   });
 
   // Вместо опроса /club-map/state — событие computer.state: связь сразу, остальное — запросом по id.

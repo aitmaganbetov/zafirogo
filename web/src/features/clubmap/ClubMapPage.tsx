@@ -53,7 +53,8 @@ const STATE_LABELS: Record<string, string> = {
 const STAFF_KINDS: Record<string, string> = { pin: 'Выход из агента по PIN-коду', signin: 'Сотрудник вошёл на ПК', panel: 'Техрежим из панели' };
 const ZONE_STATUS: Record<string, string> = { available: 'Свободно', busy: 'Занято', service: 'Сервис' };
 
-export function ClubMapPage() {
+/** computer — открыть карточку этого ПК (?computer=7: переход из колокольчика «Проблемы с ПК»). */
+export function ClubMapPage({ computer }: { readonly computer?: number } = {}) {
   const { t, i18n } = useTranslation();
   const { me } = useSession();
   const qc = useQueryClient();
@@ -71,7 +72,7 @@ export function ClubMapPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
-  const [infoId, setInfoId] = useState<number | null>(null);
+  const [infoId, setInfoId] = useState<number | null>(computer ?? null);
   const [notice, setNotice] = useState<{ text: string; show: boolean }>({ text: t(SAVING), show: false });
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [zoneLayout, setZoneLayout] = useState<Record<number, Layout>>({});
@@ -88,6 +89,12 @@ export function ClubMapPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => () => { if (noticeTimer.current) clearTimeout(noticeTimer.current); }, []);
+  // Новый переход из колокольчика, когда карта уже открыта (смена параметра — во время рендера, без эффекта).
+  const [focused, setFocused] = useState(computer);
+  if (computer !== focused) {
+    setFocused(computer);
+    if (computer != null) setInfoId(computer);
+  }
 
   // Свежие данные с сервера заменяют локальные правки расположения.
   useEffect(() => {

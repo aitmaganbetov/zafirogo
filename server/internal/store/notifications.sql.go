@@ -118,6 +118,65 @@ func (q *Queries) NotificationChat(ctx context.Context, clubID int64) (Notificat
 	return i, err
 }
 
+const notificationComputerHealth = `-- name: NotificationComputerHealth :many
+SELECT e.computer_id, c.number, c.display_name, c.device_name,
+       max(e.raised_at)::timestamptz AS last_raised_at,
+       array_agg(e.kind::text ORDER BY e.kind)::text[] AS kinds,
+       jsonb_object_agg(e.kind, e.details)::jsonb AS details
+FROM computer_health_events e
+JOIN club_computers c ON c.club_id = e.club_id AND c.id = e.computer_id
+WHERE e.club_id = $1 AND e.cleared_at IS NULL
+GROUP BY e.computer_id, c.number, c.display_name, c.device_name
+ORDER BY last_raised_at DESC, e.computer_id
+LIMIT $2
+`
+
+type NotificationComputerHealthParams struct {
+	ClubID   int64 `json:"club_id"`
+	PageSize int32 `json:"page_size"`
+}
+
+type NotificationComputerHealthRow struct {
+	ComputerID   int64           `json:"computer_id"`
+	Number       int64           `json:"number"`
+	DisplayName  *string         `json:"display_name"`
+	DeviceName   *string         `json:"device_name"`
+	LastRaisedAt time.Time       `json:"last_raised_at"`
+	Kinds        []string        `json:"kinds"`
+	Details      json.RawMessage `json:"details"`
+}
+
+// Новое (Этап 7, S7-H-11): открытые проблемы здоровья ПК (computer_health_events, cleared_at IS NULL) — строка на ПК,
+// свежие сверху, не больше page_size ПК (частичный индекс computer_health_events_open_index). Виды — по алфавиту,
+// подробности — {вид: details на момент появления}.
+func (q *Queries) NotificationComputerHealth(ctx context.Context, arg NotificationComputerHealthParams) ([]NotificationComputerHealthRow, error) {
+	rows, err := q.db.Query(ctx, notificationComputerHealth, arg.ClubID, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NotificationComputerHealthRow
+	for rows.Next() {
+		var i NotificationComputerHealthRow
+		if err := rows.Scan(
+			&i.ComputerID,
+			&i.Number,
+			&i.DisplayName,
+			&i.DeviceName,
+			&i.LastRaisedAt,
+			&i.Kinds,
+			&i.Details,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const notificationInvitations = `-- name: NotificationInvitations :many
 SELECT id, email, role, expires_at
 FROM club_invitations

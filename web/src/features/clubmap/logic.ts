@@ -99,3 +99,9 @@ export function formatPreviewSum(tiyn: number, locale: string): string {
 /** Длительности брони с карты (минуты) и выбранная по умолчанию. */
 export const BOOKING_DURATIONS = [30, 60, 90, 120, 180, 240, 360, 480, 720] as const;
 export const DEFAULT_BOOKING_DURATION = 60;
+
+/** ?computer=7 — открыть карточку ПК (переход из колокольчика «Проблемы с ПК», S7-H-11); иначе — без карточки. */
+export function computerParam(v: unknown): number | undefined {
+  const n = Number(v);
+  return v !== undefined && v !== null && v !== '' && Number.isSafeInteger(n) && n >= 1 ? n : undefined;
+}
