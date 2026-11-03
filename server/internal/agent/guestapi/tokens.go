@@ -311,6 +311,40 @@ func (t *Tokens) RevokeEverywhere(ctx context.Context, userID int64) ([]Guest, e
 	return out, nil
 }
 
+// computerUserAndScript — HGETALL KEYS[1] и токен гостя ПК (KEYS[2] — pc:<id>, ARGV[1] — префикс ключей tok:)
+// одним обращением: {поля KEYS[1], поля токена или пусто}.
+var computerUserAndScript = valkey.NewLuaScript(`
+local h = redis.call('HGETALL', KEYS[1])
+local hash = redis.call('GET', KEYS[2])
+if not hash then return {h, {}} end
+return {h, redis.call('HGETALL', ARGV[1] .. hash)}
+`)
+
+// computerUserAnd — поля хэша key (состояние автобиллинга ПК) и ComputerUser одним обращением к Valkey (S7-AB-2:
+// пересмотр ПК автобиллингом). Проверка токена — как в ComputerUser.
+func (t *Tokens) computerUserAnd(ctx context.Context, computerID int64, key string) (map[string]string, Guest, error) {
+	res, err := computerUserAndScript.Exec(ctx, t.c, []string{key, t.pcKey(computerID)}, []string{t.tokKey("")}).ToArray()
+	if err != nil {
+		return nil, Guest{}, err
+	}
+	if len(res) != 2 {
+		return nil, Guest{}, errors.New("guestapi: unexpected script reply")
+	}
+	m, err := res[0].AsStrMap()
+	if err != nil {
+		return nil, Guest{}, err
+	}
+	tm, err := res[1].AsStrMap()
+	if err != nil {
+		return nil, Guest{}, err
+	}
+	g, _, ok := parseToken(tm)
+	if !ok || g.PC != computerID || !t.now().Before(g.ExpiresAt) {
+		return m, Guest{}, nil
+	}
+	return m, g, nil
+}
+
 // ComputerUser — гость, вошедший на ПК сейчас (живой токен ПК); нулевой Guest — никто.
 func (t *Tokens) ComputerUser(ctx context.Context, computerID int64) (Guest, error) {
 	hash, err := t.c.Do(ctx, t.c.B().Get().Key(t.pcKey(computerID)).Build()).ToString()

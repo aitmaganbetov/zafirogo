@@ -4,12 +4,14 @@ package guestapi_test
 
 import (
 	"context"
+	"log/slog"
 	"slices"
 	"strconv"
 	"testing"
 	"time"
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
+	"github.com/aitmaganbetov/zafirogo/server/internal/chat"
 )
 
 // status — Status агента (вход/выход гостя на ПК приходит в нём, как в жизни).
@@ -163,5 +165,67 @@ func TestBalanceChangedByGuestIndex(t *testing.T) {
 	a1.noBalanceChanged(300 * time.Millisecond)
 	if d := ps.ListCalls() - lists; d != 0 {
 		t.Fatalf("BalanceChanged read the whole club %d times", d)
+	}
+}
+
+// S7-AB-6: ответ сотрудника в чате (chat.Deliver) ищет ПК гостя по индексу «гость → ПК», а не снимками всего клуба:
+// доходит до ПК, где гость вошёл, не до соседнего; List не вызывается (пока индекс прогревается — вызывается, доставка
+// та же).
+func TestChatDeliverByGuestIndex(t *testing.T) {
+	h := newHarness(t, harnessOpts{noLimits: true})
+	phone := uniqPhone()
+	user := h.customer("Мадина", phone, "password", 0, 0)
+	p1, p2 := h.enrollPC(), h.enrollPC()
+	p1.mustLogin(phone, "password")
+	a1 := p1.connect("boot-chat-1", user)
+	a2 := p2.connect("boot-chat-2", 0)
+	h.waitPresence(p1.id, user)
+	ps := h.stream.Presence()
+	sender := h.stream.Notifier().Sender
+	ctx := context.Background()
+	deliver := func(id int64) {
+		chat.Deliver(ctx, slog.Default(), sender, ps, h.club, user, chat.AgentMessage(id, "Админ", "Привет", h.clock.Now()))
+	}
+	wantChat := func(a *agentStream, id int64) {
+		t.Helper()
+		c := a.waitCommand(func(c *agentv1.Command) bool { return c.GetChatMessageReceived() != nil })
+		if c.GetChatMessageReceived().GetUserId() != user || c.GetChatMessageReceived().GetMessage().GetMessageId() != id {
+			t.Fatalf("ChatMessageReceived = %+v", c)
+		}
+	}
+	noChat := func(a *agentStream, window time.Duration) {
+		t.Helper()
+		timeout := time.After(window)
+		for {
+			select {
+			case c, ok := <-a.cmds:
+				if !ok {
+					return
+				}
+				if c.GetChatMessageReceived() != nil {
+					t.Fatalf("unexpected ChatMessageReceived: %+v", c)
+				}
+			case <-timeout:
+				return
+			}
+		}
+	}
+
+	// Индекс прогревается — прежний путь (List клуба).
+	lists := ps.ListCalls()
+	deliver(1)
+	wantChat(a1, 1)
+	if ps.ListCalls() == lists {
+		t.Fatal("warm-up: expected fallback to List")
+	}
+
+	// Индекс готов — только индекс гостя.
+	h.indexReady()
+	lists = ps.ListCalls()
+	deliver(2)
+	wantChat(a1, 2)
+	noChat(a2, 300*time.Millisecond)
+	if d := ps.ListCalls() - lists; d != 0 {
+		t.Fatalf("chat delivery read the whole club %d times", d)
 	}
 }

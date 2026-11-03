@@ -26,9 +26,10 @@ type Sender interface {
 	Send(ctx context.Context, clubID, computerID int64, cmd *agentv1.Command) (string, error)
 }
 
-// Presence — присутствие агентов клуба (*presence.Store).
+// Presence — присутствие агентов клуба (*presence.Store): ПК, где вошёл гость, — по индексу «гость → ПК»
+// (пока индекс прогревается — снимки всего клуба), как у BalanceChanged (S7-AB-6).
 type Presence interface {
-	List(ctx context.Context, clubID int64) ([]presence.State, error)
+	SignedInOrList(ctx context.Context, clubID, userID int64) ([]presence.State, error)
 }
 
 // Reply — ответ сотрудника: сообщения гостя в диалоге прочитаны, вставлено сообщение from_staff, события
@@ -86,7 +87,7 @@ func Deliver(ctx context.Context, log *slog.Logger, s Sender, p Presence, clubID
 	if s == nil || p == nil {
 		return
 	}
-	pcs, err := p.List(ctx, clubID)
+	pcs, err := p.SignedInOrList(ctx, clubID, customerID)
 	if err != nil {
 		log.WarnContext(ctx, "chat: presence", "club_id", clubID, "err", err)
 		return

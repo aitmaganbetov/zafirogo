@@ -53,6 +53,8 @@ rules:
   # zafiro_platform (db/queries/superadmin.sql, monitoring.sql); только эти разделы вызывают запросы с этими префиксами.
   # SuperadminTotp*, SuperadminRecovery*, SuperadminUserByPhone — второй фактор суперадмина (Этап 7,
   # db/queries/superadmin_totp.sql): вход (auth/mfa), кабинет, воркер reencrypt-secrets, команда superadmin-totp-reset.
+  # GuestClubSettingsForAutoBilling — строка clubs клуба пакета автобиллинга (WHERE id = club_id, тенантная транзакция
+  # этого клуба), Этап 7 S7-AB-2.
   # PublicLanding — saas_plans и platform_settings для лендинга (Этап 3, G7).
   # Telegram* — настройки Telegram, коды восстановления пароля и лимиты кодов перевода на аккаунт во всех клубах
   # (Этап 4, H2; db/queries/telegram.sql, пул zafiro_platform).
@@ -61,4 +63,4 @@ rules:
   - name: tenant-filter
     message: "запрос должен фильтровать по club_id (или быть в списке платформенных исключений в sqlc.yaml)"
     rule: |
-      !query.sql.contains("club_id") && !query.name.startsWith("Superadmin") && !query.name.startsWith("Monitoring") && !query.name.startsWith("Telegram") && !(query.name in ["GetClub", "GetClubBySlug", "ExpireDueSessions", "ListExpiredTimePackages", "GetUserByPhone", "GetUserAuth", "UpdateUserPasswordHash", "RegisterCreateUser", "RegisterPhoneTaken", "RegisterCreateClub", "RegisterTrialPlan", "InvitationUserEmail", "ClubLocaleTimezone", "I18nEnabledLanguages", "I18nVersion", "I18nLines", "I18nEnsureLanguage", "I18nLanguageID", "I18nInsertMissing", "AdminAccountsLocked", "AdminUserConflicts", "ClubMapSettings", "AgentReleaseSetting", "SettingsLanguages", "SettingsClub", "SettingsLockClub", "SettingsSave", "SettingsSetTimezone", "SettingsSetLocale", "SettingsSetAgentPin", "SettingsSetStaffMinutes", "SettingsSetLogoPath", "SettingsSetSigninImagePath", "PublicLanding", "SecretsPlatformSettingsToReseal", "SecretsResealPlatformSetting"])
+      !query.sql.contains("club_id") && !query.name.startsWith("Superadmin") && !query.name.startsWith("Monitoring") && !query.name.startsWith("Telegram") && !(query.name in ["GetClub", "GetClubBySlug", "ExpireDueSessions", "ListExpiredTimePackages", "GetUserByPhone", "GetUserAuth", "UpdateUserPasswordHash", "RegisterCreateUser", "RegisterPhoneTaken", "RegisterCreateClub", "RegisterTrialPlan", "InvitationUserEmail", "ClubLocaleTimezone", "I18nEnabledLanguages", "I18nVersion", "I18nLines", "I18nEnsureLanguage", "I18nLanguageID", "I18nInsertMissing", "AdminAccountsLocked", "AdminUserConflicts", "ClubMapSettings", "AgentReleaseSetting", "SettingsLanguages", "SettingsClub", "SettingsLockClub", "SettingsSave", "SettingsSetTimezone", "SettingsSetLocale", "SettingsSetAgentPin", "SettingsSetStaffMinutes", "SettingsSetLogoPath", "SettingsSetSigninImagePath", "GuestClubSettingsForAutoBilling", "PublicLanding", "SecretsPlatformSettingsToReseal", "SecretsResealPlatformSetting"])

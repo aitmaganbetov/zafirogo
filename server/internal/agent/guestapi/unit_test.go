@@ -160,3 +160,27 @@ func TestRandomCode(t *testing.T) {
 		}
 	}
 }
+
+// S7-AB-2: срок пересмотра «не положено» — слот клуба: позже now, не позже now + AutoBillingRecheck, у ПК одного
+// клуба одинаковый, от момента внутри периода не зависит (тот же слот), дальше — ровно через период; у разных клубов
+// слоты разные.
+func TestAutoBillingRecheckSlot(t *testing.T) {
+	now := time.Date(2026, 11, 3, 10, 0, 0, 123e6, time.UTC)
+	slots := map[int64]int64{}
+	for club := int64(1); club <= 1000; club++ {
+		at := abRecheckAt(club, now)
+		if !at.After(now) || at.After(now.Add(AutoBillingRecheck)) {
+			t.Fatalf("club %d: %v not in (now, now+%v]", club, at.Sub(now), AutoBillingRecheck)
+		}
+		if again := abRecheckAt(club, now.Add(at.Sub(now)/2)); !again.Equal(at) {
+			t.Fatalf("club %d: slot moved %v → %v", club, at, again)
+		}
+		if next := abRecheckAt(club, at); !next.Equal(at.Add(AutoBillingRecheck)) {
+			t.Fatalf("club %d: next %v, want %v", club, next, at.Add(AutoBillingRecheck))
+		}
+		slots[at.UnixMilli()%AutoBillingRecheck.Milliseconds()]++
+	}
+	if len(slots) != 1000 {
+		t.Fatalf("1000 clubs share %d slots", len(slots))
+	}
+}

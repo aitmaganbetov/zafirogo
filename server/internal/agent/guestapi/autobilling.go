@@ -19,7 +19,8 @@ package guestapi
 // События меняют состояние на любом инстансе: вход гостя (signIn), сессия началась/кончилась и баланс
 // (WrapNotifier — обёртка уведомлений billing/кассы), истечение сессии воркером (OnExpired). Решение и покупку
 // делает один исполнитель на кластер (worker.AutoBilling, leader.RunOnce на тик) — Tick. Ключ идемпотентности покупки —
-// ПК + гость + вход + номер шага: повтор после сбоя не спишет дважды.
+// ПК + гость + вход + номер шага: повтор после сбоя не спишет дважды. Данные Postgres для решения тик читает пакетом —
+// одной транзакцией на клуб (abLoadClub, S7-AB-2); перед покупкой ПК перечитывается поштучно (abLoad).
 
 import (
 	"context"
@@ -55,6 +56,7 @@ const (
 const (
 	// AutoBillingRecheck — как часто пересматривать гостя без сессии, которому автобиллинг сейчас не положен
 	// (нет денег, выключен в клубе): пополнение на кассе, включение в настройках. Старый агент проверял раз в секунду.
+	// Срок — по слоту клуба (abRecheckAt): не позже чем через AutoBillingRecheck.
 	AutoBillingRecheck = 30 * time.Second
 	// AutoBillingRetry — повтор после сбоя (БД, Valkey), не после отказа покупки.
 	AutoBillingRetry = 10 * time.Second
@@ -255,7 +257,7 @@ type abView struct {
 	expired bool                   // сессия гостя кончилась по времени, но ещё не снята воркером истечения
 }
 
-// minuteOffer — условия поминутной оплаты гостя на ПК (GuestMinutesController::show()): скидка — только при
+// minuteOfferFor — условия поминутной оплаты гостя на ПК (GuestMinutesController::show()): скидка — только при
 // членстве и если клуб применяет её к поминутному времени (hourlyPrice()).
 func minuteOfferFor(ctx context.Context, q *store.Queries, id identity.Identity, userID int64) (pricing.MinuteOffer, store.GuestComputerRow, clubInfo, error) {
 	ci, err := loadClub(ctx, q, id)
@@ -268,39 +270,128 @@ func minuteOfferFor(ctx context.Context, q *store.Queries, id identity.Identity,
 	}
 	var discount float64
 	if u, err := q.GuestUserInClub(ctx, store.GuestUserInClubParams{ClubID: id.ClubID, UserID: userID}); err == nil {
-		discount = bonus.LoyaltyDiscountFor(ci.settings.bonus.LoyaltyLevelsInForce(), u.Discount, money.Tiyn(u.TotalSpent))
+		discount = memberDiscount(ci.settings, u.Discount, u.TotalSpent)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return pricing.MinuteOffer{}, pcRow, ci, err
 	}
+	o, err := offerFor(ci.settings, pcRow, discount)
+	return o, pcRow, ci, err
+}
+
+// memberDiscount — скидка члена клуба на поминутное время (уровень лояльности или персональная).
+func memberDiscount(cs clubSettings, discount float64, totalSpent int64) float64 {
+	return bonus.LoyaltyDiscountFor(cs.bonus.LoyaltyLevelsInForce(), discount, money.Tiyn(totalSpent))
+}
+
+// offerFor — pricing.MinuteOfferFor по цене часа зоны ПК.
+func offerFor(cs clubSettings, pcRow store.GuestComputerRow, discount float64) (pricing.MinuteOffer, error) {
 	var price *money.Tiyn
 	if pcRow.PricePerHour != nil {
 		p := money.Tiyn(*pcRow.PricePerHour)
 		price = &p
 	}
-	o, err := pricing.MinuteOfferFor(price, ci.settings.rules, discount)
-	return o, pcRow, ci, err
+	return pricing.MinuteOfferFor(price, cs.rules, discount)
 }
 
-func (s *Server) abLoad(ctx context.Context, id identity.Identity, userID int64, now time.Time) (abView, error) {
-	var v abView
+// abData — прочитанное из Postgres для решения по ПК: условия минут, основной баланс, строка ПК (сессия).
+type abData struct {
+	offer pricing.MinuteOffer
+	main  money.Tiyn
+	pc    store.GuestComputerRow
+}
+
+// view — данные решения на момент now (идёт ли сессия — по часам пересмотра, а не чтения).
+func (d abData) view(userID int64, now time.Time) abView {
+	v := abView{offer: d.offer, main: d.main, session: activeSession(d.pc, now)}
+	v.expired = v.session == nil && d.pc.CurrentSessionID != nil && d.pc.CurrentSessionUserID != nil &&
+		*d.pc.CurrentSessionUserID == userID && d.pc.SessionEndsAt != nil
+	return v
+}
+
+// abLoad — чтение одного ПК своей транзакцией (поштучный путь): ПК без пакетных данных, ПК одного гостя после
+// первого в пакете, перепроверка перед покупкой. Эталон для пакетного abLoadClub (тест сравнения).
+func (s *Server) abLoad(ctx context.Context, id identity.Identity, userID int64) (abData, error) {
+	var d abData
 	err := db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
 		o, pcRow, _, err := minuteOfferFor(ctx, q, id, userID)
 		if err != nil {
 			return err
 		}
-		v.offer = o
-		v.session = activeSession(pcRow, now)
-		v.expired = v.session == nil && pcRow.CurrentSessionID != nil && pcRow.CurrentSessionUserID != nil &&
-			*pcRow.CurrentSessionUserID == userID && pcRow.SessionEndsAt != nil
+		d = abData{offer: o, pc: pcRow}
 		b, err := q.GetMemberBalance(ctx, store.GetMemberBalanceParams{ClubID: id.ClubID, UserID: userID})
 		if err == nil {
-			v.main = money.Tiyn(b.Balance)
+			d.main = money.Tiyn(b.Balance)
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		return nil
 	})
-	return v, err
+	return d, err
+}
+
+// abReq — ПК пакета и гость, вошедший на нём (по состоянию в Valkey).
+type abReq struct{ pc, user int64 }
+
+// abLoadClub — то же, что abLoad, для всех ПК пакета одного клуба одной тенантной транзакцией (S7-AB-2): четыре
+// запроса со списком (= ANY) вместо четырёх на каждый ПК. В ответе только ПК, для которых всё прочитано так же, как
+// прочитал бы abLoad без ошибки; остальные (ПК нет в клубе, ошибка условий) читаются поштучно — с той же ошибкой.
+// Ошибка запроса — ошибка всего клуба (тогда все его ПК читаются поштучно).
+func (s *Server) abLoadClub(ctx context.Context, clubID int64, reqs []abReq) (map[int64]abData, error) {
+	pcIDs := make([]int64, 0, len(reqs))
+	userIDs := make([]int64, 0, len(reqs))
+	for _, r := range reqs {
+		pcIDs = append(pcIDs, r.pc)
+		userIDs = append(userIDs, r.user)
+	}
+	out := make(map[int64]abData, len(reqs))
+	err := db.InTenantTx(ctx, s.o.Pool, clubID, func(q *store.Queries) error {
+		clear(out) // повтор транзакции (withRetry)
+		raw, err := q.GuestClubSettingsForAutoBilling(ctx, clubID)
+		if err != nil {
+			return err
+		}
+		cs := parseClubSettings(raw)
+		pcs, err := q.GuestComputersForAutoBilling(ctx, store.GuestComputersForAutoBillingParams{ClubID: clubID, Ids: pcIDs})
+		if err != nil {
+			return err
+		}
+		members, err := q.GuestMembersForAutoBilling(ctx, store.GuestMembersForAutoBillingParams{ClubID: clubID, UserIds: userIDs})
+		if err != nil {
+			return err
+		}
+		balances, err := q.GuestBalancesForAutoBilling(ctx, store.GuestBalancesForAutoBillingParams{ClubID: clubID, UserIds: userIDs})
+		if err != nil {
+			return err
+		}
+		pcByID := make(map[int64]store.GuestComputerRow, len(pcs))
+		for _, r := range pcs {
+			pcByID[r.ID] = store.GuestComputerRow(r)
+		}
+		discount := make(map[int64]float64, len(members))
+		for _, m := range members {
+			discount[m.ID] = memberDiscount(cs, m.Discount, m.TotalSpent)
+		}
+		main := make(map[int64]money.Tiyn, len(balances))
+		for _, b := range balances {
+			main[b.UserID] = money.Tiyn(b.Balance)
+		}
+		for _, r := range reqs {
+			pcRow, ok := pcByID[r.pc]
+			if !ok {
+				continue
+			}
+			o, err := offerFor(cs, pcRow, discount[r.user])
+			if err != nil {
+				continue
+			}
+			out[r.pc] = abData{offer: o, main: main[r.user], pc: pcRow}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // abStatus — состояние для агента.
@@ -370,27 +461,46 @@ func (s *Server) TickAutoBilling(ctx context.Context) (int, error) {
 
 // abBatch — пересмотр пакета ПК (в порядке срока). ПК одного гостя (по состоянию в Valkey) — одной очередью по
 // порядку: две покупки одного гостя на разных ПК не идут параллельно; разные гости — в AutoBillingWorkers потоков.
+//
+// Данные Postgres для решения читаются заранее, одной транзакцией на клуб (abLoadClub, S7-AB-2), — для первого ПК
+// каждой очереди: следующие ПК того же гостя читаются поштучно после предыдущих (покупка на первом ПК меняет баланс).
+// Состояние в Valkey и токен гостя каждый ПК, как и раньше, читает сам перед решением (abProcess).
 func (s *Server) abBatch(ctx context.Context, pcs []string, now time.Time) []error {
 	vc := s.o.Valkey
 	cmds := make(valkey.Commands, len(pcs))
 	for i, raw := range pcs {
-		cmds[i] = vc.B().Hget().Key(s.o.KeyPrefix + "ab:" + raw).Field("user").Build()
+		cmds[i] = vc.B().Hmget().Key(s.o.KeyPrefix+"ab:"+raw).Field("club", "user", "mode").Build()
 	}
 	groups := map[string]int{}
 	var queues [][]string
+	reqs := map[int64][]abReq{} // клуб → первые ПК очередей
 	for i, r := range vc.DoMulti(ctx, cmds...) {
+		var club, user int64
+		var mode string
+		if f, err := r.ToArray(); err == nil && len(f) == 3 {
+			cs, _ := f[0].ToString()
+			us, _ := f[1].ToString()
+			mode, _ = f[2].ToString()
+			club, _ = strconv.ParseInt(cs, 10, 64)
+			user, _ = strconv.ParseInt(us, 10, 64)
+		}
 		g := "pc:" + pcs[i] // гость неизвестен (нет состояния, сбой) — отдельная очередь; abProcess разберётся
-		if u, err := r.ToString(); err == nil && u != "" {
-			g = "user:" + u
+		if user > 0 {
+			g = "user:" + itoa(user)
 		}
 		k, ok := groups[g]
 		if !ok {
 			k = len(queues)
 			groups[g] = k
 			queues = append(queues, nil)
+			pc, err := strconv.ParseInt(pcs[i], 10, 64)
+			if err == nil && club > 0 && user > 0 && mode != abStopped {
+				reqs[club] = append(reqs[club], abReq{pc: pc, user: user})
+			}
 		}
 		queues[k] = append(queues[k], pcs[i])
 	}
+	pre := s.abPreload(ctx, reqs)
 	var (
 		mu   sync.Mutex
 		errs []error
@@ -400,8 +510,12 @@ func (s *Server) abBatch(ctx context.Context, pcs []string, now time.Time) []err
 	for range min(s.o.AutoBillingWorkers, len(queues)) {
 		wg.Go(func() {
 			for q := range next {
-				for _, raw := range q {
-					if err := s.abOne(ctx, raw, now); err != nil {
+				for i, raw := range q {
+					var p *abPre
+					if i == 0 {
+						p = pre[raw]
+					}
+					if err := s.abOne(ctx, raw, now, p); err != nil {
 						mu.Lock()
 						errs = append(errs, err)
 						mu.Unlock()
@@ -418,15 +532,56 @@ func (s *Server) abBatch(ctx context.Context, pcs []string, now time.Time) []err
 	return errs
 }
 
+// abPre — данные решения ПК, прочитанные пакетом, и для какого клуба и гостя они прочитаны.
+type abPre struct {
+	club, user int64
+	data       abData
+}
+
+// abPreload — abLoadClub по клубам пакета (клубы — в AutoBillingWorkers потоков). Сбой клуба — его ПК читаются
+// поштучно (abProcess), ошибка вернётся оттуда.
+func (s *Server) abPreload(ctx context.Context, reqs map[int64][]abReq) map[string]*abPre {
+	out := make(map[string]*abPre)
+	var (
+		mu sync.Mutex
+		wg sync.WaitGroup
+	)
+	next := make(chan int64)
+	for range min(s.o.AutoBillingWorkers, len(reqs)) {
+		wg.Go(func() {
+			for club := range next {
+				data, err := s.abLoadClub(ctx, club, reqs[club])
+				if err != nil {
+					s.o.Log.WarnContext(ctx, "auto billing: batch read failed, reading one by one", "club_id", club, "err", err)
+					continue
+				}
+				mu.Lock()
+				for _, r := range reqs[club] {
+					if d, ok := data[r.pc]; ok {
+						out[itoa(r.pc)] = &abPre{club: club, user: r.user, data: d}
+					}
+				}
+				mu.Unlock()
+			}
+		})
+	}
+	for club := range reqs {
+		next <- club
+	}
+	close(next)
+	wg.Wait()
+	return out
+}
+
 // abOne — пересмотр одного ПК из zset; сбой — повтор через AutoBillingRetry, а не в каждом тике.
-func (s *Server) abOne(ctx context.Context, raw string, now time.Time) error {
+func (s *Server) abOne(ctx context.Context, raw string, now time.Time, pre *abPre) error {
 	vc := s.o.Valkey
 	pc, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		_ = vc.Do(ctx, vc.B().Zrem().Key(s.abDue()).Member(raw).Build()).Error()
 		return nil
 	}
-	if err := s.abProcess(ctx, pc); err != nil && ctx.Err() == nil {
+	if err := s.abProcess(ctx, pc, pre); err != nil && ctx.Err() == nil {
 		_ = vc.Do(ctx, vc.B().Zadd().Key(s.abDue()).ScoreMember().ScoreMember(float64(now.Add(AutoBillingRetry).UnixMilli()), raw).Build()).Error()
 		return err
 	}
@@ -457,9 +612,10 @@ func (s *Server) AutoBillingBacklog(ctx context.Context) (due int64, oldest time
 }
 
 // abProcess — шаг автобиллинга ПК (autoBillingTick старого агента).
-func (s *Server) abProcess(ctx context.Context, pc int64) error {
+func (s *Server) abProcess(ctx context.Context, pc int64, pre *abPre) error {
 	vc := s.o.Valkey
-	m, err := vc.Do(ctx, vc.B().Hgetall().Key(s.abKey(pc)).Build()).AsStrMap()
+	// Состояние и гость, вошедший на ПК (токен), — одним обращением к Valkey.
+	m, cur, err := s.tokens.computerUserAnd(ctx, pc, s.abKey(pc))
 	if err != nil {
 		return err
 	}
@@ -468,10 +624,6 @@ func (s *Server) abProcess(ctx context.Context, pc int64) error {
 		return vc.Do(ctx, vc.B().Zrem().Key(s.abDue()).Member(itoa(pc)).Build()).Error()
 	}
 	// Гость всё ещё вошёл на этом ПК? Нет — состояние забывается (userName === null: сброс всего).
-	cur, err := s.tokens.ComputerUser(ctx, pc)
-	if err != nil {
-		return err
-	}
 	if cur.UserID != st.user || cur.ClubID != st.club {
 		return s.abForget(ctx, pc)
 	}
@@ -480,21 +632,32 @@ func (s *Server) abProcess(ctx context.Context, pc int64) error {
 	if st.mode == abStopped {
 		return s.abPush(ctx, id, st, &agentv1.AutoBillingStatus{Stopped: true}, "-")
 	}
-	v, err := s.abLoad(ctx, id, st.user, now)
-	if err != nil {
-		return err
+	// Данные пакета — если прочитаны для того же клуба и гостя, что в состоянии сейчас; иначе — поштучно.
+	var data abData
+	fresh := pre == nil || pre.club != st.club || pre.user != st.user
+	if fresh {
+		if data, err = s.abLoad(ctx, id, st.user); err != nil {
+			return err
+		}
+	} else {
+		data = pre.data
+	}
+	v := data.view(st.user, now)
+	d := abDecide(st, v, now)
+	if d.BuyMinutes > 0 && !fresh {
+		// Покупка — только по данным, прочитанным прямо перед ней, как раньше: пакет читался до пересмотра других
+		// ПК (за это время гость мог купить сам, пополнить или потратить баланс).
+		if data, err = s.abLoad(ctx, id, st.user); err != nil {
+			return err
+		}
+		v = data.view(st.user, now)
+		d = abDecide(st, v, now)
 	}
 	if v.session != nil {
 		// Идёт сессия: пересмотр — к её концу (после него — сразу, autoAfterTariff); пауза сбрасывается.
 		return s.abPush(ctx, id, st, abStatus(v.offer.AutoBilling && v.offer.Available, pricing.AutoBillingDecision{}, false),
 			ms(v.session.GetEndsAt().AsTime()), "pause", "0")
 	}
-	var pauseStart time.Time
-	if st.pause > 0 {
-		pauseStart = time.UnixMilli(st.pause)
-	}
-	d := pricing.AutoBilling(v.offer, pricing.AutoBillingState{SignedIn: true, AfterTariff: st.mode == abAfter || v.expired,
-		PauseStartedAt: pauseStart}, v.main, now)
 	enabled := v.offer.AutoBilling && v.offer.Available
 	switch {
 	case d.BuyMinutes > 0:
@@ -508,8 +671,33 @@ func (s *Server) abProcess(ctx context.Context, pc int64) error {
 	default:
 		// Не ждёт (нет денег, выключен): пауза сбрасывается, пересмотр позже. Режим «после тарифа» остаётся, пока
 		// гость не купит или не выйдет — как autoAfterTariff старого агента.
-		return s.abPush(ctx, id, st, abStatus(enabled, d, false), ms(now.Add(AutoBillingRecheck)), "pause", "0")
+		return s.abPush(ctx, id, st, abStatus(enabled, d, false), ms(abRecheckAt(id.ClubID, now)), "pause", "0")
 	}
+}
+
+// abRecheckAt — срок следующего пересмотра ПК, которому автобиллинг сейчас не положен: ближайший момент позже now в
+// слоте клуба — смещении внутри периода AutoBillingRecheck, своём у каждого клуба (номер клуба × 7919 по модулю
+// периода в миллисекундах: 7919 — простое, взаимно простое с 30 000, у 30 000 клубов подряд слоты разные). Пересмотр не позже чем через AutoBillingRecheck (первый — раньше, дальше — ровно
+// через период). ПК клуба, ждущие пересмотра, приходят в одну миллисекунду, стоят в zset подряд и читаются пакетом
+// одной транзакцией (S7-AB-2); клубы разнесены по периоду, а не приходят все в один тик.
+func abRecheckAt(club int64, now time.Time) time.Time {
+	period := AutoBillingRecheck.Milliseconds()
+	off := (club%period + period) % period * 7919 % period
+	t := now.UnixMilli()
+	return time.UnixMilli(t - ((t-off)%period+period)%period + period)
+}
+
+// abDecide — решение автобиллинга без идущей сессии (pricing.AutoBilling по состоянию ПК и данным из Postgres).
+func abDecide(st abState, v abView, now time.Time) pricing.AutoBillingDecision {
+	if v.session != nil {
+		return pricing.AutoBillingDecision{}
+	}
+	var pauseStart time.Time
+	if st.pause > 0 {
+		pauseStart = time.UnixMilli(st.pause)
+	}
+	return pricing.AutoBilling(v.offer, pricing.AutoBillingState{SignedIn: true, AfterTariff: st.mode == abAfter || v.expired,
+		PauseStartedAt: pauseStart}, v.main, now)
 }
 
 // abPush — сохранить поля и срок; если состояние для агента изменилось — команда AutoBillingChanged.

@@ -99,6 +99,43 @@ func (q *Queries) GuestApproveQrLogin(ctx context.Context, arg GuestApproveQrLog
 	return result.RowsAffected(), nil
 }
 
+const guestBalancesForAutoBilling = `-- name: GuestBalancesForAutoBilling :many
+SELECT user_id, balance
+FROM member_balances
+WHERE club_id = $1 AND user_id = ANY($2::bigint[])
+`
+
+type GuestBalancesForAutoBillingParams struct {
+	ClubID  int64   `json:"club_id"`
+	UserIds []int64 `json:"user_ids"`
+}
+
+type GuestBalancesForAutoBillingRow struct {
+	UserID  int64 `json:"user_id"`
+	Balance int64 `json:"balance"`
+}
+
+// Основной баланс — как GetMemberBalance.
+func (q *Queries) GuestBalancesForAutoBilling(ctx context.Context, arg GuestBalancesForAutoBillingParams) ([]GuestBalancesForAutoBillingRow, error) {
+	rows, err := q.db.Query(ctx, guestBalancesForAutoBilling, arg.ClubID, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GuestBalancesForAutoBillingRow
+	for rows.Next() {
+		var i GuestBalancesForAutoBillingRow
+		if err := rows.Scan(&i.UserID, &i.Balance); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const guestCertificateTimes = `-- name: GuestCertificateTimes :one
 SELECT issued_at, not_after
 FROM agent_certificates
@@ -179,6 +216,22 @@ func (q *Queries) GuestClubOwnerID(ctx context.Context, clubID int64) (int64, er
 	var user_id int64
 	err := row.Scan(&user_id)
 	return user_id, err
+}
+
+const guestClubSettingsForAutoBilling = `-- name: GuestClubSettingsForAutoBilling :one
+
+SELECT cl.settings
+FROM clubs cl
+WHERE cl.id = $1
+`
+
+// Автобиллинг пакетом (S7-AB-2): то же, что GuestClubForAgent + GuestComputer + GuestUserInClub + GetMemberBalance
+// на каждый ПК, но для всех ПК пакета одного клуба одной транзакцией (guestapi abLoadClub).
+func (q *Queries) GuestClubSettingsForAutoBilling(ctx context.Context, clubID int64) (json.RawMessage, error) {
+	row := q.db.QueryRow(ctx, guestClubSettingsForAutoBilling, clubID)
+	var settings json.RawMessage
+	err := row.Scan(&settings)
+	return settings, err
 }
 
 const guestClubSubscription = `-- name: GuestClubSubscription :one
@@ -287,6 +340,66 @@ func (q *Queries) GuestComputersByIDs(ctx context.Context, arg GuestComputersByI
 			&i.DisplayName,
 			&i.DeviceName,
 			&i.ZoneName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const guestComputersForAutoBilling = `-- name: GuestComputersForAutoBilling :many
+SELECT c.id, c.club_zone_id, c.number, c.display_name, c.device_name, z.name AS zone_name, z.price_per_hour,
+       c.current_session_id, c.current_session_user_id, c.session_guest, c.session_ends_at
+FROM club_computers c
+JOIN club_zones z ON z.club_id = c.club_id AND z.id = c.club_zone_id
+WHERE c.club_id = $1 AND c.id = ANY($2::bigint[])
+`
+
+type GuestComputersForAutoBillingParams struct {
+	ClubID int64   `json:"club_id"`
+	Ids    []int64 `json:"ids"`
+}
+
+type GuestComputersForAutoBillingRow struct {
+	ID                   int64      `json:"id"`
+	ClubZoneID           int64      `json:"club_zone_id"`
+	Number               int64      `json:"number"`
+	DisplayName          *string    `json:"display_name"`
+	DeviceName           *string    `json:"device_name"`
+	ZoneName             string     `json:"zone_name"`
+	PricePerHour         *int64     `json:"price_per_hour"`
+	CurrentSessionID     *string    `json:"current_session_id"`
+	CurrentSessionUserID *int64     `json:"current_session_user_id"`
+	SessionGuest         bool       `json:"session_guest"`
+	SessionEndsAt        *time.Time `json:"session_ends_at"`
+}
+
+// Столбцы — как у GuestComputer (строка приводится к GuestComputerRow).
+func (q *Queries) GuestComputersForAutoBilling(ctx context.Context, arg GuestComputersForAutoBillingParams) ([]GuestComputersForAutoBillingRow, error) {
+	rows, err := q.db.Query(ctx, guestComputersForAutoBilling, arg.ClubID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GuestComputersForAutoBillingRow
+	for rows.Next() {
+		var i GuestComputersForAutoBillingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ClubZoneID,
+			&i.Number,
+			&i.DisplayName,
+			&i.DeviceName,
+			&i.ZoneName,
+			&i.PricePerHour,
+			&i.CurrentSessionID,
+			&i.CurrentSessionUserID,
+			&i.SessionGuest,
+			&i.SessionEndsAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1224,6 +1337,45 @@ type GuestMarkStaffMessagesReadParams struct {
 func (q *Queries) GuestMarkStaffMessagesRead(ctx context.Context, arg GuestMarkStaffMessagesReadParams) error {
 	_, err := q.db.Exec(ctx, guestMarkStaffMessagesRead, arg.Now, arg.ClubID, arg.UserID)
 	return err
+}
+
+const guestMembersForAutoBilling = `-- name: GuestMembersForAutoBilling :many
+SELECT u.id, m.discount::float8 AS discount, m.total_spent
+FROM users u
+JOIN club_memberships m ON m.user_id = u.id
+WHERE m.club_id = $1 AND m.user_id = ANY($2::bigint[])
+`
+
+type GuestMembersForAutoBillingParams struct {
+	ClubID  int64   `json:"club_id"`
+	UserIds []int64 `json:"user_ids"`
+}
+
+type GuestMembersForAutoBillingRow struct {
+	ID         int64   `json:"id"`
+	Discount   float64 `json:"discount"`
+	TotalSpent int64   `json:"total_spent"`
+}
+
+// Членства (скидка, траты) — как GuestUserInClub.
+func (q *Queries) GuestMembersForAutoBilling(ctx context.Context, arg GuestMembersForAutoBillingParams) ([]GuestMembersForAutoBillingRow, error) {
+	rows, err := q.db.Query(ctx, guestMembersForAutoBilling, arg.ClubID, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GuestMembersForAutoBillingRow
+	for rows.Next() {
+		var i GuestMembersForAutoBillingRow
+		if err := rows.Scan(&i.ID, &i.Discount, &i.TotalSpent); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const guestMembershipRole = `-- name: GuestMembershipRole :one

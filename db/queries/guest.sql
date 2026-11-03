@@ -81,6 +81,35 @@ FROM club_computers c
 JOIN club_zones z ON z.club_id = c.club_id AND z.id = c.club_zone_id
 WHERE c.club_id = sqlc.arg(club_id) AND c.id = sqlc.arg(id);
 
+-- Автобиллинг пакетом (S7-AB-2): то же, что GuestClubForAgent + GuestComputer + GuestUserInClub + GetMemberBalance
+-- на каждый ПК, но для всех ПК пакета одного клуба одной транзакцией (guestapi abLoadClub).
+
+-- name: GuestClubSettingsForAutoBilling :one
+SELECT cl.settings
+FROM clubs cl
+WHERE cl.id = sqlc.arg(club_id);
+
+-- name: GuestComputersForAutoBilling :many
+-- Столбцы — как у GuestComputer (строка приводится к GuestComputerRow).
+SELECT c.id, c.club_zone_id, c.number, c.display_name, c.device_name, z.name AS zone_name, z.price_per_hour,
+       c.current_session_id, c.current_session_user_id, c.session_guest, c.session_ends_at
+FROM club_computers c
+JOIN club_zones z ON z.club_id = c.club_id AND z.id = c.club_zone_id
+WHERE c.club_id = sqlc.arg(club_id) AND c.id = ANY(sqlc.arg(ids)::bigint[]);
+
+-- name: GuestMembersForAutoBilling :many
+-- Членства (скидка, траты) — как GuestUserInClub.
+SELECT u.id, m.discount::float8 AS discount, m.total_spent
+FROM users u
+JOIN club_memberships m ON m.user_id = u.id
+WHERE m.club_id = sqlc.arg(club_id) AND m.user_id = ANY(sqlc.arg(user_ids)::bigint[]);
+
+-- name: GuestBalancesForAutoBilling :many
+-- Основной баланс — как GetMemberBalance.
+SELECT user_id, balance
+FROM member_balances
+WHERE club_id = sqlc.arg(club_id) AND user_id = ANY(sqlc.arg(user_ids)::bigint[]);
+
 -- name: GuestComputersByIDs :many
 SELECT c.id, c.number, c.display_name, c.device_name, z.name AS zone_name
 FROM club_computers c

@@ -4,12 +4,16 @@ package guestapi_test
 
 import (
 	"context"
+	"math/rand/v2"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/valkey-io/valkey-go"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/guestapi"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/identity"
@@ -115,7 +119,7 @@ func (h *harness) dueNow() int64 {
 
 // S6-O4-10: просроченных больше пакета (AutoBillingBatch = 200) — один тик пересматривает всех (было: 200 за тик,
 // остальные ждали следующих тиков). Пересмотр — настоящий (токен, тенантная транзакция, решение): каждый ПК получает
-// новый срок через AutoBillingRecheck. Метрика отставания — по тому же zset.
+// новый срок (слот клуба, не позже чем через AutoBillingRecheck). Метрика отставания — по тому же zset.
 func TestAutoBillingTickDrainsBacklog(t *testing.T) {
 	// Бюджет тика — с запасом: тест проверяет «пакеты, пока есть просроченные», а не скорость машины (под полным
 	// параллельным прогоном CI 800 мс на 450 ПК не хватало). Остановку по бюджету проверяет TestAutoBillingTickBudget.
@@ -136,8 +140,11 @@ func TestAutoBillingTickDrainsBacklog(t *testing.T) {
 	if d := h.dueNow(); d != 0 {
 		t.Fatalf("still due after one tick: %d", d)
 	}
-	// Каждый ПК пересмотрен: срок — через AutoBillingRecheck от часов теста.
-	want := float64(h.clock.Now().Add(guestapi.AutoBillingRecheck).UnixMilli())
+	// Каждый ПК пересмотрен: срок — слот клуба, не позже чем через AutoBillingRecheck от часов теста (S7-AB-2).
+	want := float64(guestapi.AutoBillingRecheckAt(h.club, h.clock.Now()).UnixMilli())
+	if w := float64(h.clock.Now().UnixMilli()); want <= w || want > w+float64(guestapi.AutoBillingRecheck.Milliseconds()) {
+		t.Fatalf("recheck at %v", want)
+	}
 	for _, pc := range []int64{pcs[0], pcs[n/2], pcs[n-1]} {
 		sc, err := env.valkey.Do(context.Background(), env.valkey.B().Zscore().Key(h.prefix+"guest:ab:due").
 			Member(strconv.FormatInt(pc, 10)).Build()).AsFloat64()
@@ -149,9 +156,6 @@ func TestAutoBillingTickDrainsBacklog(t *testing.T) {
 		t.Fatalf("backlog after = %d, %v, %v", due, oldest, err)
 	}
 }
-
-// S6-O4-10, замер (docs/load-test.md «Автобиллинг на 50 000 ПК»): ZAFIRO_AB_LOAD=<число ПК> (например 50000) —
-// столько гостей без сессии со сроком «сейчас» в 100 клубах; тики (бюджет 800 мс, как в проде) до полного разбора.
 
 // Бюджет тика вышел — новые пакеты не берутся, начатый доделывается: при бюджете ≈ 0 тик пересматривает ровно
 // один пакет, остальные ждут следующего тика.
@@ -170,6 +174,9 @@ func TestAutoBillingTickBudget(t *testing.T) {
 	}
 }
 
+// S6-O4-10, S7-AB-2, замер (docs/load-test.md «Автобиллинг на 50 000 ПК»): ZAFIRO_AB_LOAD=<число ПК> (например 50000) —
+// столько гостей без сессии со сроком «сейчас» в ZAFIRO_AB_CLUBS клубах (по умолчанию 100; ZAFIRO_AB_SPREAD=1 — сроки
+// вразброс за 30 с, ZAFIRO_AB_WORKERS — потоков); тики (бюджет 800 мс, как в проде) до полного разбора, два прохода.
 // Без переменной пропускается (минута на подготовку данных — не для каждого прогона).
 func TestAutoBillingLoad(t *testing.T) {
 	total, _ := strconv.Atoi(os.Getenv("ZAFIRO_AB_LOAD"))
@@ -180,8 +187,12 @@ func TestAutoBillingLoad(t *testing.T) {
 	h := newHarness(t, harnessOpts{noLimits: true, settings: wholeAndAutoSettings, options: func(o *guestapi.Options) {
 		o.AutoBillingWorkers = workers
 	}})
-	const clubs = 100
+	clubs, _ := strconv.Atoi(os.Getenv("ZAFIRO_AB_CLUBS")) // клубов (по умолчанию 100)
+	if clubs <= 0 {
+		clubs = 100
+	}
 	seedStart := time.Now()
+	var all []int64
 	for c := range clubs {
 		club, zone := h.club, h.zone
 		if c > 0 {
@@ -189,35 +200,62 @@ func TestAutoBillingLoad(t *testing.T) {
 			h.exec("UPDATE clubs SET settings = $2::jsonb WHERE id = $1", club, wholeAndAutoSettings)
 			h.scan(&zone, "INSERT INTO club_zones (club_id, name, price_per_hour, created_at, updated_at) VALUES ($1, 'Hall', 60000, now(), now()) RETURNING id", club)
 		}
-		h.seedDueGuests(club, zone, total/clubs)
+		all = append(all, h.seedDueGuests(club, zone, total/clubs)...)
 	}
-	t.Logf("seeded %d guests in %v", total, time.Since(seedStart).Round(time.Millisecond))
-	h.clock.advance(time.Second)
-
-	var ticks []time.Duration
-	processed := 0
-	start := time.Now()
-	for h.dueNow() > 0 && len(ticks) < 1000 {
-		ts := time.Now()
-		n, err := h.srv.TickAutoBilling(context.Background())
-		if err != nil {
-			t.Fatal(err)
+	// ZAFIRO_AB_SPREAD=1 — сроки вразброс за последние 30 с (как при пересмотре раз в 30 с): в пакете ПК разных
+	// клубов вперемешку. Без неё сроки равны, и пакет — ПК одного-двух клубов (zset упорядочен по номеру ПК).
+	spread := os.Getenv("ZAFIRO_AB_SPREAD") == "1"
+	if spread {
+		rng := rand.New(rand.NewPCG(1, 2))
+		vc := env.valkey
+		base := h.clock.Now().UnixMilli()
+		for chunk := range slices.Chunk(all, 1000) {
+			cmds := make(valkey.Commands, 0, len(chunk))
+			for _, pc := range chunk {
+				cmds = append(cmds, vc.B().Zadd().Key(h.prefix+"guest:ab:due").ScoreMember().
+					ScoreMember(float64(base-rng.Int64N(int64(guestapi.AutoBillingRecheck/time.Millisecond))), strconv.FormatInt(pc, 10)).Build())
+			}
+			for _, r := range vc.DoMulti(context.Background(), cmds...) {
+				if err := r.Error(); err != nil {
+					t.Fatal(err)
+				}
+			}
 		}
-		ticks = append(ticks, time.Since(ts))
-		processed += n
 	}
-	elapsed := time.Since(start)
-	var maxTick time.Duration
-	for _, d := range ticks {
-		maxTick = max(maxTick, d)
-	}
+	t.Logf("seeded %d guests in %d clubs in %v (spread %v)", total, clubs, time.Since(seedStart).Round(time.Millisecond), spread)
+	h.clock.advance(time.Second)
 	if workers <= 0 {
 		workers = guestapi.DefaultAutoBillingWorkers
 	}
-	t.Logf("workers=%d: %d computers in %d ticks, %v total, max tick %v, %.0f computers/s",
-		workers, processed, len(ticks),
-		elapsed.Round(time.Millisecond), maxTick.Round(time.Millisecond), float64(processed)/elapsed.Seconds())
-	if processed != total {
-		t.Fatalf("processed %d of %d", processed, total)
+	// Первый проход — отставание как есть (сроки равны или вразброс). После него сроки «не положено» стоят в слотах
+	// клубов (S7-AB-2); второй проход — через период пересмотра: все ПК снова просрочены, но ПК клуба идут подряд —
+	// так выглядит установившийся режим.
+	for pass := 1; pass <= 2; pass++ {
+		if pass == 2 {
+			h.clock.advance(guestapi.AutoBillingRecheck)
+		}
+		var ticks []time.Duration
+		processed := 0
+		start := time.Now()
+		for h.dueNow() > 0 && len(ticks) < 1000 {
+			ts := time.Now()
+			n, err := h.srv.TickAutoBilling(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ticks = append(ticks, time.Since(ts))
+			processed += n
+		}
+		elapsed := time.Since(start)
+		var maxTick time.Duration
+		for _, d := range ticks {
+			maxTick = max(maxTick, d)
+		}
+		t.Logf("pass %d, workers=%d: %d computers in %d ticks, %v total, max tick %v, %.0f computers/s",
+			pass, workers, processed, len(ticks),
+			elapsed.Round(time.Millisecond), maxTick.Round(time.Millisecond), float64(processed)/elapsed.Seconds())
+		if processed != total {
+			t.Fatalf("pass %d: processed %d of %d", pass, processed, total)
+		}
 	}
 }
