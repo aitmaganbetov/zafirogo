@@ -437,7 +437,8 @@ func TestAppEndToEnd(t *testing.T) {
 	http.DefaultClient.CloseIdleConnections()
 }
 
-// TestAppDrainOnShutdown — плановая остановка: агент получает Drain, затем поток закрывается, Run
+// TestAppDrainOnShutdown — плановая остановка: агент получает Drain, новые соединения с этим инстансом получают отказ
+// (балансировщик L4 отправит их на другой; docs/load-test.md), открытый поток работает до переподключения, Run
 // возвращает nil в пределах бюджета.
 func TestAppDrainOnShutdown(t *testing.T) {
 	e := startEnv(t)
@@ -488,6 +489,16 @@ func TestAppDrainOnShutdown(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("no Drain command")
 		}
+	}
+	// Listener закрыт до Drain: переподключение по Drain не может попасть на этот же инстанс.
+	if c, err := net.DialTimeout("tcp", a.GRPCAddr(), 2*time.Second); err == nil {
+		_ = c.Close()
+		t.Fatal("draining instance still accepts agent connections")
+	}
+	// Открытый поток жив до переподключения: Status принимается.
+	if err := st.Send(&agentv1.AgentMessage{Payload: &agentv1.AgentMessage_Status{Status: &agentv1.Status{
+		State: agentv1.ComputerState_COMPUTER_STATE_IDLE}}}); err != nil {
+		t.Fatalf("send on drained stream: %v", err)
 	}
 	select {
 	case err := <-stopped:

@@ -62,7 +62,8 @@ func (a *App) Run(ctx context.Context) error {
 	if a.grpcSrv != nil {
 		g.Go(func() error {
 			a.log.Info("grpc listening", "addr", a.GRPCAddr(), "instance", a.cfg.Agent.InstanceID)
-			if err := a.grpcSrv.Serve(a.grpcLis); err != nil {
+			// При остановке listener закрывается раньше GracefulStop (shutdownServers) — Serve возвращает ошибку Accept.
+			if err := a.grpcSrv.Serve(a.grpcLis); err != nil && !a.draining.Load() {
 				return fmt.Errorf("grpc: %w", err)
 			}
 			return nil
@@ -105,6 +106,12 @@ func (a *App) Run(ctx context.Context) error {
 
 // shutdownServers: readyz → 503; HTTP Shutdown параллельно с Drain агентов; затем stream.Close и
 // GracefulStop gRPC (по дедлайну — Stop).
+//
+// Listener gRPC закрывается до Drain: новые соединения агентов получают отказ (RST), и L4-балансировщик сразу
+// отправляет их на другой инстанс (nginx proxy_next_upstream). Иначе агенты, переподключающиеся по Drain, попадали бы
+// обратно на этот инстанс (least_conn: на нём теперь меньше всего соединений) и рвались при его выходе — нагрузочный
+// тест O4: 2 500 потоков → 7 300 обрывов и 78 с до полного восстановления (docs/load-test.md).
+// Уже открытые соединения (потоки до переподключения, вызовы гостя) Serve не закрывает — их ведёт GracefulStop.
 func (a *App) shutdownServers(deadline time.Time) {
 	a.draining.Store(true)
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
@@ -120,6 +127,9 @@ func (a *App) shutdownServers(deadline time.Time) {
 	}()
 
 	if a.grpcSrv != nil {
+		if err := a.grpcLis.Close(); err != nil {
+			a.log.Warn("grpc listener close", "err", err)
+		}
 		within := a.cfg.Agent.Stream.DrainWithin
 		// Окно переподключения не дольше половины бюджета: остальное — на воркеры и закрытие.
 		if half := time.Until(deadline) / 2; within > half {
