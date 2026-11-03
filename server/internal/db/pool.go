@@ -3,8 +3,10 @@ package db
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,9 +16,9 @@ import (
 // NewPool открывает пул pgx и проверяет соединение. dsn — строка подключения логина
 // с ролью zafiro_app (сервер) или zafiro_platform (суперадминка, фоновые задачи).
 func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
-	cfg, err := pgxpool.ParseConfig(dsn)
+	cfg, err := ParsePoolConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("db: parse dsn: %w", err)
+		return nil, err
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -29,6 +31,28 @@ func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("db: ping: %w", err)
 	}
 	return pool, nil
+}
+
+// DefaultMaxConns — размер пула, если в DSN нет pool_max_conns: max(16, 4 × CPU).
+//
+// Умолчание pgx — max(4, CPU): на 4 vCPU это 4 соединения на пул, и нагрузочный тест O4 (docs/load-test.md §4)
+// показал обвал при 5 000 ПК на одном инстансе (после перезапуска второго): пул zafiro_app занят целиком, сотни
+// ожидающих (запись состояния ПК, карта клуба, покупки гостей), ответы 10–30 с вместо 20 мс. С 16 соединениями —
+// без ошибок, занято в пике 5. Явный pool_max_conns в DSN (docs/deploy.md «Ресурсы») имеет приоритет.
+func DefaultMaxConns() int32 {
+	return int32(min(max(16, 4*runtime.NumCPU()), 256)) // #nosec G115 -- ≤ 256
+}
+
+// ParsePoolConfig — pgxpool.ParseConfig + размер пула по умолчанию (DefaultMaxConns), если DSN его не задаёт.
+func ParsePoolConfig(dsn string) (*pgxpool.Config, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("db: parse dsn: %w", err)
+	}
+	if !strings.Contains(dsn, "pool_max_conns") {
+		cfg.MaxConns = DefaultMaxConns()
+	}
+	return cfg, nil
 }
 
 // PartitionedTables — таблицы с месячными партициями (0002_ledger.sql, 0003_audit.sql, 0011_events.sql, 0022_api_v1.sql).

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
+	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/observability"
 )
 
@@ -18,9 +19,9 @@ import (
 // спаны транзакций). То же, что db.NewPool (разбор DSN, пул, пинг 5 с), плюс ConnConfig.Tracer и BeforeClose.
 // tracer nil — как db.NewPool.
 func newPool(ctx context.Context, dsn string, tracer *observability.PgxTracer) (*pgxpool.Pool, error) {
-	cfg, err := pgxpool.ParseConfig(dsn)
+	cfg, err := db.ParsePoolConfig(dsn) // размер пула по умолчанию — db.DefaultMaxConns
 	if err != nil {
-		return nil, fmt.Errorf("db: parse dsn: %w", err)
+		return nil, err
 	}
 	if tracer != nil {
 		cfg.ConnConfig.Tracer = tracer
