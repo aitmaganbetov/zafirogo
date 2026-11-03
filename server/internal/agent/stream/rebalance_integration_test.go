@@ -226,6 +226,9 @@ func TestRebalanceAfterInstanceReturns(t *testing.T) {
 		a, bb := inA.svc.LocalStreams(), inB.svc.LocalStreams()
 		return a+bb == pcs && a-bb <= 4 && bb-a <= 4
 	})
+	// Выравнивание может закончиться быстрее, чем наберётся достаточно команд (быстрый CI: 36 за 3,6 с) — команды
+	// идут дальше, пока их не станет ≥ 60: проверка «ни одна не потеряна» не должна зависеть от скорости машины.
+	eventually(t, 10*time.Second, "enough commands", func() bool { return nSent.Load() >= 60 })
 	close(stopCmds)
 	<-cmdsDone
 	requested := inA.svc.RebalanceRequested()
