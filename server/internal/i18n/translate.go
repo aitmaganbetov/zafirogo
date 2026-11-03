@@ -21,6 +21,10 @@ import (
 // API не позже чем через это время; интерфейс берёт язык из /api/auth/me сразу).
 const clubLocaleTTL = 30 * time.Second
 
+// lookupVersionTTL — сколько Lookup доверяет сверенной версии переводов без похода в базу (правка в суперадминке
+// видна в сообщениях API сервера не позже чем через это время; пакеты i18next — Pack — сверяются на каждый запрос).
+const lookupVersionTTL = 5 * time.Second
+
 type clubLocale struct {
 	locale string
 	at     time.Time
@@ -86,6 +90,12 @@ func (c *Catalog) Lookup(ctx context.Context, locale, key string) (string, bool)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.enabled != nil && time.Since(c.checkedAt) < lookupVersionTTL {
+		if raw, cached := c.raw[locale]; cached {
+			v, ok := raw[key]
+			return v, ok
+		}
+	}
 	var (
 		v  string
 		ok bool

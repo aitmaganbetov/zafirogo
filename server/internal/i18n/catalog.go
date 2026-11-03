@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -43,7 +44,11 @@ type Catalog struct {
 
 	mu      sync.Mutex
 	version string
-	packs   map[string]Pack
+	// checkedAt — когда версия сверялась с базой (refresh). Lookup в пределах lookupVersionTTL берёт строки из памяти
+	// без транзакции: перевод сообщения API не должен открывать транзакцию платформенного пула на каждый вызов,
+	// часто изнутри уже открытой тенантной (S6-O4-3, docs/load-test.md).
+	checkedAt time.Time
+	packs     map[string]Pack
 	// raw — строки языка в формате Laravel (ключ «группа.ключ» для групп, кроме '*') для перевода на сервере
 	// (Translate: тексты ошибок API, F1-5).
 	raw     map[string]map[string]string
@@ -63,6 +68,7 @@ func (c *Catalog) refresh(ctx context.Context, q *store.Queries) error {
 		return err
 	}
 	version := strconv.FormatInt(v.ChangedMs, 10) + "-" + strconv.FormatInt(v.Rows, 10)
+	c.checkedAt = time.Now()
 	if version == c.version && c.enabled != nil {
 		return nil
 	}
