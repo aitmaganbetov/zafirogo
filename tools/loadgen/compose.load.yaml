@@ -1,0 +1,25 @@
+# Дополнение к deploy/staging/compose.yaml на время нагрузочного теста (server/cmd/loadgen, docs/load-test.md):
+#
+#   docker compose -f deploy/staging/compose.yaml -f tools/loadgen/compose.load.yaml --env-file deploy/staging/.env.staging up -d
+#
+# - lb: лимит дескрипторов. Без него nginx в контейнере работает с мягким лимитом 1024 на воркер (worker_rlimit_nofile
+#   65535 не поднимается выше жёсткого лимита Docker: «setrlimit … Operation not permitted» в журнале) — это ≈ 2 000
+#   агентов на 4 воркера вместо 50 000. Значение — не выше жёсткого лимита демона Docker (здесь 20 000; прод — ≥ 131 072,
+#   docs/deploy.md «Ресурсы»).
+# - app1/app2: вебхуки на заглушку legacy (http://legacy/hook/<клуб>) — частный адрес и HTTP разрешены только здесь;
+#   размеры пулов pgx — параметрами DSN (LOADGEN_APP_POOL='&pool_max_conns=16', LOADGEN_PLATFORM_POOL='&pool_max_conns=8';
+#   пусто — по умолчанию pgx: max(4, число CPU)). Пароли — из .env.staging (--env-file).
+services:
+  lb:
+    ulimits:
+      nofile:
+        soft: ${LOADGEN_LB_NOFILE:-20000}
+        hard: ${LOADGEN_LB_NOFILE:-20000}
+  app1:
+    environment: &load-env
+      ZAFIRO_WEBHOOKS_REQUIRE_HTTPS: "false"
+      ZAFIRO_WEBHOOKS_ALLOW_PRIVATE_HOSTS: "true"
+      ZAFIRO_DATABASE_URL: postgres://${STG_DB_APP_USER:-zafiro_app_login}:${STG_DB_APP_PASSWORD:?}@postgres:5432/${STG_POSTGRES_DB:-zafiro}?sslmode=disable${LOADGEN_APP_POOL:-}
+      ZAFIRO_DATABASE_PLATFORM_URL: postgres://${STG_DB_PLATFORM_USER:-zafiro_platform_login}:${STG_DB_PLATFORM_PASSWORD:?}@postgres:5432/${STG_POSTGRES_DB:-zafiro}?sslmode=disable${LOADGEN_PLATFORM_POOL:-}
+  app2:
+    environment: *load-env
