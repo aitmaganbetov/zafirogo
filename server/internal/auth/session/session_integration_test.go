@@ -72,6 +72,37 @@ func TestCreateAuthenticate(t *testing.T) {
 	}
 }
 
+// Второй фактор (Этап 7): флаг сессии переживает refresh; сессия без поля mfa (до Этапа 7) — без второго фактора.
+func TestSecondFactorFlag(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t, newClock())
+	plain, err := m.Create(ctx, 42, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, err := m.Authenticate(ctx, plain.Access); err != nil || s.SecondFactor {
+		t.Fatalf("plain session: %+v %v", s, err)
+	}
+	verified, err := m.CreateSecondFactor(ctx, 42, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := m.Refresh(ctx, verified.Refresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, err := m.Authenticate(ctx, next.Access); err != nil || !s.SecondFactor {
+		t.Fatalf("second-factor session after refresh: %+v %v", s, err)
+	}
+	// Сессия, созданная до Этапа 7 (поля нет), — без второго фактора.
+	if err := client.Do(ctx, client.B().Hdel().Key(m.sessKey(verified.SessionID)).Field("mfa").Build()).Error(); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := m.Authenticate(ctx, next.Access); err != nil || s.SecondFactor {
+		t.Fatalf("legacy session: %+v %v", s, err)
+	}
+}
+
 // Ротация: каждый refresh выдаёт новый токен; повтор старого (вне окна гонки) отзывает всё семейство.
 func TestRefreshRotationAndReuse(t *testing.T) {
 	ctx := context.Background()

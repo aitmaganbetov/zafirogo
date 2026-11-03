@@ -162,3 +162,12 @@ docker compose -f docker-compose.dev.yml --env-file .env down -v   # удали�
 Проверить отдельный домен локально: собрать бинарник (`task build`) и запустить с
 `ZAFIRO_SUPERADMIN_DOMAIN=admin.localhost`, кабинет — `http://admin.localhost:<порт>/` (поддомены `localhost` браузер
 ведёт на 127.0.0.1). В `vite dev` хост кабинета не определяется (атрибут `data-superadmin-host` ставит сервер в `index.html`).
+
+## Вход суперадмина: второй фактор (Этап 7)
+
+Суперадмин после пароля вводит код TOTP; при первом входе — настройка (ключ — в приложение-аутентификатор, коды
+восстановления показываются один раз). Ключ TOTP хранится зашифрованным `security.data_keys`: в dev без
+`ZAFIRO_SECURITY_DATA_KEYS` ключ данных случайный при каждом запуске, и после перезапуска сервера код не проверится
+(«обратитесь к другому суперадмину…»). Задайте постоянный ключ (`ZAFIRO_SECURITY_DATA_KEYS=dev:<32+ символов>`) или
+сбросьте второй фактор: `cd server && go run ./cmd/zafiro superadmin-totp-reset -phone +7…` (с той же конфигурацией,
+что у сервера). Стенд `tools/visual` входит демо-суперадмином сам (`login.totp_secret` в `fixtures/demo.json`).

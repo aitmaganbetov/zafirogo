@@ -519,3 +519,19 @@ Telegram в `platform_settings` — `Crypt::encryptString` (`app/Services/Telegr
 - **Отличие от старого**: удаление целыми месяцами — строка живёт не меньше срока, до месяца дольше.
 - **Тестовые базы** (`dbtest`) создают партиции и на 24 месяца назад (тесты с замороженными датами); в проде
   партиции под старые даты создаёт только инструмент переноса (`tools/migrate-from-mysql/README.md`).
+
+## 13. Второй фактор суперадмина (0029, Этап 7)
+
+Новая функция по поручению владельца (SEC-010; решения — `docs/open-questions/stage7-totp.md`). В старом Laravel
+таблиц нет — при переносе из MySQL они пустые: каждый суперадмин настраивает TOTP при первом входе.
+
+- **`superadmin_totp`** (`user_id` PK → `users` ON DELETE CASCADE): `secret` — только шифротекст `secretbox`
+  (CHECK `^v[0-9]+:`, контекст `superadmin_totp.secret:user=<id>`, связка `security.data_keys`, перешифровка —
+  воркер `reencrypt-secrets`, §11); `confirmed_at` — NULL, пока не введён первый код; `last_step` — последний
+  принятый шаг TOTP (повтор кода отклоняется, `UPDATE … WHERE last_step < шаг`).
+- **`superadmin_recovery_codes`**: `code_hash` — sha256 кода (80 бит случайности) с привязкой к пользователю,
+  `used_at` — когда использован (одноразово, `UPDATE … WHERE used_at IS NULL`); UNIQUE (`user_id`, `code_hash`).
+- **Права**: только `zafiro_platform` (`SELECT, INSERT, UPDATE, DELETE`); у `zafiro_app` — ничего (как SEC-005:
+  ошибка в запросе пула клуба не выдаёт и не сбрасывает второй фактор суперадмина). Проверка —
+  `TestAppRoleLeastPrivilege`.
+- **Сессии** (Valkey, не Postgres): поле `mfa` в `auth:s:{sid}`; сессия суперадмина без него не действует.

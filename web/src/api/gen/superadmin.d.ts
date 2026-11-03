@@ -232,6 +232,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/superadmin/accounts/{userId}/second-factor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Сбросить второй фактор суперадмина
+         * @description Этап 7 (новая функция): ключ TOTP и коды восстановления удаляются, сеансы пользователя отзываются; при следующем входе — принудительная настройка. Не для своего аккаунта и не в режиме просмотра клуба (403 read_only). Журнал платформы superadmin.totp_reset и audit_log.
+         */
+        delete: operations["saResetSecondFactor"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/superadmin/plans": {
         parameters: {
             query?: never;
@@ -825,6 +845,8 @@ export interface components {
             is_superadmin: boolean;
             blocked_since: string | null;
             self: boolean;
+            /** @description Второй фактор (TOTP) включён (Этап 7). */
+            second_factor: boolean;
             memberships: components["schemas"]["AccountMembership"][];
         };
         AccountList: {
@@ -1378,6 +1400,32 @@ export interface operations {
         };
     };
     saRevokeSuperadmin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: components["parameters"]["UserId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    saResetSecondFactor: {
         parameters: {
             query?: never;
             header?: never;

@@ -93,6 +93,7 @@ func run(ctx context.Context, fixturePath, dsn string) error {
 		fn   func(context.Context) error
 	}{
 		{"платформа", s.platform},
+		{"второй фактор суперадмина", s.secondFactor},
 		{"клубы", s.clubs},
 		{"операции кассы", s.operations},
 		{"прочее", s.rest},

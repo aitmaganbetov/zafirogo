@@ -9,6 +9,9 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/mfa"
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
+	apicommon "github.com/aitmaganbetov/zafirogo/server/internal/http/api/common"
 	superadminapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/superadmin"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -66,7 +69,7 @@ func (h *handlers) SaListAccounts(ctx context.Context, req superadminapi.SaListA
 		}
 		for _, u := range users {
 			a := superadminapi.Account{Id: u.ID, Name: u.Name, Phone: u.Phone, IsSuperadmin: u.IsSuperadmin, Self: u.ID == self,
-				Memberships: byUser[u.ID]}
+				SecondFactor: u.SecondFactor, Memberships: byUser[u.ID]}
 			if a.Memberships == nil {
 				a.Memberships = []superadminapi.AccountMembership{}
 			}
@@ -220,4 +223,46 @@ func (h *handlers) SaRevokeSuperadmin(ctx context.Context, req superadminapi.SaR
 		return nil, err
 	}
 	return superadminapi.SaRevokeSuperadmin200JSONResponse(msg(h.d.T(ctx, "Права суперадмина сняты.", nil))), nil
+}
+
+// SaResetSecondFactor — сброс второго фактора суперадмина другим суперадмином (Этап 7, новая функция;
+// docs/open-questions/stage7-totp.md): ключ TOTP и коды восстановления удаляются, сеансы отзываются; следующий вход —
+// принудительная настройка. Не в режиме просмотра клуба (readOnlyGuard кабинет пропускает — запрет здесь и в
+// readOnlyAllowed) и не для своего аккаунта.
+func (h *handlers) SaResetSecondFactor(ctx context.Context, req superadminapi.SaResetSecondFactorRequestObject) (superadminapi.SaResetSecondFactorResponseObject, error) {
+	if httpx.Principal(ctx).ReadOnly {
+		return superadminapi.SaResetSecondFactor403JSONResponse{ForbiddenJSONResponse: apicommon.ForbiddenJSONResponse(
+			httpx.ErrorBody(permissions.CodeReadOnly, permissions.MsgReadOnly))}, nil
+	}
+	if err := guardOther(ctx, req.UserId); err != nil {
+		return nil, err
+	}
+	err := h.tx(ctx, func(q *store.Queries) error {
+		u, err := lockUser(ctx, q, req.UserId)
+		if err != nil {
+			return err
+		}
+		had, err := mfa.Reset(ctx, q, u.ID)
+		if err != nil {
+			return err
+		}
+		if !had {
+			return httpx.ValidationMsg("user", "У пользователя не настроена двухфакторная аутентификация.", nil)
+		}
+		if err := h.log(ctx, q, activity.PlatformEntry{Event: mfa.EventReset, Key: mfa.MsgReset,
+			Params: map[string]string{"user": u.Name}, SubjectType: subjectUser, SubjectID: u.ID}); err != nil {
+			return err
+		}
+		return h.audit(ctx, q, 0, "security", "superadmin.totp_reset", subjectUser, u.ID, map[string]any{"second_factor": true}, map[string]any{"second_factor": false})
+	})
+	if err != nil {
+		return nil, err
+	}
+	// После коммита: сеансы пользователя (вошедшие с прежним ключом) — заново, с настройкой нового.
+	if h.d.Auth != nil {
+		if err := h.d.Auth.Sessions().RevokeUser(ctx, req.UserId); err != nil {
+			h.d.Log().WarnContext(ctx, "superadmin: revoke sessions", "user_id", req.UserId, "err", err)
+		}
+	}
+	return superadminapi.SaResetSecondFactor200JSONResponse(msg(h.d.T(ctx, "Двухфакторная аутентификация сброшена.", nil))), nil
 }

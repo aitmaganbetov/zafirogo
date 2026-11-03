@@ -17,11 +17,15 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/authtest"
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/mfa"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/password"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/ratelimit"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/session"
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/totp"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db/dbtest"
+	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -76,11 +80,46 @@ func newService(t *testing.T) (*Service, *recorder) {
 		t.Fatal(err)
 	}
 	rec := &recorder{}
-	s, err := NewService(Options{Pool: tdb.App, Hasher: hasher, Sessions: sm, Events: rec})
+	lim, err := ratelimit.New(ratelimit.Options{Client: vk, Prefix: fmt.Sprintf("l%d:", seq.Add(1))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	box, err := secretbox.NewKeyring([]secretbox.Key{{ID: "t", Secret: strings.Repeat("k", 32)}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := mfa.New(mfa.Options{Platform: tdb.Platform, Valkey: vk, Box: box, Limiter: lim, Prefix: fmt.Sprintf("m%d:", seq.Add(1))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewService(Options{Pool: tdb.App, Hasher: hasher, Sessions: sm, Events: rec, SecondFactor: m})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s, rec
+}
+
+// loginSuperadmin — пароль, принудительная настройка TOTP и код (Этап 7).
+func loginSuperadmin(t *testing.T, s *Service, ph string) LoginResult {
+	t.Helper()
+	ctx := context.Background()
+	res, err := s.Login(ctx, LoginInput{Phone: ph, Password: "pw"})
+	if err != nil || res.Challenge == nil || res.Tokens.Access != "" || !res.Challenge.SetupRequired {
+		t.Fatalf("superadmin password step: %+v %v", res, err)
+	}
+	st, err := s.SecondFactorSetup(ctx, res.Challenge.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := totp.DecodeSecret(st.Secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := s.CompleteSecondFactor(ctx, res.Challenge.Token, totp.Code(key, totp.Step(time.Now())))
+	if err != nil || len(done.RecoveryCodes) != totp.RecoveryCount {
+		t.Fatalf("second factor: %v %d", err, len(done.RecoveryCodes))
+	}
+	return done.LoginResult
 }
 
 // phone — уникальный номер +77XXXXXXXXX.
@@ -346,10 +385,7 @@ func TestSuperadminViewing(t *testing.T) {
 	c := club(t)
 	ph := phone()
 	user(t, ph, cheapHash(t, "pw"), true)
-	res, err := s.Login(ctx, LoginInput{Phone: ph, Password: "pw"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	res := loginSuperadmin(t, s, ph)
 	if res.ClubID != 0 || !res.Principal.Superadmin || res.Principal.Can("cash.view") {
 		t.Fatalf("cabinet principal %+v", res.Principal)
 	}
@@ -380,6 +416,28 @@ func TestSuperadminViewing(t *testing.T) {
 	// Не суперадмин не смотрит чужие клубы.
 	if _, err := s.ViewClub(ctx, principal.Principal{UserID: 1, SessionID: "x"}, c); !errors.Is(err, ErrForbidden) {
 		t.Fatal(err)
+	}
+}
+
+// Без второго фактора (не подключён) суперадмин не входит — вход закрыт, а не пропускается без кода.
+func TestSuperadminWithoutSecondFactorRefused(t *testing.T) {
+	ctx := context.Background()
+	sm, err := session.New(session.Options{Client: vk, Prefix: fmt.Sprintf("a%d:", seq.Add(1)),
+		Keys: []session.Key{{ID: "t", Secret: bytes.Repeat([]byte{7}, 32)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewService(Options{Pool: tdb.App, Hasher: hasher, Sessions: sm})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ph := phone()
+	user(t, ph, cheapHash(t, "pw"), true)
+	if _, err := s.Login(ctx, LoginInput{Phone: ph, Password: "pw"}); !errors.Is(err, ErrSecondFactorUnavailable) {
+		t.Fatalf("login without second factor: %v", err)
+	}
+	if _, err := s.Login(ctx, LoginInput{Phone: ph, Password: "pw", SuperadminOnly: true}); !errors.Is(err, ErrSecondFactorUnavailable) {
+		t.Fatalf("cabinet login without second factor: %v", err)
 	}
 }
 

@@ -66,8 +66,8 @@ test('пользователи: блокировка с подтверждени
   let blocked = false;
   const list = () => ({
     items: [
-      { id: 1, name: 'Супер Админ', phone: '+77010000001', is_superadmin: true, blocked_since: null, self: true, memberships: [] },
-      { id: 5, name: 'Кассир', phone: '+77010000005', is_superadmin: false, blocked_since: blocked ? '15.10.2026' : null, self: false, memberships: [{ club_id: 1, club_name: 'Arena', role: 'cashier' }] },
+      { id: 1, name: 'Супер Админ', phone: '+77010000001', is_superadmin: true, second_factor: true, blocked_since: null, self: true, memberships: [] },
+      { id: 5, name: 'Кассир', phone: '+77010000005', is_superadmin: false, second_factor: false, blocked_since: blocked ? '15.10.2026' : null, self: false, memberships: [{ club_id: 1, club_name: 'Arena', role: 'cashier' }] },
     ],
     page: 1, per_page: 30, total: 2,
   });
@@ -108,6 +108,69 @@ test('переводы: поля страницы уходят хэшами, р�
   await page.getByRole('button', { name: 'Сохранить переводы на странице' }).click();
   await expect(page.getByRole('status')).toHaveText('Сохранён 1 перевод.');
   expect(body).toEqual({ translations: { abc: 'Сәлеметсіз бе, :name' } });
+});
+
+test('вход суперадмина: пароль → настройка TOTP → коды восстановления → кабинет (Этап 7)', async ({ page }) => {
+  let authed = false;
+  let verified: Record<string, unknown> | null = null;
+  const session = { access_token: 't', token_type: 'Bearer', expires_in: 600, csrf_token: 'c', me: ME };
+  await mockApi(page, ME, {
+    // До второго фактора сессии нет: refresh — 401.
+    'POST /api/auth/refresh': (r) => (authed ? json(r, session) : json(r, { error: 'unauthenticated' }, 401)),
+    'POST /api/auth/login': (r) => json(r, { challenge: 'ch-1', setup_required: true, expires_in: 300 }, 202),
+    'POST /api/auth/second-factor/setup': (r) =>
+      json(r, { secret: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP', otpauth_uri: 'otpauth://totp/Zafiro:%2B77010000001?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=Zafiro' }),
+    'POST /api/auth/second-factor/verify': (r) => {
+      verified = r.request().postDataJSON() as Record<string, unknown>;
+      authed = true;
+      return json(r, { session, recovery_codes: ['abcd-efgh-jkmn-pqrs', 'tvwx-yz01-2345-6789'] });
+    },
+    'GET /api/superadmin/dashboard': (r) => json(r, { error: 'not_found' }, 404),
+  });
+  await page.goto('/login');
+  await page.locator('#phone').pressSequentially('7010000001');
+  await page.locator('#password').fill('secret');
+  await page.locator('.auth-submit').click();
+
+  await expect(page.locator('.auth-card-head h2')).toHaveText('Настройка двухфакторной аутентификации');
+  await expect(page.locator('#totp-secret')).toHaveValue('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
+  await expect(page).toHaveURL(/\/login$/);
+  await page.locator('#code').fill('123456');
+  await page.getByRole('button', { name: 'Включить и войти' }).click();
+
+  await expect(page.locator('[data-recovery-codes]')).toContainText('abcd-efgh-jkmn-pqrs');
+  expect(verified).toEqual({ challenge: 'ch-1', code: '123456' });
+  await page.getByRole('button', { name: 'Я сохранил коды — продолжить' }).click();
+  await expect(page).toHaveURL(/\/superadmin$/);
+});
+
+test('пользователи: сброс 2FA другого суперадмина с подтверждением (Этап 7)', async ({ page }) => {
+  let reset = false;
+  const list = () => ({
+    items: [
+      { id: 1, name: 'Супер Админ', phone: '+77010000001', is_superadmin: true, second_factor: true, blocked_since: null, self: true, memberships: [] },
+      { id: 7, name: 'Второй', phone: '+77010000007', is_superadmin: true, second_factor: !reset, blocked_since: null, self: false, memberships: [] },
+    ],
+    page: 1, per_page: 30, total: 2,
+  });
+  await mockApi(page, ME, {
+    'GET /api/superadmin/accounts': (r) => json(r, list()),
+    'DELETE /api/superadmin/accounts/7/second-factor': (r) => {
+      reset = true;
+      return json(r, { message: 'Двухфакторная аутентификация сброшена.' });
+    },
+  });
+  await page.goto('/superadmin/accounts');
+  let question = '';
+  page.once('dialog', (d) => {
+    question = d.message();
+    void d.accept();
+  });
+  await page.getByRole('button', { name: 'Сбросить 2FA' }).click();
+  await expect(page.getByRole('status')).toHaveText('Двухфакторная аутентификация сброшена.');
+  expect(question).toContain('Второй');
+  await expect(page.getByText('2FA не настроена')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Сбросить 2FA' })).toHaveCount(0);
 });
 
 test('не суперадмину кабинет не открывается (403)', async ({ page }) => {

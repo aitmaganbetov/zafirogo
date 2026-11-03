@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/mfa"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db/dbtest"
 	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/webhook"
@@ -61,9 +62,16 @@ func TestReencryptSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Ключ TOTP суперадмина (Этап 7) старым ключом связки.
+	totpSealed, _ := oldRing.SealWith("JBSWY3DPEHPK3PXP", mfa.SecretContext(user))
+	if _, err := d.Owner.Exec(ctx, `INSERT INTO superadmin_totp (user_id, secret, confirmed_at, created_at, updated_at)
+		VALUES ($1, $2, now(), now(), now())`, user, totpSealed); err != nil {
+		t.Fatal(err)
+	}
+
 	w := &worker.ReencryptSecrets{Platform: d.Platform, Box: box}
 	ran, res, err := w.Tick(ctx)
-	if err != nil || !ran || res.Webhooks != 2 || res.Settings != 1 || res.Failed != 1 {
+	if err != nil || !ran || res.Webhooks != 2 || res.Settings != 1 || res.Totp != 1 || res.Failed != 1 {
 		t.Fatalf("tick: ran=%v res=%+v err=%v", ran, res, err)
 	}
 	secretOf := func(id int64) string {
@@ -97,8 +105,16 @@ func TestReencryptSecrets(t *testing.T) {
 		t.Fatalf("telegram token %q → %q %v, chat %q", token, got, err, chat)
 	}
 
+	var totpSecret string
+	if err := d.Owner.QueryRow(ctx, "SELECT secret FROM superadmin_totp WHERE user_id = $1", user).Scan(&totpSecret); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := box.OpenWith(totpSecret, mfa.SecretContext(user)); err != nil || got != "JBSWY3DPEHPK3PXP" || !strings.HasPrefix(totpSecret, "v2:k2:") {
+		t.Fatalf("totp secret %q → %q %v", totpSecret, got, err)
+	}
+
 	// Повтор: всё уже текущим ключом (кроме нерасшифровываемого).
-	if _, res, err := w.Tick(ctx); err != nil || res.Webhooks != 0 || res.Settings != 0 || res.Failed != 1 {
+	if _, res, err := w.Tick(ctx); err != nil || res.Webhooks != 0 || res.Settings != 0 || res.Totp != 0 || res.Failed != 1 {
 		t.Fatalf("second tick: %+v %v", res, err)
 	}
 	// Без открытых секретов ограничение проверяется целиком (следующая миграция делает то же).

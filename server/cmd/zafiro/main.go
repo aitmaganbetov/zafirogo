@@ -1,6 +1,10 @@
 // Команда zafiro — единый бинарник сервера: REST API и WebSocket админки, gRPC агентов (mTLS),
 // воркеры и вшитый фронтенд. Сборка подсистем — server/internal/app; миграции — goose отдельно
 // (task db:migrate).
+//
+// Подкоманды обслуживания (та же конфигурация, что у сервера):
+//
+//	zafiro [-config файл] superadmin-totp-reset -phone +7XXXXXXXXXX   аварийный сброс второго фактора суперадмина
 package main
 
 import (
@@ -35,6 +39,9 @@ func run() error {
 		fmt.Println(version())
 		return nil
 	}
+	if flag.NArg() > 0 {
+		return runSubcommand(*configPath, flag.Arg(0), flag.Args()[1:])
+	}
 
 	cfg, err := config.Load(*configPath, nil)
 	if err != nil {
@@ -52,6 +59,20 @@ func run() error {
 		return err
 	}
 	return a.Run(ctx)
+}
+
+// runSubcommand — подкоманды обслуживания (не сервер).
+func runSubcommand(configPath, name string, args []string) error {
+	if name != cmdTOTPReset {
+		return fmt.Errorf("неизвестная подкоманда %q (есть: %s)", name, cmdTOTPReset)
+	}
+	cfg, err := config.Load(configPath, nil)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runTOTPReset(ctx, cfg, args, os.Stdout)
 }
 
 // buildVersion — версия сборки образа (Dockerfile: -ldflags "-X main.buildVersion=<тег или коммит>"); в образе нет

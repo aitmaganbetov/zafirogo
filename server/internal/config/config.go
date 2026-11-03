@@ -415,6 +415,9 @@ type Dev struct {
 	// monitoring-flush). Только dev/test: в стенде tools/visual у старого Laravel нет планировщика, и экраны «Сервер»
 	// и карточки клуба не должны набирать метрики запросов самого прогона снимков.
 	DisableWorkers []string `koanf:"disable_workers"`
+	// TOTPAllowReplay — второй фактор суперадмина принимает повтор кода того же шага (Этап 7). Только dev/test: стенд
+	// tools/visual входит демо-суперадмином на каждый снимок чаще, чем раз в 30 с. Код и окно ±1 шаг проверяются всегда.
+	TOTPAllowReplay bool `koanf:"totp_allow_replay"`
 }
 
 // Now — часы приложения: фиксированное время dev.fixed_now или time.Now. Вызывать после Validate.
@@ -634,8 +637,9 @@ func Defaults() map[string]any {
 		"observability.log_sample_initial":    100,
 		"observability.log_sample_thereafter": 100,
 
-		"dev.fixed_now":       "",
-		"dev.disable_workers": []string{},
+		"dev.fixed_now":         "",
+		"dev.disable_workers":   []string{},
+		"dev.totp_allow_replay": false,
 	}
 }
 
@@ -1019,6 +1023,9 @@ func (c *Config) Validate() error {
 	if prod && len(c.Dev.DisableWorkers) > 0 {
 		add("dev.disable_workers: запрещён в prod")
 	}
+	if prod && c.Dev.TOTPAllowReplay {
+		add("dev.totp_allow_replay: запрещён в prod")
+	}
 	if prod && pki.DevDir != "" {
 		add("agent.pki.dev_dir: запрещён в prod — задайте файлы CA и серверного сертификата")
 	}
@@ -1238,6 +1245,7 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("observability_otlp_endpoint", RedactURL(c.Observability.OTLPEndpoint)),
 		slog.String("dev_fixed_now", c.Dev.FixedNow),
 		slog.Any("dev_disable_workers", c.Dev.DisableWorkers),
+		slog.Bool("dev_totp_allow_replay", c.Dev.TOTPAllowReplay),
 	)
 }
 

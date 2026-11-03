@@ -144,9 +144,50 @@ type RegisterRequest struct {
 	Phone                *string `json:"phone,omitempty"`
 }
 
+// SecondFactorChallenge defines model for SecondFactorChallenge.
+type SecondFactorChallenge struct {
+	// Challenge Одноразовый токен полувхода (держать только в памяти страницы).
+	Challenge string `json:"challenge"`
+
+	// ExpiresIn Срок полувхода, секунды.
+	ExpiresIn int `json:"expires_in"`
+
+	// SetupRequired TOTP ещё не настроен — сначала /api/auth/second-factor/setup.
+	SetupRequired bool `json:"setup_required"`
+}
+
+// SecondFactorSession defines model for SecondFactorSession.
+type SecondFactorSession struct {
+	// RecoveryCodes Коды восстановления — только при включении TOTP (показать один раз); иначе пусто.
+	RecoveryCodes []string    `json:"recovery_codes"`
+	Session       AuthSession `json:"session"`
+}
+
+// SecondFactorSetupRequest defines model for SecondFactorSetupRequest.
+type SecondFactorSetupRequest struct {
+	Challenge string `json:"challenge"`
+}
+
+// SecondFactorVerifyRequest defines model for SecondFactorVerifyRequest.
+type SecondFactorVerifyRequest struct {
+	Challenge string `json:"challenge"`
+
+	// Code 6 цифр из приложения или код восстановления (xxxx-xxxx-xxxx-xxxx).
+	Code string `json:"code"`
+}
+
 // SelectClubRequest defines model for SelectClubRequest.
 type SelectClubRequest struct {
 	ClubId int64 `json:"club_id"`
+}
+
+// TotpSetup defines model for TotpSetup.
+type TotpSetup struct {
+	// OtpauthUri Ссылка otpauth://totp/… (SHA1, 6 цифр, 30 с).
+	OtpauthUri string `json:"otpauth_uri"`
+
+	// Secret Ключ TOTP в base32 (ввести в приложение вручную).
+	Secret string `json:"secret"`
 }
 
 // WsTicket defines model for WsTicket.
@@ -186,6 +227,12 @@ type LoginJSONRequestBody = LoginRequest
 // RegisterJSONRequestBody defines body for Register for application/json ContentType.
 type RegisterJSONRequestBody = RegisterRequest
 
+// SecondFactorSetupJSONRequestBody defines body for SecondFactorSetup for application/json ContentType.
+type SecondFactorSetupJSONRequestBody = SecondFactorSetupRequest
+
+// SecondFactorVerifyJSONRequestBody defines body for SecondFactorVerify for application/json ContentType.
+type SecondFactorVerifyJSONRequestBody = SecondFactorVerifyRequest
+
 // AcceptInvitationJSONRequestBody defines body for AcceptInvitation for application/json ContentType.
 type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
 
@@ -212,6 +259,12 @@ type ServerInterface interface {
 	// Register Регистрация владельца с новым клубом
 	// (POST /api/auth/register)
 	Register(w http.ResponseWriter, r *http.Request)
+	// SecondFactorSetup Ключ TOTP для принудительной настройки второго фактора суперадмина
+	// (POST /api/auth/second-factor/setup)
+	SecondFactorSetup(w http.ResponseWriter, r *http.Request)
+	// SecondFactorVerify Второй фактор суперадмина — код TOTP или код восстановления
+	// (POST /api/auth/second-factor/verify)
+	SecondFactorVerify(w http.ResponseWriter, r *http.Request)
 	// GetInvitation Приглашение в клуб по ссылке
 	// (GET /api/invitations/{token})
 	GetInvitation(w http.ResponseWriter, r *http.Request, token InvitationToken)
@@ -272,6 +325,18 @@ func (_ Unimplemented) RefreshSession(w http.ResponseWriter, r *http.Request, pa
 // Register Регистрация владельца с новым клубом
 // (POST /api/auth/register)
 func (_ Unimplemented) Register(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SecondFactorSetup Ключ TOTP для принудительной настройки второго фактора суперадмина
+// (POST /api/auth/second-factor/setup)
+func (_ Unimplemented) SecondFactorSetup(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SecondFactorVerify Второй фактор суперадмина — код TOTP или код восстановления
+// (POST /api/auth/second-factor/verify)
+func (_ Unimplemented) SecondFactorVerify(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -461,6 +526,34 @@ func (siw *ServerInterfaceWrapper) Register(w http.ResponseWriter, r *http.Reque
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.Register(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SecondFactorSetup operation middleware
+func (siw *ServerInterfaceWrapper) SecondFactorSetup(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SecondFactorSetup(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SecondFactorVerify operation middleware
+func (siw *ServerInterfaceWrapper) SecondFactorVerify(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SecondFactorVerify(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -693,6 +786,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/api/auth/login", wrapper.Login)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/auth/second-factor/setup", wrapper.SecondFactorSetup)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/auth/second-factor/verify", wrapper.SecondFactorVerify)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/auth/refresh", wrapper.RefreshSession)
 	})
 	r.Group(func(r chi.Router) {
@@ -817,6 +916,20 @@ func (response Login200JSONResponse) VisitLoginResponse(w http.ResponseWriter) e
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Login202JSONResponse SecondFactorChallenge
+
+func (response Login202JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -1099,6 +1212,159 @@ type Register429JSONResponse struct {
 }
 
 func (response Register429JSONResponse) VisitRegisterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SecondFactorSetupRequestObject struct {
+	Body *SecondFactorSetupJSONRequestBody
+}
+
+type SecondFactorSetupResponseObject interface {
+	VisitSecondFactorSetupResponse(w http.ResponseWriter) error
+}
+
+type SecondFactorSetup200JSONResponse TotpSetup
+
+func (response SecondFactorSetup200JSONResponse) VisitSecondFactorSetupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SecondFactorSetup403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SecondFactorSetup403JSONResponse) VisitSecondFactorSetupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SecondFactorSetup409JSONResponse externalRef0.Error
+
+func (response SecondFactorSetup409JSONResponse) VisitSecondFactorSetupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SecondFactorSetup410JSONResponse externalRef0.Error
+
+func (response SecondFactorSetup410JSONResponse) VisitSecondFactorSetupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SecondFactorVerifyRequestObject struct {
+	Body *SecondFactorVerifyJSONRequestBody
+}
+
+type SecondFactorVerifyResponseObject interface {
+	VisitSecondFactorVerifyResponse(w http.ResponseWriter) error
+}
+
+type SecondFactorVerify200JSONResponse SecondFactorSession
+
+func (response SecondFactorVerify200JSONResponse) VisitSecondFactorVerifyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SecondFactorVerify403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SecondFactorVerify403JSONResponse) VisitSecondFactorVerifyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SecondFactorVerify410JSONResponse externalRef0.Error
+
+func (response SecondFactorVerify410JSONResponse) VisitSecondFactorVerifyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SecondFactorVerify422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SecondFactorVerify422JSONResponse) VisitSecondFactorVerifyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SecondFactorVerify429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response SecondFactorVerify429JSONResponse) VisitSecondFactorVerifyResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -1482,6 +1748,12 @@ type StrictServerInterface interface {
 	// Register Регистрация владельца с новым клубом
 	// (POST /api/auth/register)
 	Register(ctx context.Context, request RegisterRequestObject) (RegisterResponseObject, error)
+	// SecondFactorSetup Ключ TOTP для принудительной настройки второго фактора суперадмина
+	// (POST /api/auth/second-factor/setup)
+	SecondFactorSetup(ctx context.Context, request SecondFactorSetupRequestObject) (SecondFactorSetupResponseObject, error)
+	// SecondFactorVerify Второй фактор суперадмина — код TOTP или код восстановления
+	// (POST /api/auth/second-factor/verify)
+	SecondFactorVerify(ctx context.Context, request SecondFactorVerifyRequestObject) (SecondFactorVerifyResponseObject, error)
 	// GetInvitation Приглашение в клуб по ссылке
 	// (GET /api/invitations/{token})
 	GetInvitation(ctx context.Context, request GetInvitationRequestObject) (GetInvitationResponseObject, error)
@@ -1724,6 +1996,68 @@ func (sh *strictHandler) Register(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RegisterResponseObject); ok {
 		if err := validResponse.VisitRegisterResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SecondFactorSetup operation middleware
+func (sh *strictHandler) SecondFactorSetup(w http.ResponseWriter, r *http.Request) {
+	var request SecondFactorSetupRequestObject
+
+	var body SecondFactorSetupJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SecondFactorSetup(ctx, request.(SecondFactorSetupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SecondFactorSetup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SecondFactorSetupResponseObject); ok {
+		if err := validResponse.VisitSecondFactorSetupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SecondFactorVerify operation middleware
+func (sh *strictHandler) SecondFactorVerify(w http.ResponseWriter, r *http.Request) {
+	var request SecondFactorVerifyRequestObject
+
+	var body SecondFactorVerifyJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SecondFactorVerify(ctx, request.(SecondFactorVerifyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SecondFactorVerify")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SecondFactorVerifyResponseObject); ok {
+		if err := validResponse.VisitSecondFactorVerifyResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -44,6 +44,12 @@ task visual:stop                          # остановить серверы 
 - **Пароль** всех пользователей — `login.password` (`zafiro-demo-2026`); в базах — один и тот же bcrypt-хэш
   `login.password_bcrypt`. Новый сервер принимает старый bcrypt и перехеширует его при первом входе.
 - **Роли** для входа — `login.roles` (`superadmin`, `owner`, `admin`, `cashier`, `operator` → id пользователя).
+- **Второй фактор суперадмина** (Этап 7, только новый): у демо-суперадмина TOTP уже включён ключом
+  `login.totp_secret` (`visual-seed` шифрует его ключом данных `VISUAL_DATA_KEY` из `secrets.env`, сервер получает
+  тот же ключ в `ZAFIRO_SECURITY_DATA_KEYS`); вход снимка вводит код (`web/e2e/visual/support.ts` `totpNow`, по
+  настоящим часам). Снимки входят чаще раза в 30 с, поэтому стенд разрешает повтор кода (`dev.totp_allow_replay`,
+  только dev/test) и выключает лимит `superadmin-totp`, как `web-login`. Журнал платформы получает те же строки,
+  что старый (`superadmin.login`).
 
 ### Одинаковое время
 

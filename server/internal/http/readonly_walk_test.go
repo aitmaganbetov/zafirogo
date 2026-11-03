@@ -60,12 +60,17 @@ func TestReadOnlyCannotWriteAnywhere(t *testing.T) {
 		"POST /api/reset-password":             true,
 		"POST /api/pc-login/{code}":            true,
 		"POST /api/invitations/{token}/accept": true,
+		// Второй фактор входа суперадмина (Этап 7): шаг входа, не клуб.
+		"POST /api/auth/second-factor/setup":  true,
+		"POST /api/auth/second-factor/verify": true,
 	}
 	for _, mr := range writeRoutes(t, router) {
 		method, route := mr[0], mr[1]
 		key := method + " " + route
 		path := walkParam.ReplaceAllString(route, "1")
-		if strings.HasPrefix(path, "/api/v1") || strings.HasPrefix(path, "/api/superadmin/") || !strings.HasPrefix(path, "/api/") {
+		// Сброс второго фактора суперадмина (Этап 7) — кабинет, но в режиме просмотра запрещён.
+		resetSecondFactor := strings.HasPrefix(path, "/api/superadmin/accounts/") && strings.HasSuffix(path, "/second-factor")
+		if !resetSecondFactor && (strings.HasPrefix(path, "/api/v1") || strings.HasPrefix(path, "/api/superadmin/") || !strings.HasPrefix(path, "/api/")) {
 			// /api/v1 — API-ключ, не сессия; кабинет суперадмина — RequireSuperadmin (не клуб).
 			continue
 		}

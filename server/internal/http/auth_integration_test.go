@@ -59,6 +59,7 @@ func newAuthEnv(t *testing.T, enable ...string) *authEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	svc.SetSecondFactor(testSecondFactor(t, d.Platform, vk, lim))
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(NewRouter(Options{Logger: logger, Auth: svc, Limiter: lim}))
 	t.Cleanup(srv.Close)
@@ -151,6 +152,9 @@ func cookie(r resp, name string) *http.Cookie {
 func (e *authEnv) login(phone string) (access string, r resp) {
 	e.t.Helper()
 	r = do(e.t, "POST", e.srv.URL+"/api/auth/login", map[string]any{"phone": phone, "password": "pw"}, nil)
+	if r.status == http.StatusAccepted { // суперадмин: второй фактор (Этап 7)
+		r = passSecondFactor(e.t, e.srv.URL, phone, r)
+	}
 	if r.status != http.StatusOK {
 		e.t.Fatalf("login %s: %d %v", phone, r.status, r.body)
 	}

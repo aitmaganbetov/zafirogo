@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/mfa"
 	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 	"github.com/aitmaganbetov/zafirogo/server/internal/webhook"
@@ -26,7 +27,8 @@ const reencryptBatch = 200
 
 // ReencryptSecrets — перешифровка секретов в базе текущим ключом данных (security.data_keys, Q-050):
 //   - webhook_endpoints.secret: открытый текст (строки до миграции 0025), формат v1 и v2 со старым kid;
-//   - platform_settings.value.token (токены Telegram): v1 (superadmin.secret_key Этапа 3) и v2 со старым kid.
+//   - platform_settings.value.token (токены Telegram): v1 (superadmin.secret_key Этапа 3) и v2 со старым kid;
+//   - superadmin_totp.secret (ключи TOTP суперадминов, Этап 7): v2 со старым kid.
 //
 // Ключа в SQL нет, поэтому это воркер, а не миграция. Один исполнитель — leader.RunOnce (Q-086); запись
 // условная (значение не изменилось), поэтому повтор и параллельная ротация секрета пользователем безопасны.
@@ -44,8 +46,8 @@ type ReencryptSecrets struct {
 
 // ReencryptResult — итог тика.
 type ReencryptResult struct {
-	Webhooks, Settings int // перешифровано
-	Failed             int // не расшифровано ни одним ключом
+	Webhooks, Settings, Totp int // перешифровано
+	Failed                   int // не расшифровано ни одним ключом
 }
 
 // Run выполняет тики до отмены ctx; первый — сразу.
@@ -79,11 +81,14 @@ func (w *ReencryptSecrets) Tick(ctx context.Context) (ran bool, res ReencryptRes
 		if err := w.webhooks(ctx, q, &res); err != nil {
 			return err
 		}
-		return w.settings(ctx, q, &res)
+		if err := w.settings(ctx, q, &res); err != nil {
+			return err
+		}
+		return w.totp(ctx, q, &res)
 	})
-	if res.Webhooks+res.Settings > 0 || res.Failed > 0 {
+	if res.Webhooks+res.Settings+res.Totp > 0 || res.Failed > 0 {
 		w.log().Info("secrets re-encrypted", "job", ReencryptSecretsJob, "key_id", w.Box.ActiveKeyID(),
-			"webhooks", res.Webhooks, "settings", res.Settings, "failed", res.Failed)
+			"webhooks", res.Webhooks, "settings", res.Settings, "totp", res.Totp, "failed", res.Failed)
 	}
 	return ran, res, err
 }
@@ -150,6 +155,39 @@ func (w *ReencryptSecrets) settings(ctx context.Context, q *store.Queries, res *
 		res.Settings += int(n)
 	}
 	return nil
+}
+
+// totp — ключи TOTP суперадминов (контекст привязан к пользователю, открытого текста не бывает).
+func (w *ReencryptSecrets) totp(ctx context.Context, q *store.Queries, res *ReencryptResult) error {
+	var after int64
+	for {
+		rows, err := q.SuperadminTotpToReseal(ctx, store.SuperadminTotpToResealParams{
+			AfterID: after, CurrentPrefix: w.Box.CurrentPrefix(), Batch: reencryptBatch,
+		})
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			after = r.UserID
+			out, changed, err := w.Box.Reseal(r.Secret, mfa.SecretContext(r.UserID), false)
+			if err != nil {
+				res.Failed++
+				w.log().Error("superadmin totp secret cannot be decrypted with any data key", "user_id", r.UserID)
+				continue
+			}
+			if !changed {
+				continue
+			}
+			n, err := q.SuperadminTotpReseal(ctx, store.SuperadminTotpResealParams{NewSecret: out, UserID: r.UserID, OldSecret: r.Secret})
+			if err != nil {
+				return err
+			}
+			res.Totp += int(n)
+		}
+		if len(rows) < reencryptBatch {
+			return nil
+		}
+	}
 }
 
 func (w *ReencryptSecrets) log() *slog.Logger {

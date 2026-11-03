@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/mfa"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/password"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
@@ -72,6 +73,9 @@ var (
 	ErrReadOnly = errors.New("auth: read-only club view")
 	// ErrForbidden — нет прав.
 	ErrForbidden = errors.New("auth: forbidden")
+	// ErrSecondFactorUnavailable — второй фактор суперадмина не подключён (нет Options.SecondFactor): вход
+	// суперадмина закрыт, а не пропускается без кода.
+	ErrSecondFactorUnavailable = errors.New("auth: superadmin second factor is not configured")
 )
 
 // Events — события для журналов (ActivityLogger, PlatformLogger). Реализует пакет журналов (волна A, A4);
@@ -118,6 +122,8 @@ type Options struct {
 	Logger   *slog.Logger
 	// Now — часы (тесты); по умолчанию time.Now. Должны совпадать с часами session.Manager.
 	Now func() time.Time
+	// SecondFactor — TOTP суперадмина (Этап 7). Без него суперадмин войти не может (ErrSecondFactorUnavailable).
+	SecondFactor *mfa.Manager
 }
 
 // Service — вход, текущий пользователь, выбор клуба, режим просмотра суперадмина.
@@ -128,6 +134,7 @@ type Service struct {
 	events   Events
 	log      *slog.Logger
 	now      func() time.Time
+	mfa      *mfa.Manager
 }
 
 // NewService создаёт Service.
@@ -144,8 +151,13 @@ func NewService(o Options) (*Service, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	return &Service{pool: o.Pool, hasher: o.Hasher, sessions: o.Sessions, events: o.Events, log: o.Logger, now: o.Now}, nil
+	return &Service{pool: o.Pool, hasher: o.Hasher, sessions: o.Sessions, events: o.Events, log: o.Logger, now: o.Now,
+		mfa: o.SecondFactor}, nil
 }
+
+// SetSecondFactor подключает второй фактор суперадмина (сборка приложения: связка ключей данных создаётся позже
+// сервиса входа). Вызывать до приёма запросов.
+func (s *Service) SetSecondFactor(m *mfa.Manager) { s.mfa = m }
 
 // Sessions — менеджер сессий (для HTTP-слоя: cookie, CSRF).
 func (s *Service) Sessions() *session.Manager { return s.sessions }
@@ -191,6 +203,8 @@ type LoginResult struct {
 	UserID    int64
 	ClubID    int64
 	Principal principal.Principal
+	// Challenge — пароль верен, но нужен второй фактор (суперадмин): сессии ещё нет, Tokens пусты.
+	Challenge *mfa.Challenge
 }
 
 // Login — вход в панель по телефону и паролю. Laravel: AuthController::login().
@@ -244,7 +258,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginResult, error)
 		if !user.IsSuperadmin {
 			return fail(ReasonNotSuperadmin, MsgSuperadminOnly)
 		}
-		return s.startSession(ctx, user.ID, 0, user.Name, in.Remember, true)
+		return s.beginSecondFactor(ctx, mfa.Pending{UserID: user.ID, Remember: in.Remember, Name: user.Name, Phone: user.Phone})
 	}
 
 	// A staff membership first: a cashier who is also a customer of another club works.
@@ -279,12 +293,76 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginResult, error)
 		clubID = m.ClubID
 	}
 
-	return s.startSession(ctx, user.ID, clubID, user.Name, in.Remember, user.IsSuperadmin)
+	if user.IsSuperadmin {
+		return s.beginSecondFactor(ctx, mfa.Pending{UserID: user.ID, ClubID: clubID, Remember: in.Remember, Name: user.Name, Phone: user.Phone})
+	}
+	return s.startSession(ctx, user.ID, clubID, user.Name, in.Remember, false)
 }
 
-// startSession — сессия после проверки пароля и событие входа (clubID 0 — кабинет суперадмина).
+// beginSecondFactor — пароль суперадмина верен: полувход вместо сессии (Этап 7, mfa).
+func (s *Service) beginSecondFactor(ctx context.Context, p mfa.Pending) (LoginResult, error) {
+	if s.mfa == nil {
+		return LoginResult{}, ErrSecondFactorUnavailable
+	}
+	ch, err := s.mfa.Begin(ctx, p)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	return LoginResult{UserID: p.UserID, ClubID: p.ClubID, Challenge: &ch}, nil
+}
+
+// SecondFactorSetup — ключ TOTP для принудительной настройки по полувходу (ошибки — mfa.ErrChallenge,
+// mfa.ErrConfigured).
+func (s *Service) SecondFactorSetup(ctx context.Context, challenge string) (mfa.Setup, error) {
+	if s.mfa == nil {
+		return mfa.Setup{}, ErrSecondFactorUnavailable
+	}
+	return s.mfa.Setup(ctx, challenge)
+}
+
+// SecondFactorResult — вход после второго фактора.
+type SecondFactorResult struct {
+	LoginResult
+	// RecoveryCodes — коды восстановления при включении TOTP (показать один раз).
+	RecoveryCodes []string
+}
+
+// CompleteSecondFactor — код TOTP или код восстановления по полувходу; верный — сессия (как после пароля).
+// Ошибки: mfa.ErrChallenge (войти заново), mfa.ErrInvalidCode, *mfa.LimitError.
+func (s *Service) CompleteSecondFactor(ctx context.Context, challenge, code string) (SecondFactorResult, error) {
+	if s.mfa == nil {
+		return SecondFactorResult{}, ErrSecondFactorUnavailable
+	}
+	r, err := s.mfa.Verify(ctx, challenge, code)
+	if err != nil {
+		return SecondFactorResult{}, err
+	}
+	// За минуты полувхода аккаунт могли заблокировать или снять права суперадмина: тогда — вход заново.
+	user, err := store.New(s.pool).GetUserAuth(ctx, r.UserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SecondFactorResult{}, mfa.ErrChallenge
+	}
+	if err != nil {
+		return SecondFactorResult{}, fmt.Errorf("auth: user: %w", err)
+	}
+	if user.BlockedAt != nil || !user.IsSuperadmin {
+		return SecondFactorResult{}, mfa.ErrChallenge
+	}
+	lr, err := s.startSession(ctx, r.UserID, r.ClubID, user.Name, r.Remember, true)
+	if err != nil {
+		return SecondFactorResult{}, err
+	}
+	return SecondFactorResult{LoginResult: lr, RecoveryCodes: r.RecoveryCodes}, nil
+}
+
+// startSession — сессия после проверки пароля (и второго фактора суперадмина) и событие входа (clubID 0 — кабинет
+// суперадмина).
 func (s *Service) startSession(ctx context.Context, userID, clubID int64, name string, remember, superadmin bool) (LoginResult, error) {
-	tokens, err := s.sessions.Create(ctx, userID, clubID, remember)
+	create := s.sessions.Create
+	if superadmin {
+		create = s.sessions.CreateSecondFactor // сюда суперадмин попадает только из CompleteSecondFactor
+	}
+	tokens, err := create(ctx, userID, clubID, remember)
 	if err != nil {
 		return LoginResult{}, err
 	}
@@ -375,6 +453,14 @@ func (s *Service) Authenticate(ctx context.Context, accessToken string) (princip
 			s.log.WarnContext(ctx, "revoke blocked user sessions", slog.String("err", err.Error()))
 		}
 		return principal.Principal{}, ErrBlocked
+	}
+	// Суперадмин — только с сессией после второго фактора (Этап 7): сессии до включения TOTP и сессия
+	// пользователя, которому только что выдали права суперадмина, требуют нового входа с кодом.
+	if user.IsSuperadmin && !sess.SecondFactor {
+		if err := s.sessions.Revoke(ctx, sess.ID); err != nil {
+			s.log.WarnContext(ctx, "revoke superadmin session without second factor", slog.String("err", err.Error()))
+		}
+		return principal.Principal{}, ErrUnauthenticated
 	}
 	return s.principalFor(ctx, sess, user.IsSuperadmin)
 }

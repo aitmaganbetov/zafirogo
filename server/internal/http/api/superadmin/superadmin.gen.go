@@ -178,7 +178,10 @@ type Account struct {
 	Memberships  []AccountMembership `json:"memberships"`
 	Name         string              `json:"name"`
 	Phone        string              `json:"phone"`
-	Self         bool                `json:"self"`
+
+	// SecondFactor Второй фактор (TOTP) включён (Этап 7).
+	SecondFactor bool `json:"second_factor"`
+	Self         bool `json:"self"`
 }
 
 // AccountList defines model for AccountList.
@@ -783,6 +786,9 @@ type ServerInterface interface {
 	// SaBlockAccount Заблокировать
 	// (POST /api/superadmin/accounts/{userId}/block)
 	SaBlockAccount(w http.ResponseWriter, r *http.Request, userId UserId)
+	// SaResetSecondFactor Сбросить второй фактор суперадмина
+	// (DELETE /api/superadmin/accounts/{userId}/second-factor)
+	SaResetSecondFactor(w http.ResponseWriter, r *http.Request, userId UserId)
 	// SaRevokeSuperadmin Снять права суперадмина
 	// (DELETE /api/superadmin/accounts/{userId}/superadmin)
 	SaRevokeSuperadmin(w http.ResponseWriter, r *http.Request, userId UserId)
@@ -897,6 +903,12 @@ func (_ Unimplemented) SaListAccounts(w http.ResponseWriter, r *http.Request, pa
 // SaBlockAccount Заблокировать
 // (POST /api/superadmin/accounts/{userId}/block)
 func (_ Unimplemented) SaBlockAccount(w http.ResponseWriter, r *http.Request, userId UserId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaResetSecondFactor Сбросить второй фактор суперадмина
+// (DELETE /api/superadmin/accounts/{userId}/second-factor)
+func (_ Unimplemented) SaResetSecondFactor(w http.ResponseWriter, r *http.Request, userId UserId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1183,6 +1195,32 @@ func (siw *ServerInterfaceWrapper) SaBlockAccount(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SaBlockAccount(w, r, userId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaResetSecondFactor operation middleware
+func (siw *ServerInterfaceWrapper) SaResetSecondFactor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "userId" -------------
+	var userId UserId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "userId", chi.URLParam(r, "userId"), &userId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "userId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaResetSecondFactor(w, r, userId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2245,6 +2283,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/api/superadmin/accounts/{userId}/superadmin", wrapper.SaGrantSuperadmin)
 	})
 	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/superadmin/accounts/{userId}/second-factor", wrapper.SaResetSecondFactor)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/superadmin/plans", wrapper.SaListPlans)
 	})
 	r.Group(func(r chi.Router) {
@@ -2459,6 +2500,92 @@ type SaBlockAccount422JSONResponse struct {
 }
 
 func (response SaBlockAccount422JSONResponse) VisitSaBlockAccountResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaResetSecondFactorRequestObject struct {
+	UserId UserId `json:"userId"`
+}
+
+type SaResetSecondFactorResponseObject interface {
+	VisitSaResetSecondFactorResponse(w http.ResponseWriter) error
+}
+
+type SaResetSecondFactor200JSONResponse Message
+
+func (response SaResetSecondFactor200JSONResponse) VisitSaResetSecondFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaResetSecondFactor401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaResetSecondFactor401JSONResponse) VisitSaResetSecondFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaResetSecondFactor403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaResetSecondFactor403JSONResponse) VisitSaResetSecondFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaResetSecondFactor404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response SaResetSecondFactor404JSONResponse) VisitSaResetSecondFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaResetSecondFactor422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SaResetSecondFactor422JSONResponse) VisitSaResetSecondFactorResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -4873,6 +5000,9 @@ type StrictServerInterface interface {
 	// SaBlockAccount Заблокировать
 	// (POST /api/superadmin/accounts/{userId}/block)
 	SaBlockAccount(ctx context.Context, request SaBlockAccountRequestObject) (SaBlockAccountResponseObject, error)
+	// SaResetSecondFactor Сбросить второй фактор суперадмина
+	// (DELETE /api/superadmin/accounts/{userId}/second-factor)
+	SaResetSecondFactor(ctx context.Context, request SaResetSecondFactorRequestObject) (SaResetSecondFactorResponseObject, error)
 	// SaRevokeSuperadmin Снять права суперадмина
 	// (DELETE /api/superadmin/accounts/{userId}/superadmin)
 	SaRevokeSuperadmin(ctx context.Context, request SaRevokeSuperadminRequestObject) (SaRevokeSuperadminResponseObject, error)
@@ -5058,6 +5188,32 @@ func (sh *strictHandler) SaBlockAccount(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(SaBlockAccountResponseObject); ok {
 		if err := validResponse.VisitSaBlockAccountResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaResetSecondFactor operation middleware
+func (sh *strictHandler) SaResetSecondFactor(w http.ResponseWriter, r *http.Request, userId UserId) {
+	var request SaResetSecondFactorRequestObject
+
+	request.UserId = userId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaResetSecondFactor(ctx, request.(SaResetSecondFactorRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaResetSecondFactor")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaResetSecondFactorResponseObject); ok {
+		if err := validResponse.VisitSaResetSecondFactorResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

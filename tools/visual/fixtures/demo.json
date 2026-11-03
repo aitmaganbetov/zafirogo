@@ -4,6 +4,7 @@
   "login": {
     "password": "zafiro-demo-2026",
     "password_bcrypt": "$2y$12$kcsi9e6mjtXK5IJ/J9FThusgS6dx185nlo1hBjj48QOnOJKDT2UUm",
+    "totp_secret": "ZAFIRODEMOVISUALSTANDTOTPKEY2345",
     "roles": {
       "superadmin": 1,
       "owner": 2,

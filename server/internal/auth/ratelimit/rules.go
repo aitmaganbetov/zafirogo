@@ -88,6 +88,14 @@ func perMinutes(minutes, n int, key func(Subject) string) Limit {
 func byIP(s Subject) string { return s.IP }
 func byPC(s Subject) string { return s.pc() }
 
+// byUser — пользователь (без пользователя лимит не применяется).
+func byUser(s Subject) string {
+	if s.UserID > 0 {
+		return "user:" + strconv.FormatInt(s.UserID, 10)
+	}
+	return ""
+}
+
 // Throttle — правило throttle:N,M,<префикс>: N запросов за M минут, ключ — пользователь или IP.
 func Throttle(name string, n, minutes int) Rule {
 	return Rule{Name: name, Limits: []Limit{perMinutes(minutes, n, Subject.userOrIP)}}
@@ -116,6 +124,12 @@ const (
 	// выключить можно только явно (ratelimit.disable).
 	WebLogin    = "web-login"
 	WebRegister = "web-register"
+
+	// SuperadminTOTP — ввод второго фактора суперадмина (Этап 7, новая функция; docs/open-questions/stage7-totp.md):
+	// как web-login — 5/мин на аккаунт (вместо телефона — пользователь полувхода) и 300/мин на IP, плюс 30/ч на
+	// аккаунт (перебор 6 цифр растягивается на годы). Считает сервис второго фактора (пользователь известен только
+	// из полувхода в теле запроса), не HTTP-middleware.
+	SuperadminTOTP = "superadmin-totp"
 )
 
 // DefaultRules — все лимиты старого проекта.
@@ -160,6 +174,7 @@ func DefaultRules() []Rule {
 		// Решение Q-052 (docs/DECISIONS.md): включены по умолчанию.
 		{Name: WebLogin, Limits: phoneAndIP(5, 300)},
 		{Name: WebRegister, Limits: phoneAndIP(5, 300)},
+		{Name: SuperadminTOTP, Limits: []Limit{perMinute(5, byUser), perMinutes(60, 30, byUser), perMinute(300, byIP)}},
 	}
 	// throttle:N,M,<префикс> — routes/web.php и routes/api.php, routes/api_staff.php.
 	for _, t := range throttles {

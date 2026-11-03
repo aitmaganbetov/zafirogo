@@ -19,6 +19,14 @@ export type Me = components['schemas']['Me'];
 export type AuthSession = components['schemas']['AuthSession'];
 export type LoginRequest = components['schemas']['LoginRequest'];
 export type RegisterRequest = components['schemas']['RegisterRequest'];
+export type SecondFactorChallenge = components['schemas']['SecondFactorChallenge'];
+export type TotpSetup = components['schemas']['TotpSetup'];
+export type SecondFactorSession = components['schemas']['SecondFactorSession'];
+
+/** Итог пароля: сессия или (суперадмин, Этап 7) полувход — нужен второй фактор. */
+export type LoginOutcome =
+  | { readonly kind: 'session'; readonly me: Me }
+  | { readonly kind: 'second_factor'; readonly challenge: SecondFactorChallenge };
 
 export const authApi = createApiClient<paths>();
 
@@ -91,10 +99,25 @@ export class SessionStore {
     this.set({ status: 'anonymous', me: null });
   }
 
-  async login(body: LoginRequest): Promise<Me> {
+  async login(body: LoginRequest): Promise<LoginOutcome> {
     const s = await unwrap(authApi.POST('/api/auth/login', { body }));
+    // 202: пароль суперадмина верен, сессии ещё нет — второй фактор (POST /api/auth/second-factor/*).
+    if ('challenge' in s) return { kind: 'second_factor', challenge: s };
     this.accept(s);
-    return s.me;
+    return { kind: 'session', me: s.me };
+  }
+
+  /** Ключ TOTP для принудительной настройки (только при setup_required). */
+  secondFactorSetup(challenge: string): Promise<TotpSetup> {
+    return unwrap(authApi.POST('/api/auth/second-factor/setup', { body: { challenge } }));
+  }
+
+  /**
+   * Код TOTP или код восстановления. Сервер уже выдал сессию (cookie); в SPA она принимается через accept() —
+   * после показа кодов восстановления, если они есть.
+   */
+  secondFactorVerify(challenge: string, code: string): Promise<SecondFactorSession> {
+    return unwrap(authApi.POST('/api/auth/second-factor/verify', { body: { challenge, code } }));
   }
 
   async register(body: RegisterRequest): Promise<Me> {

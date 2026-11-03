@@ -150,6 +150,11 @@ func (h *handlers) Login(ctx context.Context, req authapi.LoginRequestObject) (a
 	if err != nil {
 		return nil, err
 	}
+	if res.Challenge != nil {
+		// Суперадмин: второй фактор (Этап 7) — сессии и cookie до кода нет.
+		noStore(w)
+		return loginChallenge(res.Challenge), nil
+	}
 	body, err := h.authSession(ctx, res.Tokens, res.Principal)
 	if err != nil {
 		return nil, err

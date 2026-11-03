@@ -39,6 +39,10 @@ if [ ! -f "$WORK/secrets.env" ]; then
     echo "VISUAL_SIGNING_KEY=visual:$(openssl rand -hex 32)"
   } > "$WORK/secrets.env"
 fi
+# Ключ данных (Этап 7): им visual-seed шифрует ключ TOTP демо-суперадмина, сервер — читает (дописывается в старый файл).
+if ! grep -q '^VISUAL_DATA_KEY=' "$WORK/secrets.env"; then
+  (umask 077; echo "VISUAL_DATA_KEY=visual:$(openssl rand -hex 32)" >> "$WORK/secrets.env")
+fi
 set -a; . "$WORK/secrets.env"; set +a
 
 OWNER_DSN="postgres://zafiro:$VISUAL_PG_PASSWORD@127.0.0.1:$VISUAL_PG_PORT/zafiro_visual?sslmode=disable"
@@ -65,7 +69,7 @@ seed() {
   GOOSE_DRIVER=postgres GOOSE_DBSTRING="$OWNER_DSN" "$(goose_bin)" -dir "$REPO/db/migrations" up >/dev/null 2>&1
   # Присутствие агентов (карта клуба, список ПК, дашборд): ПК «в сети» — в Valkey, как у подключённого агента.
   (cd "$REPO/server" && VISUAL_VALKEY_ADDR="127.0.0.1:$VISUAL_VALKEY_PORT" VISUAL_VALKEY_PASSWORD="$VISUAL_VALKEY_PASSWORD" \
-    go run ./cmd/visual-seed -fixture "$FIXTURE" -db "$OWNER_DSN") >&2
+    VISUAL_DATA_KEY="$VISUAL_DATA_KEY" go run ./cmd/visual-seed -fixture "$FIXTURE" -db "$OWNER_DSN") >&2
   # Переводы интерфейса (формы trans_choice — «7 операций сегодня» — берутся только из каталога), как в старом.
   (cd "$REPO/server" && go run ./cmd/import-translations -dir "${ZAFIRO_SRC:-$REPO/../Zafiro}/database/translations" -dsn "$OWNER_DSN") >/dev/null
   log "демо-данные загружены"
@@ -91,7 +95,9 @@ start() {
   if [ "$BUILD" = 1 ] || [ ! -x "$BIN" ]; then build; fi
   local now; now="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["now"])' "$FIXTURE")"
   # Сервер: dev, фиксированное «сейчас», сверка присутствия ПК раз в сутки (статусы ПК из демо-данных не сбрасываются),
-  # без лимита входа в панель (каждый снимок входит заново), без задач мониторинга (снимок машины, метрики запросов,
+  # без лимита входа в панель и второго фактора (каждый снимок входит заново; демо-суперадмин вводит код TOTP из
+  # login.totp_secret, повтор кода в пределах 30 с разрешён только здесь — dev.totp_allow_replay), ключ данных — тот,
+  # которым visual-seed зашифровал ключ TOTP, без задач мониторинга (снимок машины, метрики запросов,
   # загрузка клубов): у старого в стенде нет планировщика — «Сервер» и карточка клуба в обоих показывают «планировщик
   # ещё не запускался» и пустые графики, а не трафик самого прогона снимков.
   env -i PATH="$PATH" HOME="$HOME" \
@@ -101,7 +107,8 @@ start() {
     ZAFIRO_NATS_URL="nats://127.0.0.1:$VISUAL_NATS_PORT" \
     ZAFIRO_AUTH_SIGNING_KEYS="$VISUAL_SIGNING_KEY" \
     ZAFIRO_AGENT_GRPC_LISTEN="127.0.0.1:0" ZAFIRO_AGENT_PKI_DEV_DIR="$WORK/pki" \
-    ZAFIRO_AGENT_SWEEPER_RECONCILE_EVERY=24h ZAFIRO_RATELIMIT_DISABLE=web-login \
+    ZAFIRO_AGENT_SWEEPER_RECONCILE_EVERY=24h ZAFIRO_RATELIMIT_DISABLE=web-login,superadmin-totp \
+    ZAFIRO_SECURITY_DATA_KEYS="$VISUAL_DATA_KEY" ZAFIRO_DEV_TOTP_ALLOW_REPLAY=true \
     ZAFIRO_DEV_DISABLE_WORKERS=monitoring-collect,monitoring-flush,monitoring-clubs \
     ZAFIRO_DEV_FIXED_NOW="$now" ZAFIRO_LOG_LEVEL=warn ZAFIRO_LOG_FORMAT=text \
     ZAFIRO_SUPERADMIN_DOMAIN="${VISUAL_SUPERADMIN_HOST:-admin.localhost}" \

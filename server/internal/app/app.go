@@ -37,6 +37,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/stream"
 	"github.com/aitmaganbetov/zafirogo/server/internal/apikey"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/mfa"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/password"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/ratelimit"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/session"
@@ -519,6 +520,16 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		return err
 	}
 	tg.store.Box = box
+	// Второй фактор суперадмина (Этап 7): ключи TOTP шифруются той же связкой; без него вход суперадмина закрыт.
+	secondFactor, err := mfa.New(mfa.Options{Platform: a.PlatformPool, Valkey: a.Valkey, Box: box, Limiter: a.Limiter,
+		AllowReplay: cfg.Dev.TOTPAllowReplay, Logger: log})
+	if err != nil {
+		return fmt.Errorf("superadmin second factor: %w", err)
+	}
+	if cfg.Dev.TOTPAllowReplay {
+		log.Warn("dev.totp_allow_replay: superadmin TOTP codes may be reused within their window (dev only)")
+	}
+	a.Auth.SetSecondFactor(secondFactor)
 	deliverer, err := webhook.NewDeliverer(webhook.DelivererOptions{
 		Secrets:  box,
 		Platform: a.PlatformPool, App: a.AppPool,

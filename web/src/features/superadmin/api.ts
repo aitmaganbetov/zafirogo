@@ -145,7 +145,7 @@ export const accountsQuery = (s: AccountsSearch) =>
     queryFn: () => unwrap(saApi.GET('/api/superadmin/accounts', { params: { query: { search: s.search, filter: s.filter, page: s.page } } })),
   });
 
-export type AccountAction = 'block' | 'unblock' | 'grant' | 'revoke';
+export type AccountAction = 'block' | 'unblock' | 'grant' | 'revoke' | 'reset-second-factor';
 
 export function accountAction(userId: number, action: AccountAction) {
   const path = { params: { path: { userId } } };
@@ -158,6 +158,8 @@ export function accountAction(userId: number, action: AccountAction) {
       return unwrap(saApi.POST('/api/superadmin/accounts/{userId}/superadmin', path));
     case 'revoke':
       return unwrap(saApi.DELETE('/api/superadmin/accounts/{userId}/superadmin', path));
+    case 'reset-second-factor': // Этап 7: сброс TOTP другого суперадмина
+      return unwrap(saApi.DELETE('/api/superadmin/accounts/{userId}/second-factor', path));
   }
 }
 

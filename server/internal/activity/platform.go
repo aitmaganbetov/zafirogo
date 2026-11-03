@@ -71,6 +71,11 @@ var PlatformEventLabels = []struct{ Event, Label string }{
 	{"language.deleted", "Удаление языка"},
 	{"translations.updated", "Изменение переводов"},
 	{"translations.imported", "Импорт переводов"},
+	// Второй фактор суперадмина (Этап 7, новая функция; события пишет server/internal/auth/mfa).
+	{"superadmin.totp_enabled", "Включение двухфакторной аутентификации"},
+	{"superadmin.totp_failed", "Неверный код двухфакторной аутентификации"},
+	{"superadmin.totp_recovery_used", "Вход по коду восстановления"},
+	{"superadmin.totp_reset", "Сброс двухфакторной аутентификации"},
 }
 
 // PlatformLabel — подпись события журнала платформы (ключ перевода); ok = false — событие без подписи.

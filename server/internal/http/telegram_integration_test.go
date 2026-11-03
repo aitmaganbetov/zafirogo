@@ -47,6 +47,7 @@ func newTelegramEnv(t *testing.T) (*adminEnv, *telegramtest.Server, *[]int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	svc.SetSecondFactor(testSecondFactor(t, d.Platform, vk, lim))
 	box, _ := secretbox.New(strings.Repeat("s", 32))
 	tg := telegramtest.New(t)
 	st := &telegram.Store{Pool: d.Platform, Box: box}

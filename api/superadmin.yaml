@@ -394,6 +394,32 @@ paths:
           $ref: common.yaml#/components/responses/NotFound
         '422':
           $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/accounts/{userId}/second-factor:
+    delete:
+      operationId: saResetSecondFactor
+      tags:
+      - superadmin
+      summary: Сбросить второй фактор суперадмина
+      description: 'Этап 7 (новая функция): ключ TOTP и коды восстановления удаляются, сеансы пользователя отзываются;
+        при следующем входе — принудительная настройка. Не для своего аккаунта и не в режиме просмотра клуба (403
+        read_only). Журнал платформы superadmin.totp_reset и audit_log.'
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
   /api/superadmin/plans:
     get:
       operationId: saListPlans
@@ -1566,6 +1592,7 @@ components:
       - is_superadmin
       - blocked_since
       - self
+      - second_factor
       - memberships
       properties:
         id: *id002
@@ -1574,6 +1601,9 @@ components:
         is_superadmin: *id005
         blocked_since: *id004
         self: *id005
+        second_factor:
+          type: boolean
+          description: Второй фактор (TOTP) включён (Этап 7).
         memberships:
           type: array
           items:

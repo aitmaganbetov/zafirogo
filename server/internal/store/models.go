@@ -778,6 +778,27 @@ type StockMovement struct {
 	ClubID       int64      `json:"club_id"`
 }
 
+// Одноразовые коды восстановления суперадмина (sha256); только пул zafiro_platform
+type SuperadminRecoveryCode struct {
+	ID        int64      `json:"id"`
+	UserID    int64      `json:"user_id"`
+	CodeHash  string     `json:"code_hash"`
+	UsedAt    *time.Time `json:"used_at"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+// TOTP суперадмина (RFC 6238, SHA-1, 6 цифр, 30 с); только пул zafiro_platform
+type SuperadminTotp struct {
+	UserID int64 `json:"user_id"`
+	// Ключ TOTP, зашифрован secretbox (v2:<kid>:…, контекст superadmin_totp.secret:user=<user_id>)
+	Secret      string     `json:"secret"`
+	ConfirmedAt *time.Time `json:"confirmed_at"`
+	// Последний принятый шаг TOTP: повтор того же кода отклоняется
+	LastStep  int64     `json:"last_step"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type Tariff struct {
 	ID              int64   `json:"id"`
 	Name            string  `json:"name"`

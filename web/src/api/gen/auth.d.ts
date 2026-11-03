@@ -17,10 +17,58 @@ export interface paths {
          * Вход по телефону и паролю
          * @description Laravel: AuthController::login(). Телефон нормализуется (+7 и 10 цифр), сначала выбирается клуб,
          *     где пользователь — сотрудник. Ставит cookie refresh-токена и CSRF. Ошибки — 422 с полем формы
-         *     и текстом старого кода («Неверные учетные данные.» и т. п.). Лимит web-login выключен по умолчанию
-         *     (в старом его не было).
+         *     и текстом старого кода («Неверные учетные данные.» и т. п.). Лимит web-login включён по умолчанию
+         *     (решение Q-052; в старом его не было).
+         *
+         *     Суперадмин (Этап 7, новая функция): после верного пароля — 202 и полувход (challenge) вместо сессии;
+         *     сессия — после второго фактора (`/api/auth/second-factor/verify`), cookie здесь не ставятся.
          */
         post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/second-factor/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ключ TOTP для принудительной настройки второго фактора суперадмина
+         * @description Этап 7 (новая функция, docs/open-questions/stage7-totp.md). Только по полувходу с `setup_required: true`.
+         *     Новый ключ (base32) и ссылка otpauth:// — показываются один раз; повторный вызов заменяет ключ, пока TOTP не
+         *     включён. 409 — TOTP уже включён; 410 — полувход истёк или использован (войти заново).
+         */
+        post: operations["secondFactorSetup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/second-factor/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Второй фактор суперадмина — код TOTP или код восстановления
+         * @description Этап 7. Верный код завершает полувход (одноразово) и выдаёт сессию — как вход: cookie refresh-токена и CSRF.
+         *     При первой настройке — ещё 10 кодов восстановления (показать один раз). Тот же код TOTP второй раз не
+         *     принимается. Лимит superadmin-totp: 5/мин и 30/ч на аккаунт, 300/мин на IP; не больше 5 попыток на полувход.
+         *     422 — неверный код; 410 — полувход истёк, использован или попытки исчерпаны (войти заново).
+         */
+        post: operations["secondFactorVerify"];
         delete?: never;
         options?: never;
         head?: never;
@@ -297,6 +345,33 @@ export interface components {
              */
             pc_login: boolean;
         };
+        SecondFactorChallenge: {
+            /** @description Одноразовый токен полувхода (держать только в памяти страницы). */
+            challenge: string;
+            /** @description TOTP ещё не настроен — сначала /api/auth/second-factor/setup. */
+            setup_required: boolean;
+            /** @description Срок полувхода, секунды. */
+            expires_in: number;
+        };
+        SecondFactorSetupRequest: {
+            challenge: string;
+        };
+        SecondFactorVerifyRequest: {
+            challenge: string;
+            /** @description 6 цифр из приложения или код восстановления (xxxx-xxxx-xxxx-xxxx). */
+            code: string;
+        };
+        TotpSetup: {
+            /** @description Ключ TOTP в base32 (ввести в приложение вручную). */
+            secret: string;
+            /** @description Ссылка otpauth://totp/… (SHA1, 6 цифр, 30 с). */
+            otpauth_uri: string;
+        };
+        SecondFactorSession: {
+            session: components["schemas"]["AuthSession"];
+            /** @description Коды восстановления — только при включении TOTP (показать один раз); иначе пусто. */
+            recovery_codes: string[];
+        };
         SelectClubRequest: {
             /** Format: int64 */
             club_id: number;
@@ -458,7 +533,95 @@ export interface operations {
                     "application/json": components["schemas"]["AuthSession"];
                 };
             };
+            /** @description Пароль суперадмина верен; нужен второй фактор (сессии ещё нет). */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecondFactorChallenge"];
+                };
+            };
             403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    secondFactorSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecondFactorSetupRequest"];
+            };
+        };
+        responses: {
+            /** @description Ключ для приложения-аутентификатора. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpSetup"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description TOTP уже включён. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Полувход истёк или уже использован — войдите заново. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    secondFactorVerify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecondFactorVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Вход выполнен. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecondFactorSession"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            /** @description Полувход истёк или уже использован — войдите заново. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
         };

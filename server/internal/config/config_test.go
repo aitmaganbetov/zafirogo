@@ -314,6 +314,7 @@ func TestValidateProd(t *testing.T) {
 		"bad instance":       append(base, "ZAFIRO_AGENT_INSTANCE_ID=node.1"),
 		"fixed now in prod":  append(base, "ZAFIRO_DEV_FIXED_NOW=2026-10-15T12:00:00+05:00"),
 		"disable workers":    append(base, "ZAFIRO_DEV_DISABLE_WORKERS=monitoring-flush"),
+		"totp replay":        append(base, "ZAFIRO_DEV_TOTP_ALLOW_REPLAY=true"),
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -415,6 +416,13 @@ func TestDevFixedNow(t *testing.T) {
 	}
 	if got := cfg.Dev.DisableWorkers; len(got) != 2 || got[0] != "monitoring-flush" || got[1] != "monitoring-clubs" {
 		t.Errorf("dev.disable_workers = %v", got)
+	}
+	if cfg.Dev.TOTPAllowReplay {
+		t.Error("dev.totp_allow_replay must be off by default")
+	}
+	cfg, err = Load("", environ("ZAFIRO_DEV_TOTP_ALLOW_REPLAY=true"))
+	if err != nil || !cfg.Dev.TOTPAllowReplay {
+		t.Errorf("dev.totp_allow_replay: %v %v", err, cfg)
 	}
 }
 

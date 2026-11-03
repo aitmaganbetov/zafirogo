@@ -3,13 +3,18 @@ import { useNavigate } from '@tanstack/react-router';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pagination } from '../../components/Pagination';
+import { useSession } from '../../auth/session';
 import { useAdminPageTitle } from '../../layouts/adminSession';
 import { accountAction, accountsQuery, firstError, qs, type AccountAction, type AccountsSearch } from './api';
 import { saHref } from './host';
 import { roleLabel } from './roles';
 import { useSuperadminFlash } from './flash';
 
-/* Пользователи — перенос resources/views/superadmin/users/index.blade.php (Superadmin\UserController). */
+/*
+ * Пользователи — перенос resources/views/superadmin/users/index.blade.php (Superadmin\UserController).
+ * Этап 7 (новое): метка «2FA не настроена» у суперадмина и сброс второго фактора другого суперадмина (не в режиме
+ * просмотра клуба — сервер ответит 403 read_only).
+ */
 
 export function AccountsPage({ search }: { readonly search: AccountsSearch }) {
   const { t } = useTranslation();
@@ -18,6 +23,7 @@ export function AccountsPage({ search }: { readonly search: AccountsSearch }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data } = useQuery(accountsQuery(search));
+  const readOnly = useSession().me?.read_only === true;
   const act = useMutation({
     mutationFn: ({ id, action }: { id: number; action: AccountAction }) => accountAction(id, action),
     onSuccess: (r) => {
@@ -101,6 +107,9 @@ export function AccountsPage({ search }: { readonly search: AccountsSearch }) {
                   </td>
                   <td className="px-4 py-3 space-y-1">
                     {user.is_superadmin && <span className="inline-block rounded-full bg-violet-100 px-2 py-1 text-xs text-violet-800">{t('Суперадмин')}</span>}
+                    {user.is_superadmin && !user.second_factor && (
+                      <span className="inline-block rounded-full bg-red-100 px-2 py-1 text-xs text-red-800">{t('2FA не настроена')}</span>
+                    )}
                     {blocked && (
                       <span className="inline-block rounded-full bg-red-100 px-2 py-1 text-xs text-red-800">{t('Заблокирован с {{date}}', { date: user.blocked_since })}</span>
                     )}
@@ -122,6 +131,16 @@ export function AccountsPage({ search }: { readonly search: AccountsSearch }) {
                               </button>
                             </form>
                           )
+                        )}
+                        {user.second_factor && !readOnly && (
+                          <form
+                            method="POST"
+                            onSubmit={confirmed(user.id, 'reset-second-factor', t('Сбросить двухфакторную аутентификацию {{user}}? Он выйдет из всех сеансов и при следующем входе настроит её заново.', { user: user.name }))}
+                          >
+                            <button type="submit" className="rounded-lg border border-red-200 px-3 py-1 text-sm text-red-700">
+                              {t('Сбросить 2FA')}
+                            </button>
+                          </form>
                         )}
                         {user.is_superadmin ? (
                           <form method="POST" onSubmit={confirmed(user.id, 'revoke', t('Снять с {{user}} права суперадмина?', { user: user.name }))}>

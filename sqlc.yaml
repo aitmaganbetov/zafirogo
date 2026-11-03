@@ -51,6 +51,8 @@ rules:
   # клуба из сессии (WHERE id = club_id), экран настроек клуба (Этап 3, G5).
   # Superadmin*, Monitoring* — суперадминка и сбор метрик (Этап 3, G6): кабинет платформы по всем клубам, пул
   # zafiro_platform (db/queries/superadmin.sql, monitoring.sql); только эти разделы вызывают запросы с этими префиксами.
+  # SuperadminTotp*, SuperadminRecovery*, SuperadminUserByPhone — второй фактор суперадмина (Этап 7,
+  # db/queries/superadmin_totp.sql): вход (auth/mfa), кабинет, воркер reencrypt-secrets, команда superadmin-totp-reset.
   # PublicLanding — saas_plans и platform_settings для лендинга (Этап 3, G7).
   # Telegram* — настройки Telegram, коды восстановления пароля и лимиты кодов перевода на аккаунт во всех клубах
   # (Этап 4, H2; db/queries/telegram.sql, пул zafiro_platform).

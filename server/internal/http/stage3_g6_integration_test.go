@@ -46,6 +46,7 @@ func newG6Env(t *testing.T, now time.Time, domain string) *adminEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	svc.SetSecondFactor(testSecondFactor(t, d.Platform, vk, lim))
 	box, _ := secretbox.New(strings.Repeat("s", 32))
 	pr := &fakePresence{states: map[int64][]presence.State{}}
 	srv := httptest.NewServer(NewRouter(Options{
@@ -258,6 +259,9 @@ func TestSuperadminDomain(t *testing.T) {
 		t.Fatalf("owner on cabinet: %d %v", r.status, r.body)
 	}
 	r = e.onHost(host, "POST", "", "/api/auth/login", map[string]any{"phone": saPhone, "password": "pw"})
+	if r.status == http.StatusAccepted { // второй фактор (Этап 7)
+		r = passSecondFactor(t, e.srv.URL, saPhone, r)
+	}
 	if r.status != http.StatusOK {
 		t.Fatalf("superadmin on cabinet: %d %v", r.status, r.body)
 	}

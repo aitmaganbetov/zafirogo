@@ -14,6 +14,7 @@ var access = httpx.Access{
 	Public: []string{
 		"Login", "RefreshSession", "Logout", "LogoutAll", "GetMe", "SelectClub",
 		"SuperadminViewClub", "SuperadminLeaveClub", "Register", "GetInvitation", "AcceptInvitation", "IssueWsTicket",
+		"SecondFactorSetup", "SecondFactorVerify",
 	},
 }
 

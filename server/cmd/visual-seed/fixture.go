@@ -9,6 +9,9 @@ type Fixture struct {
 		Password       string           `json:"password"`
 		PasswordBcrypt string           `json:"password_bcrypt"`
 		Roles          map[string]int64 `json:"roles"`
+		// TOTPSecret — ключ TOTP (base32) суперадминов демо-данных (Этап 7): только для dev-стенда, чтобы снимки
+		// входили в кабинет с кодом (web/e2e/visual/support.ts). Шифруется ключом VISUAL_DATA_KEY.
+		TOTPSecret string `json:"totp_secret"`
 	} `json:"login"`
 	SaasPlans         []SaasPlan        `json:"saas_plans"`
 	Clubs             []Club            `json:"clubs"`

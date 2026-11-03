@@ -34,6 +34,11 @@ func TestAppRoleLeastPrivilege(t *testing.T) {
 		{"platform settings", "UPDATE platform_settings SET value = value WHERE $1 > 0"},
 		{"saas plans", "DELETE FROM saas_plans WHERE $1 < 0"},
 		{"platform log", "DELETE FROM platform_logs WHERE $1 < 0"},
+		// Второй фактор суперадмина (Этап 7, 0029) — только пул платформы, пул клуба таблиц не видит.
+		{"read totp secret", "SELECT secret FROM superadmin_totp WHERE user_id = $1"},
+		{"reset totp", "DELETE FROM superadmin_totp WHERE user_id = $1"},
+		{"read recovery codes", "SELECT code_hash FROM superadmin_recovery_codes WHERE user_id = $1"},
+		{"add recovery code", "INSERT INTO superadmin_recovery_codes (user_id, code_hash, created_at) VALUES ($1, 'h', now())"},
 	}
 	for _, tc := range denied {
 		_, err := d.App.Exec(ctx, tc.sql, userID)
@@ -83,5 +88,19 @@ func TestAppRoleLeastPrivilege(t *testing.T) {
 	}
 	if _, err := d.Platform.Exec(ctx, "UPDATE users SET is_superadmin = false, blocked_at = NULL WHERE id = $1", userID); err != nil {
 		t.Errorf("zafiro_platform users: %v", err)
+	}
+	for _, sql := range []string{
+		"INSERT INTO superadmin_totp (user_id, secret, created_at, updated_at) VALUES ($1, 'v2:k:x', now(), now())",
+		"INSERT INTO superadmin_recovery_codes (user_id, code_hash, created_at) VALUES ($1, 'h', now())",
+		"UPDATE superadmin_recovery_codes SET used_at = now() WHERE user_id = $1",
+		"DELETE FROM superadmin_totp WHERE user_id = $1",
+	} {
+		if _, err := d.Platform.Exec(ctx, sql, userID); err != nil {
+			t.Errorf("zafiro_platform %q: %v", sql, err)
+		}
+	}
+	// Ключ — только шифротекст secretbox.
+	if _, err := d.Platform.Exec(ctx, "INSERT INTO superadmin_totp (user_id, secret, created_at, updated_at) VALUES ($1, 'JBSWY3DPEHPK3PXP', now(), now())", userID); err == nil {
+		t.Error("plaintext totp secret accepted")
 	}
 }

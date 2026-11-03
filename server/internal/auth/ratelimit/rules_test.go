@@ -33,6 +33,7 @@ func TestNamedRuleValues(t *testing.T) {
 		ClubComputerRegistration:     {{10, time.Minute}},
 		WebLogin:                     {{5, time.Minute}, {300, time.Minute}},
 		WebRegister:                  {{5, time.Minute}, {300, time.Minute}},
+		SuperadminTOTP:               {{5, time.Minute}, {30, time.Hour}, {300, time.Minute}},
 		"api.guest.profile.password": {{5, time.Minute}},
 		"chat.reply":                 {{60, time.Minute}},
 		"users.password":             {{20, time.Minute}},
@@ -44,8 +45,8 @@ func TestNamedRuleValues(t *testing.T) {
 		}
 		rules[r.Name] = r
 	}
-	if len(rules) != 13+2+39 {
-		t.Errorf("rules = %d, want 54 (13 named + 2 disabled + 39 throttle:N,M)", len(rules))
+	if len(rules) != 13+2+1+39 {
+		t.Errorf("rules = %d, want 55 (13 named + 2 web + superadmin-totp + 39 throttle:N,M)", len(rules))
 	}
 	for name, lims := range want {
 		r, ok := rules[name]
@@ -95,6 +96,12 @@ func TestKeys(t *testing.T) {
 	enroll := rules[AgentEnroll].Limits[0].Key
 	if enroll(Subject{IP: "1", DeviceID: "ABC"}) != enroll(Subject{IP: "1", DeviceID: "abc"}) {
 		t.Error("device id is lowercased")
+	}
+	// Второй фактор суперадмина: аккаунт (без пользователя — не считается) и IP.
+	totp := rules[SuperadminTOTP].Limits
+	if totp[0].Key(Subject{IP: "1.1.1.1", UserID: 7}) != "user:7" || totp[0].Key(Subject{IP: "1.1.1.1"}) != "" ||
+		totp[1].Key(Subject{UserID: 7}) != "user:7" || totp[2].Key(Subject{IP: "1.1.1.1", UserID: 7}) != "1.1.1.1" {
+		t.Error("superadmin-totp keys")
 	}
 	thr := rules["chat.reply"].Limits[0].Key
 	if thr(Subject{IP: "1.1.1.1", UserID: 4}) != "user:4" || thr(Subject{IP: "1.1.1.1"}) != "ip:1.1.1.1" {

@@ -394,8 +394,9 @@ WHERE id = sqlc.arg(id);
 -- ---------------------------------------------------------------------------
 
 -- name: SuperadminUsers :many
--- Аккаунты по имени, поиск по имени или цифрам телефона (≥ 3), фильтр, по 30.
-SELECT id, name::text AS name, phone::text AS phone, is_superadmin, blocked_at
+-- Аккаунты по имени, поиск по имени или цифрам телефона (≥ 3), фильтр, по 30. second_factor — TOTP настроен (Этап 7).
+SELECT id, name::text AS name, phone::text AS phone, is_superadmin, blocked_at,
+       EXISTS (SELECT 1 FROM superadmin_totp t WHERE t.user_id = users.id AND t.confirmed_at IS NOT NULL) AS second_factor
 FROM users
 WHERE (sqlc.arg(search)::text = '' OR name ILIKE '%' || sqlc.arg(search)::text || '%'
        OR (length(sqlc.arg(digits)::text) >= 3 AND phone LIKE '%' || sqlc.arg(digits)::text || '%'))

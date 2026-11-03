@@ -29,7 +29,7 @@ import (
 var access = httpx.Access{Public: []string{
 	"SaDashboard", "SaSetAgentRelease", "SaClearAgentRelease",
 	"SaListClubs", "SaGetClub", "SaExtendSubscription", "SaSuspendSubscription", "SaChangeClubPlan",
-	"SaListAccounts", "SaBlockAccount", "SaUnblockAccount", "SaGrantSuperadmin", "SaRevokeSuperadmin",
+	"SaListAccounts", "SaBlockAccount", "SaUnblockAccount", "SaGrantSuperadmin", "SaRevokeSuperadmin", "SaResetSecondFactor",
 	"SaListPlans", "SaCreatePlan", "SaUpdatePlan", "SaListLogs",
 	"SaListPlatformNews", "SaCreatePlatformNews", "SaUpdatePlatformNews", "SaDeletePlatformNews",
 	"SaListLanguages", "SaCreateLanguage", "SaUpdateLanguage", "SaDeleteLanguage", "SaExportTranslations",

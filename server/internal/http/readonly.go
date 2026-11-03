@@ -32,6 +32,11 @@ func readOnlyAllowed(method, path string) bool {
 	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
 		return true
 	}
+	// Сброс второго фактора другого суперадмина (Этап 7) — не из режима просмотра клуба, хотя это кабинет: действие
+	// с доступом к платформе, а режим просмотра — «только смотреть» (docs/open-questions/stage7-totp.md).
+	if strings.HasPrefix(path, "/api/superadmin/accounts/") && strings.HasSuffix(path, "/second-factor") {
+		return false
+	}
 	// Действия своей учётной записи вне клуба (в Laravel — не под current-club): подтверждение входа на ПК по QR,
 	// принятие приглашения, восстановление пароля, регистрация.
 	if strings.HasPrefix(path, "/api/superadmin/") || strings.HasPrefix(path, "/api/pc-login/") ||
@@ -40,7 +45,8 @@ func readOnlyAllowed(method, path string) bool {
 	}
 	switch path {
 	case "/api/auth/logout", "/api/auth/logout-all", "/api/auth/refresh", "/api/auth/login", "/api/ws-ticket",
-		"/api/auth/register", "/api/forgot-password", "/api/reset-password":
+		"/api/auth/register", "/api/forgot-password", "/api/reset-password",
+		"/api/auth/second-factor/setup", "/api/auth/second-factor/verify":
 		return true
 	}
 	return false

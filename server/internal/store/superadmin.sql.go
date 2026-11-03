@@ -2247,7 +2247,8 @@ func (q *Queries) SuperadminUserMemberships(ctx context.Context, userIds []int64
 
 const superadminUsers = `-- name: SuperadminUsers :many
 
-SELECT id, name::text AS name, phone::text AS phone, is_superadmin, blocked_at
+SELECT id, name::text AS name, phone::text AS phone, is_superadmin, blocked_at,
+       EXISTS (SELECT 1 FROM superadmin_totp t WHERE t.user_id = users.id AND t.confirmed_at IS NOT NULL) AS second_factor
 FROM users
 WHERE ($1::text = '' OR name ILIKE '%' || $1::text || '%'
        OR (length($2::text) >= 3 AND phone LIKE '%' || $2::text || '%'))
@@ -2271,12 +2272,13 @@ type SuperadminUsersRow struct {
 	Phone        string     `json:"phone"`
 	IsSuperadmin bool       `json:"is_superadmin"`
 	BlockedAt    *time.Time `json:"blocked_at"`
+	SecondFactor bool       `json:"second_factor"`
 }
 
 // ---------------------------------------------------------------------------
 // Пользователи (UserController)
 // ---------------------------------------------------------------------------
-// Аккаунты по имени, поиск по имени или цифрам телефона (≥ 3), фильтр, по 30.
+// Аккаунты по имени, поиск по имени или цифрам телефона (≥ 3), фильтр, по 30. second_factor — TOTP настроен (Этап 7).
 func (q *Queries) SuperadminUsers(ctx context.Context, arg SuperadminUsersParams) ([]SuperadminUsersRow, error) {
 	rows, err := q.db.Query(ctx, superadminUsers,
 		arg.Search,
@@ -2298,6 +2300,7 @@ func (q *Queries) SuperadminUsers(ctx context.Context, arg SuperadminUsersParams
 			&i.Phone,
 			&i.IsSuperadmin,
 			&i.BlockedAt,
+			&i.SecondFactor,
 		); err != nil {
 			return nil, err
 		}

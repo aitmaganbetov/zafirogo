@@ -164,6 +164,7 @@ func newAdminEnv(t *testing.T, enableLimits ...string) *adminEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	svc.SetSecondFactor(testSecondFactor(t, d.Platform, vk, lim))
 	n := &fakeNotifier{}
 	cashSvc := &cashsvc.Service{Notifier: n}
 	bill := billingsvc.New(d.App, nil, cashSvc)
@@ -204,6 +205,9 @@ func (e *adminEnv) member(name, role, perms string, superadmin bool) (int64, str
 func (e *adminEnv) login(phone string) string {
 	e.t.Helper()
 	r := do(e.t, "POST", e.srv.URL+"/api/auth/login", map[string]any{"phone": phone, "password": "pw"}, nil)
+	if r.status == http.StatusAccepted { // суперадмин: второй фактор (Этап 7)
+		r = passSecondFactor(e.t, e.srv.URL, phone, r)
+	}
 	if r.status != http.StatusOK {
 		e.t.Fatalf("login %s: %d %v", phone, r.status, r.body)
 	}

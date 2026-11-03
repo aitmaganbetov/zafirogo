@@ -1,7 +1,7 @@
 // Визуальное сравнение старого Laravel и нового сервера: конфигурация, вход, стабилизация страницы.
 // Описание — tools/visual/README.md. Снимки сравнивает tools/visual/compare.mjs (pixelmatch).
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -58,7 +58,7 @@ interface PagesFile {
 
 interface Demo {
   now: string;
-  login: { password: string; roles: Record<string, number> };
+  login: { password: string; roles: Record<string, number>; totp_secret?: string };
   users: { id: number; phone: string }[];
 }
 
@@ -222,16 +222,49 @@ export async function login(page: Page, app: AppName, role: string, base: string
   if (hasForm) {
     await phoneInput.fill(phone.replace(/^\+7/, ''));
     await page.locator('input#password').fill(password);
-    await Promise.all([
-      page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15_000 }),
-      page.locator('form button[type="submit"], form button:not([type])').first().click(),
-    ]);
+    const left = page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15_000 });
+    await page.locator('form button[type="submit"], form button:not([type])').first().click();
+    // Новый: суперадмин после пароля вводит второй фактор (Этап 7) — код TOTP из demo.json login.totp_secret.
+    if (app === 'new') {
+      const code = page.locator('input#code');
+      const second = await Promise.race([left.then(() => false), code.waitFor({ state: 'visible', timeout: 15_000 }).then(() => true, () => false)]);
+      if (second) {
+        await code.fill(totpNow());
+        await page.locator('form button[type="submit"], form button:not([type])').first().click();
+      }
+    }
+    await left;
     return 'form';
   }
   if (app === 'old') throw new Error('старый /login: нет формы входа');
   const res = await page.request.post(`${base}/api/auth/login`, { data: { phone, password } });
+  if (res.status() === 202) {
+    const { challenge } = (await res.json()) as { challenge: string };
+    const v = await page.request.post(`${base}/api/auth/second-factor/verify`, { data: { challenge, code: totpNow() } });
+    if (!v.ok()) throw new Error(`новый /api/auth/second-factor/verify: ${v.status()} ${await v.text()}`);
+    return 'api';
+  }
   if (!res.ok()) throw new Error(`новый /api/auth/login: ${res.status()} ${await res.text()}`);
   return 'api';
+}
+
+/**
+ * Код TOTP (RFC 6238: HMAC-SHA1, 6 цифр, 30 с) демо-суперадмина по настоящим часам (не по page.clock): ключ —
+ * demo.json login.totp_secret, его же visual-seed записал в базу стенда; повтор кода стенд разрешает
+ * (dev.totp_allow_replay, tools/visual/new.sh).
+ */
+export function totpNow(now: number = Date.now()): string {
+  const secret = demo.login.totp_secret;
+  if (!secret) throw new Error('demo.json: нет login.totp_secret');
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const ch of secret.toUpperCase()) bits += alphabet.indexOf(ch).toString(2).padStart(5, '0');
+  const key = Buffer.from((bits.match(/.{8}/g) ?? []).map((b) => parseInt(b, 2)));
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(Math.floor(now / 1000 / 30)));
+  const h = createHmac('sha1', key).update(msg).digest();
+  const off = (h[h.length - 1] ?? 0) & 0x0f;
+  return String((h.readUInt32BE(off) & 0x7fffffff) % 1_000_000).padStart(6, '0');
 }
 
 /**

@@ -3,7 +3,7 @@
 //
 // Схема ключей (хэш-тег {sid} держит ключи одной сессии в одном слоте кластера):
 //
-//	auth:s:{<sid>}    hash   uid, club, view, rt, prev, rot, seen, created, exp, ttl, remember
+//	auth:s:{<sid>}    hash   uid, club, view, rt, prev, rot, seen, created, exp, ttl, remember, mfa
 //	auth:s:{<sid>}:u  set    использованные (заменённые) хэши refresh-токенов семейства
 //	auth:u:{<uid>}    zset   сессии пользователя: member = sid, score = последняя активность (мс)
 //
@@ -129,6 +129,9 @@ type Session struct {
 	ClubID int64
 	// ViewingClubID — клуб, который суперадмин смотрит только для чтения; 0 — нет.
 	ViewingClubID int64
+	// SecondFactor — вход подтверждён вторым фактором (TOTP суперадмина, Этап 7). Сессия суперадмина без него
+	// не действует (auth.Service.Authenticate): старые сессии и права, выданные уже вошедшему, требуют нового входа.
+	SecondFactor bool
 }
 
 func (m *Manager) sessKey(sid string) string { return m.o.Prefix + "s:{" + sid + "}" }
@@ -169,6 +172,15 @@ func (m *Manager) access(sid string, uid int64, now time.Time) (string, time.Tim
 
 // Create начинает сессию пользователя в клубе clubID (0 — без клуба).
 func (m *Manager) Create(ctx context.Context, userID, clubID int64, remember bool) (Tokens, error) {
+	return m.create(ctx, userID, clubID, remember, false)
+}
+
+// CreateSecondFactor — Create для входа, подтверждённого вторым фактором (Session.SecondFactor).
+func (m *Manager) CreateSecondFactor(ctx context.Context, userID, clubID int64, remember bool) (Tokens, error) {
+	return m.create(ctx, userID, clubID, remember, true)
+}
+
+func (m *Manager) create(ctx context.Context, userID, clubID int64, remember, secondFactor bool) (Tokens, error) {
 	if userID <= 0 {
 		return Tokens{}, errors.New("session: user id is required")
 	}
@@ -189,9 +201,12 @@ func (m *Manager) Create(ctx context.Context, userID, clubID int64, remember boo
 	ttl = min(ttl, m.o.MaxLifetime)
 	exp := now.Add(m.o.MaxLifetime)
 	b := m.c.B()
-	rem := "0"
+	rem, mfa := "0", "0"
 	if remember {
 		rem = "1"
+	}
+	if secondFactor {
+		mfa = "1"
 	}
 	cmds := valkey.Commands{
 		b.Hset().Key(m.sessKey(sid)).FieldValue().
@@ -205,7 +220,8 @@ func (m *Manager) Create(ctx context.Context, userID, clubID int64, remember boo
 			FieldValue("created", ms(now)).
 			FieldValue("exp", ms(exp)).
 			FieldValue("ttl", strconv.FormatInt(ttl.Milliseconds(), 10)).
-			FieldValue("remember", rem).Build(),
+			FieldValue("remember", rem).
+			FieldValue("mfa", mfa).Build(),
 		b.Pexpire().Key(m.sessKey(sid)).Milliseconds(ttl.Milliseconds()).Build(),
 		b.Zadd().Key(m.userKey(userID)).ScoreMember().ScoreMember(float64(now.UnixMilli()), sid).Build(),
 		b.Pexpire().Key(m.userKey(userID)).Milliseconds(m.o.MaxLifetime.Milliseconds()).Build(),
@@ -315,9 +331,10 @@ func (m *Manager) forgetUserSession(ctx context.Context, uid int64, sid string) 
 	}
 }
 
-// touchScript: KEYS[1] — сессия, KEYS[2] — использованные; ARGV: now (мс), touchEvery (мс). Ответ: {uid, club, view, touched} или пусто.
+// touchScript: KEYS[1] — сессия, KEYS[2] — использованные; ARGV: now (мс), touchEvery (мс).
+// Ответ: {uid, club, view, touched, mfa} или пусто (сессии до Этапа 7 без поля mfa — '0').
 var touchScript = valkey.NewLuaScript(`
-local s = redis.call('HMGET', KEYS[1], 'uid', 'club', 'view', 'seen', 'exp', 'ttl')
+local s = redis.call('HMGET', KEYS[1], 'uid', 'club', 'view', 'seen', 'exp', 'ttl', 'mfa')
 if not s[1] then return {} end
 local now = tonumber(ARGV[1])
 local left = tonumber(s[5]) - now
@@ -331,7 +348,7 @@ if now - tonumber(s[4]) >= tonumber(ARGV[2]) then
   redis.call('PEXPIRE', KEYS[1], math.min(tonumber(s[6]), left))
   touched = '1'
 end
-return {s[1], s[2], s[3], touched}
+return {s[1], s[2], s[3], touched, s[7] or '0'}
 `)
 
 // Authenticate проверяет access-токен и сессию в Valkey (выход и отзыв действуют сразу).
@@ -346,7 +363,7 @@ func (m *Manager) Authenticate(ctx context.Context, access string) (Session, err
 	if err != nil {
 		return Session{}, fmt.Errorf("session: authenticate: %w", err)
 	}
-	if len(res) != 4 {
+	if len(res) != 5 {
 		m.forgetUserSession(ctx, c.UID, c.SID)
 		return Session{}, ErrNotFound
 	}
@@ -361,7 +378,7 @@ func (m *Manager) Authenticate(ctx context.Context, access string) (Session, err
 			return Session{}, err
 		}
 	}
-	return Session{ID: c.SID, UserID: uid, ClubID: club, ViewingClubID: view}, nil
+	return Session{ID: c.SID, UserID: uid, ClubID: club, ViewingClubID: view, SecondFactor: res[4] == "1"}, nil
 }
 
 // setScript: KEYS[1] — сессия; ARGV — пары поле/значение. Меняет только существующую сессию.
