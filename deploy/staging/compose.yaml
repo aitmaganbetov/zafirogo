@@ -185,9 +185,13 @@ services:
       - ./nginx/snippets:/etc/nginx/snippets:ro
     tmpfs:
       - /tmp
-    # Прод: лимит дескрипторов ≥ 2 × соединений агентов на балансировщик (ulimits: nofile: 131072 или LimitNOFILE
-    # systemd); здесь не задан — в непривилегированных средах Docker поднять его нельзя (worker_rlimit_nofile тогда
-    # пишет предупреждение в лог).
+    # Лимит дескрипторов: ≥ 2 × соединений агентов на балансировщик (S6-O4-1, docs/load-test.md). Без него nginx
+    # получает мягкий лимит 1024 на воркер — ≈ 2 000 агентов. Значение — не выше жёсткого лимита демона Docker
+    # (STG_LB_NOFILE); прод — ≥ 131 072 (docs/deploy.md «Ресурсы»). В журнале nginx не должно быть «setrlimit … failed».
+    ulimits:
+      nofile:
+        soft: ${STG_LB_NOFILE:-20000}
+        hard: ${STG_LB_NOFILE:-20000}
     healthcheck:
       test: ["CMD-SHELL", "nginx -t -q"]
       interval: 30s
