@@ -1632,6 +1632,17 @@ body {
     margin-bottom: 12px
 }
 
+.cm-info-more {
+    margin-top: 12px;
+    border: 0;
+    border-radius: 4px;
+    background: #f1f5f2;
+    color: #47534a;
+    padding: 6px 10px;
+    font-size: 13px;
+    cursor: pointer
+}
+
 .cm-info-section p {
     margin: 0;
     color: #087634;
@@ -2169,6 +2180,45 @@ body {
     font-size: 8px;
     cursor: pointer;
     touch-action: manipulation
+}
+
+/* Этап 7: загрузка CPU/ОЗУ и значок проблем здоровья на карточке ПК (только ПК в сети с новым агентом). */
+.cm-pc-load {
+    position: absolute;
+    right: 5px;
+    bottom: 3px;
+    left: 5px;
+    display: grid;
+    gap: 1px;
+    pointer-events: none
+}
+
+.cm-pc-load i {
+    display: block;
+    height: 2px;
+    border-radius: 1px;
+    background: #22c55e
+}
+
+.cm-pc-load i+i {
+    background: #60a5fa
+}
+
+.cm-pc-alert {
+    position: absolute;
+    top: -6px;
+    left: -6px;
+    z-index: 1;
+    display: grid;
+    width: 15px;
+    height: 15px;
+    place-items: center;
+    border: 1px solid #fff;
+    border-radius: 50%;
+    background: #d97706;
+    color: #fff;
+    font-size: 8px;
+    line-height: 1
 }
 
 .cm-page.edit-mode .cm-computer-edit {

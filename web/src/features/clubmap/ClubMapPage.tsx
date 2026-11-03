@@ -21,6 +21,8 @@ import {
   type ComputerState,
   type Zone,
 } from './api';
+import { HealthSections, PcLoad } from './ComputerHealth';
+import { loadTitle } from './healthText';
 import { BookingModal, ComputerModal, GuestSessionModal, NotifyModal, ZoneModal, type ZoneModalState } from './ClubMapModals';
 import { allErrors, firstError } from './errors';
 import { canvasHeight, collides, computerClasses, PC_GRID_X, PC_GRID_Y, snapComputer, snapSize, snapZone, zoneMinSize, type Rect } from './logic';
@@ -375,9 +377,10 @@ export function ClubMapPage() {
                         if (blocked?.kind === 'pc' && blocked.id === c.id) classes += ' blocked';
                         return (
                           <span key={c.id} className={classes} data-id={c.id} style={{ left: `${p.x}px`, top: `${p.y}px` }}
-                            title={[c.name, st?.status, c.details].filter(Boolean).join(' · ')}
+                            title={[c.name, st?.status, c.details, loadTitle(t, st)].filter(Boolean).join(' · ')}
                             onClick={(e) => onPcClick(e, c)} onPointerDown={(e) => onPcPointerDown(e, c)} onPointerMove={onPcPointerMove} onPointerUp={() => onPcPointerUp(c)}>
                             <span>{c.number}</span>
+                            <PcLoad state={st} />
                             <button type="button" className="cm-computer-edit" title={t('Редактировать компьютер')} aria-label={t('Редактировать компьютер')}
                               onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPcErrors([]); setPcModal(c); }}><i className="fas fa-pen"></i></button>
                           </span>
@@ -420,6 +423,7 @@ export function ClubMapPage() {
             </dl>
           </section>
           <section id="computer-reservation-info" className="cm-info-section" hidden={!infoState?.is_reserved}><h4>{t('Информация о брони')}</h4><p>{t('Бронь активна')}</p></section>
+          {info && <HealthSections key={info.id} computerId={info.id} fmt={fmt} />}
         </aside>
       </div>
       <div id="layout-status" className={`cm-saving${notice.show ? ' show' : ''}`}>{notice.text}</div>

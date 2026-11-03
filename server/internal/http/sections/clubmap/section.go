@@ -24,6 +24,9 @@ var access = httpx.Access{
 		"ControlComputers":     "club-computers.control",
 		"EndComputerSessions":  "club-computers.end-sessions",
 		"NotifyComputers":      "club-computers.notify",
+		// Этап 7 (новое): состояние ПК и история проблем — то же право, что у состояния карты (club_map.view).
+		"GetComputerHealth":        "club-map.state",
+		"ListComputerHealthEvents": "club-map.state",
 	},
 }
 

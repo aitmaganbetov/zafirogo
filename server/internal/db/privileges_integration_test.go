@@ -39,6 +39,9 @@ func TestAppRoleLeastPrivilege(t *testing.T) {
 		{"reset totp", "DELETE FROM superadmin_totp WHERE user_id = $1"},
 		{"read recovery codes", "SELECT code_hash FROM superadmin_recovery_codes WHERE user_id = $1"},
 		{"add recovery code", "INSERT INTO superadmin_recovery_codes (user_id, code_hash, created_at) VALUES ($1, 'h', now())"},
+		// История здоровья ПК (Этап 7, 0030): пул клуба только добавляет и закрывает (cleared_at), не правит и не удаляет.
+		{"delete health history", "DELETE FROM computer_health_events WHERE computer_id = $1"},
+		{"rewrite health history", "UPDATE computer_health_events SET kind = 'mouse', raised_at = now() WHERE computer_id = $1"},
 	}
 	for _, tc := range denied {
 		_, err := d.App.Exec(ctx, tc.sql, userID)
@@ -53,6 +56,8 @@ func TestAppRoleLeastPrivilege(t *testing.T) {
 		{"password", "UPDATE users SET password = 'y', updated_at = now() WHERE id = $1"},
 		{"register", "INSERT INTO users (name, phone, password, created_at, updated_at) VALUES ('r', '+77010000007', 'x', now(), now()) RETURNING $1::bigint"},
 		{"login failed log", "INSERT INTO platform_logs (event, description, ip_address, created_at) SELECT 'auth.test', 'd', '127.0.0.1', now() WHERE $1 > 0"},
+		{"close health problem", "UPDATE computer_health_events SET cleared_at = now() WHERE computer_id = $1"},
+		{"read health history", "SELECT count(*) FROM computer_health_events WHERE computer_id = $1"},
 	}
 	for _, tc := range allowed {
 		if _, err := d.App.Exec(ctx, tc.sql, userID); err != nil {

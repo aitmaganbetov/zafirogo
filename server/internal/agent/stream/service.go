@@ -28,6 +28,7 @@ import (
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/commands"
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 )
@@ -72,6 +73,11 @@ type Options struct {
 	Welcome  WelcomeProvider
 	Results  ResultHandler
 	Presence PresenceListener
+	// Live — живые обновления загрузки и здоровья для карты клуба (без outbox, с ограничением частоты, health.go).
+	Live LiveListener
+
+	// Health — проблемы здоровья ПК, живые обновления и пинг (Этап 7, docs/agent-protocol.md §16).
+	Health HealthOptions
 
 	// Rebalance — автоматическая перебалансировка потоков между инстансами (rebalance.go, S6-O4-12).
 	Rebalance RebalanceOptions
@@ -95,6 +101,7 @@ func (o *Options) defaults() {
 	set(&o.MinStatusGap, DefaultMinStatusGap)
 	set(&o.TickEvery, DefaultTickEvery)
 	o.Rebalance.defaults()
+	o.Health.defaults()
 	if o.SubjectPrefix == "" {
 		o.SubjectPrefix = commands.DefaultSubjectPrefix
 	}
@@ -116,6 +123,7 @@ type Service struct {
 	rec    *presence.Recorder
 	sender *commands.Sender
 	queue  *commands.Queue
+	health *health.Journal
 	sub    *nats.Subscription
 
 	mu    sync.RWMutex
@@ -123,8 +131,10 @@ type Service struct {
 
 	closing    atomic.Bool
 	rebalanced atomic.Uint64 // ПК, которых попросили переподключиться ради перебалансировки
-	stop       chan struct{}
-	wg         sync.WaitGroup
+	// livePublished — живых обновлений карты отправлено; healthDropped — Status с отброшенным неверным health.
+	livePublished, healthDropped atomic.Uint64
+	stop                         chan struct{}
+	wg                           sync.WaitGroup
 }
 
 // New создаёт сервис, подписывается на subject инстанса в NATS и запускает тикер присутствия.
@@ -145,8 +155,9 @@ func New(o Options) (*Service, error) {
 			Pool: o.Pool, Presence: st, NATS: o.NATS, SubjectPrefix: o.SubjectPrefix, UpdateKeys: o.UpdateKeys,
 			Now: o.Now, Log: o.Log,
 		}),
-		conns: map[int64]*conn{},
-		stop:  make(chan struct{}),
+		health: health.NewJournal(o.Pool),
+		conns:  map[int64]*conn{},
+		stop:   make(chan struct{}),
 	}
 	s.queue = s.sender.Queue()
 	sub, err := o.NATS.Subscribe(commands.InstanceSubject(o.SubjectPrefix, o.Instance), s.onEnvelope)
@@ -182,6 +193,15 @@ func (s *Service) Notifier() *commands.Notifier {
 func (s *Service) NewSweeper(platformPool db.Beginner) *presence.Sweeper {
 	return &presence.Sweeper{Store: s.store, Pool: platformPool, Token: s.o.Instance, Now: s.o.Now, Log: s.o.Log}
 }
+
+// HealthJournal — история проблем здоровья (метрика Writes()).
+func (s *Service) HealthJournal() *health.Journal { return s.health }
+
+// LivePublished — сколько живых обновлений загрузки/здоровья отправил этот инстанс (метрика, нагрузочный тест).
+func (s *Service) LivePublished() uint64 { return s.livePublished.Load() }
+
+// HealthDropped — сколько Status пришло с неверным health (health отброшен, Status принят).
+func (s *Service) HealthDropped() uint64 { return s.healthDropped.Load() }
 
 // LocalStreams — сколько стримов открыто на этом инстансе.
 func (s *Service) LocalStreams() int {
@@ -357,6 +377,9 @@ func (s *Service) tick() {
 		}
 		if c.wantsPoke(now, s.o.AckTimeout) {
 			c.poke()
+		}
+		if c.wantsPing(now, s.o.Health.PingInterval) {
+			c.sendPing(now)
 		}
 	}
 	if len(items) == 0 {

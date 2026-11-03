@@ -27,10 +27,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
@@ -46,10 +48,22 @@ const (
 // AccessChangedEvent — служебное событие: права/членство сотрудника изменились (data: {"user_id": N}).
 const AccessChangedEvent = "staff.access_changed"
 
+// LiveSubjects — живые обновления (Этап 7: загрузка и здоровье ПК, computer.load): core NATS, без outbox и
+// JetStream — их много (раз в 15 с на ПК при заметном изменении), терять их не страшно (следующее придёт само, после
+// переподключения клиент перечитывает экран). Не пересекается с потоком событий club.> (иначе JetStream их сохранял бы).
+const LiveSubjects = "live.club.>"
+
+// LiveSubject — subject живого обновления клуба.
+func LiveSubject(clubID int64, typ string) string {
+	return "live.club." + strconv.FormatInt(clubID, 10) + "." + typ
+}
+
 // Options — параметры хаба.
 type Options struct {
 	// JS — JetStream (источник событий). Без него хаб раздаёт только Dispatch (тесты, один инстанс).
 	JS jetstream.JetStream
+	// Live — NATS для живых обновлений (LiveSubjects, outbox.Envelope в теле). nil — не подписываться.
+	Live *nats.Conn
 	// Stream — поток событий (пусто — outbox.StreamName).
 	Stream string
 	// MaxConnsPerUser — соединений одного пользователя на инстансе (0 — 5).
@@ -120,6 +134,22 @@ func (h *Handler) Ready() <-chan struct{} { return h.ready }
 // Run читает события из JetStream и раздаёт их до отмены ctx; затем закрывает все соединения (1001).
 func (h *Handler) Run(ctx context.Context) error {
 	defer h.closeAll(websocket.StatusGoingAway, "server shutdown")
+	if h.o.Live != nil {
+		sub, err := h.o.Live.Subscribe(LiveSubjects, func(m *nats.Msg) {
+			env, err := outbox.DecodeEnvelope(m.Data)
+			if err != nil || env.Type == AccessChangedEvent {
+				h.o.Log.Warn("realtime: bad live event", "subject", m.Subject, "err", err)
+				return
+			}
+			h.Dispatch(env)
+		})
+		if err != nil {
+			return fmt.Errorf("realtime: live subscribe: %w", err)
+		}
+		// Медленная раздача не должна копить память без предела: лишнее отбрасывается (следующее обновление придёт).
+		_ = sub.SetPendingLimits(65536, 64<<20)
+		defer func() { _ = sub.Unsubscribe() }()
+	}
 	if h.o.JS == nil {
 		h.once.Do(func() { close(h.ready) })
 		<-ctx.Done()

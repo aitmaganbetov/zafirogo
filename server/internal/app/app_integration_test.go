@@ -405,12 +405,14 @@ func TestAppEndToEnd(t *testing.T) {
 	}
 	if err := st.Send(&agentv1.AgentMessage{Payload: &agentv1.AgentMessage_Status{Status: &agentv1.Status{
 		State: agentv1.ComputerState_COMPUTER_STATE_IDLE, Load: &agentv1.ComputerLoad{CpuBasisPoints: 1234},
+		// Этап 7: здоровье ПК — в снимок присутствия (проблемы по порогам agent.health.* — после raise_after).
+		Health: &agentv1.ComputerHealth{CpuTempDecicelsius: 655, LinkSpeedMbps: 1000},
 	}}}); err != nil {
 		t.Fatalf("send status: %v", err)
 	}
 	waitFor(t, "computer online in presence", 5*time.Second, func() bool {
 		s, ok, err := a.Stream.Presence().Get(ctx, clubID, pcID)
-		return err == nil && ok && s.Online && s.Load.CPUBasisPoints == 1234
+		return err == nil && ok && s.Online && s.Load.CPUBasisPoints == 1234 && s.Health != nil && s.Health.CPUTempDeci == 655
 	})
 	var dbStatus string
 	if err := e.db.Owner.QueryRow(ctx, `SELECT status FROM club_computers WHERE id = $1`, pcID).Scan(&dbStatus); err != nil || dbStatus != "online" {

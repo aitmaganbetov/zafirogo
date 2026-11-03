@@ -205,6 +205,13 @@ func (h *handlers) state(ctx context.Context, r store.ClubMapComputersRow, d map
 			ls := st.LastSeenAt
 			v.LastSeen = &ls
 		}
+		// Этап 7: загрузка и проблемы здоровья (только ПК в сети с новым агентом — иначе полей нет).
+		v.Load = loadOf(st)
+		if st.Health != nil || len(st.Problems) > 0 {
+			p := problemsOf(st.Problems)
+			v.Problems = &p
+		}
+		v.RttMs = nonZero(st.RTTMillis)
 	}
 	if version != nil {
 		v.AgentVersion = *version

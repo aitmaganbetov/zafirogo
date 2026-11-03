@@ -471,6 +471,18 @@ type ClubZoneTariff struct {
 	ClubID     int64 `json:"club_id"`
 }
 
+// Переходы проблем здоровья ПК (появилась/ушла), не каждый Status. Партиции по месяцам raised_at (UTC), 0030
+type ComputerHealthEvent struct {
+	ID         int64      `json:"id"`
+	ClubID     int64      `json:"club_id"`
+	ComputerID int64      `json:"computer_id"`
+	Kind       string     `json:"kind"`
+	RaisedAt   time.Time  `json:"raised_at"`
+	ClearedAt  *time.Time `json:"cleared_at"`
+	// Подробности на момент появления: температура, диски, скорость сети, счётчики сбоев (без секретов и персональных данных)
+	Details json.RawMessage `json:"details"`
+}
+
 type ComputerReservation struct {
 	ID             int64      `json:"id"`
 	ClubID         int64      `json:"club_id"`

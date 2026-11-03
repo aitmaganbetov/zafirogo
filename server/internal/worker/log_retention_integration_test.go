@@ -117,3 +117,39 @@ func TestLogRetention(t *testing.T) {
 		t.Fatalf("app role: err = %v, want permission denied", err)
 	}
 }
+
+// История здоровья ПК (Этап 7, 0030): партиции computer_health_events старше agent.health.event_retention удаляются той
+// же задачей, остальные журналы не трогаются.
+func TestLogRetentionHealthEvents(t *testing.T) {
+	ctx := context.Background()
+	d := dbtest.New(t)
+	now := time.Now().UTC()
+	keep := 90 * 24 * time.Hour
+	count := func(parent string) int {
+		t.Helper()
+		var n int
+		if err := d.Owner.QueryRow(ctx, "SELECT count(*) FROM pg_inherits WHERE inhparent = $1::regclass", parent).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	before, beforeAPI := count("computer_health_events"), count("api_request_logs")
+	want := 0
+	for off := -dbtest.PartitionMonthsBack; off <= 0; off++ {
+		if end := time.Date(now.Year(), now.Month()+time.Month(off)+1, 1, 0, 0, 0, 0, time.UTC); !end.After(now.Add(-keep)) {
+			want++
+		}
+	}
+	w := &worker.LogRetention{Platform: d.Platform, Retention: map[string]time.Duration{"computer_health_events": keep},
+		Now: func() time.Time { return now }}
+	ran, dropped, err := w.Tick(ctx)
+	if err != nil || !ran || dropped != want || want == 0 {
+		t.Fatalf("tick: ran=%v dropped=%d (want %d) err=%v", ran, dropped, want, err)
+	}
+	if got := count("computer_health_events"); got != before-want {
+		t.Fatalf("computer_health_events partitions = %d, want %d", got, before-want)
+	}
+	if count("api_request_logs") != beforeAPI {
+		t.Fatal("other journals must not be touched")
+	}
+}

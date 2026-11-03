@@ -98,13 +98,21 @@ type State struct {
 	AgentVersion    string       `json:"agent_version,omitempty"`
 	Capabilities    Capabilities `json:"capabilities"`
 	// AgentState — значение agent_state ("" — агент ещё не сообщил).
-	AgentState     string    `json:"agent_state,omitempty"`
-	SessionID      string    `json:"session_id,omitempty"`
-	SignedInUserID int64     `json:"signed_in_user_id,omitempty"`
-	Load           Load      `json:"load"`
-	RemoteIP       string    `json:"remote_ip,omitempty"`
-	LocalIP        string    `json:"local_ip,omitempty"`
-	ConnectedAt    time.Time `json:"connected_at"`
+	AgentState     string `json:"agent_state,omitempty"`
+	SessionID      string `json:"session_id,omitempty"`
+	SignedInUserID int64  `json:"signed_in_user_id,omitempty"`
+	Load           Load   `json:"load"`
+	// HasLoad — агент прислал ComputerLoad (иначе Load — нули, а не «простаивает»).
+	HasLoad bool `json:"load_ok,omitempty"`
+	// Health — последнее здоровье ПК (Status.health; nil — агент его не присылал: старый агент или ещё не измерил).
+	Health *Health `json:"health,omitempty"`
+	// Problems — подтверждённые проблемы здоровья (agent/health: пороги и защита от дребезга), по возрастанию.
+	Problems []string `json:"problems,omitempty"`
+	// RTTMillis — время ответа агента на Ping по стриму, мс (0 — не измерено).
+	RTTMillis   uint32    `json:"rtt_ms,omitempty"`
+	RemoteIP    string    `json:"remote_ip,omitempty"`
+	LocalIP     string    `json:"local_ip,omitempty"`
+	ConnectedAt time.Time `json:"connected_at"`
 	// LastSeenAt — последний Status (или подключение / закрытие стрима).
 	LastSeenAt time.Time `json:"last_seen_at"`
 }

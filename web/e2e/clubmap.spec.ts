@@ -84,6 +84,33 @@ test('карта: выбор ПК, перезагрузка с текстом с
   expect(control).toEqual({ computer_ids: [1], action: 'restart' });
 });
 
+test('карта: загрузка и проблемы ПК, раздел «Состояние» и история проблем (Этап 7)', async ({ page }) => {
+  const map = {
+    ...MAP,
+    states: [state(1, { load: { cpu_bp: 4250, ram_bp: 6100, idle_seconds: 0 }, problems: ['cpu_hot'], rtt_ms: 18 }), MAP.states[1]],
+  };
+  await mockApi(page, {
+    'GET /api/club-map': (r) => json(r, map),
+    'GET /api/club-computers/1/health': (r) =>
+      json(r, {
+        computer_id: 1, connection: 'online', agent_version: '2.4.1', rtt_ms: 18, problems: ['cpu_hot'], load: { cpu_bp: 4250, ram_bp: 6100, idle_seconds: 0 },
+        health: { reported_at: '2026-10-15T08:00:00Z', cpu_temp_deci: 925, disks: [{ mount: 'C:', system: true, total_mb: 512000, free_mb: 256000, smart: 'ok' }],
+          peripherals: [{ kind: 'mouse', connected: true, name: 'G102' }], link_mbps: 1000, uptime_seconds: 3600, unexpected_shutdowns_7d: 0, bugchecks_7d: 0 },
+      }),
+    'GET /api/club-computers/1/health/events': (r) =>
+      json(r, { items: [{ id: 1, kind: 'cpu_hot', raised_at: '2026-10-15T07:00:00Z', cleared_at: null, details: { temp_deci: 925 } }], next_cursor: null }),
+  });
+  await page.goto('/club-map');
+  const pc = page.locator('.cm-computer[data-id="1"]');
+  await expect(pc.locator('.cm-pc-load i')).toHaveCount(2);
+  await expect(pc.locator('.cm-pc-alert')).toHaveAttribute('title', 'Перегрев CPU');
+  await expect(page.locator('.cm-computer[data-id="2"] .cm-pc-load')).toHaveCount(0);
+  await pc.click();
+  await expect(page.locator('#computer-health-info')).toContainText('93 °C');
+  await expect(page.locator('#computer-health-info')).toContainText('18 мс');
+  await expect(page.locator('#computer-health-history dt')).toHaveText('Перегрев CPU');
+});
+
 test('карта: зона — ошибка формы сверху, затем «Зона добавлена.»', async ({ page }) => {
   let calls = 0;
   await mockApi(page, {

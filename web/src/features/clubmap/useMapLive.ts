@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { useRealtimeEvent } from '../../realtime/hooks';
-import { clubMapKey, fetchStates, type ClubMapPage, type ComputerState } from './api';
+import { clubMapKey, computerHealthKey, fetchStates, type ClubMapPage, type ComputerState } from './api';
 
 /*
  * Живая карта: вместо опроса GET /club-map/state раз в 15 с (club-map/index.blade.php ~стр. 46–52) — события
@@ -15,6 +15,23 @@ interface StateEvent {
   readonly connection?: 'online' | 'offline';
   readonly agent_state?: string;
   readonly agent_version?: string;
+}
+
+/** computer.load (Этап 7): загрузка и проблемы ПК — готовые данные, без запроса (docs/realtime.md). */
+export interface LoadEvent {
+  readonly computer_id?: number;
+  readonly load?: ComputerState['load'];
+  readonly problems?: ComputerState['problems'];
+  readonly rtt_ms?: number;
+}
+
+/** Подставить загрузку и проблемы из computer.load в данные экрана. */
+export function mergeLoad(page: ClubMapPage, ev: LoadEvent): ClubMapPage {
+  if (!ev.computer_id) return page;
+  return {
+    ...page,
+    states: page.states.map((s) => (s.id === ev.computer_id ? { ...s, load: ev.load ?? null, problems: ev.problems ?? [], rtt_ms: ev.rtt_ms ?? s.rtt_ms } : s)),
+  };
 }
 
 /** Подставить свежие состояния ПК в данные экрана. */
@@ -35,6 +52,14 @@ export function useMapLive(): void {
     },
     [],
   );
+
+  // Загрузка и здоровье — сразу из события; открытая панель ПК перечитывает подробности.
+  useRealtimeEvent<LoadEvent>('computer.load', (m) => {
+    const id = m.data?.computer_id;
+    if (!id) return;
+    qc.setQueryData<ClubMapPage>(clubMapKey, (old) => (old ? mergeLoad(old, m.data) : old));
+    void qc.invalidateQueries({ queryKey: computerHealthKey(id), exact: true });
+  });
 
   useRealtimeEvent<StateEvent>('computer.state', (m) => {
     const id = m.data?.computer_id;

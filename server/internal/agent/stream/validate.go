@@ -2,6 +2,7 @@ package stream
 
 import (
 	"fmt"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -106,6 +107,69 @@ func validateStatus(s *agentv1.Status) error {
 	}
 	if l := s.GetLoad(); l != nil && (l.GetCpuBasisPoints() > 10000 || l.GetRamBasisPoints() > 10000) {
 		return fmt.Errorf("load basis points must be 0..10000")
+	}
+	return nil
+}
+
+// Пределы Status.health (Этап 7, docs/agent-protocol.md §16.1).
+const (
+	minTempDeci        = -500 // −50 °C
+	maxTempDeci        = 1500 // 150 °C
+	maxDisks           = 26   // буквы дисков A–Z
+	maxPeripherals     = 16
+	maxPeripheralName  = 128     // символов
+	maxDiskMount       = 16      // символов («C:», точка монтирования)
+	maxDiskTotalMB     = 1 << 30 // 1 ПиБ: free·100 и total·percent не переполняют uint64
+	maxBasisPoints     = 10000
+	healthFieldInvalid = "health: %s"
+)
+
+// displayText — текст для показа админу: корректный UTF-8 до max символов, без управляющих символов и
+// переключателей направления письма (подмена отображаемого имени устройства).
+func displayText(s string, n int) bool {
+	if tooLong(s, n) {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || (r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069) || r == 0x200E || r == 0x200F {
+			return false
+		}
+	}
+	return true
+}
+
+func tempOK(deci int32) bool { return deci == 0 || (deci >= minTempDeci && deci <= maxTempDeci) }
+
+// validateHealth — Status.health. Ошибка — сервер отбрасывает только health (Status принимается без него, поток не
+// закрывается): неверные измерения не должны ни ломать карту, ни отключать ПК.
+func validateHealth(h *agentv1.ComputerHealth) error {
+	if h == nil {
+		return nil
+	}
+	if !tempOK(h.GetCpuTempDecicelsius()) || !tempOK(h.GetGpuTempDecicelsius()) {
+		return fmt.Errorf(healthFieldInvalid, "temperatures must be −50..150 °C (tenths)")
+	}
+	if h.GetGpuLoadBasisPoints() > maxBasisPoints || h.GetGpuMemoryBasisPoints() > maxBasisPoints {
+		return fmt.Errorf(healthFieldInvalid, "gpu basis points must be 0..10000")
+	}
+	if len(h.GetDisks()) > maxDisks {
+		return fmt.Errorf(healthFieldInvalid, "too many disks")
+	}
+	for _, d := range h.GetDisks() {
+		if d.GetMount() == "" || !displayText(d.GetMount(), maxDiskMount) {
+			return fmt.Errorf(healthFieldInvalid, "disk mount is required (up to 16 printable characters)")
+		}
+		if d.GetTotalMb() > maxDiskTotalMB || d.GetFreeMb() > d.GetTotalMb() {
+			return fmt.Errorf(healthFieldInvalid, "disk free_mb must not exceed total_mb (≤ 1 PiB)")
+		}
+	}
+	if len(h.GetPeripherals()) > maxPeripherals {
+		return fmt.Errorf(healthFieldInvalid, "too many peripherals")
+	}
+	for _, p := range h.GetPeripherals() {
+		if !displayText(p.GetName(), maxPeripheralName) {
+			return fmt.Errorf(healthFieldInvalid, "peripheral name must be printable, up to 128 characters")
+		}
 	}
 	return nil
 }

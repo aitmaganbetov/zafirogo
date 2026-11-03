@@ -13,6 +13,11 @@
 // ZAFIRO_LOAD_TLS=1.2|1.3 — стримы по mTLS, как в production: серверный TLS grpcserver.TLSConfig (dev-PKI во временном
 // каталоге), у каждого ПК свой клиентский сертификат ECDSA P-256 от выпускающего CA (pki.CA.Issue), версия TLS
 // клиента ограничена указанной (агенты на Windows 10 — TLS 1.2). Идентичность ПК по-прежнему — тестовый перехватчик.
+//
+// ZAFIRO_LOAD_HEALTH=1 — Status несёт здоровье ПК (Этап 7): у 10 % ПК CPU 92 °C, у 5 % отключена мышь, загрузка CPU
+// случайная (худший случай для живых обновлений карты: почти каждый Status — заметное изменение). Сервер считает
+// проблемы (agent.health.*, raise_after = 0 — записи истории приходятся на подключение, а не на окно замера) и
+// публикует computer.load в NATS (clubmap.LiveEvents). Отчёт: live_published_in_window, health_writes_in_window.
 package stream
 
 import (
@@ -49,7 +54,9 @@ import (
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/commands"
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
+	"github.com/aitmaganbetov/zafirogo/server/internal/clubmap"
 	grpcserver "github.com/aitmaganbetov/zafirogo/server/internal/grpc"
 	"github.com/aitmaganbetov/zafirogo/server/internal/pki"
 )
@@ -117,6 +124,9 @@ type childStats struct {
 	Sys        uint64 `json:"sys"`
 	Streams    int    `json:"streams"`
 	PGWrites   int64  `json:"pg_writes"`
+	// Этап 7 (ZAFIRO_LOAD_HEALTH): живые обновления карты и записи истории проблем.
+	LivePublished uint64 `json:"live_published"`
+	HealthWrites  int64  `json:"health_writes"`
 }
 
 // TestLoadServerChild — процесс-сервер (запускается родителем TestLoad).
@@ -140,7 +150,14 @@ func TestLoadServerChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer nc.Close()
-	svc, err := New(Options{Instance: "load", Pool: pool, Valkey: vk, NATS: nc, KeyPrefix: "load:", SubjectPrefix: "load"})
+	o := Options{Instance: "load", Pool: pool, Valkey: vk, NATS: nc, KeyPrefix: "load:", SubjectPrefix: "load"}
+	if os.Getenv("ZAFIRO_LOAD_HEALTH") != "" {
+		th := health.Defaults()
+		th.RaiseAfter = 0
+		o.Health = HealthOptions{Thresholds: th}
+		o.Live = &clubmap.LiveEvents{NATS: nc}
+	}
+	svc, err := New(o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +207,8 @@ func TestLoadServerChild(t *testing.T) {
 			var ms runtime.MemStats
 			runtime.ReadMemStats(&ms)
 			b, _ := json.Marshal(childStats{Goroutines: runtime.NumGoroutine(), HeapInuse: ms.HeapInuse, StackInuse: ms.StackInuse,
-				Sys: ms.Sys, Streams: svc.LocalStreams(), PGWrites: svc.Recorder().Writes()})
+				Sys: ms.Sys, Streams: svc.LocalStreams(), PGWrites: svc.Recorder().Writes(),
+				LivePublished: svc.LivePublished(), HealthWrites: svc.HealthJournal().Writes()})
 			fmt.Printf("STATS %s\n", b)
 		}
 	}
@@ -249,6 +267,7 @@ func TestLoad(t *testing.T) {
 	ctx := context.Background()
 	pcs := envInt("ZAFIRO_LOAD_PCS", 10000)
 	statusEvery := envDur("ZAFIRO_LOAD_STATUS_EVERY", 30*time.Second)
+	withHealth := os.Getenv("ZAFIRO_LOAD_HEALTH") != ""
 	window := envDur("ZAFIRO_LOAD_WINDOW", 60*time.Second)
 
 	// ПК клуба (пачкой).
@@ -410,9 +429,13 @@ func TestLoad(t *testing.T) {
 			tk := time.NewTicker(statusEvery)
 			defer tk.Stop()
 			for {
-				if st.Send(&agentv1.AgentMessage{Payload: &agentv1.AgentMessage_Status{Status: &agentv1.Status{
+				status := &agentv1.Status{
 					State: agentv1.ComputerState_COMPUTER_STATE_IDLE,
-					Load:  &agentv1.ComputerLoad{CpuBasisPoints: uint32(mrand.IntN(10000)), RamBasisPoints: 4000}}}}) == nil { // #nosec G404,G115
+					Load:  &agentv1.ComputerLoad{CpuBasisPoints: uint32(mrand.IntN(10000)), RamBasisPoints: 4000}} // #nosec G404,G115
+				if withHealth {
+					status.Health = loadHealth(pc)
+				}
+				if st.Send(&agentv1.AgentMessage{Payload: &agentv1.AgentMessage_Status{Status: status}}) == nil {
 					statuses.Add(1)
 				}
 				select {
@@ -496,6 +519,9 @@ func TestLoad(t *testing.T) {
 		"pg_rows_written_in_window":    pgRows,
 		"commands_1000_send_seconds":   sendDur.Seconds(),
 		"commands_1000_max_latency_ms": maxLat.Milliseconds(),
+		"health":                       withHealth,
+		"live_published_in_window":     after.LivePublished - before.LivePublished,
+		"health_writes_in_window":      after.HealthWrites - before.HealthWrites,
 	}
 	b, _ := json.MarshalIndent(report, "", "  ")
 	t.Logf("load report:\n%s", b)
@@ -506,4 +532,23 @@ func TestLoad(t *testing.T) {
 		t.Errorf("unchanged statuses wrote to Postgres: %d rows, %d recorder writes", pgRows, after.PGWrites-before.PGWrites)
 	}
 	close(stop)
+}
+
+// loadHealth — здоровье ПК нагрузочного теста: у 10 % ПК перегрев CPU, у 5 % отключена мышь, остальное в норме.
+func loadHealth(pc int64) *agentv1.ComputerHealth {
+	temp := int32(620)
+	if pc%10 == 0 {
+		temp = 920
+	}
+	return &agentv1.ComputerHealth{
+		CpuTempDecicelsius: temp, GpuTempDecicelsius: 650, GpuMeasured: true, GpuLoadBasisPoints: 5000, GpuMemoryBasisPoints: 3000,
+		LinkSpeedMbps: 1000, UptimeSeconds: 7200,
+		Disks: []*agentv1.DiskHealth{{Mount: "C:", System: true, TotalMb: 512000, FreeMb: 200000, Smart: agentv1.DiskSmart_DISK_SMART_OK},
+			{Mount: "D:", TotalMb: 2000000, FreeMb: 900000, Smart: agentv1.DiskSmart_DISK_SMART_OK}},
+		Peripherals: []*agentv1.Peripheral{
+			{Kind: agentv1.PeripheralKind_PERIPHERAL_KIND_MOUSE, Connected: pc%20 != 0, Name: "Logitech G102"},
+			{Kind: agentv1.PeripheralKind_PERIPHERAL_KIND_KEYBOARD, Connected: true, Name: "HyperX Alloy"},
+			{Kind: agentv1.PeripheralKind_PERIPHERAL_KIND_HEADSET, Connected: true, Name: "HyperX Cloud II"},
+			{Kind: agentv1.PeripheralKind_PERIPHERAL_KIND_MONITOR, Connected: true, Name: "AOC 24G2"}},
+	}
 }

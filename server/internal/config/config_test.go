@@ -507,3 +507,45 @@ func TestAgentStreamRebalance(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentHealth(t *testing.T) {
+	cfg, err := Load("", environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := cfg.Agent.Health
+	if !h.Enabled || h.CPUTempC != 90 || h.GPUTempC != 85 || h.TempHysteresisC != 5 || h.SystemDiskFreePercent != 10 ||
+		h.SystemDiskFreeGB != 10 || h.OtherDiskFreePercent != 5 || h.LinkFullMbps != 1000 || h.LinkMinMbps != 100 ||
+		h.UnstableShutdowns != 3 || h.UnstableBugchecks != 1 || h.RaiseAfter != 2*time.Minute || h.ClearAfter != 5*time.Minute ||
+		h.EventRetention != 90*24*time.Hour || h.LiveMinGap != 15*time.Second || h.LiveLoadStepPercent != 5 ||
+		h.LiveTempStepC != 2 || h.PingInterval != time.Minute {
+		t.Errorf("health defaults = %+v", h)
+	}
+	cfg, err = Load("", environ("ZAFIRO_AGENT_HEALTH_CPU_TEMP_C=95", "ZAFIRO_AGENT_HEALTH_PING_INTERVAL=0s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Agent.Health.CPUTempC != 95 || cfg.Agent.Health.PingInterval != 0 {
+		t.Errorf("health env = %+v", cfg.Agent.Health)
+	}
+	bad := map[string][]string{
+		"cpu temp":   {"ZAFIRO_AGENT_HEALTH_CPU_TEMP_C=9"},
+		"gpu temp":   {"ZAFIRO_AGENT_HEALTH_GPU_TEMP_C=900"},
+		"hysteresis": {"ZAFIRO_AGENT_HEALTH_TEMP_HYSTERESIS_C=-1"},
+		"disk":       {"ZAFIRO_AGENT_HEALTH_SYSTEM_DISK_FREE_PERCENT=95"},
+		"link":       {"ZAFIRO_AGENT_HEALTH_LINK_MIN_MBPS=2000"},
+		"raise":      {"ZAFIRO_AGENT_HEALTH_RAISE_AFTER=-1s"},
+		"retention":  {"ZAFIRO_AGENT_HEALTH_EVENT_RETENTION=1h"},
+		"live gap":   {"ZAFIRO_AGENT_HEALTH_LIVE_MIN_GAP=100ms"},
+		"live step":  {"ZAFIRO_AGENT_HEALTH_LIVE_LOAD_STEP_PERCENT=0"},
+		"ping":       {"ZAFIRO_AGENT_HEALTH_PING_INTERVAL=1s"},
+	}
+	for name, kv := range bad {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load("", environ(kv...))
+			if err == nil || !strings.Contains(err.Error(), "agent.health.") {
+				t.Fatalf("expected health validation error, got %v", err)
+			}
+		})
+	}
+}

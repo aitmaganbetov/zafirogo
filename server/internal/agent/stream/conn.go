@@ -18,6 +18,7 @@ import (
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/commands"
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/identity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -55,6 +56,8 @@ type conn struct {
 
 	tracker *presence.StateTracker
 	caps    presence.Capabilities
+	// monitor — проблемы здоровья (nil — выключено); только горутина чтения.
+	monitor *health.Monitor
 
 	mu           sync.Mutex
 	queue        []*agentv1.ServerMessage
@@ -65,6 +68,9 @@ type conn struct {
 	resync       bool
 	rebalanced   bool // уже попросили переподключиться ради перебалансировки (rebalance.go)
 	inflight     map[string]*inflight
+	live         liveMark  // последнее живое обновление карты (health.go)
+	pingID       string    // command_id неотвеченного Ping
+	pingSent     time.Time // когда отправлен последний Ping
 }
 
 func (c *conn) close(err error) {
@@ -319,15 +325,24 @@ func (s *Service) Connect(st agentv1.AgentService_ConnectServer) error {
 		inflight: map[string]*inflight{},
 		tracker:  s.rec.Track(id.ClubID, id.ComputerID, row.AgentState),
 	}
+	if !s.o.Health.Disabled {
+		c.monitor = health.NewMonitor(s.o.Health.Thresholds, s.health, id.ClubID, id.ComputerID, s.o.Log)
+	}
 	c.st = presence.State{
 		ClubID: id.ClubID, ComputerID: id.ComputerID, Online: true, Instance: s.o.Instance, Gen: own.Gen,
 		ProtocolVersion: hello.GetProtocolVersion(), AgentVersion: hello.GetAgentVersion(), Capabilities: c.caps,
 		RemoteIP: remoteIP(ctx), LocalIP: hello.GetDevice().GetLocalIp(), ConnectedAt: now.UTC(), LastSeenAt: now.UTC(),
 	}
 	if hs := hello.GetStatus(); hs != nil {
+		c.dropInvalidHealth(hs)
 		c.applyStatus(hs, now)
 		c.tracker.Observe(c.st.AgentState)
+		c.observeHealth(ctx, c.st.Health, now)
 	}
+	// Подключение и так перечитывает ПК на карте (computer.state) — живое обновление считается отправленным.
+	c.live = markOf(c.st, now)
+	// Первый Ping — через PingInterval после подключения (не добавлять сообщений в шторм переподключений).
+	c.pingSent = now
 	s.attach(c)
 	defer c.finish()
 	if hadPrev && prev.Instance != s.o.Instance {
@@ -474,14 +489,30 @@ func (c *conn) state() presence.State {
 }
 
 // applyStatus обновляет снимок (под c.mu или до публикации соединения). significant — изменилось не только время/загрузка.
+// Status без load или health прежние значения не стирает (agent.proto, Status.health).
 func (c *conn) applyStatus(s *agentv1.Status, now time.Time) (significant bool) {
 	prev := c.st
 	c.st.AgentState = presence.StateName(s.GetState())
 	c.st.SessionID = s.GetSessionId()
 	c.st.SignedInUserID = s.GetSignedInUserId()
-	c.st.Load = presence.LoadFrom(s.GetLoad())
+	if s.GetLoad() != nil {
+		c.st.Load = presence.LoadFrom(s.GetLoad())
+		c.st.HasLoad = true
+	}
+	if s.GetHealth() != nil {
+		c.st.Health = presence.HealthFrom(s.GetHealth(), now)
+	}
 	c.st.LastSeenAt = now.UTC()
 	return c.st.Significant(prev)
+}
+
+// dropInvalidHealth отбрасывает неверное здоровье: Status принимается без него, поток не закрывается.
+func (c *conn) dropInvalidHealth(s *agentv1.Status) {
+	if err := validateHealth(s.GetHealth()); err != nil {
+		c.svc.o.Log.Debug("agent health ignored", "computer_id", c.id.ComputerID, "err", err)
+		c.svc.healthDropped.Add(1)
+		s.Health = nil
+	}
 }
 
 func (c *conn) writePresence(ctx context.Context) error {
@@ -608,18 +639,25 @@ func (c *conn) onStatus(ctx context.Context, s *agentv1.Status) {
 		c.svc.o.Log.Debug("agent status ignored", "computer_id", c.id.ComputerID, "err", err)
 		return
 	}
+	c.dropInvalidHealth(s)
 	now := c.svc.o.Now()
 	c.mu.Lock()
 	prev := c.st
 	significant := c.applyStatus(s, now)
-	if !significant && now.Sub(c.lastStatusAt) < c.svc.o.MinStatusGap {
+	// Смена периферии или SMART (агент шлёт её сразу, agent.proto Status.health) не отбрасывается ограничением частоты:
+	// она нужна панели сразу, а не со следующим плановым Status (S7-HA-2).
+	if !significant && !presence.HealthChanged(prev.Health, c.st.Health) && now.Sub(c.lastStatusAt) < c.svc.o.MinStatusGap {
 		// Не чаще 1 Status в 2 с (agent.proto п. 7): лишний отбрасывается, стрим не закрывается.
 		c.st = prev
 		c.mu.Unlock()
 		return
 	}
 	c.lastStatusAt = now
+	fresh := c.st.Health
 	c.mu.Unlock()
+	if s.GetHealth() != nil {
+		c.observeHealth(ctx, fresh, now)
+	}
 
 	if err := c.writePresence(ctx); err != nil && !errors.Is(err, presence.ErrNotOwner) {
 		c.svc.o.Log.Warn("agent presence write failed", "computer_id", c.id.ComputerID, "err", err)
@@ -627,6 +665,11 @@ func (c *conn) onStatus(ctx context.Context, s *agentv1.Status) {
 	c.tracker.Observe(presence.StateName(s.GetState()))
 	if significant && c.svc.o.Presence != nil {
 		c.svc.o.Presence.PresenceChanged(ctx, c.state())
+		c.mu.Lock()
+		c.live = markOf(c.st, now) // computer.state и так перечитает ПК на карте
+		c.mu.Unlock()
+	} else {
+		c.maybeLive(now)
 	}
 }
 
@@ -670,6 +713,9 @@ func (c *conn) onEvent(ctx context.Context, ev *agentv1.AgentEvent) {
 func (c *conn) onResult(ctx context.Context, res *agentv1.CommandResult) {
 	if !validUUID(res.GetCommandId()) {
 		return
+	}
+	if res.GetSeq() == 0 && c.pingResult(res, c.svc.o.Now()) {
+		return // ответ на Ping измерения времени ответа (health.go)
 	}
 	var kind commands.Kind
 	final := res.GetStatus() != agentv1.CommandStatus_COMMAND_STATUS_ACCEPTED

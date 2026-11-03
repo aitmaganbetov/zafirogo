@@ -366,6 +366,59 @@ paths:
           $ref: "common.yaml#/components/responses/Conflict"
         "422":
           $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/club-computers/{computerId}/health:
+    parameters:
+      - $ref: "#/components/parameters/ComputerId"
+    get:
+      operationId: getComputerHealth
+      tags: [clubmap]
+      summary: Состояние ПК (загрузка и здоровье)
+      description: |
+        Новое (Этап 7, в Laravel не было; docs/open-questions/stage7-health.md). Право — как у карты клуба
+        (club-map.state, club_map.view). Последние измерения агента из присутствия (Valkey): загрузка, температуры,
+        GPU, диски, периферия, сеть, аптайм, сбои за 7 суток, время ответа агента; проблемы — посчитанные сервером
+        по порогам agent.health.*. ПК не в сети или агент здоровье не присылает — load/health = null. Чужой ПК — 404.
+      responses:
+        "200":
+          description: Состояние ПК.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComputerHealthView"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/club-computers/{computerId}/health/events:
+    parameters:
+      - $ref: "#/components/parameters/ComputerId"
+    get:
+      operationId: listComputerHealthEvents
+      tags: [clubmap]
+      summary: История проблем ПК
+      description: |
+        Новое (Этап 7). Переходы проблем здоровья (появилась / ушла), новые сверху; keyset-пагинация
+        (cursor/limit, next_cursor). Право — club_map.view. Чужой ПК — 404.
+      parameters:
+        - $ref: "common.yaml#/components/parameters/Limit"
+        - $ref: "common.yaml#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Страница истории.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthEventPage"
+        "400":
+          $ref: "common.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
 components:
   securitySchemes:
     bearerAuth:
@@ -776,6 +829,185 @@ components:
           nullable: true
         staff_kind:
           type: string
+        load:
+          allOf:
+            - $ref: "#/components/schemas/ComputerLoad"
+          nullable: true
+          description: Загрузка ПК (Этап 7) — только ПК в сети, чей агент её присылает; иначе поля нет.
+        problems:
+          type: array
+          description: Проблемы здоровья, посчитанные сервером (Этап 7); только ПК в сети, иначе поля нет.
+          items:
+            $ref: "#/components/schemas/HealthProblem"
+        rtt_ms:
+          type: integer
+          format: int64
+          nullable: true
+          description: Время ответа агента по стриму, мс (Этап 7).
+    ComputerLoad:
+      type: object
+      required: [cpu_bp, ram_bp, idle_seconds]
+      properties:
+        cpu_bp:
+          type: integer
+          format: int64
+          description: Загрузка CPU, сотые доли процента (0..10000).
+        ram_bp:
+          type: integer
+          format: int64
+          description: Занятая ОЗУ, сотые доли процента (0..10000).
+        idle_seconds:
+          type: integer
+          format: int64
+          description: Сколько секунд нет ввода с клавиатуры/мыши.
+    HealthProblem:
+      type: string
+      description: |
+        Проблема здоровья ПК (agent.health.*): cpu_hot / gpu_hot — перегрев; disk_low — мало места; disk_smart —
+        SMART предупреждает или предсказывает отказ; mouse / keyboard / monitor — не подключены; network_slow —
+        скорость сети упала; unstable — внезапные выключения или «синие экраны» за 7 суток.
+      enum: [cpu_hot, gpu_hot, disk_low, disk_smart, mouse, keyboard, monitor, network_slow, unstable]
+    ComputerHealthView:
+      type: object
+      required: [computer_id, connection, problems]
+      properties:
+        computer_id:
+          type: integer
+          format: int64
+        connection:
+          type: string
+          enum: [online, offline]
+        agent_version:
+          type: string
+          nullable: true
+        rtt_ms:
+          type: integer
+          format: int64
+          nullable: true
+        load:
+          allOf:
+            - $ref: "#/components/schemas/ComputerLoad"
+          nullable: true
+        health:
+          allOf:
+            - $ref: "#/components/schemas/HealthSnapshot"
+          nullable: true
+        problems:
+          type: array
+          items:
+            $ref: "#/components/schemas/HealthProblem"
+    HealthSnapshot:
+      type: object
+      required: [reported_at, disks, peripherals, unexpected_shutdowns_7d, bugchecks_7d]
+      properties:
+        reported_at:
+          type: string
+          format: date-time
+          description: Когда сервер получил измерения (аптайм — на этот момент).
+        cpu_temp_deci:
+          type: integer
+          format: int64
+          nullable: true
+          description: Температура CPU, десятые доли °C (null — не измерено).
+        gpu_temp_deci:
+          type: integer
+          format: int64
+          nullable: true
+        gpu_load_bp:
+          type: integer
+          format: int64
+          nullable: true
+          description: Загрузка GPU, сотые доли процента (null — не измерено).
+        gpu_memory_bp:
+          type: integer
+          format: int64
+          nullable: true
+        disks:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiskView"
+        peripherals:
+          type: array
+          items:
+            $ref: "#/components/schemas/PeripheralView"
+        link_mbps:
+          type: integer
+          format: int64
+          nullable: true
+          description: Скорость основного сетевого подключения, Мбит/с (null — не измерено).
+        uptime_seconds:
+          type: integer
+          format: int64
+          nullable: true
+        unexpected_shutdowns_7d:
+          type: integer
+          format: int64
+        bugchecks_7d:
+          type: integer
+          format: int64
+    DiskView:
+      type: object
+      required: [mount, system, total_mb, free_mb]
+      properties:
+        mount:
+          type: string
+        system:
+          type: boolean
+        total_mb:
+          type: integer
+          format: int64
+        free_mb:
+          type: integer
+          format: int64
+        smart:
+          type: string
+          nullable: true
+          description: SMART — ok | warning | failing; null — не измерено.
+          enum: [ok, warning, failing]
+          x-enum-varnames: [DiskSmartOk, DiskSmartWarning, DiskSmartFailing]
+    PeripheralView:
+      type: object
+      required: [kind, connected, name]
+      properties:
+        kind:
+          type: string
+          enum: [mouse, keyboard, headset, monitor]
+        connected:
+          type: boolean
+        name:
+          type: string
+    HealthEvent:
+      type: object
+      required: [id, kind, raised_at, details]
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          $ref: "#/components/schemas/HealthProblem"
+        raised_at:
+          type: string
+          format: date-time
+        cleared_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Когда проблема ушла (null — ещё есть).
+        details:
+          type: object
+          additionalProperties: true
+          description: Подробности на момент появления (temp_deci, threshold_c, disks, mbps, previous_mbps, …).
+    HealthEventPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/HealthEvent"
+        next_cursor:
+          type: string
+          nullable: true
     ClubMapState:
       type: object
       required: [computers]

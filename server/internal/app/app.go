@@ -435,6 +435,9 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		},
 		// Присутствие → событие computer.state для карты клуба (вместо опроса /club-map/state, Этап 3).
 		Presence: presenceEvents,
+		// Этап 7: загрузка и здоровье ПК → computer.load (core NATS, без outbox), проблемы — agent/health.
+		Live:   &clubmap.LiveEvents{NATS: a.NATS, Now: ro.Now, Log: log},
+		Health: healthOptions(cfg.Agent.Health),
 		// TODO(B2): Results (stream.ResultHandler) —
 		// реализаций пока нет (docs/open-questions/stage2-wiring.md W-1).
 		Log: log,
@@ -500,7 +503,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 
 	// --- События: WebSocket админки, outbox, вебхуки ---
 	if a.Realtime, err = realtime.NewHandler(realtime.Options{
-		JS: a.JS, MaxConnsPerUser: cfg.Realtime.MaxConnsPerUser, SendBuffer: cfg.Realtime.SendBuffer,
+		JS: a.JS, Live: a.NATS, MaxConnsPerUser: cfg.Realtime.MaxConnsPerUser, SendBuffer: cfg.Realtime.SendBuffer,
 		PingInterval: cfg.Realtime.PingInterval, PingTimeout: cfg.Realtime.PingTimeout,
 		MaxLifetime: cfg.Realtime.MaxLifetime, OriginPatterns: cfg.Realtime.OriginPatterns, Log: log,
 	}); err != nil {
@@ -591,7 +594,9 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		{"log-retention", (&worker.LogRetention{
 			Platform: a.PlatformPool, Interval: cfg.Workers.LogRetention.Interval, Log: log,
 			// Сроки журналов — как в старом (PruneIntegrationData); ledger и audit_log — никогда.
-			Retention: map[string]time.Duration{"api_request_logs": cfg.Integrations.RequestLogRetention},
+			Retention: map[string]time.Duration{"api_request_logs": cfg.Integrations.RequestLogRetention,
+				// Этап 7: история проблем здоровья ПК (новая, в старом не было).
+				"computer_health_events": cfg.Agent.Health.EventRetention},
 		}).Run},
 	}
 	if a.workers, err = withoutWorkers(a.workers, cfg.Dev.DisableWorkers); err != nil {

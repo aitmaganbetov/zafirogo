@@ -535,3 +535,25 @@ Telegram в `platform_settings` — `Crypt::encryptString` (`app/Services/Telegr
   ошибка в запросе пула клуба не выдаёт и не сбрасывает второй фактор суперадмина). Проверка —
   `TestAppRoleLeastPrivilege`.
 - **Сессии** (Valkey, не Postgres): поле `mfa` в `auth:s:{sid}`; сессия суперадмина без него не действует.
+
+## 14. История проблем здоровья ПК (0030, Этап 7)
+
+Новая функция по поручению владельца (решения — `docs/open-questions/stage7-health.md`). В старом Laravel таблицы нет —
+при переносе из MySQL она пустая. Измерения агента живут только в снимке присутствия (Valkey); здесь — **переходы**.
+
+- **`computer_health_events`**: `club_id` → `clubs`, `computer_id` → `club_computers` (ON DELETE CASCADE), `kind`
+  (CHECK: `cpu_hot`, `gpu_hot`, `disk_low`, `disk_smart`, `mouse`, `keyboard`, `monitor`, `network_slow`, `unstable`),
+  `raised_at`, `cleared_at` (NULL — проблема есть; CHECK ≥ `raised_at`), `details` jsonb (температура и порог, диски,
+  скорость сети, счётчики сбоев — без персональных данных). PK (`id`, `raised_at`).
+- **Партиции** по месяцам `raised_at` (UTC), как `api_request_logs` (§10.6, §12): белые списки
+  `zafiro_create_monthly_partitions` и `zafiro_drop_monthly_partitions` расширены, таблица в `db.PartitionedTables` и
+  `db.RetentionTables`; срок — `agent.health.event_retention` (90 дней), задача `logs:retention`.
+- **Индексы**: (`club_id`, `computer_id`, `raised_at` DESC, `id` DESC) — история ПК с keyset; частичный
+  (`club_id`, `computer_id`, `kind`) WHERE `cleared_at IS NULL` — открытые проблемы.
+- **Одна открытая проблема вида у ПК** — `INSERT … SELECT … FROM club_computers WHERE club_id AND id AND NOT EXISTS
+  (открытая)` (уникальный индекс партиционированной таблицы должен включать `raised_at`); ПК чужого клуба не вставить.
+- **RLS** `tenant_isolation` + `platform_access` (FORCE). **Права**: `zafiro_app` — SELECT, INSERT, UPDATE
+  только `cleared_at` (ни подменить, ни удалить историю), `zafiro_platform` — SELECT. Проверки —
+  `TestAppRoleLeastPrivilege`, `TestHealthStatusToSnapshotAndHistory` (RLS чужого клуба).
+- **Запись**: только при подтверждённом переходе (дребезг `raise_after`/`clear_after`, `server/internal/agent/health`),
+  не на каждый Status: на 5 000 ПК в установившемся режиме — 0 строк в минуту (`docs/load-test.md` §6.3).

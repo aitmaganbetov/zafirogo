@@ -247,6 +247,54 @@ export interface paths {
         patch: operations["updateComputerLayout"];
         trace?: never;
     };
+    "/api/club-computers/{computerId}/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                computerId: components["parameters"]["ComputerId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Состояние ПК (загрузка и здоровье)
+         * @description Новое (Этап 7, в Laravel не было; docs/open-questions/stage7-health.md). Право — как у карты клуба
+         *     (club-map.state, club_map.view). Последние измерения агента из присутствия (Valkey): загрузка, температуры,
+         *     GPU, диски, периферия, сеть, аптайм, сбои за 7 суток, время ответа агента; проблемы — посчитанные сервером
+         *     по порогам agent.health.*. ПК не в сети или агент здоровье не присылает — load/health = null. Чужой ПК — 404.
+         */
+        get: operations["getComputerHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/club-computers/{computerId}/health/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                computerId: components["parameters"]["ComputerId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * История проблем ПК
+         * @description Новое (Этап 7). Переходы проблем здоровья (появилась / ушла), новые сверху; keyset-пагинация
+         *     (cursor/limit, next_cursor). Право — club_map.view. Чужой ПК — 404.
+         */
+        get: operations["listComputerHealthEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -452,6 +500,124 @@ export interface components {
             staff_until?: string | null;
             staff_name?: string | null;
             staff_kind: string;
+            /** @description Загрузка ПК (Этап 7) — только ПК в сети, чей агент её присылает; иначе поля нет. */
+            load?: components["schemas"]["ComputerLoad"] | null;
+            /** @description Проблемы здоровья, посчитанные сервером (Этап 7); только ПК в сети, иначе поля нет. */
+            problems?: components["schemas"]["HealthProblem"][];
+            /**
+             * Format: int64
+             * @description Время ответа агента по стриму, мс (Этап 7).
+             */
+            rtt_ms?: number | null;
+        };
+        ComputerLoad: {
+            /**
+             * Format: int64
+             * @description Загрузка CPU, сотые доли процента (0..10000).
+             */
+            cpu_bp: number;
+            /**
+             * Format: int64
+             * @description Занятая ОЗУ, сотые доли процента (0..10000).
+             */
+            ram_bp: number;
+            /**
+             * Format: int64
+             * @description Сколько секунд нет ввода с клавиатуры/мыши.
+             */
+            idle_seconds: number;
+        };
+        /**
+         * @description Проблема здоровья ПК (agent.health.*): cpu_hot / gpu_hot — перегрев; disk_low — мало места; disk_smart —
+         *     SMART предупреждает или предсказывает отказ; mouse / keyboard / monitor — не подключены; network_slow —
+         *     скорость сети упала; unstable — внезапные выключения или «синие экраны» за 7 суток.
+         * @enum {string}
+         */
+        HealthProblem: "cpu_hot" | "gpu_hot" | "disk_low" | "disk_smart" | "mouse" | "keyboard" | "monitor" | "network_slow" | "unstable";
+        ComputerHealthView: {
+            /** Format: int64 */
+            computer_id: number;
+            /** @enum {string} */
+            connection: "online" | "offline";
+            agent_version?: string | null;
+            /** Format: int64 */
+            rtt_ms?: number | null;
+            load?: components["schemas"]["ComputerLoad"] | null;
+            health?: components["schemas"]["HealthSnapshot"] | null;
+            problems: components["schemas"]["HealthProblem"][];
+        };
+        HealthSnapshot: {
+            /**
+             * Format: date-time
+             * @description Когда сервер получил измерения (аптайм — на этот момент).
+             */
+            reported_at: string;
+            /**
+             * Format: int64
+             * @description Температура CPU, десятые доли °C (null — не измерено).
+             */
+            cpu_temp_deci?: number | null;
+            /** Format: int64 */
+            gpu_temp_deci?: number | null;
+            /**
+             * Format: int64
+             * @description Загрузка GPU, сотые доли процента (null — не измерено).
+             */
+            gpu_load_bp?: number | null;
+            /** Format: int64 */
+            gpu_memory_bp?: number | null;
+            disks: components["schemas"]["DiskView"][];
+            peripherals: components["schemas"]["PeripheralView"][];
+            /**
+             * Format: int64
+             * @description Скорость основного сетевого подключения, Мбит/с (null — не измерено).
+             */
+            link_mbps?: number | null;
+            /** Format: int64 */
+            uptime_seconds?: number | null;
+            /** Format: int64 */
+            unexpected_shutdowns_7d: number;
+            /** Format: int64 */
+            bugchecks_7d: number;
+        };
+        DiskView: {
+            mount: string;
+            system: boolean;
+            /** Format: int64 */
+            total_mb: number;
+            /** Format: int64 */
+            free_mb: number;
+            /**
+             * @description SMART — ok | warning | failing; null — не измерено.
+             * @enum {string|null}
+             */
+            smart?: "ok" | "warning" | "failing" | null;
+        };
+        PeripheralView: {
+            /** @enum {string} */
+            kind: "mouse" | "keyboard" | "headset" | "monitor";
+            connected: boolean;
+            name: string;
+        };
+        HealthEvent: {
+            /** Format: int64 */
+            id: number;
+            kind: components["schemas"]["HealthProblem"];
+            /** Format: date-time */
+            raised_at: string;
+            /**
+             * Format: date-time
+             * @description Когда проблема ушла (null — ещё есть).
+             */
+            cleared_at?: string | null;
+            /** @description Подробности на момент появления (temp_deci, threshold_c, disks, mbps, previous_mbps, …). */
+            details: {
+                [key: string]: unknown;
+            };
+        };
+        HealthEventPage: {
+            items: components["schemas"]["HealthEvent"][];
+            next_cursor?: string | null;
         };
         ClubMapState: {
             computers: components["schemas"]["ComputerState"][];
@@ -519,10 +685,23 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description Неверный запрос (параметр, курсор, нет заголовка Idempotency-Key). */
+        BadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
     parameters: {
         ZoneId: number;
         ComputerId: number;
+        /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
+        Limit: number;
+        /** @description Непрозрачный курсор следующей страницы (next_cursor). */
+        Cursor: string;
     };
     requestBodies: never;
     headers: never;
@@ -882,6 +1061,62 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getComputerHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                computerId: components["parameters"]["ComputerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Состояние ПК. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputerHealthView"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listComputerHealthEvents: {
+        parameters: {
+            query?: {
+                /** @description Размер страницы (по умолчанию 25, как paginate(25) старого кода). */
+                limit?: components["parameters"]["Limit"];
+                /** @description Непрозрачный курсор следующей страницы (next_cursor). */
+                cursor?: components["parameters"]["Cursor"];
+            };
+            header?: never;
+            path: {
+                computerId: components["parameters"]["ComputerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Страница истории. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthEventPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
 }

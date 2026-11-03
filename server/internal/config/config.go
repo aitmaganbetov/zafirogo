@@ -176,6 +176,41 @@ type Agent struct {
 	Sweeper    Sweeper     `koanf:"sweeper"`
 	Guest      AgentGuest  `koanf:"guest"`
 	Update     AgentUpdate `koanf:"update"`
+	Health     AgentHealth `koanf:"health"`
+}
+
+// AgentHealth — здоровье ПК (Этап 7, agent/health, docs/agent-protocol.md §16): пороги проблем, защита от дребезга,
+// срок хранения истории, живые обновления карты клуба и пинг агента. Решения — docs/open-questions/stage7-health.md.
+type AgentHealth struct {
+	// Enabled — считать проблемы и писать историю (computer_health_events). false — только снимок здоровья.
+	Enabled bool `koanf:"enabled"`
+	// CPUTempC, GPUTempC — перегрев, °C; TempHysteresisC — проблема уходит ниже порога на столько °C.
+	CPUTempC        int32 `koanf:"cpu_temp_c"`
+	GPUTempC        int32 `koanf:"gpu_temp_c"`
+	TempHysteresisC int32 `koanf:"temp_hysteresis_c"`
+	// SystemDiskFreePercent, SystemDiskFreeGB — системный диск: свободно меньше процента или ГБ.
+	SystemDiskFreePercent uint64 `koanf:"system_disk_free_percent"`
+	SystemDiskFreeGB      uint64 `koanf:"system_disk_free_gb"`
+	// OtherDiskFreePercent — остальные диски: свободно меньше процента.
+	OtherDiskFreePercent uint64 `koanf:"other_disk_free_percent"`
+	// LinkFullMbps — скорость упала ниже этой после того, как была не ниже; LinkMinMbps — ниже этой всегда проблема.
+	LinkFullMbps uint32 `koanf:"link_full_mbps"`
+	LinkMinMbps  uint32 `koanf:"link_min_mbps"`
+	// UnstableShutdowns, UnstableBugchecks — нестабилен за 7 суток (0 — признак не проверяется).
+	UnstableShutdowns uint32 `koanf:"unstable_shutdowns"`
+	UnstableBugchecks uint32 `koanf:"unstable_bugchecks"`
+	// RaiseAfter, ClearAfter — сколько проблема держится / отсутствует, прежде чем попасть в историю.
+	RaiseAfter time.Duration `koanf:"raise_after"`
+	ClearAfter time.Duration `koanf:"clear_after"`
+	// EventRetention — срок хранения истории проблем (месячные партиции, задача logs:retention).
+	EventRetention time.Duration `koanf:"event_retention"`
+	// LiveMinGap, LiveLoadStepPercent, LiveTempStepC — живые обновления карты: не чаще раза в LiveMinGap на ПК и
+	// только при заметном изменении (смена набора проблем — сразу).
+	LiveMinGap          time.Duration `koanf:"live_min_gap"`
+	LiveLoadStepPercent uint32        `koanf:"live_load_step_percent"`
+	LiveTempStepC       int32         `koanf:"live_temp_step_c"`
+	// PingInterval — как часто мерить время ответа агента по стриму (0 — не мерить).
+	PingInterval time.Duration `koanf:"ping_interval"`
 }
 
 // AgentUpdate — обновления агента. Решение «Обновления агента» (docs/DECISIONS.md): подпись Ed25519 обязательна,
@@ -578,6 +613,24 @@ func Defaults() map[string]any {
 		"agent.sweeper.interval":                  "5s",
 		"agent.sweeper.reconcile_every":           "5m",
 		"agent.sweeper.command_retention":         "168h",
+		"agent.health.enabled":                    true,
+		"agent.health.cpu_temp_c":                 90,
+		"agent.health.gpu_temp_c":                 85,
+		"agent.health.temp_hysteresis_c":          5,
+		"agent.health.system_disk_free_percent":   10,
+		"agent.health.system_disk_free_gb":        10,
+		"agent.health.other_disk_free_percent":    5,
+		"agent.health.link_full_mbps":             1000,
+		"agent.health.link_min_mbps":              100,
+		"agent.health.unstable_shutdowns":         3,
+		"agent.health.unstable_bugchecks":         1,
+		"agent.health.raise_after":                "2m",
+		"agent.health.clear_after":                "5m",
+		"agent.health.event_retention":            "2160h",
+		"agent.health.live_min_gap":               "15s",
+		"agent.health.live_load_step_percent":     5,
+		"agent.health.live_temp_step_c":           2,
+		"agent.health.ping_interval":              "60s",
 
 		"events.stream.max_age":    "72h",
 		"events.stream.duplicates": "10m",
@@ -769,6 +822,36 @@ var keyIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,16}$`)
 // updateKeyIDRe — key_id ключа подписи обновлений агента (UpdateAvailable.key_id, например "2026-10").
 var updateKeyIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,32}$`)
 
+// validateHealth — agent.health.*: пороги в разумных пределах (опечатка не должна ни засыпать историю ложными
+// проблемами, ни выключить их молча).
+func (c *Config) validateHealth(add func(format string, args ...any)) {
+	h := c.Agent.Health
+	if h.CPUTempC < 40 || h.CPUTempC > 130 || h.GPUTempC < 40 || h.GPUTempC > 130 {
+		add("agent.health.cpu_temp_c, gpu_temp_c: ожидается 40..130 °C")
+	}
+	if h.TempHysteresisC < 0 || h.TempHysteresisC > 30 {
+		add("agent.health.temp_hysteresis_c: ожидается 0..30 °C")
+	}
+	if h.SystemDiskFreePercent > 90 || h.OtherDiskFreePercent > 90 || h.SystemDiskFreeGB > 1024 {
+		add("agent.health.*_disk_free_percent: ожидается 0..90; system_disk_free_gb: 0..1024")
+	}
+	if h.LinkMinMbps > h.LinkFullMbps || h.LinkFullMbps > 100000 {
+		add("agent.health.link_min_mbps: должен быть ≤ link_full_mbps (≤ 100000)")
+	}
+	if h.RaiseAfter < 0 || h.ClearAfter < 0 || h.RaiseAfter > 24*time.Hour || h.ClearAfter > 24*time.Hour {
+		add("agent.health.raise_after, clear_after: ожидается 0..24h")
+	}
+	if h.EventRetention < 24*time.Hour {
+		add("agent.health.event_retention: должен быть ≥ 24h")
+	}
+	if h.LiveMinGap < time.Second || h.LiveLoadStepPercent < 1 || h.LiveLoadStepPercent > 100 || h.LiveTempStepC < 1 {
+		add("agent.health.live_min_gap ≥ 1s, live_load_step_percent 1..100, live_temp_step_c ≥ 1")
+	}
+	if h.PingInterval < 0 || (h.PingInterval > 0 && h.PingInterval < 5*time.Second) {
+		add("agent.health.ping_interval: 0 (не мерить) или ≥ 5s")
+	}
+}
+
 // validateRebalance — agent.stream.rebalance_* (проверяются и при выключенной перебалансировке: включить её
 // можно одной переменной, и ошибка не должна всплыть только тогда).
 func (c *Config) validateRebalance(add func(format string, args ...any)) {
@@ -902,6 +985,7 @@ func (c *Config) Validate() error {
 		add("agent.stream.drain_within: должен быть ≥ 0")
 	}
 	c.validateRebalance(add)
+	c.validateHealth(add)
 	if c.Realtime.MaxLifetime < 0 {
 		add("realtime.max_lifetime: должен быть ≥ 0")
 	}

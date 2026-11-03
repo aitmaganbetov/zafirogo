@@ -98,6 +98,7 @@ ordered consumer club.>, только новые            фильтр club.*.
 |---|---|---|
 | `notifications.changed` | `{}` | изменилось что-то, из чего строится колокольчик (`ClubNotifications::for()`): журнал из списка событий колокольчика, чат, заказ, остаток, ПК офлайн. Клиент перечитывает `GET /notifications` (список зависит от роли и `notifications_seen_at`) |
 | `computer.state` | `{"computer_id": 7, "status": "online\|offline\|busy\|maintenance", "session": {"user_id": 5, "ends_at": "…"} \| null, "reserved": bool, "maintenance": bool, "agent_version": "1.2.3"}` | дифф одного ПК (поля как у элемента `computerStates` старого `/club-map/state`); пишется только при изменении состояния, не на heartbeat |
+| `computer.load` | `{"computer_id": 7, "load": {"cpu_bp": 4250, "ram_bp": 6100, "idle_seconds": 30} \| отсутствует, "problems": ["cpu_hot"], "rtt_ms": 18}` | Этап 7: загрузка и проблемы здоровья ПК (поля как `load`/`problems`/`rtt_ms` у `ComputerState`). **Не через outbox** — §7; не чаще раза в 15 с на ПК и только при заметном изменении |
 | `computer.session.expired` | `{"computer_id": 7, "session_id": 123}` | воркер истечения сессий |
 | `computer.reservation_changed` | `{"computer_ids": [7], "reserved": true}` | флаг брони ПК: карта клуба (reserve) и API v1 `PUT /computers/{id}/reservation` (тип-вебхук, как в старом; брони экрана «Брони» шлют `reservation.changed` и `computer.state`) |
 | `computer.controlled` | `{"computer_ids": [7], "action": "power_on\|restart\|power_off\|service", "status": "restarting\|offline" \| null}` | команда управления (тип-вебхук) |
@@ -141,3 +142,26 @@ REST с проверкой прав); суммы — тиыны. Для типо
   клуб → соединения. При 50 000 ПК и событиях только на изменение состояния это сотни сообщений в секунду —
   приемлемо. Если нет — подписка по клубам с соединениями (`club.<id>.>`), см. EV-6.
 - Лимит соединений — на инстанс; общий на кластер — через Valkey (EV-4).
+
+## 7. Живые обновления без outbox (Этап 7: `computer.load`)
+
+Загрузка и здоровье ПК меняются постоянно; писать их в `outbox_events` (Postgres) и JetStream на каждый Status нельзя
+(CLAUDE.md «Производительность»). Поэтому:
+
+```
+Status агента (стрим, инстанс ПК) ─ ограничение частоты (stream.HealthOptions.liveDue)
+  → clubmap.LiveEvents: core NATS publish live.club.<club_id>.computer.load (тело — outbox.Envelope, id — uuid)
+  → realtime.Handler каждого инстанса (подписка live.club.>) → сотрудники клуба с правом club_map.view
+```
+
+- Subject `live.club.>` не пересекается с потоком `club.>` — JetStream эти сообщения не сохраняет (тест
+  `TestLiveToWebSocket`), вебхуки их не видят.
+- Частота: на ПК не чаще `agent.health.live_min_gap` (15 с) и только при заметном изменении (±5 п.п. CPU/ОЗУ,
+  ±2 °C CPU/GPU, появление или пропажа данных); смена набора проблем, периферии или SMART — сразу.
+- Доставка «не более одного раза» (core NATS, буфер подписки ограничен — лишнее отбрасывается). После переподключения
+  клиент перечитывает экран по REST, где те же поля есть в `/api/club-map/state`.
+- По живому каналу принимаются только события данных: служебное `staff.access_changed` игнорируется.
+- Клиент (`web/src/features/clubmap/useMapLive.ts`) подставляет данные без запроса; открытая панель ПК перечитывает
+  `GET /api/club-computers/{id}/health`.
+- Нагрузка — `docs/load-test.md` §6.3.
+

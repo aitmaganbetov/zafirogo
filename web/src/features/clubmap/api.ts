@@ -1,4 +1,4 @@
-import { queryOptions } from '@tanstack/react-query';
+import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query';
 import { createApiClient, idempotencyKey, unwrap } from '../../api/http';
 import type { components, paths } from '../../api/gen/clubmap';
 import type { paths as reservationPaths } from '../../api/gen/reservations';
@@ -22,6 +22,9 @@ export type ComputerState = S['ComputerState'];
 export type MapTariff = S['MapTariff'];
 export type ZoneInput = S['ZoneInput'];
 export type ControlResult = S['ControlResult'];
+export type HealthView = S['ComputerHealthView'];
+export type HealthEvent = S['HealthEvent'];
+export type HealthProblem = S['HealthProblem'];
 
 export const clubMapKey = ['clubmap', 'page'] as const;
 
@@ -29,6 +32,27 @@ export const clubMapQuery = () =>
   queryOptions({
     queryKey: clubMapKey,
     queryFn: () => unwrap(clubmapApi.GET('/api/club-map')),
+  });
+
+/** Состояние ПК (Этап 7): загрузка, здоровье, проблемы. Ключ — ['clubmap', 'health', id]. */
+export const computerHealthKey = (id: number) => ['clubmap', 'health', id] as const;
+
+export const computerHealthQuery = (id: number) =>
+  queryOptions({
+    queryKey: computerHealthKey(id),
+    queryFn: () => unwrap(clubmapApi.GET('/api/club-computers/{computerId}/health', { params: { path: { computerId: id } } })),
+  });
+
+/** История проблем ПК (keyset, next_cursor). */
+export const healthEventsQuery = (id: number) =>
+  infiniteQueryOptions({
+    queryKey: [...computerHealthKey(id), 'events'] as const,
+    queryFn: ({ pageParam }) =>
+      unwrap(clubmapApi.GET('/api/club-computers/{computerId}/health/events', {
+        params: { path: { computerId: id }, query: { limit: 10, ...(pageParam ? { cursor: pageParam } : {}) } },
+      })),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor ?? null,
   });
 
 /** Состояние нескольких ПК (досылка после события computer.state). */
