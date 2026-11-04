@@ -1,0 +1,35 @@
+# Окружение и секреты
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Сборка
+/bin/
+/dist/
+server/internal/webui/dist/*
+!server/internal/webui/dist/.gitkeep
+
+# Go
+*.test
+*.out
+coverage.*
+/server/tmp/
+
+# Web
+node_modules/
+web/dist/
+web/playwright-report/
+web/test-results/
+web/blob-report/
+web/.vite/
+*.tsbuildinfo
+
+# Инструменты и IDE
+.task/
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+*.swp

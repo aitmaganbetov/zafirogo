@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Логика процесса UI без WPF и WebView2 (проверяется на Linux): клиент IPC службы, мост WebView2 ↔ IPC со схемами
+    (только методы ipc.proto + несколько локальных), выбор экрана по снимку службы, правила киоска, QR-код.
+    Сам процесс UI (WPF + WebView2) — Zafiro.Agent.UI (net10.0-windows).
+  -->
+  <PropertyGroup>
+    <RootNamespace>Zafiro.Agent.UI</RootNamespace>
+    <AssemblyName>Zafiro.Agent.UI.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Zafiro.Agent.Protocol\Zafiro.Agent.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="QRCoder" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Zafiro.Agent.Tests" />
+  </ItemGroup>
+</Project>

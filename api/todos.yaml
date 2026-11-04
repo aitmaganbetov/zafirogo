@@ -1,0 +1,200 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — todos
+  version: 0.1.0
+  description: |
+    To Do List клуба (TodoController). Обновление открытых страниц — событие todo.changed по WebSocket
+    (вместо опроса /todos/state).
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/todos:
+    get:
+      operationId: listTodos
+      tags: [todos]
+      summary: Задачи дня
+      description: |
+        Laravel: TodoController::index()/state() (todos.index, todos.view): задачи локального дня клуба; на сегодня —
+        плюс невыполненные просроченные; не больше 300.
+      parameters:
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Задачи.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TodoDay"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+    post:
+      operationId: createTodo
+      tags: [todos]
+      summary: Добавить задачу
+      description: |
+        Laravel: TodoController::store() (todos.store, todos.create). Журнал todo.created, событие todo.changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TodoInput"
+      responses:
+        "201":
+          description: Задача добавлена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TodoCreated"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/todos/{todoId}/toggle:
+    post:
+      operationId: toggleTodo
+      tags: [todos]
+      summary: Отметить выполненной или снова невыполненной
+      description: |
+        Laravel: TodoController::toggle() (todos.toggle, todos.update). Без изменения — ничего не пишется. Журнал
+        todo.done / todo.reopened, событие todo.changed.
+      parameters:
+        - $ref: "#/components/parameters/TodoId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TodoToggle"
+      responses:
+        "200":
+          description: Задача.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Todo"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/todos/{todoId}:
+    delete:
+      operationId: deleteTodo
+      tags: [todos]
+      summary: Удалить задачу
+      description: |
+        Laravel: TodoController::destroy() (todos.destroy, todos.delete). Журнал todo.deleted, событие todo.changed.
+      parameters:
+        - $ref: "#/components/parameters/TodoId"
+      responses:
+        "200":
+          description: Задача удалена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TodoMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  parameters:
+    TodoId:
+      name: todoId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    Todo:
+      type: object
+      required: [id, title, due_on, done]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        due_on:
+          type: string
+          description: День задачи (Y-m-d).
+        done:
+          type: boolean
+        done_by:
+          type: string
+          nullable: true
+          description: Кто выполнил (имя).
+        done_at:
+          type: string
+          format: date-time
+          nullable: true
+    TodoDay:
+      type: object
+      required: [date, today, is_today, tasks]
+      properties:
+        date:
+          type: string
+        today:
+          type: string
+          description: Сегодня клуба (Y-m-d).
+        is_today:
+          type: boolean
+        tasks:
+          type: array
+          items:
+            $ref: "#/components/schemas/Todo"
+    TodoInput:
+      type: object
+      required: [title, due_on]
+      properties:
+        title:
+          type: string
+        due_on:
+          type: string
+    TodoCreated:
+      type: object
+      required: [message, date]
+      properties:
+        message:
+          type: string
+        date:
+          type: string
+    TodoToggle:
+      type: object
+      required: [done]
+      properties:
+        done:
+          type: boolean
+    TodoMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Библиотека связи агента: регистрация и продление сертификата, канал gRPC с mTLS, стрим Connect
+    (команды, статус, события), unary-клиенты гостя, проверка обновлений. Без UI и без хостинга —
+    их даёт Zafiro.Agent.Service. Совместима с Native AOT (без рефлексии).
+  -->
+  <PropertyGroup>
+    <RootNamespace>Zafiro.Agent.Core</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Zafiro.Agent.Protocol\Zafiro.Agent.Protocol.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grpc.StatusProto" />
+    <PackageReference Include="BouncyCastle.Cryptography" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Zafiro.Agent.Tests" />
+  </ItemGroup>
+</Project>

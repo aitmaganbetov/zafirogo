@@ -1,0 +1,154 @@
+# Образ сервера (Dockerfile → ghcr.io/<owner>/<repo>): docs/deploy.md §10.
+#
+#   pull_request — только сборка, смоук, скан уязвимостей и SBOM (ничего не публикуется, прав на пакеты нет);
+#   тег v*       — то же + публикация в GHCR ровно того образа, что прошёл скан (docker save → load → push),
+#                  подпись cosign keyless (по желанию: переменная репозитория COSIGN_SIGN=true).
+#
+# Скан: trivy (закреплённая версия и digest), падение на HIGH/CRITICAL; исключения — deploy/trivy-ignore.yaml
+# (с обоснованием и сроком). SBOM — CycloneDX (артефакт сборки; на теге ещё и приложен к образу аттестацией cosign).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - server/**
+      - web/**
+      - db/migrations/**
+      - db/seed/**
+      - deploy/trivy-ignore.yaml
+      - .github/workflows/release.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # PD-4: закреплено версией и digest (не моложе 14 дней); обновлять осознанно.
+  TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.76.0@sha256:2416d1f74045b57274df1a340eee6b510cacd73c66a6ccb8da092b117eb7d222
+  LOCAL_IMAGE: zafiro:ci
+
+jobs:
+  build:
+    name: build, smoke, scan, SBOM
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: version
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = push ]; then v="$REF_NAME"; else v="pr-$(git rev-parse --short=12 HEAD)"; fi
+          case "$v" in *[!A-Za-z0-9._-]*) echo "bad version $v"; exit 1;; esac
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - name: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ${{ env.LOCAL_IMAGE }}
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha,scope=zafiro
+          cache-to: type=gha,scope=zafiro,mode=max
+          provenance: false
+      - name: image size
+        run: docker image ls "$LOCAL_IMAGE" --format '{{.Repository}}:{{.Tag}} {{.Size}}' | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: smoke (binaries, healthz in standalone mode)
+        run: |
+          docker run --rm "$LOCAL_IMAGE" -version
+          docker run --rm --entrypoint /usr/local/bin/goose "$LOCAL_IMAGE" --version
+          docker run --rm --entrypoint /usr/local/bin/migrate-from-mysql "$LOCAL_IMAGE" -h 2>&1 | head -1
+          # Режим без зависимостей разрешён только вне prod (смоук бинарника): /healthz и фронт.
+          docker run -d --name smoke -p 127.0.0.1:18080:8080 -e ZAFIRO_ENV=test "$LOCAL_IMAGE"
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:18080/healthz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:18080/ | grep -qi '<html'
+          test "$(docker inspect -f '{{.Config.User}}' "$LOCAL_IMAGE")" = "65532:65532"
+          docker rm -f smoke
+      - name: save image
+        run: docker save "$LOCAL_IMAGE" -o image.tar
+      - name: trivy (HIGH/CRITICAL fail, exceptions in deploy/trivy-ignore.yaml)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$TRIVY_IMAGE" image --input image.tar \
+            --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 \
+            --ignorefile deploy/trivy-ignore.yaml --no-progress
+      - name: SBOM (CycloneDX)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$TRIVY_IMAGE" image --input image.tar \
+            --skip-db-update --format cyclonedx --output sbom.cdx.json --quiet
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+          retention-days: 90
+      - name: keep image for publish
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: image
+          path: image.tar
+          retention-days: 1
+
+  publish:
+    name: publish to GHCR
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # cosign keyless (OIDC → Fulcio); без COSIGN_SIGN не используется
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      COSIGN_SIGN: ${{ vars.COSIGN_SIGN }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: image
+      - uses: actions/download-artifact@v4
+        with:
+          name: sbom
+      - name: image name
+        id: name
+        env:
+          REPO: ${{ github.repository }}
+        run: echo "image=ghcr.io/$(echo "$REPO" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: push (the scanned image)
+        id: push
+        env:
+          IMAGE: ${{ steps.name.outputs.image }}
+        run: |
+          docker load -i image.tar
+          docker tag "$LOCAL_IMAGE" "$IMAGE:$VERSION"
+          docker push "$IMAGE:$VERSION"
+          digest=$(docker inspect -f '{{index .RepoDigests 0}}' "$IMAGE:$VERSION" | cut -d@ -f2)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Опубликовано: \`$IMAGE:$VERSION@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+      - uses: sigstore/cosign-installer@v4
+        if: env.COSIGN_SIGN == 'true'
+      - name: cosign sign + SBOM attestation (keyless)
+        if: env.COSIGN_SIGN == 'true'
+        env:
+          REF: ${{ steps.name.outputs.image }}@${{ steps.push.outputs.digest }}
+        run: |
+          cosign sign --yes "$REF"
+          cosign attest --yes --type cyclonedx --predicate sbom.cdx.json "$REF"

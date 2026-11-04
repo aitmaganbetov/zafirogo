@@ -1,0 +1,131 @@
+# Наблюдаемость для staging (Этап 6, O3): Prometheus + правила алертов, Alertmanager, Grafana с дашбордами,
+# node-exporter. Подключается поверх staging, файлы O1 не меняются:
+#
+#   deploy/observability/init.sh            # один раз: пароль администратора Grafana (secrets/, вне git)
+#   docker compose --env-file deploy/staging/.env.staging \
+#     -f deploy/staging/compose.yaml -f deploy/observability/compose.observability.yml up -d --wait
+#   (проверка конфигурации без запуска — deploy/observability/check.sh)
+#
+# Относительные пути compose считает от каталога ПЕРВОГО файла (deploy/staging), поэтому пути ниже — через
+# ${OBS_DIR:-../observability}. Порты UI — только на 127.0.0.1 хоста (доступ — SSH-туннелем); внутренний порт
+# метрик сервера (:9090) не публикуется вовсе. Описание — docs/observability.md.
+#
+# Версии: точный тег + digest, не моложе 14 дней (PD-4); обновления — через Dependabot (docker).
+
+x-obs-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  networks:
+    zafiro: {}
+
+services:
+  # Инстансы сервера: внутренний порт /metrics в сети compose (observability.metrics_listen).
+  app1:
+    environment:
+      ZAFIRO_OBSERVABILITY_METRICS_LISTEN: ":9090"
+      # Трассировка: адрес OTLP/HTTP коллектора (Tempo/Jaeger/OTel Collector). Пусто — выключена.
+      ZAFIRO_OBSERVABILITY_OTLP_ENDPOINT: ${OBS_OTLP_ENDPOINT:-}
+      ZAFIRO_OBSERVABILITY_TRACE_SAMPLE_RATIO: ${OBS_TRACE_SAMPLE_RATIO:-0.1}
+  app2:
+    environment:
+      ZAFIRO_OBSERVABILITY_METRICS_LISTEN: ":9090"
+      ZAFIRO_OBSERVABILITY_OTLP_ENDPOINT: ${OBS_OTLP_ENDPOINT:-}
+      ZAFIRO_OBSERVABILITY_TRACE_SAMPLE_RATIO: ${OBS_TRACE_SAMPLE_RATIO:-0.1}
+
+  prometheus:
+    <<: *hardening
+    image: ${OBS_PROMETHEUS_IMAGE:-prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${OBS_RETENTION:-15d}
+      - --web.listen-address=:9090
+    volumes:
+      - ${OBS_DIR:-../observability}/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${OBS_DIR:-../observability}/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:${OBS_PROMETHEUS_PORT:-19090}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+
+  alertmanager:
+    <<: *hardening
+    image: ${OBS_ALERTMANAGER_IMAGE:-prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a}
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ${OBS_DIR:-../observability}/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "127.0.0.1:${OBS_ALERTMANAGER_PORT:-19093}:9093"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9093/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+
+  grafana:
+    <<: *hardening
+    image: ${OBS_GRAFANA_IMAGE:-grafana/grafana:13.1.8@sha256:1a8e58976a6cd349d1ffdd27a14b92053816c7c60e6b7e157013e9bf0b9cec5f}
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_COOKIE_SECURE: "false" # UI — через SSH-туннель на 127.0.0.1; за HTTPS-прокси поставить true
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    secrets:
+      - grafana_admin_password
+    volumes:
+      - ${OBS_DIR:-../observability}/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${OBS_DIR:-../observability}/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    tmpfs:
+      - /tmp
+    ports:
+      - "127.0.0.1:${OBS_GRAFANA_PORT:-13000}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+
+  # Диск, память, CPU хоста (алерты HostDiskSpaceLow, HostMemoryLow). На хосте приложения в проде — свой
+  # node-exporter на каждом сервере (systemd или контейнер с тем же набором флагов).
+  node-exporter:
+    <<: *hardening
+    image: ${OBS_NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0}
+    pid: host
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+)($$|/)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+
+secrets:
+  grafana_admin_password:
+    file: ${OBS_DIR:-../observability}/secrets/grafana_admin_password
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:

@@ -1,0 +1,475 @@
+/* Экран входа / блокировки и регистрации ПК, PIN сотрудника — перенос WPF-окон старого агента
+   (Views/ClubSetupWindow.xaml, Views/StaffPinWindow.xaml) в HTML: те же цвета, отступы, скругления и размеры. */
+
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: #111019;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  color: #f5f3fa;
+}
+
+/* Скрытые части экрана (атрибут hidden) не показываются, даже если у класса свой display. */
+.lock-screen [hidden] {
+  display: none !important;
+}
+
+.lock-frame {
+  position: absolute;
+  inset: 20px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #1b1925;
+}
+
+.lock-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lock-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(11, 13, 24, 0.15) 0%, rgba(11, 13, 24, 0.07) 45%, rgba(11, 13, 24, 0.9) 100%);
+}
+
+.lock-brand {
+  position: absolute;
+  left: 34px;
+  top: 30px;
+}
+
+.lock-logo {
+  font-size: 20px;
+  font-weight: 800;
+  color: #fff;
+}
+
+.lock-pc {
+  margin-top: 20px;
+  padding: 14px 26px 16px 20px;
+  border-radius: 14px;
+  background: rgba(16, 14, 26, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.lock-pc-number {
+  font-size: 28px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.lock-pc-zone {
+  margin-top: 4px;
+  font-size: 17px;
+  font-weight: 600;
+  color: #c9bef5;
+}
+
+.lock-bottom {
+  position: absolute;
+  left: 34px;
+  bottom: 30px;
+}
+
+.lock-power-hint {
+  max-width: 360px;
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.lock-bottom-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.lock-power {
+  width: 52px;
+  height: 52px;
+  border-radius: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(16, 14, 26, 0.45);
+  color: #fff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.lock-power svg {
+  width: 22px;
+  height: 22px;
+}
+
+.lock-power:hover {
+  background: rgba(117, 84, 200, 0.8);
+}
+
+.lock-power.is-armed {
+  background: #d90058;
+  border-color: #d90058;
+}
+
+.lock-languages {
+  display: flex;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.lock-language {
+  min-width: 44px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: #3d3950;
+  cursor: pointer;
+}
+
+.lock-language.is-current {
+  background: #7554c8;
+}
+
+.lock-card {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  width: max(440px, 35%);
+  max-height: calc(100% - 48px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 28px 38px;
+  border-radius: 16px;
+  background: rgba(20, 18, 32, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.lock-card > * {
+  max-width: 420px;
+}
+
+.lock-kicker,
+.lock-title,
+.lock-club,
+.lock-label,
+.lock-notice,
+.lock-error,
+.lock-qr-text {
+  text-shadow: 0 0 10px rgba(0, 0, 0, 0.8);
+}
+
+.lock-kicker {
+  margin-bottom: 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #a78bfa;
+}
+
+.lock-title {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 600;
+  color: #f5f3fa;
+}
+
+.lock-club {
+  margin: 9px 0 26px;
+  font-size: 14px;
+  color: #aaa5b8;
+}
+
+.lock-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.lock-label {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 13px;
+  color: #e8e5ef;
+}
+
+.lock-input {
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 16px;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 14px;
+  color: #f5f3fa;
+  caret-color: #f5f3fa;
+  background: #302d3d;
+  border: 1px solid #4a465a;
+  border-radius: 0;
+  outline: none;
+}
+
+.lock-input:focus {
+  border-color: #7554c8;
+}
+
+.lock-code {
+  font-size: 20px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.lock-phone,
+.lock-password {
+  position: relative;
+}
+
+.lock-phone .lock-input {
+  padding-left: 42px;
+}
+
+.lock-phone-prefix {
+  position: absolute;
+  left: 13px;
+  top: 9px;
+  color: #aaa5b8;
+  pointer-events: none;
+}
+
+.lock-phone .lock-input::placeholder {
+  color: #5f5a6e;
+}
+
+.lock-password .lock-input {
+  padding-right: 100px;
+}
+
+#loginConfirmPanel .lock-password .lock-input {
+  padding-right: 46px;
+}
+
+.lock-eye {
+  position: absolute;
+  right: 58px;
+  top: 6px;
+  width: 34px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #aaa5b8;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+#loginConfirmPanel .lock-eye {
+  right: 6px;
+}
+
+.lock-eye svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lock-eye:hover,
+.lock-eye[aria-pressed="true"] {
+  background: #3d3950;
+  color: #f5f3fa;
+}
+
+.lock-input-language {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  min-width: 48px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #e8e5ef;
+  background: #3d3950;
+  cursor: pointer;
+}
+
+.lock-notice {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #86efac;
+}
+
+.lock-error {
+  min-height: 44px;
+  margin: 6px 0 8px;
+  font-size: 13px;
+  color: #ff7b83;
+}
+
+.lock-submit {
+  height: 46px;
+  border: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: #7554c8;
+  cursor: pointer;
+}
+
+.lock-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.lock-link {
+  height: 34px;
+  margin-top: 4px;
+  border: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: #c4b5fd;
+  background: transparent;
+  cursor: pointer;
+}
+
+#loginRegisterToggle {
+  margin-top: 12px;
+}
+
+.lock-qr {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-top: 22px;
+  padding: 16px;
+  border-radius: 10px;
+  background: #2a2738;
+}
+
+.lock-qr-code {
+  align-self: flex-start;
+  padding: 6px;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.lock-qr-code img {
+  display: block;
+  width: 132px;
+  height: 132px;
+  image-rendering: pixelated;
+}
+
+.lock-qr-text {
+  max-width: 220px;
+}
+
+.lock-qr-text strong {
+  font-size: 15px;
+  font-weight: 600;
+  color: #f5f3fa;
+}
+
+.lock-qr-text p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #aaa5b8;
+}
+
+.service-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: rgba(11, 13, 18, 0.92);
+  color: #f3f4f6;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 22px;
+  text-align: center;
+}
+
+.service-overlay[hidden] {
+  display: none;
+}
+
+.service-overlay p {
+  max-width: 640px;
+}
+
+.pin-dialog {
+  width: 420px;
+  box-sizing: border-box;
+  padding: 28px 32px;
+  border: 1px solid #4a465a;
+  background: #211f2d;
+  color: #f5f3fa;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+}
+
+.pin-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.pin-dialog h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.pin-hint {
+  margin: 8px 0 20px;
+  color: #aaa5b8;
+}
+
+.pin-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 44px;
+  padding: 6px 12px;
+  font-size: 20px;
+  color: #f5f3fa;
+  background: #302d3d;
+  border: 1px solid #4a465a;
+}
+
+.pin-error {
+  min-height: 40px;
+  margin: 8px 0;
+  font-size: 13px;
+  color: #ff7b83;
+}
+
+.pin-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.pin-actions button {
+  height: 44px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pin-cancel {
+  color: #f5f3fa;
+  background: #302d3d;
+  border: 1px solid #4a465a;
+}
+
+.pin-submit {
+  color: #fff;
+  font-weight: 600;
+  background: #d90058;
+  border: 1px solid #d90058;
+}

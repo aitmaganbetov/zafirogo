@@ -1,0 +1,94 @@
+# golangci-lint v2. Запуск: cd server && golangci-lint run ./...
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  build-tags:
+    - integration
+  # Пути в exclusions — относительно этого файла (корень репозитория).
+  relative-path-mode: cfg
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - gosec
+    - revive
+    - bodyclose
+    - noctx
+    - errorlint
+    - misspell
+    - unconvert
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # читаемость структур конфигурации важнее
+        - shadow
+    errcheck:
+      check-type-assertions: true
+    gosec:
+      excludes:
+        - G104 # дублирует errcheck
+    revive:
+      # Умеренный набор: без стилистических придирок.
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+          arguments: ["disableStutteringCheck"]
+        - name: increment-decrement
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: redefines-builtin-id
+    misspell:
+      locale: US
+  exclusions:
+    generated: lax
+    presets:
+      - std-error-handling
+    paths:
+      - server/gen
+      - server/internal/store
+      - server/internal/http/api
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
+          - noctx
+          - bodyclose
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/aitmaganbetov/zafirogo
+  exclusions:
+    generated: lax
+    paths:
+      - server/gen
+      - server/internal/store
+      - server/internal/http/api

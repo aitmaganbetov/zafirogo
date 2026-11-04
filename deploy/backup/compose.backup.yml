@@ -1,0 +1,123 @@
+# Непрерывный бэкап Postgres (WAL-G) для staging — подключается поверх compose окружения (Этап 6, O2):
+#
+#   docker compose --env-file deploy/staging/.env.staging -f deploy/staging/compose.yaml \
+#     -f deploy/backup/compose.backup.yml up -d --wait          (task backup:up — то же с секретами)
+#
+# Что добавляет:
+#   * postgres — тот же postgres:18.6 + WAL-G (образ deploy/backup/Dockerfile, task backup:image) с архивом WAL
+#     (archive_command = wal-push, archive_timeout = 60 с: RPO ≤ 1 мин). ВНИМАНИЕ: `command` заменяет команду
+#     базового файла — его параметры (max_connections, shared_buffers из deploy/staging/compose.yaml) повторены
+#     здесь; меняете их там — поменяйте и здесь (BK-7). Postgres дополнительно подключается к сети default,
+#     где живут s3 и backup (staging держит сервисы в своей сети zafiro);
+#   * backup — сайдкар расписания: базовая копия раз в сутки, хранение, проверка архива (backup-scheduler.sh).
+#     Читает каталог данных только на чтение, к Postgres ходит по unix-сокету (общий том postgres-run);
+#   * s3, s3-init — S3-совместимое хранилище для staging (SeaweedFS, BK-2) и бакет копий.
+#     В проде хранилище — внешнее S3 в другом регионе/у другого провайдера (WALG_S3_PREFIX, WALG_S3_ENDPOINT).
+#
+# Секреты — файлы (deploy/backup/gen-secrets.sh → BACKUP_SECRETS_DIR, абсолютный путь), не переменные окружения.
+# На сервере БД — только ОТКРЫТЫЙ ключ OpenPGP: прочитать копии с него нельзя.
+# Пути — только абсолютные или через переменные: относительные пути compose считает от каталога ПЕРВОГО файла (-f).
+
+services:
+  postgres:
+    image: ${BACKUP_PG_IMAGE:-zafiro-postgres-walg:18.6-3.0.9}
+    command:
+      - postgres
+      - -c
+      - max_connections=${BACKUP_PG_MAX_CONNECTIONS:-300}
+      - -c
+      - shared_buffers=${BACKUP_PG_SHARED_BUFFERS:-256MB}
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=/usr/local/bin/walg wal-push %p
+      - -c
+      - archive_timeout=60s
+    environment: &walg-env
+      WALG_S3_PREFIX: ${WALG_S3_PREFIX:-s3://zafiro-backup/pg/staging}
+      AWS_ENDPOINT: ${WALG_S3_ENDPOINT:-http://s3:8333}
+      AWS_REGION: ${WALG_S3_REGION:-us-east-1}
+      AWS_S3_FORCE_PATH_STYLE: "true"
+      WALG_S3_ACCESS_KEY_FILE: /run/secrets/walg_s3_access_key
+      WALG_S3_SECRET_KEY_FILE: /run/secrets/walg_s3_secret_key
+      WALG_PGP_KEY_PATH: /run/secrets/walg_pgp_public
+      WALG_COMPRESSION_METHOD: zstd
+      WALG_LOG_LEVEL: NORMAL
+    secrets: [walg_s3_access_key, walg_s3_secret_key, walg_pgp_public]
+    volumes:
+      - postgres-run:/var/run/postgresql
+    networks:
+      default: {}
+    depends_on:
+      s3-init:
+        condition: service_completed_successfully
+
+  backup:
+    image: ${BACKUP_PG_IMAGE:-zafiro-postgres-walg:18.6-3.0.9}
+    restart: unless-stopped
+    user: postgres
+    entrypoint: ["backup-scheduler.sh"]
+    environment:
+      <<: *walg-env
+      PGDATA: /var/lib/postgresql/18/docker
+      # Суперпользователь кластера (вход по unix-сокету): staging — STG_POSTGRES_USER, dev — POSTGRES_USER.
+      POSTGRES_USER: ${BACKUP_PGUSER:-${STG_POSTGRES_USER:-${POSTGRES_USER:-postgres}}}
+      POSTGRES_DB: ${STG_POSTGRES_DB:-${POSTGRES_DB:-zafiro}}
+      BACKUP_AT: ${BACKUP_AT:-21:17}
+      BACKUP_RETAIN_FULL: ${BACKUP_RETAIN_FULL:-5}
+      BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-12}
+      WALG_DELTA_MAX_STEPS: ${WALG_DELTA_MAX_STEPS:-6}
+      WALG_VERIFY_PAGE_CHECKSUMS: "true"
+    secrets: [walg_s3_access_key, walg_s3_secret_key, walg_pgp_public]
+    volumes:
+      - postgres-data:/var/lib/postgresql:ro
+      - postgres-run:/var/run/postgresql
+      - backup-metrics:/var/lib/walg-metrics
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  s3:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    restart: unless-stopped
+    command: ["server", "-dir=/data", "-ip.bind=0.0.0.0", "-master.volumeSizeLimitMB=1024", "-volume.minFreeSpace=${S3_MIN_FREE_SPACE:-1}",
+              "-s3", "-s3.port=8333", "-s3.config=/run/secrets/s3_config"]
+    secrets: [s3_config]
+    volumes:
+      - s3-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8333/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  s3-init:
+    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        echo "s3.bucket.list" | weed shell -master=s3:9333 | grep -q "^  zafiro-backup" ||
+        echo "s3.bucket.create -name zafiro-backup" | weed shell -master=s3:9333
+    depends_on:
+      s3:
+        condition: service_healthy
+
+secrets:
+  walg_s3_access_key:
+    file: ${BACKUP_SECRETS_DIR:?задайте BACKUP_SECRETS_DIR (абсолютный путь, deploy/backup/gen-secrets.sh)}/s3_access_key
+  walg_s3_secret_key:
+    file: ${BACKUP_SECRETS_DIR}/s3_secret_key
+  walg_pgp_public:
+    file: ${BACKUP_SECRETS_DIR}/walg_pgp_public.asc
+  s3_config:
+    file: ${BACKUP_SECRETS_DIR}/s3.json
+
+volumes:
+  postgres-data:
+  postgres-run:
+  backup-metrics:
+  s3-data:

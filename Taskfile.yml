@@ -1,0 +1,392 @@
+# go-task v3 — https://taskfile.dev
+# Установка task: go install github.com/go-task/task/v3/cmd/task@v3.54.0
+# Список задач: task --list
+version: "3"
+
+dotenv: [".env"]
+
+vars:
+  # Закреплённые версии инструментов (обновлять осознанно, синхронно с CI).
+  TASK_VERSION: v3.54.0
+  SQLC_VERSION: v1.31.1
+  GOOSE_VERSION: v3.29.0
+  OAPI_CODEGEN_VERSION: v2.8.1
+  BUF_VERSION: v1.75.0
+  PROTOC_GEN_GO_VERSION: v1.36.12
+  PROTOC_GEN_GO_GRPC_VERSION: v1.6.2
+  GOLANGCI_LINT_VERSION: v2.15.0
+  GOVULNCHECK_VERSION: v1.9.0
+  GOSEC_VERSION: v2.30.0
+
+  COMPOSE: docker compose -f docker-compose.dev.yml --env-file .env
+  STAGING_COMPOSE: docker compose -f deploy/staging/compose.yaml --env-file deploy/staging/.env.staging
+  # Бэкап (O2): образ Postgres + WAL-G и staging с подключённым deploy/backup/compose.backup.yml.
+  BACKUP_IMAGE: zafiro-postgres-walg:18.6-3.0.9
+  BACKUP_SECRETS_DIR: "{{.ROOT_DIR}}/deploy/backup/secrets"
+  BACKUP_COMPOSE: docker compose -f deploy/staging/compose.yaml -f deploy/backup/compose.backup.yml --env-file deploy/staging/.env.staging
+  WEBUI_DIST: server/internal/webui/dist
+  BIN: bin/zafiro
+
+tasks:
+  default:
+    cmds:
+      - task --list
+    silent: true
+
+  tools:
+    desc: Установить закреплённые версии генераторов и линтеров в $(go env GOPATH)/bin
+    cmds:
+      - go install github.com/go-task/task/v3/cmd/task@{{.TASK_VERSION}}
+      - go install github.com/sqlc-dev/sqlc/cmd/sqlc@{{.SQLC_VERSION}}
+      - go install github.com/pressly/goose/v3/cmd/goose@{{.GOOSE_VERSION}}
+      - go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@{{.OAPI_CODEGEN_VERSION}}
+      - go install github.com/bufbuild/buf/cmd/buf@{{.BUF_VERSION}}
+      - go install google.golang.org/protobuf/cmd/protoc-gen-go@{{.PROTOC_GEN_GO_VERSION}}
+      - go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@{{.PROTOC_GEN_GO_GRPC_VERSION}}
+      - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}}
+      - go install golang.org/x/vuln/cmd/govulncheck@{{.GOVULNCHECK_VERSION}}
+      - go install github.com/securego/gosec/v2/cmd/gosec@{{.GOSEC_VERSION}}
+
+  # ---------- окружение ----------
+
+  env:
+    desc: Создать .env из .env.example, если его нет
+    status:
+      - test -f .env
+    cmds:
+      - cp .env.example .env
+
+  db:up:
+    desc: Поднять Postgres, Valkey, NATS (docker-compose.dev.yml) и дождаться healthcheck
+    deps: [env]
+    cmds:
+      - "{{.COMPOSE}} up -d --wait"
+
+  db:down:
+    desc: Остановить окружение (данные в volume сохраняются)
+    cmds:
+      - "{{.COMPOSE}} down"
+
+  db:migrate:
+    desc: Применить миграции goose (db/migrations) под владельцем схемы (GOOSE_DBSTRING из .env, не логин сервера)
+    env:
+      GOOSE_DRIVER: postgres
+    cmds:
+      - goose -dir db/migrations up
+
+  db:logins:
+    desc: Создать/обновить логины сервера (члены zafiro_app и zafiro_platform) в Postgres из compose — для тома, созданного до db/init
+    deps: [env]
+    cmds:
+      - "{{.COMPOSE}} exec -T postgres /docker-entrypoint-initdb.d/10-zafiro-logins.sh"
+
+  db:status:
+    desc: Статус миграций goose
+    env:
+      GOOSE_DRIVER: postgres
+    cmds:
+      - goose -dir db/migrations status
+
+  # ---------- разработка ----------
+
+  dev:
+    desc: Окружение (compose) + сервер Go (:8080) + Vite (:5173) параллельно
+    deps: [db:up, web:install]
+    cmds:
+      - task: dev:run
+
+  dev:run:
+    internal: true
+    deps: [dev:server, dev:web]
+
+  dev:server:
+    desc: Только сервер Go (go run); HTTP :8080, gRPC агентов :8443 (dev-PKI в .dev/pki)
+    dir: server
+    env:
+      ZAFIRO_AGENT_PKI_DEV_DIR: "{{.ROOT_DIR}}/.dev/pki"
+    cmds:
+      - go run ./cmd/zafiro
+
+  dev:web:
+    desc: Только Vite dev server (прокси /api, /healthz → :8080)
+    dir: web
+    cmds:
+      - npm run dev
+
+  web:install:
+    desc: npm ci, если node_modules устарели
+    dir: web
+    sources: [package.json, package-lock.json]
+    generates: [node_modules/.package-lock.json]
+    cmds:
+      - npm ci --no-audit --no-fund
+
+  # ---------- тесты ----------
+
+  test:
+    desc: Юнит-тесты Go и web (без Docker)
+    cmds:
+      - task: test:go
+      - task: test:web
+
+  test:go:
+    dir: server
+    cmds:
+      - go test -race ./...
+
+  test:integration:
+    desc: Интеграционные тесты Go (testcontainers, нужен Docker; или ZAFIRO_TEST_DATABASE_URL)
+    dir: server
+    cmds:
+      - go test -race -tags=integration ./...
+
+  test:web:
+    dir: web
+    deps: [web:install]
+    cmds:
+      - npm test
+
+  test:e2e:
+    desc: Playwright e2e против vite preview (нужен web build)
+    dir: web
+    deps: [web:build]
+    cmds:
+      - npm run test:e2e
+
+  visual:
+    desc: "Визуальное сравнение старого Laravel и нового сервера (tools/visual/README.md); одна страница — task visual -- --page dashboard"
+    cmds:
+      - tools/visual/run.sh {{.CLI_ARGS}}
+
+  visual:stop:
+    desc: Остановить серверы визуального сравнения (после task visual -- --keep)
+    cmds:
+      - tools/visual/old.sh stop
+      - tools/visual/new.sh stop
+
+  # ---------- линтеры ----------
+
+  lint:
+    desc: go vet, golangci-lint, govulncheck, gosec, eslint, tsc
+    cmds:
+      - task: lint:go
+      - task: lint:web
+
+  lint:go:
+    dir: server
+    cmds:
+      - go vet ./...
+      - go vet -tags=integration ./...
+      - golangci-lint run ./...
+      - govulncheck ./...
+      - gosec -quiet -exclude-generated -exclude-dir=gen -exclude-dir=store ./...
+
+  lint:web:
+    dir: web
+    deps: [web:install]
+    cmds:
+      - npm run lint
+      - npm run typecheck
+
+  # ---------- генерация (результат коммитится) ----------
+
+  gen:
+    desc: sqlc, oapi-codegen, buf (Go), openapi-typescript
+    cmds:
+      - task: gen:sqlc
+      - task: gen:api
+      - task: gen:proto
+      - task: gen:web
+
+  gen:sqlc:
+    cmds:
+      - sqlc generate
+
+  gen:api:
+    desc: oapi-codegen по разделам — api/<раздел>.yaml → server/internal/http/api/<раздел> (api/gen.sh)
+    cmds:
+      - sh api/gen.sh
+
+  gen:check:
+    desc: Сгенерированный код совпадает с исходниками (CI)
+    cmds:
+      - task: gen
+      - git diff --exit-code -- server/internal/store server/internal/http/api server/gen web/src/api/gen
+      - test -z "$(git status --porcelain -- server/internal/store server/internal/http/api server/gen web/src/api/gen)"
+
+  gen:proto:
+    cmds:
+      - buf generate
+
+  gen:web:
+    desc: openapi-typescript по разделам — api/<раздел>.yaml → web/src/api/gen/<раздел>.d.ts
+    dir: web
+    deps: [web:install]
+    cmds:
+      - npm run gen:api
+
+  # ---------- сборка ----------
+
+  web:build:
+    dir: web
+    deps: [web:install]
+    cmds:
+      - npm run build
+
+  webui:copy:
+    desc: Скопировать web/dist в server/internal/webui/dist (для embed.FS)
+    deps: [web:build]
+    cmds:
+      - find {{.WEBUI_DIST}} -mindepth 1 ! -name .gitkeep -exec rm -rf {} +
+      - cp -R web/dist/. {{.WEBUI_DIST}}/
+
+  build:
+    desc: Один бинарник bin/zafiro со вшитым фронтом
+    deps: [webui:copy]
+    cmds:
+      - mkdir -p bin
+      - cd server && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../{{.BIN}} ./cmd/zafiro
+      - echo "собрано {{.BIN}}"
+
+  # ---------- образ и staging (docs/deploy.md, deploy/README.md) ----------
+
+  image:
+    desc: "Docker-образ (Dockerfile): task image IMAGE=zafiro:dev [VERSION=v1.2.3] [BUILD_CA=/путь/ca.crt — прокси с подменой TLS] [BUILD_ARGS='--build-arg …']"
+    vars:
+      IMAGE: '{{.IMAGE | default "zafiro:dev"}}'
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+    cmds:
+      - docker build {{if .BUILD_CA}}--secret id=build_ca,src={{.BUILD_CA}}{{end}} {{.BUILD_ARGS}} --build-arg VERSION={{.VERSION}} -t {{.IMAGE}} .
+
+  staging:init:
+    desc: "Staging: пароли (.env.staging), секреты сервера, PKI агентов, TLS веба — deploy/staging/init.sh (идемпотентно)"
+    cmds:
+      - sh deploy/staging/init.sh
+
+  staging:image:
+    desc: Собрать образ zafiro:staging для staging (как в CI, локально)
+    cmds:
+      - task: image
+        vars: {IMAGE: "zafiro:staging", BUILD_CA: "{{.BUILD_CA}}", BUILD_ARGS: "{{.BUILD_ARGS}}"}
+
+  staging:up:
+    desc: "Staging одной командой: init → compose up (миграции → 2 инстанса → nginx) → ждёт /readyz обоих инстансов. Образ — STG_IMAGE из .env.staging (zafiro:staging: task staging:image)"
+    deps: [staging:init]
+    cmds:
+      - "{{.STAGING_COMPOSE}} up -d --remove-orphans"
+      - test "$({{.STAGING_COMPOSE}} ps -a migrate --format '{{"{{"}}.ExitCode{{"}}"}}')" = 0
+      - |
+        for port in 18081 18082; do
+          i=0
+          until curl -fsS "http://127.0.0.1:$port/readyz" >/dev/null 2>&1; do
+            i=$((i+1)); if [ $i -gt 60 ]; then echo "инстанс :$port не готов"; curl -sS "http://127.0.0.1:$port/readyz"; exit 1; fi
+            sleep 2
+          done
+          echo "инстанс :$port — /readyz ok"
+        done
+
+  staging:down:
+    desc: Остановить staging (graceful, данные в томах сохраняются)
+    cmds:
+      - "{{.STAGING_COMPOSE}} down"
+
+  staging:destroy:
+    desc: Остановить staging и удалить тома (база, Valkey, NATS); секреты в deploy/staging/secrets остаются
+    cmds:
+      - "{{.STAGING_COMPOSE}} down -v --remove-orphans"
+
+  staging:ps:
+    desc: Состояние контейнеров staging
+    cmds:
+      - "{{.STAGING_COMPOSE}} ps -a"
+
+  staging:logs:
+    desc: "Логи staging: task staging:logs -- app1"
+    cmds:
+      - "{{.STAGING_COMPOSE}} logs --tail=200 {{.CLI_ARGS}}"
+
+  staging:migrate:
+    desc: Повторить job миграций (goose up под владельцем схемы) — перед выкладкой новых инстансов
+    cmds:
+      - "{{.STAGING_COMPOSE}} run --rm migrate up"
+
+  staging:reload-lb:
+    desc: Проверить и перечитать конфигурацию nginx без разрыва соединений
+    cmds:
+      - "{{.STAGING_COMPOSE}} exec lb nginx -t"
+      - "{{.STAGING_COMPOSE}} exec lb nginx -s reload"
+
+  staging:seed:
+    desc: Демо-данные (tools/visual/fixtures/demo.json) в базу staging — для входа и проверок; только staging
+    dir: server
+    cmds:
+      - sh -c '. ../deploy/staging/.env.staging && go run ./cmd/visual-seed -fixture ../tools/visual/fixtures/demo.json -db "postgres://$STG_DB_OWNER_USER:$STG_DB_OWNER_PASSWORD@127.0.0.1:15432/$STG_POSTGRES_DB?sslmode=disable"'
+      # Демо-данные датированы октябрём 2026 (визуальное сравнение с фиксированным «сейчас»): подписки — активны от сегодня.
+      - sh -c '. ../deploy/staging/.env.staging && cd .. && {{.STAGING_COMPOSE}} exec -T postgres psql -q -v ON_ERROR_STOP=1 -U "$STG_DB_OWNER_USER" -d "$STG_POSTGRES_DB" -c "UPDATE club_subscriptions SET status = '"'"'active'"'"', started_at = now(), current_period_ends_at = now() + interval '"'"'30 days'"'"'"'
+
+  staging:smoke:
+    desc: "Проверки staging (нужны staging:up и staging:seed): вход и WebSocket через nginx, событие между инстансами, агент через L4 + PROXY protocol + mTLS, остановка инстанса (переподключение, идемпотентная покупка), drain"
+    dir: server
+    cmds:
+      - ZAFIRO_STAGING_DIR={{.ROOT_DIR}}/deploy/staging go test -tags staging -count=1 -v -timeout 10m -run '^TestStaging' ./internal/app/
+
+  # ---------- резервные копии (deploy/backup, docs/runbooks/restore.md) ----------
+
+  backup:image:
+    desc: "Образ Postgres 18.6 + WAL-G (deploy/backup/Dockerfile) [BUILD_CA=/путь/ca.crt — прокси с подменой TLS]"
+    cmds:
+      - docker build {{if .BUILD_CA}}--secret id=build_ca,src={{.BUILD_CA}}{{end}} -t {{.BACKUP_IMAGE}} deploy/backup
+
+  backup:secrets:
+    desc: "Секреты бэкапа для staging/учений (ключи S3, пара OpenPGP) в deploy/backup/secrets — идемпотентно"
+    cmds:
+      - deploy/backup/gen-secrets.sh "{{.BACKUP_SECRETS_DIR}}"
+
+  backup:up:
+    desc: "Staging + непрерывный бэкап: Postgres с архивом WAL, сайдкар расписания, S3 (SeaweedFS). Нужны staging:init и backup:image"
+    deps: [staging:init, backup:secrets]
+    env:
+      BACKUP_SECRETS_DIR: "{{.BACKUP_SECRETS_DIR}}"
+    cmds:
+      - "{{.BACKUP_COMPOSE}} up -d --wait postgres backup"
+
+  backup:now:
+    desc: "Внеплановая базовая копия staging (копия, хранение, проверка архива WAL) — например, перед рискованной миграцией"
+    env:
+      BACKUP_SECRETS_DIR: "{{.BACKUP_SECRETS_DIR}}"
+    cmds:
+      - "{{.BACKUP_COMPOSE}} exec -T backup backup-run.sh"
+
+  backup:list:
+    desc: Копии в хранилище staging (имя, время, размер, постоянная ли)
+    env:
+      BACKUP_SECRETS_DIR: "{{.BACKUP_SECRETS_DIR}}"
+    cmds:
+      - "{{.BACKUP_COMPOSE}} exec -T backup walg backup-list --detail"
+
+  backup:restore-drill:
+    desc: "Учения восстановления из копий staging: чистый Postgres ← последняя копия и PITR на T, проверка (goose, деньги, партиции, RLS, amcheck). task backup:restore-drill -- --target-time '2026-11-02 21:30:00+00'"
+    env:
+      BACKUP_SECRETS_DIR: "{{.BACKUP_SECRETS_DIR}}"
+      BACKUP_PG_IMAGE: "{{.BACKUP_IMAGE}}"
+    cmds:
+      - |
+        . deploy/staging/.env.staging
+        WALG_S3_PREFIX="${WALG_S3_PREFIX:-s3://zafiro-backup/pg/staging}" WALG_S3_ENDPOINT="${WALG_S3_ENDPOINT:-http://s3:8333}" \
+        DRILL_NETWORK="${DRILL_NETWORK:-zafirogo-staging_default}" \
+        DRILL_DB_USER="${STG_POSTGRES_USER:-postgres}" DRILL_DB_NAME="${STG_POSTGRES_DB:-zafiro}" \
+        deploy/backup/restore-drill.sh {{.CLI_ARGS}}
+
+  backup:drill-e2e:
+    desc: "Сквозные учения на одноразовом окружении (как CI backup-drill.yml): данные → копия → порча → PITR → проверка. task backup:drill-e2e -- --keep"
+    env:
+      BACKUP_PG_IMAGE: "{{.BACKUP_IMAGE}}"
+    cmds:
+      - deploy/backup/drill-e2e.sh {{.CLI_ARGS}}
+
+  clean:
+    desc: Удалить артефакты сборки
+    cmds:
+      - rm -rf bin web/dist
+      - find {{.WEBUI_DIST}} -mindepth 1 ! -name .gitkeep -exec rm -rf {} +

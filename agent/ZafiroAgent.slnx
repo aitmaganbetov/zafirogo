@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Zafiro.Agent.Protocol/Zafiro.Agent.Protocol.csproj" />
+    <Project Path="src/Zafiro.Agent.Core/Zafiro.Agent.Core.csproj" />
+    <Project Path="src/Zafiro.Agent.Service/Zafiro.Agent.Service.csproj" />
+    <Project Path="src/Zafiro.Agent.UI.Core/Zafiro.Agent.UI.Core.csproj" />
+    <Project Path="src/Zafiro.Agent.UI/Zafiro.Agent.UI.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Zafiro.Agent.Tests/Zafiro.Agent.Tests.csproj" />
+  </Folder>
+</Solution>

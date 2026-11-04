@@ -1,0 +1,21 @@
+<Project>
+  <!-- Общие настройки всех проектов агента (agent/ZafiroAgent.slnx). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <Deterministic>true</Deterministic>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>ru</SatelliteResourceLanguages>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Version>2.0.0</Version>
+    <Company>Zafiro</Company>
+    <Product>Zafiro Agent</Product>
+    <!-- Точные версии пакетов — Directory.Packages.props; lock-файлы проверяются в CI (dotnet restore с проверкой lock-файлов). -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>

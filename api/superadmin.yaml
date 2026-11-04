@@ -1,0 +1,1895 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — superadmin
+  version: 0.1.0
+  description: 'Кабинет суперадмина (Этап 3, группа 6): resources/views/superadmin/*. Все операции — только суперадмин (RequireSuperadmin)
+
+    и только на хосте SUPERADMIN_DOMAIN, если он задан (Q-069). Каждое действие пишется в platform_logs и audit_log.
+
+
+
+    '
+servers:
+- url: /
+security:
+- bearerAuth: []
+paths:
+  /api/superadmin/dashboard:
+    get:
+      operationId: saDashboard
+      tags:
+      - superadmin
+      summary: Сервер
+      description: 'Laravel: Superadmin\DashboardController (superadmin.dashboard): живой снимок, история по бакетам, нагрузка
+        клубов, версии агента, журнал.'
+      parameters:
+      - name: period
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - 24h
+          - 7d
+      - name: clubs
+        in: query
+        required: false
+        style: form
+        explode: true
+        schema:
+          type: array
+          items:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+  /api/superadmin/agent-release:
+    put:
+      operationId: saSetAgentRelease
+      tags:
+      - superadmin
+      summary: Объявить версию агента
+      description: 'Laravel: AgentReleaseController::update(). С автообновлением — манифест подписи CI (Ed25519) обязателен;
+        ПК со старым агентом получают UpdateAvailable.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentReleaseForm'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+    delete:
+      operationId: saClearAgentRelease
+      tags:
+      - superadmin
+      summary: Снять объявление
+      description: 'Laravel: AgentReleaseController::destroy().'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+  /api/superadmin/clubs:
+    get:
+      operationId: saListClubs
+      tags:
+      - superadmin
+      summary: Клубы
+      description: 'Laravel: Superadmin\ClubController::index(): по 25.'
+      parameters:
+      - name: search
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 100
+      - name: subscription
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - active
+          - inactive
+      - name: sort
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - name
+          - online
+          - busy
+          - agent_requests
+          - api_requests
+          - last_login
+          - sessions
+          - webhooks
+          - ends
+      - name: direction
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - asc
+          - desc
+      - &id001
+        name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClubList'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/clubs/{clubId}:
+    get:
+      operationId: saGetClub
+      tags:
+      - superadmin
+      summary: Клуб
+      description: 'Laravel: ClubController::show(): участники по 30.'
+      parameters:
+      - $ref: '#/components/parameters/ClubId'
+      - *id001
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClubCard'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+  /api/superadmin/clubs/{clubId}/subscription/extend:
+    post:
+      operationId: saExtendSubscription
+      tags:
+      - superadmin
+      summary: Продлить подписку
+      description: 'Laravel: ClubController::extend().'
+      parameters:
+      - $ref: '#/components/parameters/ClubId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExtendForm'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/clubs/{clubId}/subscription/suspend:
+    post:
+      operationId: saSuspendSubscription
+      tags:
+      - superadmin
+      summary: Приостановить подписку
+      description: 'Laravel: ClubController::suspend().'
+      parameters:
+      - $ref: '#/components/parameters/ClubId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+  /api/superadmin/clubs/{clubId}/subscription/plan:
+    post:
+      operationId: saChangeClubPlan
+      tags:
+      - superadmin
+      summary: Сменить тариф клуба
+      description: 'Laravel: ClubController::changePlan().'
+      parameters:
+      - $ref: '#/components/parameters/ClubId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanChoice'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/accounts:
+    get:
+      operationId: saListAccounts
+      tags:
+      - superadmin
+      summary: Пользователи
+      description: 'Laravel: Superadmin\UserController::index(): по 30.'
+      parameters:
+      - name: search
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 100
+      - name: filter
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - blocked
+          - superadmin
+      - *id001
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountList'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/accounts/{userId}/block:
+    post:
+      operationId: saBlockAccount
+      tags:
+      - superadmin
+      summary: Заблокировать
+      description: 'Laravel: UserController::block(): сеансы отзываются сразу.'
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/accounts/{userId}/unblock:
+    post:
+      operationId: saUnblockAccount
+      tags:
+      - superadmin
+      summary: Разблокировать
+      description: 'Laravel: UserController::unblock().'
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+  /api/superadmin/accounts/{userId}/superadmin:
+    post:
+      operationId: saGrantSuperadmin
+      tags:
+      - superadmin
+      summary: Выдать права суперадмина
+      description: 'Laravel: UserController::grant().'
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+    delete:
+      operationId: saRevokeSuperadmin
+      tags:
+      - superadmin
+      summary: Снять права суперадмина
+      description: 'Laravel: UserController::revoke().'
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/accounts/{userId}/second-factor:
+    delete:
+      operationId: saResetSecondFactor
+      tags:
+      - superadmin
+      summary: Сбросить второй фактор суперадмина
+      description: 'Этап 7 (новая функция): ключ TOTP и коды восстановления удаляются, сеансы пользователя отзываются;
+        при следующем входе — принудительная настройка. Не для своего аккаунта и не в режиме просмотра клуба (403
+        read_only). Журнал платформы superadmin.totp_reset и audit_log.'
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/plans:
+    get:
+      operationId: saListPlans
+      tags:
+      - superadmin
+      summary: Тарифы платформы
+      description: 'Laravel: PlanController::index().'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanList'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+    post:
+      operationId: saCreatePlan
+      tags:
+      - superadmin
+      summary: Создать тариф
+      description: 'Laravel: PlanController::store().'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanForm'
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/plans/{planId}:
+    patch:
+      operationId: saUpdatePlan
+      tags:
+      - superadmin
+      summary: Сохранить тариф
+      description: 'Laravel: PlanController::update().'
+      parameters:
+      - $ref: '#/components/parameters/PlanId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanForm'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/logs:
+    get:
+      operationId: saListLogs
+      tags:
+      - superadmin
+      summary: Журнал
+      description: 'Laravel: Superadmin\LogController: вкладки platform/clubs, по 50.'
+      parameters:
+      - name: tab
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - platform
+          - clubs
+      - name: club
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int64
+      - name: event
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 64
+      - *id001
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogList'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/platform-news:
+    get:
+      operationId: saListPlatformNews
+      tags:
+      - superadmin
+      summary: Новости платформы
+      description: 'Laravel: Superadmin\NewsController::index(): по 20.'
+      parameters:
+      - *id001
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformNewsPage'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+    post:
+      operationId: saCreatePlatformNews
+      tags:
+      - superadmin
+      summary: Добавить новость
+      description: 'Laravel: Superadmin\NewsController::store().'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PlatformNewsForm'
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/platform-news/{newsId}:
+    patch:
+      operationId: saUpdatePlatformNews
+      tags:
+      - superadmin
+      summary: Изменить новость
+      description: 'Laravel: Superadmin\NewsController::update().'
+      parameters:
+      - $ref: '#/components/parameters/NewsId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PlatformNewsForm'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+    delete:
+      operationId: saDeletePlatformNews
+      tags:
+      - superadmin
+      summary: Удалить новость
+      description: 'Laravel: Superadmin\NewsController::destroy().'
+      parameters:
+      - $ref: '#/components/parameters/NewsId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+  /api/superadmin/languages:
+    get:
+      operationId: saListLanguages
+      tags:
+      - superadmin
+      summary: Языки
+      description: 'Laravel: LanguageController::index().'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LanguageList'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+    post:
+      operationId: saCreateLanguage
+      tags:
+      - superadmin
+      summary: Добавить язык
+      description: 'Laravel: LanguageController::store() (languages.store).'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LanguageCreate'
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/languages/export:
+    get:
+      operationId: saExportTranslations
+      tags:
+      - superadmin
+      summary: Экспорт CSV
+      description: 'Laravel: LanguageController::export() (languages.export).'
+      parameters:
+      - name: language
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: missing
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: CSV (UTF-8 с BOM, разделитель «;»).
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/languages/import:
+    post:
+      operationId: saImportTranslations
+      tags:
+      - superadmin
+      summary: Импорт CSV
+      description: 'Laravel: LanguageController::import() (languages.import, throttle 20/мин).'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ImportForm'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportResult'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+        '429':
+          $ref: common.yaml#/components/responses/TooManyRequests
+  /api/superadmin/languages/{languageId}:
+    patch:
+      operationId: saUpdateLanguage
+      tags:
+      - superadmin
+      summary: Изменить язык
+      description: 'Laravel: LanguageController::update().'
+      parameters:
+      - $ref: '#/components/parameters/LanguageId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LanguageUpdate'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+    delete:
+      operationId: saDeleteLanguage
+      tags:
+      - superadmin
+      summary: Удалить язык
+      description: 'Laravel: LanguageController::destroy().'
+      parameters:
+      - $ref: '#/components/parameters/LanguageId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/languages/{languageId}/translations:
+    get:
+      operationId: saListTranslations
+      tags:
+      - superadmin
+      summary: Переводы языка
+      description: 'Laravel: LanguageController::translations(): исходный каталог (строки ru), формат Laravel (:name), по
+        50.'
+      parameters:
+      - $ref: '#/components/parameters/LanguageId'
+      - name: search
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 120
+      - name: missing
+        in: query
+        required: false
+        schema:
+          type: boolean
+      - *id001
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationPage'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+    put:
+      operationId: saSaveTranslations
+      tags:
+      - superadmin
+      summary: Сохранить переводы страницы
+      description: 'Laravel: LanguageController::saveTranslations(): версия переводов растёт, агентам — TranslationsChanged
+        (PD-12).'
+      parameters:
+      - $ref: '#/components/parameters/LanguageId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranslationSave'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/telegram:
+    get:
+      operationId: saTelegram
+      tags:
+      - superadmin
+      summary: Telegram
+      description: 'Laravel: TelegramController::show(): токены не возвращаются.'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelegramState'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+    post:
+      operationId: saSetTelegramGateway
+      tags:
+      - superadmin
+      summary: Подключить Telegram Gateway
+      description: 'Laravel: TelegramController::update().'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GatewayForm'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+    delete:
+      operationId: saClearTelegramGateway
+      tags:
+      - superadmin
+      summary: Отключить Telegram Gateway
+      description: 'Laravel: TelegramController::destroy().'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+  /api/superadmin/telegram/alerts:
+    post:
+      operationId: saSetTelegramAlerts
+      tags:
+      - superadmin
+      summary: Подключить бота оповещений
+      description: 'Laravel: TelegramController::updateAlerts().'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertsForm'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+    delete:
+      operationId: saClearTelegramAlerts
+      tags:
+      - superadmin
+      summary: Отключить оповещения
+      description: 'Laravel: TelegramController::destroyAlerts().'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+  /api/superadmin/telegram/alerts/test:
+    post:
+      operationId: saTestTelegramAlerts
+      tags:
+      - superadmin
+      summary: Проверочное сообщение
+      description: 'Laravel: TelegramController::testAlerts() (throttle 5/мин).'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+        '429':
+          $ref: common.yaml#/components/responses/TooManyRequests
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+  parameters:
+    ClubId:
+      name: clubId
+      in: path
+      required: true
+      schema: &id002
+        type: integer
+        format: int64
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: *id002
+    PlanId:
+      name: planId
+      in: path
+      required: true
+      schema: *id002
+    NewsId:
+      name: newsId
+      in: path
+      required: true
+      schema: *id002
+    LanguageId:
+      name: languageId
+      in: path
+      required: true
+      schema: *id002
+  schemas:
+    Message:
+      type: object
+      required:
+      - message
+      properties:
+        message: &id003
+          type: string
+    ChartLine:
+      type: object
+      required:
+      - label
+      - translate
+      - color
+      - segments
+      properties:
+        label: *id003
+        translate: &id005
+          type: boolean
+        color: *id003
+        segments:
+          type: array
+          items: *id003
+    Chart:
+      type: object
+      required:
+      - lines
+      - max_label
+      - from_label
+      - to_label
+      properties:
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChartLine'
+        max_label: *id003
+        from_label: &id004
+          type: string
+          nullable: true
+        to_label: *id004
+    LogRow:
+      type: object
+      required:
+      - id
+      - club_id
+      - club_name
+      - user_name
+      - system
+      - event
+      - event_label
+      - description
+      - ip_address
+      - at_utc
+      properties:
+        id: *id002
+        club_id: &id006
+          type: integer
+          format: int64
+          nullable: true
+        club_name: *id003
+        user_name: *id003
+        system: *id005
+        event: *id003
+        event_label: *id004
+        description: *id003
+        ip_address: *id003
+        at_utc: *id003
+    Live:
+      type: object
+      required:
+      - load_1
+      - load_5
+      - load_15
+      - load_alert
+      - cpu_count
+      - memory_percent
+      - memory_used_gb
+      - memory_total_gb
+      - disk_percent
+      - disk_used_gb
+      - disk_total_gb
+      - disk_alert_percent
+      - uptime_days
+      - queue_pending
+      - queue_pending_alert
+      - queue_failed
+      - queue_oldest_minutes
+      - database_mb
+      properties:
+        load_1: *id004
+        load_5: *id004
+        load_15: *id004
+        load_alert: *id005
+        cpu_count:
+          type: integer
+          nullable: true
+        memory_percent:
+          type: integer
+          nullable: true
+        memory_used_gb: *id004
+        memory_total_gb: *id004
+        disk_percent:
+          type: integer
+          nullable: true
+        disk_used_gb: *id004
+        disk_total_gb: *id004
+        disk_alert_percent: &id007
+          type: integer
+        uptime_days: *id006
+        queue_pending: *id002
+        queue_pending_alert: *id002
+        queue_failed: *id002
+        queue_oldest_minutes: *id006
+        database_mb: *id006
+    ClubLoadRow:
+      type: object
+      required:
+      - club_id
+      - name
+      - requests_per_minute
+      - peak
+      - agent
+      - api
+      - panel
+      - guest
+      - response_ms
+      - errors_percent
+      - has_errors
+      - server_share
+      properties:
+        club_id: *id002
+        name: *id003
+        requests_per_minute: *id003
+        peak: *id002
+        agent: *id003
+        api: *id003
+        panel: *id003
+        guest: *id003
+        response_ms: *id004
+        errors_percent: *id004
+        has_errors: *id005
+        server_share: *id004
+    ChannelRow:
+      type: object
+      required:
+      - channel
+      - label
+      - requests_per_minute
+      - response_ms
+      - errors_percent
+      - has_errors
+      properties:
+        channel: *id003
+        label: *id003
+        requests_per_minute: *id003
+        response_ms: *id004
+        errors_percent: *id004
+        has_errors: *id005
+    TableSize:
+      type: object
+      required:
+      - name
+      - megabytes
+      - rows
+      properties:
+        name: *id003
+        megabytes: *id003
+        rows: *id002
+    LogError:
+      type: object
+      required:
+      - at
+      - level
+      - message
+      properties:
+        at: *id003
+        level: *id003
+        message: *id003
+    CertificateHost:
+      type: object
+      required:
+      - host
+      - days
+      - checked
+      properties:
+        host: *id003
+        days: *id006
+        checked: *id005
+    Backup:
+      type: object
+      required:
+      - configured
+      - at_human
+      - stale
+      properties:
+        configured: *id005
+        at_human: *id004
+        stale: *id005
+    AgentVersion:
+      type: object
+      required:
+      - version
+      - count
+      - outdated
+      properties:
+        version: *id003
+        count: *id002
+        outdated: *id005
+    AgentRelease:
+      type: object
+      required:
+      - latest_version
+      - released_at
+      - auto_update
+      properties:
+        latest_version: *id003
+        released_at: *id003
+        download_url: *id004
+        auto_update: *id005
+        installer_url: *id004
+        installer_sha256: *id004
+    Dashboard:
+      type: object
+      required:
+      - period
+      - period_minutes
+      - scheduler_minutes_ago
+      - scheduler_silent_minutes
+      - live
+      - computers
+      - charts
+      - club_load
+      - selected_clubs
+      - channels
+      - tables
+      - log_errors
+      - certificate_hosts
+      - backup
+      - agent_versions
+      - latest_agent
+      - agent_download_url
+      - today
+      - recent_logs
+      properties:
+        period: *id003
+        period_minutes: *id002
+        scheduler_minutes_ago: *id006
+        scheduler_silent_minutes: *id007
+        live:
+          $ref: '#/components/schemas/Live'
+        computers:
+          type: object
+          required:
+          - total
+          - online
+          properties:
+            total: *id002
+            online: *id002
+        charts:
+          type: object
+          required:
+          - load
+          - memory
+          - requests
+          - duration
+          - errors
+          - clubs
+          properties:
+            load:
+              $ref: '#/components/schemas/Chart'
+            memory:
+              $ref: '#/components/schemas/Chart'
+            requests:
+              $ref: '#/components/schemas/Chart'
+            duration:
+              $ref: '#/components/schemas/Chart'
+            errors:
+              $ref: '#/components/schemas/Chart'
+            clubs:
+              $ref: '#/components/schemas/Chart'
+        club_load:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClubLoadRow'
+        selected_clubs:
+          type: array
+          items: *id002
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChannelRow'
+        tables:
+          type: array
+          items:
+            $ref: '#/components/schemas/TableSize'
+        log_errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogError'
+        certificate_hosts:
+          type: array
+          items:
+            $ref: '#/components/schemas/CertificateHost'
+        backup:
+          $ref: '#/components/schemas/Backup'
+        agent_versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentVersion'
+        latest_agent: *id004
+        agent_download_url: *id004
+        agent_release:
+          allOf:
+          - $ref: '#/components/schemas/AgentRelease'
+          nullable: true
+        today: *id003
+        recent_logs:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogRow'
+    AgentReleaseForm:
+      type: object
+      required:
+      - latest_version
+      - released_at
+      properties:
+        latest_version: *id003
+        released_at: *id003
+        download_url: *id004
+        auto_update: *id005
+    SubscriptionBadge:
+      type: object
+      required:
+      - label
+      - active
+      properties:
+        label: *id003
+        active: *id005
+    Issue:
+      type: object
+      required:
+      - club_id
+      - club
+      - kind
+      - text
+      properties:
+        club_id: *id002
+        club: *id003
+        kind:
+          type: string
+          enum:
+          - offline
+          - webhooks
+          - subscription
+        text: *id003
+    ClubRow:
+      type: object
+      required:
+      - id
+      - name
+      - slug
+      - owner_name
+      - computers_count
+      - online_count
+      - busy_count
+      - busy_percent
+      - agent_per_minute
+      - api_per_minute
+      - last_login_human
+      - sessions_today
+      - outdated_agents
+      - webhook_failures
+      - badge
+      - days_left
+      properties:
+        id: *id002
+        name: *id003
+        slug: *id003
+        owner_name: *id004
+        computers_count: *id002
+        online_count: *id002
+        busy_count: *id002
+        busy_percent: *id006
+        agent_per_minute: *id003
+        api_per_minute: *id003
+        last_login_human: *id004
+        sessions_today: *id002
+        outdated_agents: *id006
+        webhook_failures: *id002
+        badge:
+          $ref: '#/components/schemas/SubscriptionBadge'
+        days_left: *id006
+    ClubList:
+      type: object
+      required:
+      - items
+      - page
+      - per_page
+      - total
+      - sort
+      - direction
+      - issues
+      - totals
+      - latest_agent
+      - load_minutes
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClubRow'
+        page: *id007
+        per_page: *id007
+        total: *id002
+        sort: *id003
+        direction: *id003
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/Issue'
+        totals:
+          type: object
+          required:
+          - clubs
+          - active
+          - trial
+          properties:
+            clubs: *id002
+            active: *id002
+            trial: *id002
+        latest_agent: *id004
+        load_minutes: *id007
+    Member:
+      type: object
+      required:
+      - id
+      - name
+      - phone
+      - role
+      - blocked
+      properties:
+        id: *id002
+        name: *id003
+        phone: *id003
+        role: *id003
+        blocked: *id005
+    PlanOption:
+      type: object
+      required:
+      - id
+      - name
+      - is_active
+      properties:
+        id: *id002
+        name: *id003
+        is_active: *id005
+    HeatCell:
+      type: object
+      required:
+      - weekday
+      - hour
+      - busy
+      - online
+      properties:
+        weekday: *id007
+        hour: *id007
+        busy: *id002
+        online: *id003
+    ClubCard:
+      type: object
+      required:
+      - id
+      - name
+      - slug
+      - created
+      - timezone
+      - computers
+      - subscription
+      - badge
+      - members
+      - page
+      - per_page
+      - total
+      - heatmap
+      - plans
+      - activity
+      - platform_logs
+      properties:
+        id: *id002
+        name: *id003
+        slug: *id003
+        created: *id003
+        timezone: *id003
+        computers:
+          type: object
+          required:
+          - total
+          - online
+          properties:
+            total: *id002
+            online: *id002
+        subscription:
+          allOf:
+          - type: object
+            required:
+            - status
+            - saas_plan_id
+            - plan_name
+            - paid_until
+            - trial_until
+            - active
+            properties:
+              status: *id003
+              saas_plan_id: *id002
+              plan_name: *id004
+              paid_until: *id004
+              trial_until: *id004
+              active: *id005
+          nullable: true
+        badge:
+          $ref: '#/components/schemas/SubscriptionBadge'
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/Member'
+        page: *id007
+        per_page: *id007
+        total: *id002
+        heatmap:
+          type: array
+          items:
+            $ref: '#/components/schemas/HeatCell'
+        plans:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanOption'
+        activity:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogRow'
+        platform_logs:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogRow'
+    ExtendForm:
+      type: object
+      required:
+      - days
+      properties:
+        days: *id007
+        saas_plan_id: *id006
+    PlanChoice:
+      type: object
+      required:
+      - saas_plan_id
+      properties:
+        saas_plan_id: *id002
+    AccountMembership:
+      type: object
+      required:
+      - club_id
+      - club_name
+      - role
+      properties:
+        club_id: *id002
+        club_name: *id003
+        role: *id003
+    Account:
+      type: object
+      required:
+      - id
+      - name
+      - phone
+      - is_superadmin
+      - blocked_since
+      - self
+      - second_factor
+      - memberships
+      properties:
+        id: *id002
+        name: *id003
+        phone: *id003
+        is_superadmin: *id005
+        blocked_since: *id004
+        self: *id005
+        second_factor:
+          type: boolean
+          description: Второй фактор (TOTP) включён (Этап 7).
+        memberships:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountMembership'
+    AccountList:
+      type: object
+      required:
+      - items
+      - page
+      - per_page
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Account'
+        page: *id007
+        per_page: *id007
+        total: *id002
+    Plan:
+      type: object
+      required:
+      - id
+      - name
+      - slug
+      - price_monthly_tiyn
+      - trial_days
+      - features
+      - is_active
+      - clubs_count
+      properties:
+        id: *id002
+        name: *id003
+        slug: *id003
+        price_monthly_tiyn: *id006
+        trial_days: *id007
+        features:
+          type: array
+          items: *id003
+        is_active: *id005
+        clubs_count: *id002
+    PlanList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Plan'
+    PlanForm:
+      type: object
+      required:
+      - name
+      - slug
+      - trial_days
+      properties:
+        name: *id003
+        slug: *id003
+        price_monthly_tiyn: *id006
+        trial_days: *id007
+        features: *id004
+        is_active: *id005
+    EventOption:
+      type: object
+      required:
+      - event
+      - label
+      properties:
+        event: *id003
+        label: *id003
+    LogList:
+      type: object
+      required:
+      - tab
+      - club
+      - events
+      - items
+      - page
+      - per_page
+      - total
+      properties:
+        tab: *id003
+        club:
+          allOf:
+          - type: object
+            required:
+            - id
+            - name
+            properties:
+              id: *id002
+              name: *id003
+          nullable: true
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventOption'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogRow'
+        page: *id007
+        per_page: *id007
+        total: *id002
+    PlatformNewsItem:
+      type: object
+      required:
+      - id
+      - title
+      - body
+      - is_published
+      - has_image
+      - image_url
+      - created_at
+      properties:
+        id: *id002
+        title: *id003
+        body: *id003
+        is_published: *id005
+        has_image: *id005
+        image_url: *id004
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+    PlatformNewsPage:
+      type: object
+      required:
+      - items
+      - page
+      - per_page
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlatformNewsItem'
+        page: *id007
+        per_page: *id007
+        total: *id002
+    PlatformNewsForm:
+      type: object
+      properties:
+        title: *id003
+        body: *id003
+        is_published: *id003
+        remove_image: *id003
+        image:
+          type: string
+          format: binary
+    Language:
+      type: object
+      required:
+      - id
+      - code
+      - name
+      - is_enabled
+      - is_system
+      - is_default
+      - translated_count
+      - clubs_count
+      properties:
+        id: *id002
+        code: *id003
+        name: *id003
+        is_enabled: *id005
+        is_system: *id005
+        is_default: *id005
+        translated_count: *id002
+        clubs_count: *id002
+    LanguageList:
+      type: object
+      required:
+      - items
+      - translation_total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Language'
+        translation_total: *id002
+    LanguageCreate:
+      type: object
+      required:
+      - code
+      - name
+      properties:
+        code: *id003
+        name: *id003
+    LanguageUpdate:
+      type: object
+      properties:
+        name: *id003
+        is_enabled: *id005
+    ImportForm:
+      type: object
+      properties:
+        language: *id003
+        file:
+          type: string
+          format: binary
+    ImportResult:
+      type: object
+      required:
+      - message
+      - invalid
+      - invalid_count
+      properties:
+        message: *id003
+        invalid:
+          type: array
+          items: *id003
+        invalid_count: *id007
+    TranslationRow:
+      type: object
+      required:
+      - hash
+      - label
+      - source
+      - value
+      properties:
+        hash: *id003
+        label: *id003
+        source: *id003
+        value: *id003
+    TranslationPage:
+      type: object
+      required:
+      - language
+      - items
+      - page
+      - per_page
+      - total
+      - translated
+      - source_total
+      properties:
+        language:
+          type: object
+          required:
+          - id
+          - code
+          - name
+          properties:
+            id: *id002
+            code: *id003
+            name: *id003
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TranslationRow'
+        page: *id007
+        per_page: *id007
+        total: *id002
+        translated: *id002
+        source_total: *id002
+    TranslationSave:
+      type: object
+      required:
+      - translations
+      properties:
+        translations:
+          type: object
+          additionalProperties:
+            type: string
+            nullable: true
+    TelegramState:
+      type: object
+      required:
+      - configured
+      - sent_last_month
+      - alerts_chat_id
+      properties:
+        configured: *id005
+        sent_last_month: *id002
+        alerts_chat_id: *id004
+    GatewayForm:
+      type: object
+      required:
+      - token
+      properties:
+        token: *id003
+    AlertsForm:
+      type: object
+      required:
+      - bot_token
+      properties:
+        bot_token: *id003
+        chat_id: *id004
+

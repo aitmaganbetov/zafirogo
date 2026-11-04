@@ -1,0 +1,36 @@
+# Prometheus для staging (Этап 6, O3). Описание метрик и алертов — docs/observability.md.
+# Внутренний порт метрик сервера (observability.metrics_listen = :9090) доступен только в сети compose:
+# наружу не публикуется, аутентификации у /metrics нет.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: staging
+
+rule_files:
+  - /etc/prometheus/rules/*.rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # Инстансы сервера. В проде — по одному target на инстанс (file_sd/dns_sd); метка instance — адрес инстанса.
+  - job_name: zafiro
+    metrics_path: /metrics
+    scrape_timeout: 10s
+    static_configs:
+      - targets: ["app1:9090", "app2:9090"]
+
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]

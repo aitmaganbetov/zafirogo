@@ -1,0 +1,390 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — tariffs
+  version: 0.1.0
+  description: |
+    Тарифы (TariffController).
+    Конвенции — api/README.md. Деньги — целые тиыны (integer, int64), никогда number.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/tariffs:
+    get:
+      operationId: listTariffs
+      tags: [tariffs]
+      summary: Тарифы и цены часа по зонам
+      description: |
+        Laravel: TariffController::index() (tariffs.index, tariffs.view). Только чтение.
+      responses:
+        "200":
+          description: Тарифы и зоны.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TariffList"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+    post:
+      operationId: createTariff
+      tags: [tariffs]
+      summary: Новый тариф
+      description: |
+        Laravel: TariffController::store() (tariffs.store, tariffs.create), StoreTariffRequest. Журнал tariff.created,
+        аудит tariff.created. Цена — тиыны 0…999 999 999 999 (PQ-4).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TariffInput"
+      responses:
+        "201":
+          description: Тариф создан.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TariffSaved"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/tariffs/page:
+    get:
+      operationId: getTariffsPage
+      tags: [tariffs]
+      summary: Экран «Зоны и тарифы»
+      description: |
+        Laravel: TariffController::index()/page() (tariffs.index, tariffs.view): зоны с ПК (по имени), тарифы
+        (фильтр зоны — тарифы зоны и тарифы всех зон; по длительности и имени), продажи для лимита количества,
+        «сейчас не продаётся» (WeeklyPeriods), валюта клуба, can_delete (только владелец, как canDelete).
+      parameters:
+        - name: zone
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Данные экрана.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TariffsPage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/tariffs/{tariffId}:
+    patch:
+      operationId: updateTariff
+      tags: [tariffs]
+      summary: Изменить тариф
+      description: |
+        Laravel: TariffController::update() (tariffs.update), UpdateTariffRequest. Изменения действуют на новые
+        покупки. Журнал и аудит tariff.updated. Удалённый или чужой тариф — 404.
+      parameters:
+        - $ref: "#/components/parameters/TariffId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TariffInput"
+      responses:
+        "200":
+          description: Тариф сохранён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TariffSaved"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+    delete:
+      operationId: deleteTariff
+      tags: [tariffs]
+      summary: Удалить тариф
+      description: |
+        Laravel: TariffController::destroy() (tariffs.destroy, tariffs.delete — по умолчанию никому; в интерфейсе —
+        только владелец). Мягкое удаление: история и купленные абонементы сохраняются. Журнал и аудит tariff.deleted.
+      parameters:
+        - $ref: "#/components/parameters/TariffId"
+      responses:
+        "200":
+          description: Тариф удалён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TariffSaved"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+components:
+  parameters:
+    TariffId:
+      name: tariffId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  schemas:
+    Tariff:
+      type: object
+      required: [id, name, duration_minutes, price_tiyn, currency, is_active, payment_method, discount_enabled, zone_ids]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        duration_minutes:
+          type: integer
+          format: int64
+        price_tiyn:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        is_active:
+          type: boolean
+        payment_method:
+          type: string
+          enum: [main_balance_only, main_or_bonus]
+        discount_enabled:
+          type: boolean
+        usage_limit_minutes:
+          type: integer
+          format: int64
+          nullable: true
+        quantity_limit:
+          type: integer
+          format: int64
+          nullable: true
+        zone_ids:
+          type: array
+          description: Зоны действия; пусто — все зоны.
+          items:
+            type: integer
+            format: int64
+    Zone:
+      type: object
+      required: [id, name, price_per_hour_tiyn]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        price_per_hour_tiyn:
+          type: integer
+          format: int64
+          nullable: true
+          description: Цена часа поминутной продажи; null — в зоне поминутно не продаётся.
+    TariffList:
+      type: object
+      required: [tariffs, zones]
+      properties:
+        tariffs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Tariff"
+        zones:
+          type: array
+          items:
+            $ref: "#/components/schemas/Zone"
+    WeeklyPeriod:
+      type: object
+      required: [start_day, start_time, end_day, end_time]
+      properties:
+        start_day:
+          type: string
+        start_time:
+          type: string
+        end_day:
+          type: string
+        end_time:
+          type: string
+    PageTariff:
+      type: object
+      required: [id, name, duration_minutes, price_tiyn, currency, is_active, payment_method, discount_enabled, zone_ids,
+                 usage_limit_enabled, quantity_limit_enabled, sold, sale_periods, validity_periods, on_sale, in_validity_period]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        duration_minutes:
+          type: integer
+          format: int64
+        price_tiyn:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        is_active:
+          type: boolean
+        payment_method:
+          type: string
+          enum: [main_balance_only, main_or_bonus]
+        discount_enabled:
+          type: boolean
+        usage_limit_enabled:
+          type: boolean
+        usage_limit_minutes:
+          type: integer
+          format: int64
+          nullable: true
+        quantity_limit_enabled:
+          type: boolean
+        quantity_limit:
+          type: integer
+          format: int64
+          nullable: true
+        sold:
+          type: integer
+          format: int64
+          description: Продано в агенте (лимит количества).
+        zone_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        zone_names:
+          type: array
+          description: Имена зон тарифа (по имени), пусто — все зоны.
+          items:
+            type: string
+        sale_periods:
+          type: array
+          description: Время продажи; пусто — всегда.
+          items:
+            $ref: "#/components/schemas/WeeklyPeriod"
+        validity_periods:
+          type: array
+          description: Период действия; пусто — всегда.
+          items:
+            $ref: "#/components/schemas/WeeklyPeriod"
+        on_sale:
+          type: boolean
+          description: Tariff::onSale() сейчас (время продажи).
+        in_validity_period:
+          type: boolean
+          description: Tariff::inValidityPeriod() сейчас.
+    TariffsPage:
+      type: object
+      required: [zones, tariffs, currency, can_delete]
+      properties:
+        zones:
+          type: array
+          description: Зоны, в которых есть ПК, по имени.
+          items:
+            $ref: "#/components/schemas/Zone"
+        zone_filter:
+          type: integer
+          format: int64
+          nullable: true
+        tariffs:
+          type: array
+          items:
+            $ref: "#/components/schemas/PageTariff"
+        currency:
+          type: string
+        can_delete:
+          type: boolean
+    TariffInput:
+      type: object
+      required: [name, duration_value, duration_unit, price_tiyn, payment_method, discount_enabled, usage_limit_enabled,
+                 quantity_limit_enabled, validity_periods, is_active]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        duration_value:
+          type: integer
+          format: int64
+        duration_unit:
+          type: string
+        price_tiyn:
+          type: integer
+          format: int64
+        payment_method:
+          type: string
+        discount_enabled:
+          type: boolean
+        zone_ids:
+          type: array
+          nullable: true
+          items:
+            type: integer
+            format: int64
+        usage_limit_enabled:
+          type: boolean
+        usage_limit_value:
+          type: integer
+          format: int64
+          nullable: true
+        usage_limit_unit:
+          type: string
+          nullable: true
+        quantity_limit_enabled:
+          type: boolean
+        quantity_limit:
+          type: integer
+          format: int64
+          nullable: true
+        validity_periods:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyPeriod"
+        sale_periods:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/WeeklyPeriod"
+        is_active:
+          type: boolean
+    TariffSaved:
+      type: object
+      required: [message]
+      properties:
+        id:
+          type: integer
+          format: int64
+        message:
+          type: string
+          description: Текст flash (`status`) на языке клуба.

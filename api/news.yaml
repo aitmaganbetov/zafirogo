@@ -1,0 +1,193 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — news
+  version: 0.1.0
+  description: |
+    Новости клуба для агента ПК (NewsController, NewsManager). Новости платформы — суперадминка.
+    Картинка — публичный GET /news-images/{news}/{file} (вне /api, без токена: агент грузит её по URL).
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/news:
+    get:
+      operationId: listNews
+      tags: [news]
+      summary: Новости клуба
+      description: |
+        Laravel: NewsController::index() (news.index, news.view): новости клуба, новые сверху, paginate(News::PAGE = 20).
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Страница новостей.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewsPage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+    post:
+      operationId: createNews
+      tags: [news]
+      summary: Добавить новость
+      description: |
+        Laravel: NewsController::store() (news.store, news.create), NewsManager::validate()/create(). Журнал news.created.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/NewsForm"
+      responses:
+        "201":
+          description: Новость добавлена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/news/{newsId}:
+    patch:
+      operationId: updateNews
+      tags: [news]
+      summary: Изменить новость
+      description: |
+        Laravel: NewsController::update() (news.update), NewsManager::update(). Новая картинка или remove_image —
+        прежняя удаляется. Новость платформы или чужого клуба — 404. Журнал news.updated.
+      parameters:
+        - $ref: "#/components/parameters/NewsId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/NewsForm"
+      responses:
+        "200":
+          description: Новость сохранена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+    delete:
+      operationId: deleteNews
+      tags: [news]
+      summary: Удалить новость
+      description: |
+        Laravel: NewsController::destroy() (news.destroy, news.delete). Журнал news.deleted.
+      parameters:
+        - $ref: "#/components/parameters/NewsId"
+      responses:
+        "200":
+          description: Новость удалена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  parameters:
+    NewsId:
+      name: newsId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    NewsItem:
+      type: object
+      required: [id, title, body, is_published, has_image]
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        body:
+          type: string
+        is_published:
+          type: boolean
+        has_image:
+          type: boolean
+        image_url:
+          type: string
+          nullable: true
+          description: News::imageUrl() — путь /news-images/{id}/{файл}.
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+    NewsPage:
+      type: object
+      required: [items, page, per_page, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/NewsItem"
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+          format: int64
+    NewsForm:
+      type: object
+      properties:
+        title:
+          type: string
+        body:
+          type: string
+        is_published:
+          type: string
+          description: "boolean формы: 1/0, true/false"
+        remove_image:
+          type: string
+        image:
+          type: string
+          format: binary
+    NewsMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string

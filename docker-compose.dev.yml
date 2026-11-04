@@ -1,0 +1,69 @@
+# Локальное окружение разработки: PostgreSQL, Valkey, NATS JetStream.
+# Запуск: task db:up (или docker compose -f docker-compose.dev.yml --env-file .env up -d --wait).
+# Пароли — только dev-значения из .env (шаблон — .env.example). Не использовать в проде.
+# Postgres: POSTGRES_USER — владелец схемы (goose, task db:migrate). Сервер подключается двумя логинами —
+# членами ролей zafiro_app и zafiro_platform; их создаёт db/init/10-zafiro-logins.sh при первой
+# инициализации тома (на существующем томе — task db:logins).
+name: zafirogo-dev
+
+services:
+  postgres:
+    image: postgres:18.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-zafiro}
+      POSTGRES_USER: ${POSTGRES_USER:-zafiro}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в .env}
+      ZAFIRO_DB_APP_USER: ${ZAFIRO_DB_APP_USER:-zafiro_app_login}
+      ZAFIRO_DB_APP_PASSWORD: ${ZAFIRO_DB_APP_PASSWORD:?задайте ZAFIRO_DB_APP_PASSWORD в .env}
+      ZAFIRO_DB_PLATFORM_USER: ${ZAFIRO_DB_PLATFORM_USER:-zafiro_platform_login}
+      ZAFIRO_DB_PLATFORM_PASSWORD: ${ZAFIRO_DB_PLATFORM_PASSWORD:?задайте ZAFIRO_DB_PLATFORM_PASSWORD в .env}
+      TZ: UTC
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    # Postgres 18+: данные в /var/lib/postgresql/<major>/docker, монтируем родительский каталог.
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  valkey:
+    image: valkey/valkey:9.1.3-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--appendonly", "yes", "--requirepass", "${VALKEY_PASSWORD:?задайте VALKEY_PASSWORD в .env}"]
+    environment:
+      REDISCLI_AUTH: ${VALKEY_PASSWORD}
+    ports:
+      - "127.0.0.1:${VALKEY_PORT:-6379}:6379"
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  nats:
+    image: nats:2.15.2-alpine
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "127.0.0.1:${NATS_PORT:-4222}:4222"
+      - "127.0.0.1:${NATS_MONITOR_PORT:-8222}:8222"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8222/healthz?js-enabled-only=true | grep -q ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres-data:
+  valkey-data:
+  nats-data:

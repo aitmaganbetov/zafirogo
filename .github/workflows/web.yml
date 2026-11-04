@@ -1,0 +1,61 @@
+name: web
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: web
+
+jobs:
+  web:
+    name: lint, typecheck, test, build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - name: API types are up to date
+        run: |
+          npm run gen:api
+          git diff --exit-code -- src/api/gen
+          test -z "$(git status --porcelain -- src/api/gen)"
+      - run: npm test
+      - run: npm run build
+
+  e2e:
+    name: playwright e2e
+    runs-on: ubuntu-24.04
+    needs: web
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npm run test:e2e
+        env:
+          CI: "true"

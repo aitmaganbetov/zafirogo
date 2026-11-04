@@ -1,0 +1,668 @@
+{
+  "$comment": "Страницы визуального сравнения (tools/visual/README.md). Поля страницы: id, old, new (пути), role (кто входит: ключ demo.json login.roles или null — без входа), viewports, themes, mask (селекторы живых элементов, наборы @имя из maskSets; общие или {old, new}), waitFor (селектор, которого дождаться), fullPage (false — только окно), pixelThreshold (pixelmatch), maxDiffPercent (порог доли отличающихся пикселей, %), status (ported — экран перенесён, расхождение сверх порога — ошибка; pending — ещё не перенесён, результат только в отчёте), note.",
+  "defaults": {
+    "viewports": [
+      "desktop",
+      "mobile"
+    ],
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "role": "owner",
+    "pixelThreshold": 0.1,
+    "maxDiffPercent": 0.5,
+    "mask": [
+      "@clock"
+    ],
+    "status": "ported"
+  },
+  "viewports": {
+    "desktop": {
+      "width": 1440,
+      "height": 900
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "isMobile": true,
+      "hasTouch": true
+    }
+  },
+  "maskSets": {
+    "@clock": [
+      "[data-clock]",
+      ".admin-clock"
+    ],
+    "@relativeTime": [
+      "[data-relative-time]"
+    ],
+    "@badges": [
+      "[data-sidebar-badge]",
+      "[data-notifications-dot]"
+    ]
+  },
+  "pages": [
+    {
+      "id": "login",
+      "old": "/login",
+      "new": "/login",
+      "role": null,
+      "themes": [
+        "light"
+      ],
+      "mask": [],
+      "waitFor": "form",
+      "status": "pending",
+      "note": "Вход (auth/login.blade.php). F1 переносит экран; до этого новый сервер отдаёт заглушку SPA."
+    },
+    {
+      "id": "layout",
+      "old": "/dashboard",
+      "new": "/dashboard",
+      "role": "owner",
+      "fullPage": false,
+      "mask": [
+        "@clock",
+        ".admin-content"
+      ],
+      "waitFor": ".admin-topbar",
+      "status": "pending",
+      "note": "Каркас панели (layouts/admin.blade.php + partials/sidebar.blade.php): сайдбар и шапка в окне, контент закрыт маской. Сейчас в новом — AdminLayout с заглушкой сессии (STUB_ADMIN_SESSION): ожидаемо нет имени пользователя, бейджей чата/заказов и заголовок «Панель управления» вместо «Админпанель». Когда F1 подключит /api/auth/me и маршрут /dashboard — статус ported."
+    },
+    {
+      "id": "dashboard",
+      "old": "/dashboard",
+      "new": "/dashboard",
+      "role": "owner",
+      "waitFor": "[data-testid=dashboard] canvas",
+      "status": "ported",
+      "note": "Админпанель (dashboard.blade.php): сводка кассы за сегодня, график 7 дней (Chart.js 4.5.1 из npm), состояние клуба, последние операции. Группа 1 (G1)."
+    },
+    {
+      "id": "cash-register",
+      "old": "/cash-register",
+      "new": "/cash-register",
+      "role": "cashier",
+      "waitFor": ".pos-product, .pos-open",
+      "status": "ported",
+      "note": "Касса POS (cash-register/index.blade.php), открытая смена демо-данных. Товары витрины подгружаются страницами, пользователь для пополнения — поиском (Q-070), вид тот же."
+    },
+    {
+      "id": "cash-operations",
+      "old": "/cash-register/operations",
+      "new": "/cash-register/operations",
+      "role": "cashier",
+      "waitFor": "table",
+      "status": "ported",
+      "note": "Операции смены (cash-register/operations.blade.php): кассир без права на возвраты (cash.delete)."
+    },
+    {
+      "id": "cash-receipt",
+      "old": "/cash-register/receipts/13",
+      "new": "/cash-register/receipts/13",
+      "role": "owner",
+      "waitFor": ".receipt",
+      "status": "ported",
+      "note": "Чек продажи (cash-register/receipt.blade.php) с кнопкой возврата."
+    },
+    {
+      "id": "cash-receipt-print",
+      "old": "/cash-register/receipts/13",
+      "new": "/cash-register/receipts/13",
+      "role": "owner",
+      "waitFor": ".receipt",
+      "media": "print",
+      "themes": [
+        "light"
+      ],
+      "status": "ported",
+      "note": "Чек — печатная версия (@media print)."
+    },
+    {
+      "id": "cash-x-report",
+      "old": "/cash-register/reports/x",
+      "new": "/cash-register/reports/x",
+      "role": "cashier",
+      "waitFor": ".report-paper",
+      "status": "ported",
+      "note": "X-отчёт открытой смены (cash-register/report.blade.php)."
+    },
+    {
+      "id": "cash-z-report",
+      "old": "/cash-register/shifts/3/z-report",
+      "new": "/cash-register/shifts/3/z-report",
+      "role": "cashier",
+      "waitFor": ".report-paper",
+      "status": "ported",
+      "note": "Z-отчёт открытой смены: «Закрыть смену» неактивна до печати (afterprint → nonce, Q-015)."
+    },
+    {
+      "id": "cash-z-report-closed",
+      "old": "/cash-register/shifts/2/z-report",
+      "new": "/cash-register/shifts/2/z-report",
+      "role": "owner",
+      "waitFor": ".report-paper",
+      "status": "ported",
+      "note": "Z-отчёт закрытой смены."
+    },
+    {
+      "id": "cash-z-report-print",
+      "old": "/cash-register/shifts/2/z-report",
+      "new": "/cash-register/shifts/2/z-report",
+      "role": "owner",
+      "waitFor": ".report-paper",
+      "media": "print",
+      "themes": [
+        "light"
+      ],
+      "status": "ported",
+      "note": "Z-отчёт — печатная версия (@media print)."
+    },
+    {
+      "id": "warehouse",
+      "old": "/warehouse",
+      "new": "/warehouse",
+      "role": "owner",
+      "waitFor": ".warehouse-catalog",
+      "status": "ported",
+      "note": "Склад (warehouse.blade.php). Товар в формах движения и удаления — поле поиска вместо select (Q-070); по умолчанию выбран первый товар, как у select. Порог 4%: поле поиска на 2 px выше select (два поля) — всё ниже сдвинуто на 1–4 px; осознанное отличие Q-070 (docs/open-questions/stage3-cash.md G2-4).",
+      "maxDiffPercent": 4
+    },
+    {
+      "id": "stock",
+      "old": "/stock",
+      "new": "/stock",
+      "role": "cashier",
+      "waitFor": "table",
+      "status": "ported",
+      "note": "Остатки для кассира (stock/index.blade.php) с формой «Оприходовать» (stock.create)."
+    },
+    {
+      "id": "shop-orders",
+      "old": "/shop-orders",
+      "new": "/shop-orders",
+      "role": "cashier",
+      "waitFor": "[data-orders]",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Заказы из агента (shop-orders/index.blade.php), новые. Опрос /shop-orders/state → WebSocket (Q-062)."
+    },
+    {
+      "id": "shop-orders-all",
+      "old": "/shop-orders?status=all",
+      "new": "/shop-orders?status=all",
+      "role": "cashier",
+      "waitFor": "[data-orders]",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Заказы из агента — все статусы (выданный, отменённый, новый)."
+    },
+    {
+      "id": "services",
+      "old": "/services",
+      "new": "/services",
+      "role": "owner",
+      "waitFor": "table",
+      "status": "ported",
+      "note": "Услуги (services/index.blade.php): форма добавления и правка строкой (владелец)."
+    },
+    {
+      "id": "users",
+      "old": "/users",
+      "new": "/users",
+      "role": "owner",
+      "waitFor": "[data-customer-row], table",
+      "status": "ported",
+      "note": "Пользователи (users.blade.php, UserController::index): клиенты с балансами и лояльностью; пагинация keyset (simple-tailwind) — в демо-данных одна страница."
+    },
+    {
+      "id": "workers",
+      "old": "/workers",
+      "new": "/workers",
+      "role": "owner",
+      "waitFor": "table",
+      "status": "ported",
+      "note": "Работники (workers/index.blade.php, WorkerController::index): формы добавления и приглашения, смены, роли."
+    },
+    {
+      "id": "settings-permissions",
+      "old": "/settings/permissions",
+      "new": "/settings/permissions",
+      "role": "owner",
+      "waitFor": "#permissions",
+      "status": "ported",
+      "note": "Настройки → Права (settings/permissions.blade.php, PermissionController::index)."
+    },
+    {
+      "id": "settings-permissions-edit",
+      "old": "/settings/permissions/4",
+      "new": "/settings/permissions/4",
+      "role": "owner",
+      "waitFor": "#permissions table",
+      "status": "ported",
+      "note": "Права сотрудника (settings/permissions-edit.blade.php): оператор (членство 4) с правом todos.delete сверх роли — рамка и «Вернуть права по роли»."
+    },
+    {
+      "id": "settings-club",
+      "old": "/settings/club",
+      "new": "/settings/club",
+      "role": "owner",
+      "waitFor": "#agent-pin",
+      "mask": [
+        "@clock",
+        "#club-key"
+      ],
+      "status": "ported",
+      "note": "Настройка клуба (settings/club.blade.php). #club-key замаскирован: в старом — случайный ключ установки клуба, в новом — ссылка на «Подключение ПК» (Q-037, docs/open-questions/stage3-settings.md S-2)."
+    },
+    {
+      "id": "settings-languages",
+      "old": "/settings/languages",
+      "new": "/settings/languages",
+      "role": "owner",
+      "waitFor": "#club-languages",
+      "status": "ported",
+      "note": "Языки (settings/languages.blade.php)."
+    },
+    {
+      "id": "settings-finances",
+      "old": "/settings/finances",
+      "new": "/settings/finances",
+      "role": "owner",
+      "waitFor": "#topup-bonus",
+      "status": "ported",
+      "note": "Финансы (settings/finances.blade.php, percent-levels.blade.php)."
+    },
+    {
+      "id": "settings-guests",
+      "old": "/settings/guests",
+      "new": "/settings/guests",
+      "role": "owner",
+      "waitFor": "#guest_mode_enabled",
+      "status": "ported",
+      "note": "Гости (settings/guests.blade.php)."
+    },
+    {
+      "id": "settings-integrations",
+      "old": "/settings/integrations",
+      "new": "/settings/integrations",
+      "role": "owner",
+      "waitFor": "input[name=\"url\"]",
+      "mask": [
+        "@clock",
+        "span.break-all.font-mono"
+      ],
+      "status": "ported",
+      "note": "API и интеграции (settings/integrations.blade.php). Адрес /api/v1 замаскирован: разные порты стендов."
+    },
+    {
+      "id": "tariffs",
+      "old": "/tariffs",
+      "new": "/tariffs",
+      "role": "owner",
+      "waitFor": "#tariff-zone-filter",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Зоны и тарифы (tariffs/index.blade.php + tariffs/periods.blade.php)"
+    },
+    {
+      "id": "tariffs-zone",
+      "old": "/tariffs?zone=3",
+      "new": "/tariffs?zone=3",
+      "role": "owner",
+      "viewports": [
+        "desktop"
+      ],
+      "waitFor": "#tariff-zone-filter",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Тарифы с фильтром зоны (тарифы зоны и тарифы всех зон)"
+    },
+    {
+      "id": "tariffs-edit",
+      "old": "/tariffs/2/edit",
+      "new": "/tariffs/2/edit",
+      "role": "owner",
+      "fullPage": false,
+      "waitFor": "#tariff-dialog[open]",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Тот же экран с открытой формой изменения тарифа (<dialog>, showModal)"
+    },
+    {
+      "id": "reservations",
+      "old": "/reservations",
+      "new": "/reservations",
+      "role": "admin",
+      "waitFor": "#reservation-day",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Брони (reservations/index.blade.php), день демо-данных"
+    },
+    {
+      "id": "news",
+      "old": "/news",
+      "new": "/news",
+      "role": "owner",
+      "waitFor": "#news-title",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Новости клуба (news/index.blade.php в режиме клуба)"
+    },
+    {
+      "id": "todos",
+      "old": "/todos",
+      "new": "/todos",
+      "role": "owner",
+      "waitFor": "[data-todo-list]",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "To Do List (todos/index.blade.php): сегодня + просроченные"
+    },
+    {
+      "id": "chat",
+      "old": "/chat",
+      "new": "/chat",
+      "role": "cashier",
+      "waitFor": "[aria-label='Переписка'], section",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Чат с клиентами (chat/index.blade.php), отвечающий (кассир): открытие диалога помечает прочитанным"
+    },
+    {
+      "id": "chat-readonly",
+      "old": "/chat",
+      "new": "/chat",
+      "role": "owner",
+      "viewports": [
+        "desktop"
+      ],
+      "waitFor": "section",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Чат для читающего (владелец без права chat.create)"
+    },
+    {
+      "id": "activity-logs",
+      "old": "/activity-logs?event=cash.income",
+      "new": "/activity-logs?event=cash.income",
+      "role": "owner",
+      "waitFor": "#log-event",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Логи действий (activity-logs/index.blade.php) с фильтром «Пополнение кассы»: без фильтра в журнале — записи входа самого инструмента (время и IP входа — реальные, у старого — замороженное «сейчас», V-5), их число зависит от числа снимков. Разметка без фильтра совпадает. Порог 1%: порядок ключей подробностей (details) — в новом порядок jsonb (по длине ключа, как JSON-колонка MySQL в проде: amount, new_balance, balance_type, payment_method), в копии старого на sqlite — порядок вставки; остальное совпадает.",
+      "maxDiffPercent": 1.0,
+      "viewports": [
+        "desktop"
+      ]
+    },
+    {
+      "id": "club-map",
+      "old": "/club-map",
+      "new": "/club-map",
+      "role": "owner",
+      "waitFor": "#map-canvas",
+      "status": "ported",
+      "note": "Карта клуба (club-map/index.blade.php): зоны, ПК со статусом и подсветкой (присутствие агента — из Valkey, загрузчик visual-seed), легенда. Группа 1 (G1)."
+    },
+    {
+      "id": "club-computers",
+      "old": "/club-computers",
+      "new": "/club-computers",
+      "role": "owner",
+      "waitFor": "table",
+      "status": "ported",
+      "note": "Список ПК (club-computers/index.blade.php). Новое: кнопка «Подключение ПК» в шапке (коды регистрации и ключи образа, Q-037). Группа 1 (G1)."
+    },
+    {
+      "id": "activity-logs-mobile",
+      "old": "/activity-logs?event=cash.income",
+      "new": "/activity-logs?event=cash.income",
+      "role": "owner",
+      "waitFor": "#log-event",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "pending",
+      "note": "Логи действий, мобильный вид: разметка совпадает, но порядок ключей подробностей (jsonb/MySQL — по длине ключа, sqlite копии старого — порядок вставки) меняет перенос строк в узкой колонке описания и высоту строк (~8 %). Расхождение данных копии старого (sqlite), не переноса — docs/open-questions/stage3-tariffs-etc.md G4-14.",
+      "viewports": [
+        "mobile"
+      ]
+    },
+    {
+      "id": "landing",
+      "old": "/",
+      "new": "/",
+      "role": null,
+      "mask": [],
+      "waitFor": "#features",
+      "status": "ported",
+      "note": "Лендинг (welcome.blade.php, LandingController), гость. Группа 7 (G7)."
+    },
+    {
+      "id": "offline",
+      "old": "/offline",
+      "new": "/offline",
+      "role": null,
+      "mask": [],
+      "waitFor": "button",
+      "status": "ported",
+      "note": "Нет подключения (offline.blade.php, PwaController::offline): HTML сервера с текстами всех языков. G7."
+    },
+    {
+      "id": "pc-login",
+      "old": "/pc-login/VisualDemoQrLoginCode0123456789abcdefABC",
+      "new": "/pc-login/VisualDemoQrLoginCode0123456789abcdefABC",
+      "role": "owner",
+      "mask": [],
+      "waitFor": ".auth-submit",
+      "status": "ported",
+      "note": "Подтвердить вход на ПК (pc-login/show.blade.php): открытый QR-вход demo.json qr_logins на VIP-01. G7."
+    },
+    {
+      "id": "pc-login-expired",
+      "old": "/pc-login/0000000000000000000000000000000000000000",
+      "new": "/pc-login/0000000000000000000000000000000000000000",
+      "role": "owner",
+      "mask": [],
+      "waitFor": ".auth-card-head h2",
+      "status": "ported",
+      "note": "QR-код устарел (pc-login/show.blade.php, $login === null). G7."
+    },
+    {
+      "id": "pc-login-done",
+      "old": "/pc-login/done",
+      "new": "/pc-login/done",
+      "role": "owner",
+      "mask": [],
+      "waitFor": ".auth-card-head h2",
+      "status": "ported",
+      "note": "Готово (pc-login/done.blade.php). G7."
+    },
+    {
+      "id": "api-docs",
+      "old": "/docs/api",
+      "new": "/docs/api",
+      "role": null,
+      "themes": [
+        "light"
+      ],
+      "mask": [],
+      "waitFor": "#swagger-ui",
+      "status": "pending",
+      "note": "Справка Integration API v1 (api-docs.blade.php): Swagger UI 5.17.14 из npm (в старом — CDN jsdelivr, в стенде заблокирован). Только отчёт. G7."
+    },
+    {
+      "id": "wiki",
+      "old": "/wiki",
+      "new": "/wiki",
+      "role": null,
+      "themes": [
+        "light"
+      ],
+      "mask": [],
+      "waitFor": "h1",
+      "status": "pending",
+      "note": "Wiki (resources/wiki/index.html): шрифты Golos Text/Unbounded/JetBrains Mono из npm (в старом — Google Fonts, в стенде не загружаются). Только отчёт. G7."
+    },
+    {
+      "id": "billing",
+      "old": "/billing",
+      "new": "/billing",
+      "role": "owner",
+      "waitFor": "dl",
+      "status": "ported",
+      "note": "Подписка (billing/index.blade.php, BillingController::show): активная подписка демо-клуба. G7."
+    },
+    {
+      "id": "billing-expired",
+      "old": "/billing",
+      "new": "/billing",
+      "role": "owner_expired",
+      "waitFor": "dl",
+      "status": "ported",
+      "note": "Подписка: клуб «Zafiro Lite» (demo.json club 2) с истёкшей подпиской — статус «Истекла»; сюда ведёт 402 разделов панели. G7."
+    },
+    {
+      "id": "superadmin-dashboard",
+      "old": "/",
+      "new": "/",
+      "host": "admin.localhost",
+      "role": "superadmin",
+      "hide": [
+        "section[aria-labelledby=\"scheduler-title\"] + div",
+        "section[aria-labelledby=\"database-title\"]",
+        "section[aria-labelledby=\"errors-title\"]"
+      ],
+      "waitFor": "#history-title",
+      "status": "ported",
+      "note": "Кабинет суперадмина: Сервер (superadmin/dashboard.blade.php). Карточки живых показателей машины (load average, память, диск, uptime), «База данных» и «Последние ошибки в логе» скрыты в обоих (hide): значения снимаются в разные моменты и переносятся по-разному (высота карточек плавает на 20 px), старый — sqlite без размеров таблиц и свой laravel.log, новый — Postgres; маска высоту не выравнивает. Задачи мониторинга нового в стенде выключены (dev.disable_workers), как планировщик старого (docs/open-questions/stage3-superadmin.md SA-8)."
+    },
+    {
+      "id": "superadmin-clubs",
+      "old": "/clubs",
+      "new": "/clubs",
+      "host": "admin.localhost",
+      "role": "superadmin",
+      "waitFor": "table",
+      "status": "ported",
+      "note": "Кабинет: Клубы (superadmin/clubs/index.blade.php)."
+    },
+    {
+      "id": "superadmin-club",
+      "old": "/clubs/1",
+      "new": "/clubs/1",
+      "host": "admin.localhost",
+      "role": "superadmin",
+      "waitFor": "#members-title",
+      "status": "ported",
+      "note": "Кабинет: карточка клуба (superadmin/clubs/show.blade.php)."
+    },
+    {
+      "id": "superadmin-accounts",
+      "old": "/accounts",
+      "new": "/accounts",
+      "host": "admin.localhost",
+      "role": "superadmin",
+      "waitFor": "table",
+      "status": "ported",
+      "note": "Кабинет: Пользователи (superadmin/users/index.blade.php)."
+    },
+    {
+      "id": "superadmin-plans",
+      "old": "/plans",
+      "new": "/plans",
+      "host": "admin.localhost",
+      "role": "superadmin",
+      "waitFor": "form",
+      "status": "ported",
+      "note": "Кабинет: Тарифы платформы (superadmin/plans/index.blade.php)."
+    },
+    {
+      "id": "superadmin-news",
+      "old": "/platform-news",
+      "new": "/platform-news",
+      "host": "admin.localhost",
+      "role": "superadmin",
+      "waitFor": "header",
+      "status": "ported",
+      "note": "Кабинет: Новости платформы (news/index.blade.php, режим платформы)."
+    },
+    {
+      "id": "superadmin-logs",
+      "old": "/logs",
+      "new": "/logs",
+      "host": "admin.localhost",
+      "role": "superadmin",
+      "waitFor": "table",
+      "status": "ported",
+      "note": "Кабинет: Журнал (superadmin/logs/index.blade.php)."
+    },
+    {
+      "id": "superadmin-languages",
+      "old": "/languages",
+      "new": "/languages",
+      "host": "admin.localhost",
+      "role": "superadmin",
+      "waitFor": "#languages-title",
+      "status": "ported",
+      "note": "Кабинет: Языки и переводы (superadmin/languages.blade.php)."
+    },
+    {
+      "id": "superadmin-translations",
+      "old": "/languages/2/translations",
+      "new": "/languages/2/translations",
+      "host": "admin.localhost",
+      "role": "superadmin",
+      "waitFor": "table",
+      "status": "ported",
+      "note": "Кабинет: переводы языка kk (superadmin/translations.blade.php). Порядок строк каталога — по группе и ключу (импорт database/translations в Postgres), в старом — порядок файла ru.php: те же строки, другой порядок (и состав страниц) — порог 7 % (docs/open-questions/stage3-superadmin.md SA-2).",
+      "maxDiffPercent": 7
+    },
+    {
+      "id": "superadmin-telegram",
+      "old": "/telegram",
+      "new": "/telegram",
+      "host": "admin.localhost",
+      "role": "superadmin",
+      "waitFor": "#alerts-title",
+      "status": "ported",
+      "note": "Кабинет: Telegram (superadmin/telegram.blade.php)."
+    }
+  ]
+}

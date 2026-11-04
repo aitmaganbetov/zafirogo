@@ -1,0 +1,19 @@
+# Генерация Go-кода контракта агента: `buf generate` (из корня репозитория).
+# Плагины локальные (без входа в buf.build), версии закреплены:
+#   go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+#   go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+# Рантайм в server/go.mod: google.golang.org/protobuf v1.36.12, google.golang.org/grpc v1.85.0.
+# Результат: server/gen/agent/v1/*.pb.go (package agentv1).
+# C#: генерация только проверяется — tools/proto-csharp-check.sh (Grpc.Tools 2.85.0).
+version: v2
+# clean не используется: в server/gen могут лежать и другие генераторы (sqlc, oapi-codegen).
+plugins:
+  - local: protoc-gen-go
+    out: server/gen
+    opt:
+      - paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: server/gen
+    opt:
+      - paths=source_relative
+      - require_unimplemented_servers=true

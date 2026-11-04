@@ -1,0 +1,586 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — integrations
+  version: 0.1.0
+  description: |
+    Настройки → «API и интеграции» (IntegrationController, ApiKeyManager): ключи API, вебхуки, журнал доставок,
+    последние запросы к API, кто из сотрудников управляет интеграциями. Доступ — @can('manage-integrations'):
+    владелец или сотрудник с club_memberships.can_manage_integrations. Секрет (ключ API, секрет подписи вебхука)
+    показывается один раз — в ответе, который его создал (Cache-Control: no-store, private); в Zafiro хранится
+    хэш ключа (SHA-256) и префикс. Конвенции — api/README.md.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/settings/integrations:
+    get:
+      operationId: getIntegrations
+      tags: [integrations]
+      summary: Ключи, вебхуки, доставки и запросы клуба
+      description: |
+        Laravel: IntegrationController::index() (settings.integrations): ключи (новые сверху), вебхуки, первая
+        страница доставок (20, keyset), 30 последних запросов к API, персонал (только владельцу), права ключей
+        и события вебхуков из config/integrations.php.
+      responses:
+        "200":
+          description: Страница интеграций.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationsPage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/settings/integrations/deliveries:
+    get:
+      operationId: listWebhookDeliveries
+      tags: [integrations]
+      summary: Журнал доставок вебхуков (keyset)
+      description: Доставки клуба, новые сверху, по 20 (в старом — только 20 последних).
+      parameters:
+        - $ref: "common.yaml#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Страница доставок.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryPage"
+        "400":
+          $ref: "common.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/settings/integrations/keys:
+    post:
+      operationId: createApiKey
+      tags: [integrations]
+      summary: Создать ключ API
+      description: |
+        Laravel: IntegrationController::storeKey(), ApiKeyManager::create(): ключ zfk_<8>_<40>, хранится SHA-256 и
+        префикс; не больше 50 активных ключей. Журнал api_key.created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiKeyRequest"
+      responses:
+        "201":
+          description: Ключ создан — секрет показывается один раз.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedSecret"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/settings/integrations/keys/{keyId}/rotate:
+    post:
+      operationId: rotateApiKey
+      tags: [integrations]
+      summary: Перевыпустить ключ API
+      description: Laravel — IntegrationController::rotateKey(), ApiKeyManager::rotate() (api_key.rotated).
+      parameters:
+        - $ref: "#/components/parameters/KeyId"
+      responses:
+        "200":
+          description: Новый ключ — секрет показывается один раз.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedSecret"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/settings/integrations/keys/{keyId}:
+    delete:
+      operationId: revokeApiKey
+      tags: [integrations]
+      summary: Отозвать ключ API
+      description: Laravel — IntegrationController::revokeKey() (api_key.revoked).
+      parameters:
+        - $ref: "#/components/parameters/KeyId"
+      responses:
+        "200":
+          description: Ключ отозван.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/settings/integrations/webhooks:
+    post:
+      operationId: createWebhook
+      tags: [integrations]
+      summary: Добавить вебхук
+      description: |
+        Laravel: IntegrationController::storeWebhook(): URL (https, публичный хост, порты 80/443/8080/8443 —
+        WebhookUrlGuard), события; не больше 20 вебхуков. Секрет whsec_<40> показывается один раз. Журнал
+        webhook.created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookRequest"
+      responses:
+        "201":
+          description: Вебхук добавлен — секрет показывается один раз.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedSecret"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/settings/integrations/webhooks/{webhookId}:
+    patch:
+      operationId: updateWebhook
+      tags: [integrations]
+      summary: Изменить вебхук (адрес, события, включён)
+      description: |
+        Laravel: IntegrationController::updateWebhook(): при включении счётчик ошибок сбрасывается; журнал
+        webhook.updated с изменёнными полями.
+      parameters:
+        - $ref: "#/components/parameters/WebhookId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookUpdateRequest"
+      responses:
+        "200":
+          description: Вебхук сохранён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+    delete:
+      operationId: deleteWebhook
+      tags: [integrations]
+      summary: Удалить вебхук
+      description: Laravel — IntegrationController::destroyWebhook() (webhook.deleted).
+      parameters:
+        - $ref: "#/components/parameters/WebhookId"
+      responses:
+        "200":
+          description: Вебхук удалён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/settings/integrations/webhooks/{webhookId}/secret:
+    post:
+      operationId: rotateWebhookSecret
+      tags: [integrations]
+      summary: Новый секрет подписи вебхука
+      description: Laravel — IntegrationController::rotateWebhookSecret() (webhook.secret_rotated).
+      parameters:
+        - $ref: "#/components/parameters/WebhookId"
+      responses:
+        "200":
+          description: Новый секрет — показывается один раз.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedSecret"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/settings/integrations/deliveries/{deliveryId}/retry:
+    post:
+      operationId: retryWebhookDelivery
+      tags: [integrations]
+      summary: Повторить доставку
+      description: |
+        Laravel: IntegrationController::retryDelivery(): только failed/skipped (иначе 404) → pending сейчас;
+        журнал webhook.retried.
+      parameters:
+        - name: deliveryId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Отправка поставлена в очередь.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/settings/integrations/members/{membershipId}:
+    patch:
+      operationId: updateIntegrationsPermission
+      tags: [integrations]
+      summary: Выдать или снять доступ к интеграциям
+      description: |
+        Laravel: IntegrationController::updatePermission(): только владелец (иначе 403), владельца менять нельзя
+        (404); `required|boolean`. Журнал integrations.permission_changed, аудит категории permission.
+      parameters:
+        - name: membershipId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntegrationsPermissionRequest"
+      responses:
+        "200":
+          description: Права обновлены.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    KeyId:
+      name: keyId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    WebhookId:
+      name: webhookId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    IntegrationsMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+    CreatedSecret:
+      type: object
+      required: [type, name, secret]
+      properties:
+        type:
+          type: string
+          enum: [key, webhook]
+        name:
+          type: string
+          description: Название ключа или адрес вебхука.
+        secret:
+          type: string
+          description: Ключ API или секрет подписи — показывается один раз.
+    ApiKeyRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+        scopes:
+          type: array
+          nullable: true
+          items:
+            type: string
+        allowed_ips:
+          type: string
+          nullable: true
+          description: IP или подсети, по одному в строке (через пробел, запятую, «;»).
+        rate_limit_per_minute:
+          description: Запросов в минуту (строка поля формы или число); пусто — по умолчанию.
+          nullable: true
+          oneOf:
+            - type: string
+            - type: integer
+        expires_at:
+          type: string
+          nullable: true
+          description: Дата Y-m-d (после сегодня в поясе клуба); пусто — бессрочно.
+    WebhookRequest:
+      type: object
+      properties:
+        url:
+          type: string
+          nullable: true
+        events:
+          type: array
+          nullable: true
+          items:
+            type: string
+    WebhookUpdateRequest:
+      type: object
+      properties:
+        url:
+          type: string
+          nullable: true
+        events:
+          type: array
+          nullable: true
+          items:
+            type: string
+        is_active:
+          type: boolean
+    IntegrationsPermissionRequest:
+      type: object
+      properties:
+        can_manage_integrations:
+          type: boolean
+          nullable: true
+    ScopeInfo:
+      type: object
+      required: [scope, label, dangerous]
+      properties:
+        scope:
+          type: string
+        label:
+          type: string
+          description: Ключ перевода (config/integrations.php scopes.*.label).
+        dangerous:
+          type: boolean
+    EventInfo:
+      type: object
+      required: [event, label]
+      properties:
+        event:
+          type: string
+        label:
+          type: string
+    ApiKeyItem:
+      type: object
+      required: [id, name, creator_name, created_at, prefix, scopes, allowed_ips, rate_limit_per_minute, expires_at,
+        last_used_at, last_used_ip, status]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        creator_name:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        prefix:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        allowed_ips:
+          type: array
+          items:
+            type: string
+        rate_limit_per_minute:
+          type: integer
+          description: Действующий лимит min(свой ?? по умолчанию, максимум).
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_ip:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, revoked, expired]
+    WebhookItem:
+      type: object
+      required: [id, url, events, is_active, failure_count, last_success_at, last_failure_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        url:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+        is_active:
+          type: boolean
+        failure_count:
+          type: integer
+          format: int64
+        last_success_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_failure_at:
+          type: string
+          format: date-time
+          nullable: true
+    DeliveryItem:
+      type: object
+      required: [id, created_at, event, endpoint_url, status, last_error, attempts]
+      properties:
+        id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        event:
+          type: string
+        endpoint_url:
+          type: string
+          nullable: true
+        status:
+          type: string
+          description: pending, delivered, failed, skipped.
+        last_error:
+          type: string
+          nullable: true
+        attempts:
+          type: integer
+          format: int32
+    DeliveryPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryItem"
+        next_cursor:
+          type: string
+          nullable: true
+    RequestLogItem:
+      type: object
+      required: [created_at, key_prefix, method, endpoint, status, duration_ms, ip]
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        key_prefix:
+          type: string
+          nullable: true
+        method:
+          type: string
+        endpoint:
+          type: string
+        status:
+          type: integer
+          format: int32
+        duration_ms:
+          type: integer
+          format: int64
+        ip:
+          type: string
+    StaffAccessItem:
+      type: object
+      required: [membership_id, name, role, can_manage_integrations]
+      properties:
+        membership_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          nullable: true
+        role:
+          type: string
+        can_manage_integrations:
+          type: boolean
+    IntegrationsPage:
+      type: object
+      required: [keys, webhooks, deliveries, requests, staff, is_owner, scopes, events, default_rate_limit,
+        max_rate_limit, min_expires_at]
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiKeyItem"
+        webhooks:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookItem"
+        deliveries:
+          $ref: "#/components/schemas/DeliveryPage"
+        requests:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequestLogItem"
+        staff:
+          type: array
+          description: Персонал (admin, manager, cashier, operator) — только владельцу, иначе пусто.
+          items:
+            $ref: "#/components/schemas/StaffAccessItem"
+        is_owner:
+          type: boolean
+        scopes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScopeInfo"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventInfo"
+        default_rate_limit:
+          type: integer
+        max_rate_limit:
+          type: integer
+        min_expires_at:
+          type: string
+          description: min поля «Действует до» — завтра в поясе клуба (Y-m-d).

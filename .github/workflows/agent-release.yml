@@ -1,0 +1,238 @@
+# Выпуск агента ПК: сборка (windows-latest: служба Native AOT + UI WPF/WebView2) → Authenticode (если есть сертификат)
+# → установщик Inno Setup → sha256 и размер → манифест <установщик>.update.json с подписью Ed25519 (решение «Обновления
+# агента», docs/agent-protocol.md §6 и §14). Манифест читает кабинет суперадмина
+# (server/internal/http/sections/superadmin/release.go) и проверяет подпись открытым ключом agent.update.public_keys;
+# без манифеста с верной подписью автообновление не включается.
+#
+# Секреты окружения `agent-release`:
+#   AGENT_UPDATE_SIGNING_KEY — PEM PKCS#8 из `openssl genpkey -algorithm ed25519` или base64 seed из
+#                              `go run ./cmd/sign-update -genkey -key-id <id>`;
+#   AGENT_CODESIGN_PFX, AGENT_CODESIGN_PASSWORD — сертификат Authenticode (base64 PFX) и пароль; нет — exe и установщик
+#                              не подписываются Authenticode (предупреждение, open-questions/stage5-agent.md AG-15).
+# Переменные репозитория: AGENT_UPDATE_KEY_ID (key_id ключа), AGENT_UPDATE_PUBLIC_KEY (key_id:base64 — то же значение,
+# что в agent.update.public_keys сервера: подпись проверяется им до публикации), AGENT_ROOT_CA_PEM (корень CA Zafiro
+# для pinning, PEM — кладётся в установщик как root-ca.pem, AG-3).
+name: agent-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Версия агента (три числа через точку, например 2.1.0)
+        required: true
+      channel:
+        description: Канал обновлений
+        required: true
+        default: stable
+  push:
+    tags: ["agent-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  # Inno Setup — закреплённая версия и SHA-256 установщика (выпуск jrsoftware/issrc на GitHub).
+  INNO_SETUP_URL: https://github.com/jrsoftware/issrc/releases/download/is-6_5_4/innosetup-6.5.4.exe
+  INNO_SETUP_SHA256: fa73bf47a4da250d185d07561c2bfda387e5e20db77e4570004cf6a133cc10b1
+
+jobs:
+  build:
+    name: build installer (windows)
+    runs-on: windows-latest
+    environment: agent-release
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Входы — через env, не подстановкой в скрипт (защита от инъекции в run).
+      INPUT_VERSION: ${{ inputs.version }}
+      INPUT_CHANNEL: ${{ inputs.channel }}
+      REF_NAME: ${{ github.ref_name }}
+      ROOT_CA_PEM: ${{ vars.AGENT_ROOT_CA_PEM }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: agent/global.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Версия и канал
+        id: version
+        run: |
+          version="${INPUT_VERSION:-${REF_NAME#agent-v}}"
+          channel="${INPUT_CHANNEL:-stable}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}$'; then
+            echo "::error::версия «$version»: ожидается три числа через точку"; exit 1
+          fi
+          if [ -z "$ROOT_CA_PEM" ]; then
+            echo "::error::не задана переменная репозитория AGENT_ROOT_CA_PEM (корень CA Zafiro для pinning)"; exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "channel=$channel"
+          } >> "$GITHUB_OUTPUT"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Тесты перед выпуском (unit .NET, страница UI)
+        working-directory: agent
+        run: |
+          dotnet restore ZafiroAgent.slnx --locked-mode
+          dotnet build ZafiroAgent.slnx -c Release --no-restore
+          dotnet test tests/Zafiro.Agent.Tests/Zafiro.Agent.Tests.csproj -c Release --no-build --filter "Category!=Integration"
+          node --test tests/frontend/*.test.mjs
+
+      - name: Публикация (служба Native AOT, UI self-contained)
+        working-directory: agent
+        run: |
+          out="$RUNNER_TEMP/publish"
+          dotnet publish src/Zafiro.Agent.Service/Zafiro.Agent.Service.csproj -c Release -r win-x64 -p:PublishAot=true \
+            -p:RestoreLockedMode=false -p:Version="$VERSION" -o "$out" 2>&1 | tee "$RUNNER_TEMP/aot.log"
+          if grep -E 'warning (IL|SYSLIB)' "$RUNNER_TEMP/aot.log"; then echo "::error::AOT/trim warnings"; exit 1; fi
+          dotnet publish src/Zafiro.Agent.UI/Zafiro.Agent.UI.csproj -c Release -r win-x64 --self-contained true \
+            -p:RestoreLockedMode=false -p:Version="$VERSION" -o "$out"
+          printf '%s\n' "$ROOT_CA_PEM" > "$out/root-ca.pem"
+          rm -f "$out"/*.pdb
+          test -f "$out/Zafiro.Agent.Service.exe" && test -f "$out/Zafiro.Agent.UI.exe" && test -f "$out/Frontend/index.html"
+          "$out/Zafiro.Agent.Service.exe" --version
+          echo "PUBLISH_DIR=$out" >> "$GITHUB_ENV"
+
+      - name: Authenticode (exe)
+        env:
+          CODESIGN_PFX: ${{ secrets.AGENT_CODESIGN_PFX }}
+          CODESIGN_PASSWORD: ${{ secrets.AGENT_CODESIGN_PASSWORD }}
+        shell: pwsh
+        run: |
+          if (-not $env:CODESIGN_PFX) {
+            Write-Output "::warning::нет AGENT_CODESIGN_PFX: exe не подписаны Authenticode (AG-15)"
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CODESIGN_PFX))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          $files = Get-ChildItem -Path $env:PUBLISH_DIR -File | Where-Object { $_.Name -like 'Zafiro.Agent.*' -and $_.Extension -in '.exe', '.dll' }
+          & $signtool.FullName sign /f $pfx /p $env:CODESIGN_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $files.FullName
+          $code = $LASTEXITCODE
+          Remove-Item $pfx -Force
+          exit $code
+
+      - name: Inno Setup (закреплённая версия, проверка SHA-256)
+        shell: pwsh
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest -Uri $env:INNO_SETUP_URL -OutFile $setup
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:INNO_SETUP_SHA256) { throw "Inno Setup: SHA-256 $hash не совпадает с закреплённым" }
+          $dir = Join-Path $env:RUNNER_TEMP 'inno'
+          Start-Process -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=$dir" -Wait
+          if (-not (Test-Path (Join-Path $dir 'ISCC.exe'))) { throw 'Inno Setup не установлен' }
+          "ISCC=$(Join-Path $dir 'ISCC.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Установщик
+        shell: pwsh
+        working-directory: agent/installer
+        run: |
+          & $env:ISCC "/DAppVersion=$env:VERSION" "/DSourceDir=$env:PUBLISH_DIR" ZafiroAgent.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $installer = Resolve-Path "..\.work\installer\ZafiroAgentSetup-$env:VERSION.exe"
+          "INSTALLER=$installer" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Authenticode (установщик)
+        env:
+          CODESIGN_PFX: ${{ secrets.AGENT_CODESIGN_PFX }}
+          CODESIGN_PASSWORD: ${{ secrets.AGENT_CODESIGN_PASSWORD }}
+        shell: pwsh
+        run: |
+          if (-not $env:CODESIGN_PFX) { exit 0 }
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CODESIGN_PFX))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          & $signtool.FullName sign /f $pfx /p $env:CODESIGN_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $env:INSTALLER
+          $code = $LASTEXITCODE
+          Remove-Item $pfx -Force
+          exit $code
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-installer
+          path: ${{ env.INSTALLER }}
+          if-no-files-found: error
+
+  sign:
+    name: sign and publish
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: agent-release
+    permissions:
+      contents: write # создание выпуска agent-v<версия>
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      CHANNEL: ${{ needs.build.outputs.channel }}
+      KEY_ID: ${{ vars.AGENT_UPDATE_KEY_ID }}
+      EXPECT_PUBLIC_KEY: ${{ vars.AGENT_UPDATE_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Ключ подписи
+        run: |
+          if [ -z "$KEY_ID" ]; then
+            echo "::error::не задана переменная репозитория AGENT_UPDATE_KEY_ID"; exit 1
+          fi
+          echo "INSTALLER=$RUNNER_TEMP/release/ZafiroAgentSetup-$VERSION.exe" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-installer
+          path: ${{ runner.temp }}/release
+
+      - name: Подпись (sha256, размер, Ed25519) и проверка ключом сервера
+        working-directory: server
+        env:
+          AGENT_UPDATE_SIGNING_KEY: ${{ secrets.AGENT_UPDATE_SIGNING_KEY }}
+        run: |
+          test -s "$INSTALLER"
+          args=(-file "$INSTALLER" -version "$VERSION" -channel "$CHANNEL" -key-id "$KEY_ID")
+          if [ -n "$EXPECT_PUBLIC_KEY" ]; then
+            args+=(-expect-public-key "$EXPECT_PUBLIC_KEY")
+          fi
+          go run ./cmd/sign-update "${args[@]}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ env.VERSION }}
+          path: |
+            ${{ env.INSTALLER }}
+            ${{ env.INSTALLER }}.update.json
+          if-no-files-found: error
+
+      - name: Выпуск agent-v<версия>
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="agent-v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$INSTALLER" "$INSTALLER.update.json" --clobber
+          else
+            gh release create "$tag" "$INSTALLER" "$INSTALLER.update.json" --title "Агент $VERSION" \
+              --notes "Канал $CHANNEL, ключ подписи $KEY_ID. Манифест: $(basename "$INSTALLER").update.json." \
+              --target "$GITHUB_SHA"
+          fi

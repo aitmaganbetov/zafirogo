@@ -1,0 +1,643 @@
+// Вход гостя на ПК и действия гостя с временем (тарифы, минуты, пакеты, сессия, пересадка,
+// история, новости, профиль).
+//
+// Все RPC — под mTLS ПК (см. шапку agent.proto). GuestService дополнительно требует токен
+// гостя: метаданные `authorization: Bearer <access_token>`.
+// Лимиты указаны у каждого RPC и повторяют throttle:* старого routes/api.php (Laravel).
+syntax = "proto3";
+
+package zafiro.agent.v1;
+
+option csharp_namespace = "Zafiro.Agent.V1";
+option go_package = "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1;agentv1";
+
+import "agent/v1/common.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Вход, регистрация, QR-вход, восстановление пароля, выход.
+service GuestAuthService {
+  // Вход по телефону и паролю.
+  // Заменяет POST /api/agent/user/login (AuthController::agentUserLogin; ключ клуба
+  // подставляла служба — теперь клуб известен из сертификата ПК).
+  // Правила старого кода: один ПК на клиента (signed_in_elsewhere, app/Services/AgentSignIns.php);
+  // повторный вход на этом ПК отзывает прежний токен гостя этого ПК.
+  // Лимит: 5/мин на (IP ПК, телефон), 300/мин на IP (RateLimiter `customer-login`).
+  // Ошибки: INVALID_CREDENTIALS, ACCOUNT_BLOCKED, NOT_CLUB_MEMBER, SIGNED_IN_ELSEWHERE,
+  // SUBSCRIPTION_INACTIVE, RATE_LIMITED.
+  rpc Login(LoginRequest) returns (LoginResponse);
+
+  // Регистрация нового клиента на ПК (или вступление в клуб существующего аккаунта Zafiro
+  // с его паролем). Заменяет POST /api/agent/register (AgentRegisterController).
+  // Лимит: 5 за 10 минут на ПК, 60 за 10 минут на IP (RateLimiter `agent-register`).
+  // Ошибки: VALIDATION_FAILED, ALREADY_CLUB_MEMBER, ACCOUNT_BLOCKED, WRONG_PASSWORD, RATE_LIMITED.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Создаёт QR-вход: ссылку для телефона (страница /pc-login/{code} или мобильное приложение).
+  // Заменяет POST /api/agent/qr-login (AgentQrLoginController::store). Срок 5 минут
+  // (AgentQrLogin::LIFETIME_MINUTES). Лимит: 20/мин на ПК (`agent-qr-login`).
+  // Ошибки: FEATURE_DISABLED (QR-вход выключен в клубе), RATE_LIMITED.
+  rpc CreateQrLogin(CreateQrLoginRequest) returns (CreateQrLoginResponse);
+
+  // Ожидание подтверждения QR-входа: server-streaming вместо опроса
+  // POST /api/agent/qr-login/poll каждые 3 с (poll_interval_seconds = 3, лимит agent-qr-poll
+  // 60/мин). Сервер шлёт текущий статус сразу, затем при изменении; после APPROVED (с токеном)
+  // или EXPIRED закрывает стрим. Не более 2 одновременных ожиданий на ПК.
+  rpc WatchQrLogin(WatchQrLoginRequest) returns (stream WatchQrLoginResponse);
+
+  // Код восстановления пароля в Telegram (Telegram Gateway).
+  // Заменяет POST /api/auth/password/code (PasswordRecoveryController::code).
+  // Лимит: 10/мин на (IP, телефон), 30/мин на IP (`password-recovery`); внутри сервиса —
+  // 5 кодов в час, повтор через 60 с (PasswordRecovery::CODES_PER_HOUR, RESEND_SECONDS).
+  // Ответ одинаковый, есть ли номер в Zafiro (не раскрывает регистрацию).
+  rpc RequestPasswordResetCode(RequestPasswordResetCodeRequest) returns (RequestPasswordResetCodeResponse);
+
+  // Новый пароль по коду из Telegram. Заменяет POST /api/auth/password/reset.
+  // Лимит как у RequestPasswordResetCode; 5 попыток ввода кода (PasswordRecovery::MAX_ATTEMPTS).
+  // Ошибки: CONFIRMATION_CODE_INVALID, CONFIRMATION_CODE_EXPIRED, VALIDATION_FAILED.
+  rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);
+
+  // Выход гостя: токен из метаданных отзывается. Заменяет POST /api/auth/logout.
+  // Требует токен гостя.
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+}
+
+// Действия вошедшего гостя (токен гостя обязателен).
+service GuestService {
+  // Профиль и балансы гостя. Заменяет GET /api/me (AuthController::summary) и
+  // GET /api/auth/me. Дальше балансы приходят командой BalanceChanged в стриме.
+  // Лимит: 60/мин на токен (новый: у GET /api/me в Laravel throttle не было, routes/api.php стр. 33–35).
+  rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
+
+  // Смена имени. Заменяет POST /api/guest/profile/name (10/мин).
+  rpc UpdateName(UpdateNameRequest) returns (UpdateNameResponse);
+
+  // Смена пароля (с текущим паролем); остальные токены гостя отзываются, этот остаётся.
+  // Заменяет POST /api/guest/profile/password (5/мин).
+  // Ошибки: WRONG_PASSWORD, VALIDATION_FAILED.
+  rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
+
+  // Тарифы, которые продаются на этом ПК (по зоне ПК). Заменяет GET /api/tariffs
+  // (AgentTariffController::index, AgentTariffPurchaseService::availableFor; 60/мин).
+  rpc ListTariffs(ListTariffsRequest) returns (ListTariffsResponse);
+
+  // Покупка тарифа на этом ПК. idempotency_key ОБЯЗАТЕЛЕН.
+  // Заменяет POST /api/tariffs/{tariff}/purchase (AgentTariffPurchaseService::purchase; 10/мин).
+  // Ошибки: TARIFF_UNAVAILABLE, INSUFFICIENT_FUNDS, COMPUTER_RESERVED, IDEMPOTENCY_*, RATE_LIMITED.
+  rpc PurchaseTariff(PurchaseTariffRequest) returns (PurchaseTariffResponse);
+
+  // Условия поминутной оплаты в зоне ПК. Заменяет GET /api/guest/minutes
+  // (GuestMinutesController::show; 60/мин).
+  rpc GetMinuteOffer(GetMinuteOfferRequest) returns (GetMinuteOfferResponse);
+
+  // Покупка минут (1..720, GuestMinutesController::MAX_MINUTES). idempotency_key ОБЯЗАТЕЛЕН.
+  // Заменяет POST /api/guest/minutes/purchase (AgentTariffPurchaseService::purchaseMinutes; 10/мин).
+  rpc PurchaseMinutes(PurchaseMinutesRequest) returns (PurchaseMinutesResponse);
+
+  // «Играть на весь баланс»: сервер сам считает минуты на весь основной баланс (pricing.WholeBalanceMinutes,
+  // решение Q-008) и покупает их с основного баланса в той же транзакции, что и блокировка баланса.
+  // idempotency_key ОБЯЗАТЕЛЕН. Заменяет локальный расчёт старого агента (WindowsAgent/Frontend/main.js
+  // renderWholeBalance, обработчик minuteWholeBuy → purchaseMinutes). Лимит — как PurchaseMinutes (10/мин).
+  // Ошибки: FEATURE_DISABLED (клуб не разрешил), TARIFF_UNAVAILABLE (у зоны нет цены часа), INSUFFICIENT_FUNDS
+  // (не хватает и на минуту), COMPUTER_RESERVED, IDEMPOTENCY_*, RATE_LIMITED.
+  rpc PlayWholeBalance(PlayWholeBalanceRequest) returns (PlayWholeBalanceResponse);
+
+  // Состояние автобиллинга гостя на этом ПК (после входа и переподключения; дальше — команда AutoBillingChanged).
+  // Покупку делает сервер (решение Q-008); у агента автобиллинга нет. Лимит 60/мин на гостя.
+  rpc GetAutoBilling(GetAutoBillingRequest) returns (GetAutoBillingResponse);
+
+  // Сохранённые пакеты времени гостя (TimePackage). Заменяет GET /api/guest/packages (60/мин).
+  rpc ListPackages(ListPackagesRequest) returns (ListPackagesResponse);
+
+  // Запуск сохранённого пакета на этом ПК (без оплаты). idempotency_key ОБЯЗАТЕЛЕН.
+  // Заменяет POST /api/guest/packages/{package}/start (AgentTariffPurchaseService::startPackage; 10/мин).
+  // Ошибки: PACKAGE_UNAVAILABLE, TARIFF_UNAVAILABLE.
+  rpc StartPackage(StartPackageRequest) returns (StartPackageResponse);
+
+  // Досрочное завершение сессии гостем с возвратом неиспользованного времени.
+  // idempotency_key ОБЯЗАТЕЛЕН. Заменяет POST /api/club-computers/{computer}/session/end
+  // (ClubComputerSessions::end → SessionSettlement; throttle club-computers 60/мин на ПК).
+  // Ошибки: SESSION_MISMATCH, NO_ACTIVE_SESSION.
+  rpc EndSession(EndSessionRequest) returns (EndSessionResponse);
+
+  // Карта клуба для пересадки. Заменяет GET /api/guest/seats (SeatTransfers::map; 30/мин).
+  // Ошибки: FEATURE_DISABLED (self_transfer выключен).
+  rpc GetSeatMap(GetSeatMapRequest) returns (GetSeatMapResponse);
+
+  // Пересадка остатка сессии на другой свободный ПК. idempotency_key ОБЯЗАТЕЛЕН.
+  // Заменяет POST /api/guest/seat-transfer (SeatTransfers::transfer; 10/мин).
+  // Ошибки: FEATURE_DISABLED, SEAT_UNAVAILABLE, NO_ACTIVE_SESSION.
+  rpc TransferSeat(TransferSeatRequest) returns (TransferSeatResponse);
+
+  // Журнал гостя (покупки, пополнения, переводы, визиты), новые сверху, страницами по 30
+  // (GuestHistory::PAGE). Заменяет GET /api/guest/history (60/мин).
+  rpc ListHistory(ListHistoryRequest) returns (ListHistoryResponse);
+
+  // Новости: Zafiro (платформа) и клуба, до 10 каждого вида (GuestNewsController::LIMIT).
+  // Заменяет GET /api/guest/news (30/мин).
+  rpc ListNews(ListNewsRequest) returns (ListNewsResponse);
+}
+
+// ---------------------------------------------------------------------------------------
+// GuestAuthService
+// ---------------------------------------------------------------------------------------
+
+// Выданный токен гостя.
+message GuestToken {
+  // Токен доступа (непрозрачная строка ≥ 32 байт энтропии). Передаётся в
+  // `authorization: Bearer ...`. Хранится агентом только в памяти и в DPAPI текущего
+  // пользователя; в журналы не пишется.
+  string access_token = 1;
+  // Когда истекает.
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+// Ответ успешного входа (общий для Login, Register, WatchQrLogin).
+message GuestSignIn {
+  // Токен гостя.
+  GuestToken token = 1;
+  // Гость.
+  GuestUser user = 2;
+  // Балансы.
+  Balance balance = 3;
+  // Активная сессия этого гостя на ЭТОМ ПК, если есть (например, оплачена на кассе).
+  ActiveSession session = 4;
+}
+
+// Запрос входа.
+message LoginRequest {
+  // Телефон в любом виде; сервер нормализует в +7XXXXXXXXXX (PhoneNumber::normalize).
+  string phone = 1;
+  // Пароль (≤ 256 символов).
+  string password = 2;
+}
+
+// Ответ входа.
+message LoginResponse {
+  // Результат входа.
+  GuestSignIn sign_in = 1;
+}
+
+// Запрос регистрации.
+message RegisterRequest {
+  // Имя (2..255 символов).
+  string name = 1;
+  // Телефон (+7 и 10 цифр после нормализации).
+  string phone = 2;
+  // Пароль (6..255 символов). Для существующего аккаунта Zafiro — его пароль.
+  string password = 3;
+}
+
+// Ответ регистрации.
+message RegisterResponse {
+  // Результат входа.
+  GuestSignIn sign_in = 1;
+  // true — создан новый аккаунт, false — существующий аккаунт вступил в клуб.
+  bool account_created = 2;
+}
+
+// Запрос создания QR-входа.
+message CreateQrLoginRequest {}
+
+// Ответ: QR-вход создан.
+message CreateQrLoginResponse {
+  // UUID QR-входа (agent_qr_logins.id).
+  string login_id = 1;
+  // Ссылка для QR-кода (https://zafiro.kz/pc-login/<код из 40 символов>).
+  string url = 2;
+  // Когда истекает.
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+// Запрос ожидания QR-входа.
+message WatchQrLoginRequest {
+  // UUID QR-входа.
+  string login_id = 1;
+}
+
+// Статус QR-входа.
+enum QrLoginStatus {
+  // Не задано.
+  QR_LOGIN_STATUS_UNSPECIFIED = 0;
+  // Ждём подтверждения на телефоне.
+  QR_LOGIN_STATUS_PENDING = 1;
+  // Подтверждено: в ответе токен гостя.
+  QR_LOGIN_STATUS_APPROVED = 2;
+  // Истёк, использован или аккаунт недоступен.
+  QR_LOGIN_STATUS_EXPIRED = 3;
+}
+
+// Событие ожидания QR-входа.
+message WatchQrLoginResponse {
+  // Статус.
+  QrLoginStatus status = 1;
+  // При APPROVED — результат входа.
+  GuestSignIn sign_in = 2;
+}
+
+// Запрос кода восстановления пароля.
+message RequestPasswordResetCodeRequest {
+  // Телефон.
+  string phone = 1;
+}
+
+// Ответ: код (возможно) отправлен.
+message RequestPasswordResetCodeResponse {
+  // Сколько действует код (5 минут, PasswordRecovery::CODE_MINUTES).
+  google.protobuf.Duration code_valid_for = 1;
+  // Через сколько можно запросить новый код (60 с).
+  google.protobuf.Duration resend_after = 2;
+}
+
+// Запрос смены пароля по коду.
+message ResetPasswordRequest {
+  // Телефон.
+  string phone = 1;
+  // Код из Telegram (6 цифр).
+  string code = 2;
+  // Новый пароль (≥ 6 символов). Подтверждение пароля проверяет агент.
+  string new_password = 3;
+}
+
+// Ответ: пароль изменён (все токены аккаунта отозваны).
+message ResetPasswordResponse {}
+
+// Запрос выхода.
+message LogoutRequest {}
+
+// Ответ выхода.
+message LogoutResponse {}
+
+// ---------------------------------------------------------------------------------------
+// GuestService
+// ---------------------------------------------------------------------------------------
+
+// Запрос профиля.
+message GetProfileRequest {}
+
+// Профиль гостя.
+message GetProfileResponse {
+  // Гость.
+  GuestUser user = 1;
+  // Балансы в этом клубе.
+  Balance balance = 2;
+  // Входящие заявки в друзья.
+  uint32 pending_friend_requests = 3;
+  // ID последнего сообщения сотрудника в чате.
+  int64 last_staff_chat_message_id = 4;
+}
+
+// Запрос смены имени.
+message UpdateNameRequest {
+  // Новое имя (2..255 символов после trim).
+  string name = 1;
+}
+
+// Ответ смены имени.
+message UpdateNameResponse {
+  // Сохранённое имя.
+  string name = 1;
+}
+
+// Запрос смены пароля.
+message ChangePasswordRequest {
+  // Текущий пароль.
+  string current_password = 1;
+  // Новый пароль (6..255).
+  string new_password = 2;
+}
+
+// Ответ смены пароля.
+message ChangePasswordResponse {}
+
+// Запрос тарифов.
+message ListTariffsRequest {}
+
+// Тариф, доступный на ПК. Старый аналог — элемент data[] из AgentTariffPurchaseService.
+message Tariff {
+  // ID тарифа.
+  int64 tariff_id = 1;
+  // Название.
+  string name = 2;
+  // Описание.
+  string description = 3;
+  // Сколько минут даёт (с учётом периода действия, effectiveMinutes).
+  int32 minutes = 4;
+  // Цена для этого гостя (со скидкой), тиыны.
+  int64 price_tiyn = 5;
+  // Цена без скидки, тиыны.
+  int64 original_price_tiyn = 6;
+  // Валюта.
+  string currency = 7;
+  // До какого процента цены можно оплатить бонусами (0 — нельзя). Целые проценты.
+  uint32 bonus_max_percent = 8;
+  // Разрешена смешанная оплата (бонусы + основной).
+  bool mixed_payment = 9;
+  // Лимит использования, минуты (тариф-пакет: неиспользованное сохраняется); 0 — нет лимита.
+  int32 usage_limit_minutes = 10;
+  // ID зон, где действует (пусто — везде).
+  repeated int64 zone_ids = 11;
+}
+
+// Список тарифов.
+message ListTariffsResponse {
+  // Тарифы зоны этого ПК.
+  repeated Tariff tariffs = 1;
+}
+
+// Итог покупки времени (тариф, минуты, пакет).
+message TimePurchase {
+  // Сообщение для гостя.
+  string message = 1;
+  // Балансы после покупки.
+  Balance balance = 2;
+  // Добавлено минут.
+  int32 minutes_added = 3;
+  // Сессия после покупки (новая или продлённая).
+  ActiveSession session = 4;
+  // Списано с основного баланса, тиыны.
+  int64 charged_main_tiyn = 5;
+  // Списано бонусами, тиыны.
+  int64 charged_bonus_tiyn = 6;
+}
+
+// Запрос покупки тарифа.
+message PurchaseTariffRequest {
+  // UUID идемпотентности (обязателен).
+  string idempotency_key = 1;
+  // ID тарифа.
+  int64 tariff_id = 2;
+  // С какого баланса.
+  BalanceSource balance_source = 3;
+}
+
+// Ответ покупки тарифа.
+message PurchaseTariffResponse {
+  // Итог.
+  TimePurchase purchase = 1;
+}
+
+// Запрос условий поминутной оплаты.
+message GetMinuteOfferRequest {}
+
+// Условия поминутной оплаты (GuestMinutesController::show).
+message GetMinuteOfferResponse {
+  // Можно ли купить минуты (у зоны задана цена за час).
+  bool available = 1;
+  // Название зоны.
+  string zone_name = 2;
+  // Цена часа для гостя (со скидкой, если клуб применяет её к поминутной оплате), тиыны.
+  int64 price_per_hour_tiyn = 3;
+  // Цена часа без скидки, тиыны.
+  int64 original_price_per_hour_tiyn = 4;
+  // До какого процента можно платить бонусами (0 — нельзя).
+  uint32 bonus_max_percent = 5;
+  // Смешанная оплата разрешена.
+  bool mixed_payment = 6;
+  // Валюта.
+  string currency = 7;
+  // Минимум минут (1).
+  int32 min_minutes = 8;
+  // Максимум минут (720).
+  int32 max_minutes = 9;
+  // «Играть на весь баланс» разрешено.
+  bool whole_balance = 10;
+  // Автобиллинг включён.
+  bool auto_billing = 11;
+  // Пауза до старта автобиллинга, минуты.
+  uint32 auto_billing_pause_minutes = 12;
+  // «На весь баланс»: сколько минут оплачивает основной баланс гостя сейчас (pricing.WholeBalanceMinutes);
+  // 0 — кнопку не показывать (выключено в клубе, нет цены часа или денег).
+  int32 whole_balance_minutes = 13;
+  // Цена этих минут, тиыны (pricing.MinutesPrice).
+  int64 whole_balance_price_tiyn = 14;
+}
+
+// Запрос покупки минут.
+message PurchaseMinutesRequest {
+  // UUID идемпотентности (обязателен).
+  string idempotency_key = 1;
+  // Сколько минут (1..720).
+  int32 minutes = 2;
+  // С какого баланса.
+  BalanceSource balance_source = 3;
+}
+
+// Ответ покупки минут.
+message PurchaseMinutesResponse {
+  // Итог.
+  TimePurchase purchase = 1;
+}
+
+// Запрос «играть на весь баланс».
+message PlayWholeBalanceRequest {
+  // UUID идемпотентности (обязателен).
+  string idempotency_key = 1;
+}
+
+// Ответ «играть на весь баланс»: purchase.minutes_added — купленные минуты, charged_main_tiyn — сумма,
+// session.ends_at — конец сессии.
+message PlayWholeBalanceResponse {
+  // Итог.
+  TimePurchase purchase = 1;
+}
+
+// Запрос состояния автобиллинга.
+message GetAutoBillingRequest {}
+
+// Состояние автобиллинга.
+message GetAutoBillingResponse {
+  // Состояние.
+  AutoBillingStatus status = 1;
+}
+
+// Запрос пакетов.
+message ListPackagesRequest {}
+
+// Сохранённый пакет времени (TimePackage).
+message TimePackage {
+  // ID пакета.
+  int64 package_id = 1;
+  // Название (тариф, из которого сохранено).
+  string name = 2;
+  // Осталось минут.
+  int32 minutes_left = 3;
+  // До какого времени можно запустить.
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+// Список пакетов.
+message ListPackagesResponse {
+  // Неистёкшие пакеты, по сроку.
+  repeated TimePackage packages = 1;
+}
+
+// Запрос запуска пакета.
+message StartPackageRequest {
+  // UUID идемпотентности (обязателен).
+  string idempotency_key = 1;
+  // ID пакета.
+  int64 package_id = 2;
+}
+
+// Ответ запуска пакета.
+message StartPackageResponse {
+  // Итог.
+  TimePurchase purchase = 1;
+}
+
+// Запрос завершения сессии.
+message EndSessionRequest {
+  // UUID идемпотентности (обязателен).
+  string idempotency_key = 1;
+  // Какую сессию завершить (защита от гонки с продлением).
+  string session_id = 2;
+}
+
+// Ответ завершения сессии.
+message EndSessionResponse {
+  // Возвращено на основной баланс, тиыны.
+  int64 refunded_main_tiyn = 1;
+  // Возвращено на бонусный баланс, тиыны.
+  int64 refunded_bonus_tiyn = 2;
+  // Минут сохранено пакетом.
+  int32 kept_minutes = 3;
+  // Балансы после возврата.
+  Balance balance = 4;
+}
+
+// Запрос карты пересадки.
+message GetSeatMapRequest {}
+
+// Зона на карте клуба.
+message SeatZone {
+  // ID зоны.
+  int64 zone_id = 1;
+  // Название.
+  string name = 2;
+  // Иконка (имя из набора панели).
+  string icon = 3;
+  // Тема оформления.
+  string theme = 4;
+  // Положение и размер на карте (условные единицы панели).
+  int32 x = 5;
+  // Положение по вертикали.
+  int32 y = 6;
+  // Ширина.
+  int32 width = 7;
+  // Высота.
+  int32 height = 8;
+}
+
+// ПК на карте клуба.
+message Seat {
+  // ПК.
+  ComputerRef computer = 1;
+  // ID зоны.
+  int64 zone_id = 2;
+  // Положение на карте.
+  int32 x = 3;
+  // Положение по вертикали.
+  int32 y = 4;
+  // Свободен для пересадки.
+  bool available = 5;
+}
+
+// Карта клуба для пересадки.
+message GetSeatMapResponse {
+  // Зоны.
+  repeated SeatZone zones = 1;
+  // ПК (до 500, как SeatTransfers::map).
+  repeated Seat seats = 2;
+  // ID текущего ПК.
+  int64 current_computer_id = 3;
+}
+
+// Запрос пересадки.
+message TransferSeatRequest {
+  // UUID идемпотентности (обязателен).
+  string idempotency_key = 1;
+  // Куда пересесть.
+  int64 target_computer_id = 2;
+}
+
+// Ответ пересадки.
+message TransferSeatResponse {
+  // Целевой ПК.
+  ComputerRef target = 1;
+  // Сессия на целевом ПК.
+  ActiveSession session = 2;
+  // Сообщение для гостя.
+  string message = 3;
+}
+
+// Фильтр журнала гостя (GuestHistory::FILTERS).
+enum HistoryFilter {
+  // Все записи.
+  HISTORY_FILTER_UNSPECIFIED = 0;
+  // Покупки и возвраты.
+  HISTORY_FILTER_PURCHASES = 1;
+  // Пополнения, возвраты и списания с кассы.
+  HISTORY_FILTER_TOP_UPS = 2;
+  // Переводы друзьям.
+  HISTORY_FILTER_TRANSFERS = 3;
+  // Входы и пересадки.
+  HISTORY_FILTER_VISITS = 4;
+}
+
+// Запрос журнала.
+message ListHistoryRequest {
+  // Фильтр.
+  HistoryFilter filter = 1;
+  // Курсор следующей страницы (пусто — первая).
+  string page_token = 2;
+}
+
+// Запись журнала гостя.
+message HistoryEntry {
+  // ID записи.
+  int64 entry_id = 1;
+  // Код события ("tariff.purchased", "balance.transferred", ...).
+  string event = 2;
+  // Текст для гостя (на его языке).
+  string title = 3;
+  // Изменение основного баланса, тиыны (со знаком; 0 — без изменения).
+  int64 main_delta_tiyn = 4;
+  // Изменение бонусного баланса, тиыны (со знаком).
+  int64 bonus_delta_tiyn = 5;
+  // Когда.
+  google.protobuf.Timestamp occurred_at = 6;
+}
+
+// Страница журнала.
+message ListHistoryResponse {
+  // Записи, новые сверху.
+  repeated HistoryEntry entries = 1;
+  // Курсор следующей страницы (пусто — конец).
+  string next_page_token = 2;
+}
+
+// Запрос новостей.
+message ListNewsRequest {}
+
+// Новость.
+message NewsItem {
+  // ID.
+  int64 news_id = 1;
+  // Заголовок.
+  string title = 2;
+  // Текст.
+  string body = 3;
+  // Картинка (HTTPS URL) или пусто.
+  string image_url = 4;
+  // Когда опубликована.
+  google.protobuf.Timestamp published_at = 5;
+}
+
+// Новости.
+message ListNewsResponse {
+  // Новости Zafiro (первая карточка).
+  repeated NewsItem platform = 1;
+  // Новости клуба (вторая карточка).
+  repeated NewsItem club = 2;
+}

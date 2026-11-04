@@ -1,0 +1,18 @@
+# Конфигурация buf (v2) для контракта агента. Проверка: `buf lint` (из корня репозитория).
+# buf v1.75.0: go install github.com/bufbuild/buf/cmd/buf@v1.75.0
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+  except:
+    # Пакет zafiro.agent.v1 лежит в proto/agent/v1 (структура репозитория из ТЗ, Этап 0 §4/§6),
+    # а не в proto/zafiro/agent/v1, поэтому правило соответствия каталога пакету отключено.
+    - PACKAGE_DIRECTORY_MATCH
+  # Исключения отдельных мест — комментарием `buf:lint:ignore <ПРАВИЛО>` прямо в .proto
+  # (сейчас: имена сообщений стрима AgentService.Connect — AgentMessage/ServerMessage).
+  disallow_comment_ignores: false
+breaking:
+  use:
+    - FILE

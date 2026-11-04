@@ -1,0 +1,1018 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — clubmap
+  version: 0.1.0
+  description: |
+    Карта клуба: зоны, карточки ПК, состояние ПК, управление ПК (ClubZoneController, ClubComputerController).
+    Конвенции — api/README.md. Деньги — целые тиыны (integer, int64), никогда number.
+    Состояние ПК обновляется событиями computer.* по WebSocket (docs/realtime.md) вместо опроса /club-map/state.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/club-map:
+    get:
+      operationId: getClubMap
+      tags: [clubmap]
+      summary: Экран «Карта клуба»
+      description: |
+        Laravel: ClubZoneController::index() (club-map.index, club_map.view): зоны с тарифами (sort_order, id),
+        карточки ПК, состояние каждого ПК (computerStates), все тарифы (по имени), гостевой режим (GuestFeatures),
+        время начала брони по умолчанию (следующий час клуба).
+      responses:
+        "200":
+          description: Данные экрана.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClubMapPage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+    post:
+      operationId: createZone
+      tags: [clubmap]
+      summary: Новая зона
+      description: |
+        Laravel: ClubZoneController::store() (club-map.store, club_map.create), StoreClubZoneRequest. Позиция —
+        20 + (n·30 mod 240), 20 + (n·30 mod 180), n — число зон. Журнал zone.created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ZoneInput"
+      responses:
+        "201":
+          description: Зона создана.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Saved"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/club-map/state:
+    get:
+      operationId: getClubMapState
+      tags: [clubmap]
+      summary: Состояние ПК на карте клуба
+      description: |
+        Laravel: ClubZoneController::state() (club-map.state, club_map.view). Сессии — из БД, связь с агентом
+        (online/offline, версия) — из присутствия агента (Valkey). ids — только эти ПК (досылка после события
+        computer.state).
+      parameters:
+        - name: ids
+          in: query
+          required: false
+          description: id ПК через запятую (не больше 500).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ПК клуба.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClubMapState"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/club-map/{zoneId}:
+    parameters:
+      - $ref: "#/components/parameters/ZoneId"
+    put:
+      operationId: updateZone
+      tags: [clubmap]
+      summary: Изменить зону
+      description: |
+        Laravel: ClubZoneController::update() (club-map.update, club_map.update), UpdateClubZoneRequest. Журнал
+        zone.updated (только изменённые поля).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ZoneInput"
+      responses:
+        "200":
+          description: Зона изменена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Saved"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+    delete:
+      operationId: deleteZone
+      tags: [clubmap]
+      summary: Удалить зону
+      description: |
+        Laravel: ClubZoneController::destroy() (club-map.destroy, club_map.delete). Решение Q-018: нельзя, пока на ПК
+        зоны идёт сессия (422); тарифы, у которых не останется зон, выключаются. ПК зоны удаляются каскадом.
+        Журнал zone.deleted.
+      responses:
+        "200":
+          description: Зона удалена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZoneDeleted"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/club-map/{zoneId}/layout:
+    parameters:
+      - $ref: "#/components/parameters/ZoneId"
+    patch:
+      operationId: updateZoneLayout
+      tags: [clubmap]
+      summary: Расположение и размер зоны
+      description: |
+        Laravel: ClubZoneController::updateLayout() (club-map.layout, club_map.update), UpdateClubZoneLayoutRequest.
+        Пересечение с другой зоной (зазор 20) — 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ZoneLayout"
+      responses:
+        "200":
+          description: Сохранено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Saved"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/club-map/{zoneId}/computers:
+    parameters:
+      - $ref: "#/components/parameters/ZoneId"
+    post:
+      operationId: addZoneComputer
+      tags: [clubmap]
+      summary: Добавить ПК в зону
+      description: |
+        Laravel: ClubComputerController::store() (club-computers.store, club_map.create), ClubZoneComputerService::add():
+        только зона с иконкой desktop (иначе 404); номер = max + 1, первая свободная ячейка 6 в ряд (47×42).
+        Вместимость достигнута — 200 с added = false («Достигнута вместимость зоны.»). Журнал computer.created.
+      responses:
+        "200":
+          description: Результат.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComputerAdded"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/club-computers/control:
+    post:
+      operationId: controlComputers
+      tags: [clubmap]
+      summary: Управление выбранными ПК
+      description: |
+        Laravel: ClubComputerController::control() (club-computers.control, pc_control.update),
+        ControlClubComputersRequest. power_on — Wake-on-LAN через включённые ПК клуба; restart/power_off/service —
+        команда агенту (agent/commands); service — техрежим (staff_kind panel); reserve — переключить флаг брони.
+        Журнал computer.controlled, вебхук computer.controlled / computer.reservation_changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ControlInput"
+      responses:
+        "200":
+          description: Результат.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlResult"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/club-computers/end-sessions:
+    post:
+      operationId: endComputerSessions
+      tags: [clubmap]
+      summary: Завершить сессии выбранных ПК
+      description: |
+        Laravel: ClubComputerController::endSessions() (club-computers.end-sessions, pc_control.delete):
+        неиспользованное время возвращается клиентам (ClubComputerSessions::end сотрудником). Повтор безопасен:
+        возврат проводится ключом session_end:<session_id>.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ComputerIds"
+      responses:
+        "200":
+          description: Результат.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EndSessionsResult"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/club-computers/notify:
+    post:
+      operationId: notifyComputers
+      tags: [clubmap]
+      summary: Уведомление на выбранные ПК
+      description: |
+        Laravel: ClubComputerController::notify() (club-computers.notify, pc_control.update): сообщение в правом верхнем
+        углу экрана (ShowMessage, 300 символов, срок 5 мин). Журнал computer.messaged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotifyInput"
+      responses:
+        "200":
+          description: Результат.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotifyResult"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/club-computers/{computerId}:
+    parameters:
+      - $ref: "#/components/parameters/ComputerId"
+    patch:
+      operationId: updateComputer
+      tags: [clubmap]
+      summary: Изменить карточку ПК
+      description: |
+        Laravel: ClubComputerController::update() (club-computers.update, club_map.update), UpdateClubComputerRequest:
+        номер (уникален в зоне), имя (уникально в клубе), MAC (нормализуется, уникален в клубе), зона (смена зоны —
+        вместимость и первая свободная ячейка). Журнал computer.updated.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ComputerInput"
+      responses:
+        "200":
+          description: Сохранено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Saved"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+    delete:
+      operationId: deleteComputer
+      tags: [clubmap]
+      summary: Удалить ПК с карты
+      description: |
+        Laravel: ClubComputerController::destroy() (club-computers.destroy, club_map.delete): нельзя при идущей сессии
+        (422); брони ПК удаляются каскадом, сертификаты отзываются триггером. Журнал computer.deleted.
+      responses:
+        "200":
+          description: Удалён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComputerDeleted"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/club-computers/{computerId}/layout:
+    parameters:
+      - $ref: "#/components/parameters/ComputerId"
+    patch:
+      operationId: updateComputerLayout
+      tags: [clubmap]
+      summary: Место ПК в зоне
+      description: |
+        Laravel: ClubComputerController::__invoke() (club-computers.layout, club_map.update),
+        UpdateClubComputerLayoutRequest. Ячейка занята — 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ComputerLayout"
+      responses:
+        "200":
+          description: Сохранено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Saved"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/club-computers/{computerId}/health:
+    parameters:
+      - $ref: "#/components/parameters/ComputerId"
+    get:
+      operationId: getComputerHealth
+      tags: [clubmap]
+      summary: Состояние ПК (загрузка и здоровье)
+      description: |
+        Новое (Этап 7, в Laravel не было; docs/open-questions/stage7-health.md). Право — как у карты клуба
+        (club-map.state, club_map.view). Последние измерения агента из присутствия (Valkey): загрузка, температуры,
+        GPU, диски, периферия, сеть, аптайм, сбои за 7 суток, время ответа агента; проблемы — посчитанные сервером
+        по порогам agent.health.*. ПК не в сети или агент здоровье не присылает — load/health = null. Чужой ПК — 404.
+      responses:
+        "200":
+          description: Состояние ПК.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComputerHealthView"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/club-computers/{computerId}/health/events:
+    parameters:
+      - $ref: "#/components/parameters/ComputerId"
+    get:
+      operationId: listComputerHealthEvents
+      tags: [clubmap]
+      summary: История проблем ПК
+      description: |
+        Новое (Этап 7). Переходы проблем здоровья (появилась / ушла), новые сверху; keyset-пагинация
+        (cursor/limit, next_cursor). Право — club_map.view. Чужой ПК — 404.
+      parameters:
+        - $ref: "common.yaml#/components/parameters/Limit"
+        - $ref: "common.yaml#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Страница истории.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthEventPage"
+        "400":
+          $ref: "common.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  parameters:
+    ZoneId:
+      name: zoneId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    ComputerId:
+      name: computerId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    Saved:
+      type: object
+      required: [id, message]
+      properties:
+        id:
+          type: integer
+          format: int64
+        message:
+          type: string
+          description: Текст для блока статуса (session('status') старого кода), на языке клуба.
+    ZoneDeleted:
+      type: object
+      required: [message, disabled_tariffs]
+      properties:
+        message:
+          type: string
+        disabled_tariffs:
+          type: array
+          description: Тарифы, выключенные потому, что у них не осталось зон (Q-018).
+          items:
+            type: string
+    ComputerAdded:
+      type: object
+      required: [added, message]
+      properties:
+        added:
+          type: boolean
+        id:
+          type: integer
+          format: int64
+          nullable: true
+        message:
+          type: string
+    ComputerDeleted:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+    ZoneInput:
+      type: object
+      required: [name, icon, theme, status, is_featured, sort_order]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        capacity:
+          type: integer
+          format: int64
+          nullable: true
+        price_per_hour_tiyn:
+          type: integer
+          format: int64
+          nullable: true
+          description: Цена часа (поминутная продажа), тиыны 1…100 000 000; null — не продаётся поминутно.
+        icon:
+          type: string
+        theme:
+          type: string
+        status:
+          type: string
+        is_featured:
+          type: boolean
+        sort_order:
+          type: integer
+          format: int64
+        tariff_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+    ZoneLayout:
+      type: object
+      required: [position_x, position_y, width, height]
+      properties:
+        position_x:
+          type: integer
+          format: int64
+        position_y:
+          type: integer
+          format: int64
+        width:
+          type: integer
+          format: int64
+        height:
+          type: integer
+          format: int64
+        rotation:
+          type: integer
+          format: int64
+    ComputerInput:
+      type: object
+      required: [number, club_zone_id]
+      properties:
+        number:
+          type: integer
+          format: int64
+        display_name:
+          type: string
+          nullable: true
+        mac_address:
+          type: string
+          nullable: true
+        club_zone_id:
+          type: integer
+          format: int64
+    ComputerLayout:
+      type: object
+      required: [position_x, position_y]
+      properties:
+        position_x:
+          type: integer
+          format: int64
+        position_y:
+          type: integer
+          format: int64
+    ComputerIds:
+      type: object
+      required: [computer_ids]
+      properties:
+        computer_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+    ControlInput:
+      type: object
+      required: [computer_ids, action]
+      properties:
+        computer_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        action:
+          type: string
+          description: power_on | restart | power_off | reserve | service
+    ControlResult:
+      type: object
+      required: [updated]
+      properties:
+        updated:
+          type: integer
+          format: int64
+        status:
+          type: string
+          nullable: true
+          description: Новый статус ПК (restarting, offline) или null.
+        reserved:
+          type: boolean
+          description: Только для reserve — новый флаг брони.
+        message:
+          type: string
+          description: Текст для уведомления на карте (на языке клуба).
+    EndSessionsResult:
+      type: object
+      required: [ended, message]
+      properties:
+        ended:
+          type: integer
+          format: int64
+        message:
+          type: string
+    NotifyInput:
+      type: object
+      required: [computer_ids, message]
+      properties:
+        computer_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+        message:
+          type: string
+    NotifyResult:
+      type: object
+      required: [sent, message]
+      properties:
+        sent:
+          type: integer
+          format: int64
+        message:
+          type: string
+    Zone:
+      type: object
+      required: [id, name, icon, theme, status, is_featured, sort_order, position_x, position_y, width, height, rotation, tariff_ids]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        capacity:
+          type: integer
+          format: int64
+          nullable: true
+        price_per_hour_tiyn:
+          type: integer
+          format: int64
+          nullable: true
+        icon:
+          type: string
+        theme:
+          type: string
+        status:
+          type: string
+        is_featured:
+          type: boolean
+        sort_order:
+          type: integer
+          format: int64
+        position_x:
+          type: integer
+          format: int64
+        position_y:
+          type: integer
+          format: int64
+        width:
+          type: integer
+          format: int64
+        height:
+          type: integer
+          format: int64
+        rotation:
+          type: integer
+          format: int64
+        tariff_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+    ComputerCard:
+      type: object
+      description: Карточка ПК на карте (то, что не меняется событиями состояния).
+      required: [id, zone_id, number, name, position_x, position_y, details]
+      properties:
+        id:
+          type: integer
+          format: int64
+        zone_id:
+          type: integer
+          format: int64
+        number:
+          type: integer
+          format: int64
+        name:
+          type: string
+          description: ClubComputer::displayName().
+        display_name:
+          type: string
+          nullable: true
+        mac_address:
+          type: string
+          nullable: true
+        position_x:
+          type: integer
+          format: int64
+        position_y:
+          type: integer
+          format: int64
+        details:
+          type: string
+          description: «MAC … · LAN … · WAN … · CPU · N cores · N MB RAM · GPU · ОС» (как $computerDetails шаблона).
+    MapTariff:
+      type: object
+      required: [id, name, duration_minutes, price_tiyn, currency, is_active, guest_sellable]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        duration_minutes:
+          type: integer
+          format: int64
+        price_tiyn:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        is_active:
+          type: boolean
+        guest_sellable:
+          type: boolean
+          description: is_active && onSale() && inValidityPeriod() — показывается в «Подключить тариф».
+    ClubMapPage:
+      type: object
+      required: [zones, computers, states, tariffs, guest_mode, booking_start]
+      properties:
+        zones:
+          type: array
+          items:
+            $ref: "#/components/schemas/Zone"
+        computers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComputerCard"
+        states:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComputerState"
+        tariffs:
+          type: array
+          items:
+            $ref: "#/components/schemas/MapTariff"
+        guest_mode:
+          type: boolean
+          description: GuestFeatures::guestModeEnabled().
+        booking_start:
+          type: string
+          description: Начало брони по умолчанию — следующий час клуба (Y-m-d\TH:i).
+    ComputerState:
+      type: object
+      required: [id, zone_id, number, name, status, light, connection, is_reserved, has_session, session_guest, session_user, session_tariff, agent_state, agent_version, agent_outdated, staff_kind]
+      properties:
+        id:
+          type: integer
+          format: int64
+        zone_id:
+          type: integer
+          format: int64
+        number:
+          type: integer
+          format: int64
+        name:
+          type: string
+        status:
+          type: string
+          description: ClubComputer::currentStatus() — reserved | offline | online | available | restarting.
+        light:
+          type: string
+          description: Подсветка — pc-staff | pc-guest | pc-account | pc-free | "" (computerStates).
+        connection:
+          type: string
+          enum: [online, offline]
+        is_reserved:
+          type: boolean
+          description: Ручной флаг брони без времени (club_computers.is_reserved).
+        has_session:
+          type: boolean
+        session_id:
+          type: string
+          nullable: true
+        session_ends_at:
+          type: string
+          format: date-time
+          nullable: true
+        session_guest:
+          type: boolean
+        session_user_id:
+          type: integer
+          format: int64
+          nullable: true
+        session_user:
+          type: string
+          description: «Имя · телефон» клиента; гость — «Гость без аккаунта» (на языке клуба); без сессии — "".
+        session_tariff:
+          type: string
+          description: "Что куплено в сессии (тарифы, «Поминутно N мин.»); гость без покупок — «Оплачено на кассе»."
+        agent_state:
+          type: string
+        agent_version:
+          type: string
+        agent_outdated:
+          type: boolean
+        last_seen:
+          type: string
+          format: date-time
+          nullable: true
+        staff_until:
+          type: string
+          format: date-time
+          nullable: true
+        staff_name:
+          type: string
+          nullable: true
+        staff_kind:
+          type: string
+        load:
+          allOf:
+            - $ref: "#/components/schemas/ComputerLoad"
+          nullable: true
+          description: Загрузка ПК (Этап 7) — только ПК в сети, чей агент её присылает; иначе поля нет.
+        problems:
+          type: array
+          description: Проблемы здоровья, посчитанные сервером (Этап 7); только ПК в сети, иначе поля нет.
+          items:
+            $ref: "#/components/schemas/HealthProblem"
+        rtt_ms:
+          type: integer
+          format: int64
+          nullable: true
+          description: Время ответа агента по стриму, мс (Этап 7).
+    ComputerLoad:
+      type: object
+      required: [cpu_bp, ram_bp, idle_seconds]
+      properties:
+        cpu_bp:
+          type: integer
+          format: int64
+          description: Загрузка CPU, сотые доли процента (0..10000).
+        ram_bp:
+          type: integer
+          format: int64
+          description: Занятая ОЗУ, сотые доли процента (0..10000).
+        idle_seconds:
+          type: integer
+          format: int64
+          description: Сколько секунд нет ввода с клавиатуры/мыши.
+    HealthProblem:
+      type: string
+      description: |
+        Проблема здоровья ПК (agent.health.*): cpu_hot / gpu_hot — перегрев; disk_low — мало места; disk_smart —
+        SMART предупреждает или предсказывает отказ; mouse / keyboard / monitor — не подключены; network_slow —
+        скорость сети упала; unstable — внезапные выключения или «синие экраны» за 7 суток.
+      enum: [cpu_hot, gpu_hot, disk_low, disk_smart, mouse, keyboard, monitor, network_slow, unstable]
+    ComputerHealthView:
+      type: object
+      required: [computer_id, connection, problems]
+      properties:
+        computer_id:
+          type: integer
+          format: int64
+        connection:
+          type: string
+          enum: [online, offline]
+        agent_version:
+          type: string
+          nullable: true
+        rtt_ms:
+          type: integer
+          format: int64
+          nullable: true
+        load:
+          allOf:
+            - $ref: "#/components/schemas/ComputerLoad"
+          nullable: true
+        health:
+          allOf:
+            - $ref: "#/components/schemas/HealthSnapshot"
+          nullable: true
+        problems:
+          type: array
+          items:
+            $ref: "#/components/schemas/HealthProblem"
+    HealthSnapshot:
+      type: object
+      required: [reported_at, disks, peripherals, unexpected_shutdowns_7d, bugchecks_7d]
+      properties:
+        reported_at:
+          type: string
+          format: date-time
+          description: Когда сервер получил измерения (аптайм — на этот момент).
+        cpu_temp_deci:
+          type: integer
+          format: int64
+          nullable: true
+          description: Температура CPU, десятые доли °C (null — не измерено).
+        gpu_temp_deci:
+          type: integer
+          format: int64
+          nullable: true
+        gpu_load_bp:
+          type: integer
+          format: int64
+          nullable: true
+          description: Загрузка GPU, сотые доли процента (null — не измерено).
+        gpu_memory_bp:
+          type: integer
+          format: int64
+          nullable: true
+        disks:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiskView"
+        peripherals:
+          type: array
+          items:
+            $ref: "#/components/schemas/PeripheralView"
+        link_mbps:
+          type: integer
+          format: int64
+          nullable: true
+          description: Скорость основного сетевого подключения, Мбит/с (null — не измерено).
+        uptime_seconds:
+          type: integer
+          format: int64
+          nullable: true
+        unexpected_shutdowns_7d:
+          type: integer
+          format: int64
+        bugchecks_7d:
+          type: integer
+          format: int64
+    DiskView:
+      type: object
+      required: [mount, system, total_mb, free_mb]
+      properties:
+        mount:
+          type: string
+        system:
+          type: boolean
+        total_mb:
+          type: integer
+          format: int64
+        free_mb:
+          type: integer
+          format: int64
+        smart:
+          type: string
+          nullable: true
+          description: SMART — ok | warning | failing; null — не измерено.
+          enum: [ok, warning, failing]
+          x-enum-varnames: [DiskSmartOk, DiskSmartWarning, DiskSmartFailing]
+    PeripheralView:
+      type: object
+      required: [kind, connected, name]
+      properties:
+        kind:
+          type: string
+          enum: [mouse, keyboard, headset, monitor]
+        connected:
+          type: boolean
+        name:
+          type: string
+    HealthEvent:
+      type: object
+      required: [id, kind, raised_at, details]
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          $ref: "#/components/schemas/HealthProblem"
+        raised_at:
+          type: string
+          format: date-time
+        cleared_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Когда проблема ушла (null — ещё есть).
+        details:
+          type: object
+          additionalProperties: true
+          description: Подробности на момент появления (temp_deci, threshold_c, disks, mbps, previous_mbps, …).
+    HealthEventPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/HealthEvent"
+        next_cursor:
+          type: string
+          nullable: true
+    ClubMapState:
+      type: object
+      required: [computers]
+      properties:
+        computers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComputerState"

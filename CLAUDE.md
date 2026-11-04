@@ -7,7 +7,7 @@
 ## Принятые решения (не пересматривать без вопроса владельцу)
 
 1. Полный перенос на Go + React. Клубы работают на старом Laravel, пока новый проект не готов.
-   Переход поклубно (по тенантам), с переносом данных MySQL → Postgres (`tools/migrate-from-mysql`).
+   Переход поклубно (по тенантам), с переносом данных MySQL → Postgres (код — `server/cmd/migrate-from-mysql`, описание — `tools/migrate-from-mysql/README.md`).
 2. **Дизайн и бизнес-логика сохраняются.** Это перенос, а не редизайн: те же экраны и Tailwind-классы,
    те же суммы до тиына.
 3. API агента и гостя спроектированы заново (`proto/agent/v1`), совместимость со старым не нужна.
@@ -23,7 +23,7 @@
 - PostgreSQL + pgx + sqlc (никаких ORM), миграции goose (`db/migrations`), запросы `db/queries`.
 - Valkey (кэш, сессии, rate limit), NATS JetStream (события между инстансами, фоновые задачи).
 - Фоновые задачи — воркеры в Go (`internal/worker`), не cron. Не запускать дважды на нескольких инстансах
-  (лидер или JetStream-консьюмер).
+  (механизм — см. `docs/OPEN_QUESTIONS.md` Q-086).
 - Один бинарник: фронт вшит через `embed.FS` (`server/internal/webui`).
 - Фронт `web/`: React 19 + TypeScript + Vite, TanStack Router/Query/Table/Virtual, Tailwind 4
   (shadcn/ui только там, где не ломает текущий дизайн), react-hook-form + zod, i18next (ru/kk/en),
@@ -47,7 +47,12 @@
 - Суммы — `int64` в тиынах. Никогда float (ни в Go, ни в TS, ни в JSON: в API — целые тиыны).
 - Формулы и округления переносить **буквально** из старого кода (`intdiv`, «+5000 / 10000» и т.п.),
   с комментарием-ссылкой на файл и метод Laravel, откуда взято:
-  `// Laravel: app/Services/TopUpBonus.php TopUpBonus::forAmount()`.
+  `// Laravel: app/Services/TopUpBonus.php TopUpBonus::for()`.
+- Старый Laravel работает на PHP 8.4+ (его `composer.lock` требует PHP ≥ 8.4.1). В 8.4 `round($x)` без знаков
+  совпадает с Go `math.Round` (`round(0.145*100) = 14`, `round(1.005*100) = 100`; в 8.3 было 15 и 101),
+  а `round($x, 2)` — нет: `round(1.005, 2) = 1.01`, наивный `math.Round(1.005*100)/100` даёт 1.00.
+  Там, где старый код округлял float, — `money.PHPRound` (эквивалент PHP 8.4, сверен побитно на 310 тыс. значений)
+  и тесты на граничных значениях (`docs/business-rules.md` §2, BR-001).
 - Все движения денег — через журнал операций (ledger) с ключом идемпотентности.
   Баланс не меняется «просто обновлением поля».
 - Любое изменение логики расчётов — сначала тест со сценарием из старой реализации

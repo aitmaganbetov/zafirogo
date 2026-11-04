@@ -1,0 +1,87 @@
+# Правила записей (recording rules) для дашбордов и алертов. Показатели «по всей платформе» (присутствие, очереди
+# outbox и вебхуков) каждый инстанс отдаёт одинаковыми — берём max, не sum. Проверка: promtool check rules
+# (deploy/observability/check.sh).
+groups:
+  - name: zafiro.records
+    interval: 30s
+    rules:
+      # --- HTTP ---
+      - record: zafiro:http_requests:rate5m
+        expr: sum by (method, route, code) (rate(zafiro_http_requests_total[5m]))
+      - record: zafiro:http_5xx_ratio:rate5m
+        expr: |
+          sum(rate(zafiro_http_requests_total{code=~"5.."}[5m]))
+            / clamp_min(sum(rate(zafiro_http_requests_total[5m])), 1e-9)
+      - record: zafiro:http_latency_p95:5m
+        expr: histogram_quantile(0.95, sum by (le, route) (rate(zafiro_http_request_duration_seconds_bucket[5m])))
+      # Денежные эндпоинты: касса, покупки и сессии ПК, заказы магазина, баланс клиентов, интеграционный API.
+      # Изменяющие методы (не GET). Список маршрутов — docs/observability.md §3.
+      - record: zafiro:http_money_latency_p95:5m
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(zafiro_http_request_duration_seconds_bucket{
+            method=~"POST|PUT|PATCH|DELETE",
+            route=~"/api/(cash|billing|club-computers|shop-orders|customers)/.*|/api/v1/.*"}[5m])))
+
+      # --- gRPC ---
+      - record: zafiro:grpc_requests:rate5m
+        expr: sum by (method, code) (rate(zafiro_grpc_requests_total[5m]))
+      - record: zafiro:grpc_server_error_ratio:rate5m
+        expr: |
+          sum(rate(zafiro_grpc_requests_total{code=~"Internal|Unknown|Unavailable|DataLoss|DeadlineExceeded"}[5m]))
+            / clamp_min(sum(rate(zafiro_grpc_requests_total[5m])), 1e-9)
+      - record: zafiro:grpc_guest_latency_p95:5m
+        expr: |
+          histogram_quantile(0.95, sum by (le, method) (rate(zafiro_grpc_request_duration_seconds_bucket{
+            method!~".*/(Connect|Enroll)"}[5m])))
+
+      # --- Агенты ---
+      - record: zafiro:agent_online_computers
+        expr: max(zafiro_agent_online_computers)
+      - record: zafiro:agent_streams_active
+        expr: sum(zafiro_agent_streams_active)
+      - record: zafiro:agent_commands:rate5m
+        expr: sum by (event, result) (rate(zafiro_agent_commands_total[5m]))
+
+      # --- Очереди ---
+      - record: zafiro:outbox_lag_seconds
+        expr: max(zafiro_outbox_oldest_unpublished_age_seconds)
+      - record: zafiro:outbox_pending
+        expr: max(zafiro_outbox_pending_events)
+      - record: zafiro:webhook_pending
+        expr: max(zafiro_webhook_deliveries_pending)
+      - record: zafiro:webhook_oldest_seconds
+        expr: max(zafiro_webhook_oldest_pending_age_seconds)
+      # Автобиллинг (S6-O4-10): zset ab:due общий для кластера — все инстансы отдают одно и то же.
+      - record: zafiro:auto_billing_due
+        expr: max(zafiro_agent_auto_billing_due_computers)
+      - record: zafiro:auto_billing_oldest_due_seconds
+        expr: max(zafiro_agent_auto_billing_oldest_due_age_seconds)
+      - record: zafiro:webhook_attempts:rate5m
+        expr: sum by (result) (rate(zafiro_webhook_delivery_attempts_total[5m]))
+
+      # --- Деньги ---
+      - record: zafiro:ledger_operations:rate5m
+        expr: sum by (kind, result) (rate(zafiro_ledger_operations_total[5m]))
+      - record: zafiro:ledger_errors:increase5m
+        expr: sum by (query, reason) (increase(zafiro_ledger_errors_total[5m]))
+
+      # --- Воркеры ---
+      - record: zafiro:worker_last_run_timestamp_seconds
+        expr: max by (job) (zafiro_worker_last_run_timestamp_seconds)
+      - record: zafiro:worker_leaders
+        expr: sum by (job) (zafiro_worker_leader)
+
+      # --- Postgres-пулы ---
+      - record: zafiro:db_pool_utilization
+        expr: |
+          max by (instance, pool) (zafiro_db_pool_acquired_connections / clamp_min(zafiro_db_pool_max_connections, 1))
+      - record: zafiro:db_pool_wait_seconds:rate5m
+        expr: max by (instance, pool) (rate(zafiro_db_pool_acquire_wait_seconds_total[5m]))
+
+      # --- Вход ---
+      - record: zafiro:auth_login_failures:increase5m
+        expr: sum(increase(zafiro_auth_logins_total{result="failed"}[5m]))
+      - record: zafiro:auth_logins:increase5m
+        expr: sum(increase(zafiro_auth_logins_total[5m]))
+      - record: zafiro:rate_limited:increase5m
+        expr: sum by (channel) (increase(zafiro_rate_limited_total[5m]))

@@ -1,0 +1,86 @@
+[
+ {
+  "total_tiyn": 0,
+  "vat_tiyn": 0
+ },
+ {
+  "total_tiyn": 1,
+  "vat_tiyn": 0
+ },
+ {
+  "total_tiyn": 100,
+  "vat_tiyn": 0
+ },
+ {
+  "total_tiyn": 1049,
+  "vat_tiyn": 0
+ },
+ {
+  "total_tiyn": 1050,
+  "vat_tiyn": 100
+ },
+ {
+  "total_tiyn": 1051,
+  "vat_tiyn": 100
+ },
+ {
+  "total_tiyn": 2099,
+  "vat_tiyn": 100
+ },
+ {
+  "total_tiyn": 2100,
+  "vat_tiyn": 100
+ },
+ {
+  "total_tiyn": 2101,
+  "vat_tiyn": 100
+ },
+ {
+  "total_tiyn": 3150,
+  "vat_tiyn": 200
+ },
+ {
+  "total_tiyn": 10500,
+  "vat_tiyn": 500
+ },
+ {
+  "total_tiyn": 45000,
+  "vat_tiyn": 2100
+ },
+ {
+  "total_tiyn": 90000,
+  "vat_tiyn": 4300
+ },
+ {
+  "total_tiyn": 104900,
+  "vat_tiyn": 5000
+ },
+ {
+  "total_tiyn": 105000,
+  "vat_tiyn": 5000
+ },
+ {
+  "total_tiyn": 157500,
+  "vat_tiyn": 7500
+ },
+ {
+  "total_tiyn": 231000,
+  "vat_tiyn": 11000
+ },
+ {
+  "total_tiyn": 235200,
+  "vat_tiyn": 11200
+ },
+ {
+  "total_tiyn": 1234567,
+  "vat_tiyn": 58800
+ },
+ {
+  "total_tiyn": 99999999,
+  "vat_tiyn": 4761900
+ },
+ {
+  "total_tiyn": 999999999999,
+  "vat_tiyn": 47619047600
+ }
+]

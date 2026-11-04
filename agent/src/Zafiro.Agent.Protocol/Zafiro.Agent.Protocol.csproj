@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Контракт агента: C#, сгенерированный из proto/agent/v1 (Grpc.Tools при сборке, в репозиторий не кладётся),
+    плюс локальные контракты агента — IPC служба ↔ UI (Proto/zafiro/agent/ipc) и файлы состояния службы
+    (Proto/zafiro/agent/local). Только клиентские заглушки gRPC.
+  -->
+  <PropertyGroup>
+    <RootNamespace>Zafiro.Agent</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <ContractProtoRoot>$(MSBuildThisFileDirectory)..\..\..\proto</ContractProtoRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="Grpc.Net.Client" />
+    <PackageReference Include="Grpc.Tools" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="$(ContractProtoRoot)\agent\v1\*.proto" ProtoRoot="$(ContractProtoRoot)" GrpcServices="Client" Access="Public" />
+    <Protobuf Include="Proto\zafiro\agent\**\*.proto" ProtoRoot="Proto" AdditionalImportDirs="$(ContractProtoRoot)" GrpcServices="None" Access="Public" />
+  </ItemGroup>
+</Project>

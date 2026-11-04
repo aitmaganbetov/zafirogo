@@ -1,0 +1,180 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — sessions
+  version: 0.1.0
+  description: |
+    Сессии ПК со стороны сотрудника (гостевая сессия, завершение).
+    Конвенции — api/README.md. Деньги — целые тиыны (integer, int64), никогда number.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/club-computers/guest-session:
+    post:
+      operationId: sellGuestSession
+      tags: [sessions]
+      summary: Гостевая сессия на кассе
+      description: |
+        Laravel: GuestSessionController::store(), GuestSessions::sell() (club-computers.guest-session, cash.create;
+        throttle 30/мин). Время без аккаунта на выбранных ПК, оплата в открытую смену.
+      parameters:
+        - $ref: "common.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GuestSessionRequest"
+      responses:
+        "201":
+          description: Сессии открыты.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GuestSessionResult"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+        "429":
+          $ref: "common.yaml#/components/responses/TooManyRequests"
+  /api/club-computers/{computerId}/end-session:
+    post:
+      operationId: endComputerSession
+      tags: [sessions]
+      summary: Завершить сессию ПК (сотрудник)
+      description: |
+        Laravel: ClubComputerSessions::end() с isStaff (club-computers.end-sessions, pc_control.delete). Неиспользованные
+        минуты возвращаются на балансы, остаток тарифа с лимитом сохраняется пакетом.
+      parameters:
+        - $ref: "#/components/parameters/ComputerId"
+        - $ref: "common.yaml#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EndSessionRequest"
+      responses:
+        "200":
+          description: Сессия завершена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EndSessionResult"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "409":
+          $ref: "common.yaml#/components/responses/Conflict"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  parameters:
+    ComputerId:
+      name: computerId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    GuestSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [computer_ids, payment_method]
+      properties:
+        computer_ids:
+          type: array
+          maxItems: 500
+          items:
+            type: integer
+            format: int64
+        tariff_id:
+          type: integer
+          format: int64
+          nullable: true
+        minutes:
+          type: integer
+          format: int64
+          nullable: true
+        payment_method:
+          type: string
+          description: cash | card | qr
+    GuestSessionComputer:
+      type: object
+      required: [computer_id, name, session_id, session_ends_at, extends, price_tiyn]
+      properties:
+        computer_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        session_id:
+          type: string
+        session_ends_at:
+          type: string
+          format: date-time
+        extends:
+          type: boolean
+        price_tiyn:
+          type: integer
+          format: int64
+    GuestSessionResult:
+      type: object
+      required: [amount_tiyn, minutes, computers, description, cash_transaction_id]
+      properties:
+        amount_tiyn:
+          type: integer
+          format: int64
+        minutes:
+          type: integer
+          format: int64
+        computers:
+          type: array
+          items:
+            $ref: "#/components/schemas/GuestSessionComputer"
+        description:
+          type: string
+        cash_transaction_id:
+          type: integer
+          format: int64
+    EndSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [session_id]
+      properties:
+        session_id:
+          type: string
+          maxLength: 64
+    EndSessionResult:
+      type: object
+      required: [refund_main_tiyn, refund_bonus_tiyn, kept_minutes]
+      properties:
+        refund_main_tiyn:
+          type: integer
+          format: int64
+        refund_bonus_tiyn:
+          type: integer
+          format: int64
+        kept_minutes:
+          type: integer
+          format: int64

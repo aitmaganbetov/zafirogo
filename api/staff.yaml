@@ -1,0 +1,472 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — staff
+  version: 0.1.0
+  description: |
+    Работники клуба, приглашения и права сотрудников (WorkerController, ClubInvitationController::store,
+    PermissionController). Конвенции — api/README.md. Сотрудник — по id членства ({membership} в старых URL).
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/workers:
+    get:
+      operationId: listWorkers
+      tags: [staff]
+      summary: Работники клуба
+      description: |
+        Laravel: WorkerController::index() (workers.index, workers.view): персонал по роли (owner, admin, manager,
+        cashier, остальные), затем по id; paginate(50) → keyset (cursor = next_cursor, before = prev_cursor). Кто на
+        смене и лимиты кассиров/операторов (StaffShifts), роли, которые может назначить вошедший.
+      parameters:
+        - $ref: "common.yaml#/components/parameters/Cursor"
+        - name: before
+          in: query
+          required: false
+          description: Курсор предыдущей страницы (prev_cursor).
+          schema:
+            type: string
+            maxLength: 512
+        - $ref: "common.yaml#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Страница работников.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkerPage"
+        "400":
+          $ref: "common.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+    post:
+      operationId: addWorker
+      tags: [staff]
+      summary: Добавить зарегистрированного пользователя
+      description: |
+        Laravel: WorkerController::store() (workers.store, workers.create): пользователь по телефону получает роль
+        сотрудника (worker.added). Не зарегистрирован — 422 по полю phone.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkerAddRequest"
+      responses:
+        "200":
+          description: Работник добавлен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/workers/{membershipId}:
+    patch:
+      operationId: changeWorkerRole
+      tags: [staff]
+      summary: Сменить роль работника
+      description: |
+        Laravel: WorkerController::update() (workers.update): владельца и себя не меняют, администраторов — только
+        владелец (worker.role_changed). Права и WebSocket сотрудника обновляются (staff.access_changed).
+      parameters:
+        - $ref: "#/components/parameters/MembershipId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkerRoleRequest"
+      responses:
+        "200":
+          description: Роль изменена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+    delete:
+      operationId: removeWorker
+      tags: [staff]
+      summary: Убрать из сотрудников
+      description: |
+        Laravel: WorkerController::destroy() (workers.destroy, workers.delete): аккаунт остаётся клиентом клуба
+        (worker.removed). Сессии панели сотрудника отзываются, WebSocket закрывается (staff.access_changed).
+      parameters:
+        - $ref: "#/components/parameters/MembershipId"
+      responses:
+        "200":
+          description: Работник убран.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/club-invitations:
+    post:
+      operationId: createInvitation
+      tags: [staff]
+      summary: Ссылка-приглашение в клуб
+      description: |
+        Laravel: ClubInvitationController::store() (club-invitations.store, workers.create): одноразовая ссылка на 7
+        дней (invitation.created). Токен показывается один раз (хранится только sha256). path — путь страницы
+        приглашения (/invitations/{token}); адрес сайта добавляет клиент.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvitationCreateRequest"
+      responses:
+        "201":
+          description: Ссылка создана.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationCreated"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/settings/permissions:
+    get:
+      operationId: listPermissionStaff
+      tags: [staff]
+      summary: Права сотрудников — список
+      description: |
+        Laravel: PermissionController::index() (settings.permissions, club-role:owner,admin): персонал кроме владельца.
+      responses:
+        "200":
+          description: Сотрудники.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PermissionStaffList"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/settings/permissions/{membershipId}:
+    get:
+      operationId: getStaffPermissions
+      tags: [staff]
+      summary: Права сотрудника — матрица
+      description: |
+        Laravel: PermissionController::edit() (club-role:owner,admin; админ не правит других админов и себя — 403
+        «Права администратора задаёт только владелец клуба.»).
+      parameters:
+        - $ref: "#/components/parameters/MembershipId"
+      responses:
+        "200":
+          description: Матрица прав.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffPermissions"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+    put:
+      operationId: updateStaffPermissions
+      tags: [staff]
+      summary: Сохранить права сотрудника
+      description: |
+        Laravel: PermissionController::update() (settings.permissions.update): хранится только отличие от роли
+        (permissions.updated + audit_log); права действуют со следующего запроса, WebSocket сотрудника
+        переподключается (staff.access_changed).
+      parameters:
+        - $ref: "#/components/parameters/MembershipId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffPermissionsUpdate"
+      responses:
+        "200":
+          description: Права сохранены.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/settings/permissions/{membershipId}/reset:
+    post:
+      operationId: resetStaffPermissions
+      tags: [staff]
+      summary: Вернуть права по роли
+      description: "Laravel: PermissionController::reset() (settings.permissions.reset)."
+      parameters:
+        - $ref: "#/components/parameters/MembershipId"
+      responses:
+        "200":
+          description: Права по роли.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+  parameters:
+    MembershipId:
+      name: membershipId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    StaffMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          description: Текст flash-сообщения (уже на языке клуба).
+    RoleOption:
+      type: object
+      required: [role, label]
+      properties:
+        role:
+          type: string
+        label:
+          type: string
+          description: Подпись роли — ключ перевода (ClubRoles::label).
+    Worker:
+      type: object
+      required: [membership_id, user_id, name, phone, role, role_label, on_shift, manageable]
+      properties:
+        membership_id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        phone:
+          type: string
+        role:
+          type: string
+        role_label:
+          type: string
+        on_shift:
+          type: boolean
+        manageable:
+          type: boolean
+          description: Не владелец, не сам вошедший, администратор — только для владельца (шаблон workers/index $manageable).
+    ShiftLimit:
+      type: object
+      required: [role, count, limit]
+      properties:
+        role:
+          type: string
+        count:
+          type: integer
+        limit:
+          type: integer
+          nullable: true
+    WorkerPage:
+      type: object
+      required: [items, next_cursor, prev_cursor, total, page_size, shift_limits, assignable_roles]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Worker"
+        next_cursor:
+          type: string
+          nullable: true
+        prev_cursor:
+          type: string
+          nullable: true
+        total:
+          type: integer
+          format: int64
+        page_size:
+          type: integer
+        shift_limits:
+          type: array
+          items:
+            $ref: "#/components/schemas/ShiftLimit"
+        assignable_roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoleOption"
+    WorkerAddRequest:
+      type: object
+      additionalProperties: false
+      required: [phone, role]
+      properties:
+        phone:
+          type: string
+          maxLength: 100
+        role:
+          type: string
+          maxLength: 40
+    WorkerRoleRequest:
+      type: object
+      additionalProperties: false
+      required: [role]
+      properties:
+        role:
+          type: string
+          maxLength: 40
+    InvitationCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [role]
+      properties:
+        email:
+          type: string
+          nullable: true
+          maxLength: 1000
+        role:
+          type: string
+          maxLength: 40
+    InvitationCreated:
+      type: object
+      required: [path, message]
+      properties:
+        path:
+          type: string
+          description: /invitations/{token} — показать один раз.
+        message:
+          type: string
+    PermissionStaffMember:
+      type: object
+      required: [membership_id, name, phone, role, role_label, customized, editable]
+      properties:
+        membership_id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        phone:
+          type: string
+        role:
+          type: string
+        role_label:
+          type: string
+        customized:
+          type: boolean
+          description: Права изменены (club_memberships.permissions не пусто).
+        editable:
+          type: boolean
+          description: PermissionController::mayEdit().
+    PermissionStaffList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PermissionStaffMember"
+    PermissionAction:
+      type: object
+      required: [action, label]
+      properties:
+        action:
+          type: string
+        label:
+          type: string
+          description: Заголовок столбца (ClubPermissions::actionLabels(), ключ перевода).
+    PermissionCell:
+      type: object
+      required: [action, description, allowed, given]
+      properties:
+        action:
+          type: string
+        description:
+          type: string
+          description: Подпись действия раздела (ключ перевода).
+        allowed:
+          type: boolean
+          description: hasPermission() — действует сейчас.
+        given:
+          type: boolean
+          description: Отличается от роли (ClubPermissions::given() !== null) — рамка.
+    PermissionSection:
+      type: object
+      required: [section, label, cells]
+      properties:
+        section:
+          type: string
+        label:
+          type: string
+        cells:
+          type: array
+          description: Только существующие действия раздела (остальные столбцы — «—»).
+          items:
+            $ref: "#/components/schemas/PermissionCell"
+    StaffPermissions:
+      type: object
+      required: [member, actions, sections]
+      properties:
+        member:
+          $ref: "#/components/schemas/PermissionStaffMember"
+        actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/PermissionAction"
+        sections:
+          type: array
+          items:
+            $ref: "#/components/schemas/PermissionSection"
+    StaffPermissionsUpdate:
+      type: object
+      additionalProperties: false
+      required: [rights]
+      properties:
+        rights:
+          type: object
+          description: rights[section][action] = true|false (как rights[…][…] формы); нет — false.
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: boolean

@@ -1,0 +1,305 @@
+# Алерты zafirogo (Этап 6, O3). Что значит каждый и первые шаги — docs/observability.md §5 (ссылка runbook_url).
+# severity: critical — будит дежурного (деньги, массовый обрыв агентов, сервис недоступен); warning — в рабочее время.
+# Проверка: promtool check rules и promtool test rules (tests/alerts.test.yml) — deploy/observability/check.sh.
+groups:
+  - name: zafiro.availability
+    rules:
+      - alert: ZafiroInstanceDown
+        expr: up{job="zafiro"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Инстанс {{ $labels.instance }} не отдаёт метрики 2 минуты"
+          description: "Процесс упал, завис или недоступна внутренняя сеть. Агенты этого инстанса переподключаются к остальным."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-instance-down
+
+      - alert: ZafiroHigh5xxRate
+        expr: zafiro:http_5xx_ratio:rate5m > 0.05 and on() sum(rate(zafiro_http_requests_total[5m])) > 0.5
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Доля ответов 5xx {{ $value | humanizePercentage }} за 5 минут"
+          description: "Больше 5% HTTP-запросов (панель, интеграционный API, мобильные) завершаются ошибкой сервера."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-high-5xx
+
+      - alert: ZafiroGRPCServerErrors
+        expr: zafiro:grpc_server_error_ratio:rate5m > 0.05 and on() sum(rate(zafiro_grpc_requests_total[5m])) > 0.5
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Доля ошибок сервера gRPC {{ $value | humanizePercentage }}"
+          description: "Вызовы агентов и гостей завершаются кодами Internal/Unavailable/Unknown/DataLoss/DeadlineExceeded."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-high-5xx
+
+      - alert: ZafiroMoneyLatencyHigh
+        expr: zafiro:http_money_latency_p95:5m > 1
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 денежных эндпоинтов {{ $value | humanizeDuration }}"
+          description: "Касса, покупки, сессии ПК, заказы, баланс клиентов отвечают медленнее 1 с (95-й перцентиль, 10 минут)."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-money-latency
+
+      - alert: ZafiroMoneyLatencyRegression
+        # Рост относительно того же часа вчера: в 3 раза и не меньше 300 мс.
+        expr: |
+          zafiro:http_money_latency_p95:5m > 0.3
+            and zafiro:http_money_latency_p95:5m > 3 * (zafiro:http_money_latency_p95:5m offset 1d)
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "p95 денежных эндпоинтов вырос в 3+ раза к вчерашнему ({{ $value | humanizeDuration }})"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-money-latency
+
+  - name: zafiro.agents
+    rules:
+      - alert: ZafiroAgentsMassDisconnect
+        # Число ПК на связи упало больше чем на 20% за 5 минут (при ≥ 50 ПК). Присутствие считает ПК на связи
+        # ещё 90 с после обрыва (окно переподключения), поэтому обрыв виден через 1,5–2 минуты.
+        expr: |
+          (max_over_time(zafiro:agent_online_computers[5m]) - zafiro:agent_online_computers)
+            / clamp_min(max_over_time(zafiro:agent_online_computers[5m]), 1) > 0.2
+          and max_over_time(zafiro:agent_online_computers[5m]) >= 50
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "ПК на связи: −{{ $value | humanizePercentage }} за 5 минут"
+          description: "Массовый обрыв потоков агентов: сеть клубов/провайдера, балансировщик L4, сертификат сервера, падение инстансов."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-agents-disconnect
+
+      - alert: ZafiroAgentStreamsImbalance
+        # После выкладки/Drain потоки должны распределиться; один инстанс держит > 80% при 2+ инстансах.
+        expr: |
+          max(zafiro_agent_streams_active) / clamp_min(sum(zafiro_agent_streams_active), 1) > 0.8
+          and on() count(zafiro_agent_streams_active) > 1 and on() sum(zafiro_agent_streams_active) > 200
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Один инстанс держит {{ $value | humanizePercentage }} потоков агентов"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-agents-disconnect
+
+      - alert: ZafiroAgentCommandsExpiring
+        expr: sum(increase(zafiro_agent_commands_total{event="expired"}[15m])) > 100
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "За 15 минут истекло {{ $value }} команд агентам"
+          description: "Команды (сессия, баланс, питание) не доходят до ПК: ПК офлайн или поток не доставляет команды."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-agent-commands
+
+  - name: zafiro.queues
+    rules:
+      - alert: ZafiroOutboxLag
+        expr: zafiro:outbox_lag_seconds > 60
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Самое старое неопубликованное событие outbox ждёт {{ $value | humanizeDuration }}"
+          description: "Админка (WebSocket) и вебхуки не получают событий. Публикатор outbox не работает или NATS недоступен."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-outbox-lag
+
+      - alert: ZafiroOutboxNoLeader
+        expr: sum(zafiro_worker_leader{job="outbox-publisher"}) < 1 and on() count(up{job="zafiro"} == 1) > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Ни один инстанс не держит лидерство публикатора outbox"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-outbox-lag
+
+      - alert: ZafiroWebhookQueueGrowing
+        expr: zafiro:webhook_pending > 100 and deriv(zafiro:webhook_pending[15m]) > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Очередь вебхуков растёт: {{ $value }} доставок"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-webhooks
+
+      - alert: ZafiroWebhookStale
+        expr: zafiro:webhook_oldest_seconds > 3 * 3600
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Самая старая доставка вебхука в очереди {{ $value | humanizeDuration }}"
+          description: "При расписании повторов 10 с → 2 ч доставка старше 3 ч означает, что отправка не работает."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-webhooks
+
+  - name: zafiro.workers
+    rules:
+      - alert: ZafiroWorkerNotRunning
+        # N = 3 интервала задачи (но не меньше 3 минут): интервалы — worker/*.go, monitoring/workers.go, app/checks.go.
+        expr: |
+          (time() - zafiro:worker_last_run_timestamp_seconds{job=~"agent:auto-billing"}) > 180
+          or (time() - zafiro:worker_last_run_timestamp_seconds{job=~"club-computers:expire-sessions|monitoring:collect"}) > 3 * 60
+          or (time() - zafiro:worker_last_run_timestamp_seconds{job=~"subscriptions:expire|monitoring:clubs"}) > 3 * 300
+          or (time() - zafiro:worker_last_run_timestamp_seconds{job=~"logs:retention|secrets:reencrypt"}) > 3 * 3600
+          or (time() - zafiro:worker_last_run_timestamp_seconds{job=~"time-packages:burn-expired|monitoring:prune|db:ensure-partitions"}) > 3 * 86400
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Задача {{ $labels.job }} не запускалась {{ $value | humanizeDuration }}"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-worker-not-running
+
+      - alert: ZafiroMoneyWorkerMissing
+        # Денежные задачи (снятие истёкших сессий, автобиллинг) не запускались ни разу с запуска сервера.
+        expr: |
+          (absent(zafiro_worker_last_run_timestamp_seconds{job="club-computers:expire-sessions"})
+            or absent(zafiro_worker_last_run_timestamp_seconds{job="agent:auto-billing"}))
+          and on() count(up{job="zafiro"} == 1) > 0
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "Денежная фоновая задача не запускалась 15 минут"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-worker-not-running
+
+      - alert: ZafiroAutoBillingLag
+        # Тик (1 с) разбирает просроченные пакетами в пределах 800 мс; в норме старейший срок просрочен < 2 с.
+        expr: zafiro:auto_billing_oldest_due_seconds > 30
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Автобиллинг отстаёт: старейший срок пересмотра просрочен на {{ $value | humanizeDuration }}"
+          description: "Гости ждут покупки времени после паузы или конца тарифа дольше обычного. Деньги не теряются (покупка идемпотентна), но время гостя не начинается."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-auto-billing-lag
+
+      - alert: ZafiroWorkerErrors
+        expr: sum by (job) (increase(zafiro_worker_errors_total[15m])) > 3
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Задача {{ $labels.job }}: {{ $value }} ошибок за 15 минут"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-worker-not-running
+
+  - name: zafiro.database
+    rules:
+      - alert: ZafiroDBPoolExhausted
+        expr: zafiro:db_pool_utilization > 0.9 and zafiro:db_pool_wait_seconds:rate5m > 0.05
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Пул {{ $labels.pool }} на {{ $labels.instance }} исчерпан: запросы ждут соединения"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-db-pool
+
+      - alert: ZafiroDBPoolHigh
+        expr: zafiro:db_pool_utilization > 0.8
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Пул {{ $labels.pool }} на {{ $labels.instance }} занят на {{ $value | humanizePercentage }}"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-db-pool
+
+  - name: zafiro.money
+    rules:
+      - alert: ZafiroLedgerErrors
+        # Ошибка запроса журнала денег на стороне базы. Нехватку средств ledger проверяет до записи — в норме здесь 0.
+        expr: sum(zafiro:ledger_errors:increase5m) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "Ошибки запросов ledger: {{ $value | printf \"%.0f\" }} за 5 минут"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-ledger-errors
+
+      - alert: ZafiroLedgerRollbacks
+        expr: |
+          sum(rate(zafiro_ledger_operations_total{result="rolled_back"}[10m]))
+            / clamp_min(sum(rate(zafiro_ledger_operations_total[10m])), 1e-9) > 0.1
+          and on() sum(rate(zafiro_ledger_operations_total[10m])) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value | humanizePercentage }} операций ledger откатываются"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-ledger-errors
+
+  - name: zafiro.security
+    rules:
+      - alert: ZafiroLoginFailuresSpike
+        expr: zafiro:auth_login_failures:increase5m > 30 and zafiro:auth_login_failures:increase5m > 0.5 * zafiro:auth_logins:increase5m
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} неудачных входов в панель за 5 минут"
+          description: "Перебор паролей или массовый сбой входа. Лимиты на вход включены (Q-052), смотрите zafiro_rate_limited_total."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-login-failures
+
+      - alert: ZafiroRateLimitSpike
+        expr: sum(zafiro:rate_limited:increase5m) > 300
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} отказов по лимиту частоты за 5 минут"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-login-failures
+
+      - alert: ZafiroCertificateExpiresSoon
+        expr: (min by (cert) (zafiro_tls_certificate_expiry_timestamp_seconds) - time()) < 21 * 86400
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "Сертификат {{ $labels.cert }} истекает через {{ $value | humanizeDuration }}"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-certificates
+
+      - alert: ZafiroCertificateExpiresCritical
+        expr: (min by (cert) (zafiro_tls_certificate_expiry_timestamp_seconds) - time()) < 7 * 86400
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "Сертификат {{ $labels.cert }} истекает через {{ $value | humanizeDuration }}"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-certificates
+
+  - name: zafiro.dependencies
+    rules:
+      - alert: ZafiroNATSDisconnected
+        expr: zafiro_nats_connected == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Инстанс {{ $labels.instance }} без связи с NATS"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-dependencies
+
+      - alert: ZafiroDependencyErrors
+        expr: |
+          sum by (instance) (increase(zafiro_valkey_errors_total{kind!="timeout"}[5m])) > 20
+          or sum by (instance) (increase(zafiro_nats_errors_total[5m])) > 5
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Ошибки Valkey/NATS на {{ $labels.instance }}: {{ $value }} за 5 минут"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-dependencies
+
+  - name: zafiro.host
+    rules:
+      - alert: HostDiskSpaceLow
+        expr: |
+          node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs"} < 0.15
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Свободно {{ $value | humanizePercentage }} на {{ $labels.mountpoint }} ({{ $labels.instance }})"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-host
+
+      - alert: HostDiskWillFillIn24h
+        expr: |
+          predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs"}[6h], 24 * 3600) < 0
+          and node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs"} < 0.3
+        for: 30m
+        labels: {severity: critical}
+        annotations:
+          summary: "Диск {{ $labels.mountpoint }} ({{ $labels.instance }}) заполнится в течение суток"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-host
+
+      - alert: HostMemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.1
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Доступно {{ $value | humanizePercentage }} памяти ({{ $labels.instance }})"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-host
+
+      - alert: ZafiroProcessMemoryHigh
+        # Порог — с запасом над ожидаемым (буферы потоков ~16 КБ × 25 000 соединений на инстанс, grpc DefaultLimits);
+        # уточнить по замерам нагрузочного теста (O4).
+        expr: process_resident_memory_bytes{job="zafiro"} > 4 * 1024 * 1024 * 1024
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Процесс {{ $labels.instance }} занимает {{ $value | humanize1024 }}B"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-host

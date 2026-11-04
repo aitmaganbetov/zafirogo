@@ -1,0 +1,156 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — activitylogs
+  version: 0.1.0
+  description: |
+    Журнал действий клуба (ActivityLogController). activity_logs партиционирована по месяцам; страницы — keyset.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/activity-logs:
+    get:
+      operationId: listActivityLogs
+      tags: [activitylogs]
+      summary: Журнал действий
+      description: |
+        Laravel: ActivityLogController::index() (activity-logs.index, activity_logs.view), FilterActivityLogsRequest:
+        from/to — локальные дни клуба (диапазон [from 00:00, to+1 00:00) в UTC), event — из ярлыков событий, user_id —
+        член клуба, search — подстрока описания или имени/телефона. 50 на страницу, новые сверху. Описание — на
+        языке клуба (ключ + параметры, W-3); старые записи — текст как есть.
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: event
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: user_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: "common.yaml#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Страница журнала.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivityLogPage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  schemas:
+    ActivityLogDetail:
+      type: object
+      required: [key, value]
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+          description: ActivityLog::detailText() (да/нет — ключи перевода «да»/«нет», переводит клиент).
+        bool:
+          type: boolean
+          nullable: true
+          description: Значение было логическим (клиент показывает t('да') / t('нет')).
+    ActivityLogEntry:
+      type: object
+      required: [id, event, description, created_at, ip_address, details]
+      properties:
+        id:
+          type: integer
+          format: int64
+        event:
+          type: string
+        description:
+          type: string
+          description: Описание на языке клуба.
+        user_name:
+          type: string
+          nullable: true
+          description: Имя пользователя; null — «Система».
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityLogDetail"
+        ip_address:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    ActivityLogUser:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        phone:
+          type: string
+          nullable: true
+    ActivityLogEvent:
+      type: object
+      required: [event, label]
+      properties:
+        event:
+          type: string
+        label:
+          type: string
+          description: Ярлык (русский текст — ключ перевода).
+    ActivityLogPage:
+      type: object
+      required: [items, total, users, events]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityLogEntry"
+        next_cursor:
+          type: string
+          nullable: true
+        total:
+          type: integer
+          format: int64
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityLogUser"
+        events:
+          type: array
+          description: ActivityLog::EVENT_LABELS (в порядке старого списка).
+          items:
+            $ref: "#/components/schemas/ActivityLogEvent"

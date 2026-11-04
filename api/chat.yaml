@@ -1,0 +1,215 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — chat
+  version: 0.1.0
+  description: |
+    Чат сотрудников с гостями ПК (ChatController). Новые сообщения — события chat.message / chat.unread по
+    WebSocket (вместо опроса /chat/poll); ответ сотрудника уходит на ПК гостя командой ChatMessageReceived.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/chat:
+    get:
+      operationId: getChat
+      tags: [chat]
+      summary: Диалоги и открытый диалог
+      description: |
+        Laravel: ChatController::index() (chat.index, chat.view): до 100 диалогов по последнему сообщению с числом
+        непрочитанных; открытый диалог (customer, по умолчанию — первый) — последние 100 сообщений. Отвечающий
+        (право chat.create) помечает сообщения гостя прочитанными.
+      parameters:
+        - name: customer
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Чат.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatPage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/chat/{customerId}/messages:
+    get:
+      operationId: getChatMessages
+      tags: [chat]
+      summary: Новые сообщения диалога
+      description: |
+        Laravel: ChatController::poll() (chat.poll, chat.view): сообщения после after (до 100) и общее число
+        непрочитанных. Клиент вызывает по событию chat.message этого диалога.
+      parameters:
+        - $ref: "#/components/parameters/CustomerId"
+        - name: after
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      responses:
+        "200":
+          description: Сообщения.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatPoll"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+    post:
+      operationId: replyChat
+      tags: [chat]
+      summary: Ответ клиенту
+      description: |
+        Laravel: ChatController::reply() (chat.reply, chat.create; throttle 60/мин). Нет диалога с клиентом — 404.
+        Сообщения гостя помечаются прочитанными; ответ уходит на ПК, где гость вошёл.
+      parameters:
+        - $ref: "#/components/parameters/CustomerId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatReply"
+      responses:
+        "201":
+          description: Сообщение отправлено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatReplied"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+        "429":
+          $ref: "common.yaml#/components/responses/TooManyRequests"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  parameters:
+    CustomerId:
+      name: customerId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    ChatCustomer:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        phone:
+          type: string
+          nullable: true
+    ChatConversation:
+      type: object
+      required: [customer_id, unread]
+      properties:
+        customer_id:
+          type: integer
+          format: int64
+        customer_name:
+          type: string
+          nullable: true
+        unread:
+          type: integer
+          format: int64
+        last_body:
+          type: string
+          nullable: true
+        last_from_staff:
+          type: boolean
+          nullable: true
+    ChatMessage:
+      type: object
+      required: [id, from_staff, body]
+      properties:
+        id:
+          type: integer
+          format: int64
+        from_staff:
+          type: boolean
+        author:
+          type: string
+          nullable: true
+        computer:
+          type: string
+          nullable: true
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+    ChatPage:
+      type: object
+      required: [conversations, messages, can_answer, unread]
+      properties:
+        conversations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatConversation"
+        customer:
+          allOf:
+            - $ref: "#/components/schemas/ChatCustomer"
+          nullable: true
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        can_answer:
+          type: boolean
+        unread:
+          type: integer
+          format: int64
+    ChatPoll:
+      type: object
+      required: [messages, unread]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        unread:
+          type: integer
+          format: int64
+    ChatReply:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+    ChatReplied:
+      type: object
+      required: [message]
+      properties:
+        message:
+          $ref: "#/components/schemas/ChatMessage"

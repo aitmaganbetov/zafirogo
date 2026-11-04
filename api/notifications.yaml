@@ -1,0 +1,99 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — notifications
+  version: 0.1.0
+  description: |
+    Колокольчик уведомлений панели клуба (NotificationController, ClubNotifications). Обновление — событие
+    notifications.changed по WebSocket (вместо опроса GET /notifications раз в 60 с).
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: Уведомления сотрудника
+      description: |
+        Laravel: NotificationController::index() (notifications.index, club-role персонала): уведомления по роли,
+        непрочитано — после notifications_seen_at. Тексты — на языке клуба.
+      responses:
+        "200":
+          description: Уведомления.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationList"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/notifications/seen:
+    post:
+      operationId: markNotificationsSeen
+      tags: [notifications]
+      summary: Отметить уведомления просмотренными
+      description: |
+        Laravel: NotificationController::markSeen() (notifications.seen).
+      responses:
+        "200":
+          description: Отмечено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationsSeen"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  schemas:
+    Notification:
+      type: object
+      required: [id, icon, title, body, url, at, at_human, unread]
+      properties:
+        id:
+          type: string
+        icon:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        url:
+          type: string
+        at:
+          type: string
+          description: ISO 8601 (toIso8601String).
+        at_human:
+          type: string
+          description: diffForHumans() на языке клуба.
+        unread:
+          type: boolean
+    NotificationList:
+      type: object
+      required: [unread_count, items]
+      properties:
+        unread_count:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Notification"
+    NotificationsSeen:
+      type: object
+      required: [unread_count]
+      properties:
+        unread_count:
+          type: integer

@@ -1,0 +1,667 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — auth
+  version: 0.1.0
+  description: |
+    Вход сотрудника, сессия, выбор клуба, режим просмотра суперадмина.
+    Конвенции — api/README.md. Деньги — целые тиыны (integer, int64), никогда number.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Вход по телефону и паролю
+      description: |
+        Laravel: AuthController::login(). Телефон нормализуется (+7 и 10 цифр), сначала выбирается клуб,
+        где пользователь — сотрудник. Ставит cookie refresh-токена и CSRF. Ошибки — 422 с полем формы
+        и текстом старого кода («Неверные учетные данные.» и т. п.). Лимит web-login включён по умолчанию
+        (решение Q-052; в старом его не было).
+
+        Суперадмин (Этап 7, новая функция): после верного пароля — 202 и полувход (challenge) вместо сессии;
+        сессия — после второго фактора (`/api/auth/second-factor/verify`), cookie здесь не ставятся.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Вход выполнен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "202":
+          description: Пароль суперадмина верен; нужен второй фактор (сессии ещё нет).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecondFactorChallenge"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+        "429":
+          $ref: "common.yaml#/components/responses/TooManyRequests"
+  /api/auth/second-factor/setup:
+    post:
+      operationId: secondFactorSetup
+      tags: [auth]
+      summary: Ключ TOTP для принудительной настройки второго фактора суперадмина
+      description: |
+        Этап 7 (новая функция, docs/open-questions/stage7-totp.md). Только по полувходу с `setup_required: true`.
+        Новый ключ (base32) и ссылка otpauth:// — показываются один раз; повторный вызов заменяет ключ, пока TOTP не
+        включён. 409 — TOTP уже включён; 410 — полувход истёк или использован (войти заново).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecondFactorSetupRequest"
+      responses:
+        "200":
+          description: Ключ для приложения-аутентификатора.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TotpSetup"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "409":
+          description: TOTP уже включён.
+          content:
+            application/json:
+              schema:
+                $ref: "common.yaml#/components/schemas/Error"
+        "410":
+          description: Полувход истёк или уже использован — войдите заново.
+          content:
+            application/json:
+              schema:
+                $ref: "common.yaml#/components/schemas/Error"
+  /api/auth/second-factor/verify:
+    post:
+      operationId: secondFactorVerify
+      tags: [auth]
+      summary: Второй фактор суперадмина — код TOTP или код восстановления
+      description: |
+        Этап 7. Верный код завершает полувход (одноразово) и выдаёт сессию — как вход: cookie refresh-токена и CSRF.
+        При первой настройке — ещё 10 кодов восстановления (показать один раз). Тот же код TOTP второй раз не
+        принимается. Лимит superadmin-totp: 5/мин и 30/ч на аккаунт, 300/мин на IP; не больше 5 попыток на полувход.
+        422 — неверный код; 410 — полувход истёк, использован или попытки исчерпаны (войти заново).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecondFactorVerifyRequest"
+      responses:
+        "200":
+          description: Вход выполнен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecondFactorSession"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "410":
+          description: Полувход истёк или уже использован — войдите заново.
+          content:
+            application/json:
+              schema:
+                $ref: "common.yaml#/components/schemas/Error"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+        "429":
+          $ref: "common.yaml#/components/responses/TooManyRequests"
+  /api/auth/refresh:
+    post:
+      operationId: refreshSession
+      tags: [auth]
+      summary: Новый access-токен по refresh-cookie (ротация)
+      description: |
+        Refresh-токен из cookie заменяется новым. Повтор уже использованного токена отзывает всю сессию (401).
+        Повтор только что заменённого токена в течение нескольких секунд (две вкладки) — 409, сессия жива:
+        повторите запрос.
+      security:
+        - refreshCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "200":
+          description: Сессия обновлена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "409":
+          description: Токен уже обновлён параллельным запросом; повторите.
+          content:
+            application/json:
+              schema:
+                $ref: "common.yaml#/components/schemas/Error"
+  /api/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Выход (текущая сессия)
+      description: |
+        Laravel: AuthController::logout(). По access-токену или по refresh-cookie (с X-CSRF-Token).
+        Cookie удаляются. Отсутствующая сессия — тоже 204.
+      security:
+        - bearerAuth: []
+        - refreshCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFTokenOptional"
+      responses:
+        "204":
+          description: Сессия завершена.
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/auth/logout-all:
+    post:
+      operationId: logoutAll
+      tags: [auth]
+      summary: Выход на всех устройствах
+      responses:
+        "204":
+          description: Все сессии пользователя завершены.
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+  /api/auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Текущий пользователь, клуб, роль и права
+      responses:
+        "200":
+          description: Текущий пользователь.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+  /api/auth/club:
+    put:
+      operationId: selectClub
+      tags: [auth]
+      summary: Перейти в другой клуб пользователя
+      description: |
+        Laravel: ClubController::switch() — нужен клуб, где у пользователя есть членство, иначе 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SelectClubRequest"
+      responses:
+        "200":
+          description: Клуб выбран.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/superadmin/clubs/{clubId}/view:
+    post:
+      operationId: superadminViewClub
+      tags: [auth]
+      summary: Открыть клуб на просмотр (только чтение)
+      description: |
+        Laravel: Superadmin\ClubController::view(). Панель клуба как у владельца, но любые изменения
+        (не GET/HEAD) — 403 «Режим просмотра: суперадмин не может ничего менять в клубе.».
+      parameters:
+        - name: clubId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Режим просмотра включён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/superadmin/leave-club:
+    post:
+      operationId: superadminLeaveClub
+      tags: [auth]
+      summary: Выйти из режима просмотра клуба
+      description: |
+        Laravel: Superadmin\ClubController::leave().
+      responses:
+        "200":
+          description: Режим просмотра выключен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+  /api/auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Регистрация владельца с новым клубом
+      description: |
+        Laravel: AuthController::register(). Пользователь, клуб (slug из названия + 8 случайных символов), членство
+        owner, пробная подписка (тариф trial, 14 дней), запись auth.registered в журнал; затем вход (cookie как у
+        login). Ошибки — 422 с текстами старого кода. Лимит web-register (решение Q-052).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Аккаунт и клуб созданы, вход выполнен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+        "429":
+          $ref: "common.yaml#/components/responses/TooManyRequests"
+  /api/invitations/{token}:
+    get:
+      operationId: getInvitation
+      tags: [auth]
+      summary: Приглашение в клуб по ссылке
+      description: |
+        Laravel: ClubInvitationController::show() — действующее (не принятое, не истёкшее) приглашение; иначе 404.
+        Работает и для гостя, и для вошедшего (already_member — уже состоит в клубе).
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/InvitationToken"
+      responses:
+        "200":
+          description: Приглашение.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invitation"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/invitations/{token}/accept:
+    post:
+      operationId: acceptInvitation
+      tags: [auth]
+      summary: Принять приглашение
+      description: |
+        Laravel: ClubInvitationController::accept(). Гость — создаёт аккаунт (тело обязательно) и входит (201,
+        AuthSession); вошедший — вступает и переходит в клуб (200, Me). Лимит club-invitations.accept 10/мин.
+        410 — приглашение уже принято или истекло; 409 — аккаунт уже в клубе; 403 — приглашение для другого email.
+      security:
+        - {}
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/InvitationToken"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptInvitationRequest"
+      responses:
+        "200":
+          description: Вошедший пользователь вступил в клуб.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "201":
+          description: Аккаунт создан, вход выполнен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSession"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "409":
+          description: Аккаунт уже состоит в этом клубе.
+          content:
+            application/json:
+              schema:
+                $ref: "common.yaml#/components/schemas/Error"
+        "410":
+          description: Приглашение уже принято или истекло.
+          content:
+            application/json:
+              schema:
+                $ref: "common.yaml#/components/schemas/Error"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+        "429":
+          $ref: "common.yaml#/components/responses/TooManyRequests"
+  /api/ws-ticket:
+    post:
+      operationId: issueWsTicket
+      tags: [auth]
+      summary: Одноразовый билет для подключения к /ws
+      description: |
+        Решение EV-3: браузерный WebSocket не ставит Authorization, поэтому SPA берёт билет (30 с, одноразовый) и
+        подключается к `/ws?ticket=…`. Нужны вход и выбранный клуб.
+      responses:
+        "200":
+          description: Билет.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WsTicket"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-zafiro_rt
+      description: Refresh-токен (HttpOnly). Только для /api/auth/refresh и /api/auth/logout.
+  parameters:
+    InvitationToken:
+      name: token
+      in: path
+      required: true
+      description: Токен из ссылки-приглашения (в БД — sha256).
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Значение cookie __Host-zafiro_csrf.
+      schema:
+        type: string
+        maxLength: 128
+    CSRFTokenOptional:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Обязателен при выходе по refresh-cookie (без access-токена).
+      schema:
+        type: string
+        maxLength: 128
+  schemas:
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        club_name:
+          type: string
+          maxLength: 4096
+        name:
+          type: string
+          maxLength: 4096
+        phone:
+          type: string
+          maxLength: 64
+        password:
+          type: string
+          maxLength: 4096
+        password_confirmation:
+          type: string
+          maxLength: 4096
+    AcceptInvitationRequest:
+      type: object
+      additionalProperties: false
+      description: Только для гостя (новый аккаунт).
+      properties:
+        name:
+          type: string
+          maxLength: 4096
+        phone:
+          type: string
+          maxLength: 64
+        password:
+          type: string
+          maxLength: 4096
+        password_confirmation:
+          type: string
+          maxLength: 4096
+    Invitation:
+      type: object
+      required: [club_name, role, email, already_member]
+      properties:
+        club_name:
+          type: string
+        role:
+          type: string
+          description: Роль (admin, manager, cashier, operator) — как в старом тексте («с ролью :role»).
+        email:
+          type: string
+          nullable: true
+        already_member:
+          type: boolean
+          description: Вошедший пользователь уже состоит в клубе.
+    WsTicket:
+      type: object
+      required: [ticket, expires_in]
+      properties:
+        ticket:
+          type: string
+        expires_in:
+          type: integer
+          description: Срок билета, секунды.
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [phone, password]
+      properties:
+        phone:
+          type: string
+          maxLength: 64
+          description: Телефон в любом виде (8 701…, +7 (701)…); нормализуется к +7XXXXXXXXXX.
+        password:
+          type: string
+          maxLength: 4096
+        remember:
+          type: boolean
+          default: false
+          description: Флаг «Запомнить меня» — сессия живёт дольше без активности.
+        pc_login:
+          type: boolean
+          default: false
+          description: Вход ради подтверждения входа на ПК по QR (/pc-login/{code}) — разрешён и клиентам.
+    SecondFactorChallenge:
+      type: object
+      required: [challenge, setup_required, expires_in]
+      properties:
+        challenge:
+          type: string
+          description: Одноразовый токен полувхода (держать только в памяти страницы).
+        setup_required:
+          type: boolean
+          description: TOTP ещё не настроен — сначала /api/auth/second-factor/setup.
+        expires_in:
+          type: integer
+          description: Срок полувхода, секунды.
+    SecondFactorSetupRequest:
+      type: object
+      additionalProperties: false
+      required: [challenge]
+      properties:
+        challenge:
+          type: string
+          maxLength: 128
+    SecondFactorVerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [challenge, code]
+      properties:
+        challenge:
+          type: string
+          maxLength: 128
+        code:
+          type: string
+          maxLength: 64
+          description: 6 цифр из приложения или код восстановления (xxxx-xxxx-xxxx-xxxx).
+    TotpSetup:
+      type: object
+      required: [secret, otpauth_uri]
+      properties:
+        secret:
+          type: string
+          description: Ключ TOTP в base32 (ввести в приложение вручную).
+        otpauth_uri:
+          type: string
+          description: Ссылка otpauth://totp/… (SHA1, 6 цифр, 30 с).
+    SecondFactorSession:
+      type: object
+      required: [session, recovery_codes]
+      properties:
+        session:
+          $ref: "#/components/schemas/AuthSession"
+        recovery_codes:
+          type: array
+          description: Коды восстановления — только при включении TOTP (показать один раз); иначе пусто.
+          items:
+            type: string
+    SelectClubRequest:
+      type: object
+      additionalProperties: false
+      required: [club_id]
+      properties:
+        club_id:
+          type: integer
+          format: int64
+          minimum: 1
+    AuthSession:
+      type: object
+      required: [access_token, token_type, expires_in, csrf_token, me]
+      properties:
+        access_token:
+          type: string
+          description: Держать только в памяти SPA.
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          description: Срок access-токена, секунды.
+        csrf_token:
+          type: string
+          description: То же значение, что в cookie __Host-zafiro_csrf (для X-CSRF-Token).
+        me:
+          $ref: "#/components/schemas/Me"
+    MeUser:
+      type: object
+      required: [id, name, phone, is_superadmin]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        phone:
+          type: string
+        is_superadmin:
+          type: boolean
+    MeClub:
+      type: object
+      required: [id, name, timezone, locale]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        timezone:
+          type: string
+          description: IANA-зона клуба (clubs.timezone) — даты и часы панели.
+        locale:
+          type: string
+          description: Язык интерфейса клуба (clubs.locale ?? 'ru', LocaleResolver::forClub()).
+        can_manage_integrations:
+          type: boolean
+          description: |
+            @can('manage-integrations'): владелец или сотрудник с club_memberships.can_manage_integrations
+            (пункт «API и интеграции» меню настроек).
+    MembershipItem:
+      type: object
+      required: [club_id, club_name, role]
+      properties:
+        club_id:
+          type: integer
+          format: int64
+        club_name:
+          type: string
+        role:
+          type: string
+    Me:
+      type: object
+      required: [user, club, role, permissions, read_only, clubs, server_time]
+      properties:
+        server_time:
+          type: string
+          format: date-time
+          description: Время сервера — поправка часов панели на неверные часы устройства.
+        user:
+          $ref: "#/components/schemas/MeUser"
+        club:
+          description: Выбранный клуб; null — не выбран (суперадмин без клуба).
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/MeClub"
+        role:
+          type: string
+          nullable: true
+          description: Роль в клубе (owner, admin, manager, cashier, operator, client, …).
+        permissions:
+          type: array
+          description: Права «раздел.действие» в клубе (ClubPermissions::allows), уже с выбором владельца.
+          items:
+            type: string
+        read_only:
+          type: boolean
+          description: Суперадмин смотрит клуб — изменения запрещены.
+        clubs:
+          type: array
+          description: Клубы пользователя для переключения (в режиме просмотра — пусто).
+          items:
+            $ref: "#/components/schemas/MembershipItem"

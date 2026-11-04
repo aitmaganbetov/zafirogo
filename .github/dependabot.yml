@@ -1,0 +1,74 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /server
+    schedule:
+      interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14
+    groups:
+      go-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14
+    groups:
+      npm-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /tools/visual
+    schedule:
+      interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14
+    # Font Awesome и Chart.js повторяют версии CDN старого проекта (V-9, docs/open-questions/stage3-visual.md).
+    ignore:
+      - dependency-name: "@fortawesome/fontawesome-free"
+      - dependency-name: "chart.js"
+
+  - package-ecosystem: nuget
+    directory: /agent
+    schedule:
+      interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14
+    groups:
+      # Grpc.* и Google.Protobuf обновляются вместе (версии сверяет tools/proto-csharp-check.sh).
+      grpc:
+        patterns: ["Grpc.*", "Google.Protobuf"]
+      dotnet-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14
+
+  # Dockerfile образа сервера (node, golang, distroless — тег + digest).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14

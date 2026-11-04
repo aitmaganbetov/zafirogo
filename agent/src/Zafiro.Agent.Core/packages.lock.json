@@ -1,0 +1,93 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "BouncyCastle.Cryptography": {
+        "type": "Direct",
+        "requested": "[2.7.0, )",
+        "resolved": "2.7.0",
+        "contentHash": "U+12df8UEWHgBi04YVf/Lgi2dy3SItlIYvHjjEVa/BngCQIzDCDRBk50DDByCfDvSbe5pRNFr3b7UrVK2kMcLw=="
+      },
+      "Grpc.StatusProto": {
+        "type": "Direct",
+        "requested": "[2.85.0, )",
+        "resolved": "2.85.0",
+        "contentHash": "618VytN2qkPS9Sr1WJR5ovKtobHuYpGx7qXSRPjnJhIzrXkjmWNpJhwIb12daNDVeLabbnGB5+5RH0CsX1KY7A==",
+        "dependencies": {
+          "Google.Api.CommonProtos": "2.17.0",
+          "Grpc.Core.Api": "2.85.0"
+        }
+      },
+      "Microsoft.Extensions.Logging.Abstractions": {
+        "type": "Direct",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "aSZEhEig4fvNiw2zs8Z6NyDlniKtq6YjcF3DyHuqTEHcZ2VKA/6itMPZ+dW+yWABWExlDcQwwdbqX1Rcb7W8WQ==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13"
+        }
+      },
+      "Microsoft.NET.ILLink.Tasks": {
+        "type": "Direct",
+        "requested": "[10.0.14, )",
+        "resolved": "10.0.14",
+        "contentHash": "YlTamXppEQls6DYWt7RdUuwWDb0lyw/vXCaGeQpLCpsLmfwGuCkOz/vIGgMTV7ECsJcavkCOkxZXv9s8rdAHkQ=="
+      },
+      "System.Security.Cryptography.ProtectedData": {
+        "type": "Direct",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "aUSmC6cPjFLSE0rDTsmkR3wvUOnscqewebOaaELEToh12sNmoltZqT3f0C81mJ1zhxKjWco25soHTvYwsXCsUw=="
+      },
+      "Google.Api.CommonProtos": {
+        "type": "Transitive",
+        "resolved": "2.17.0",
+        "contentHash": "elfQPknFr495hm7vdy6ZlgyQh6yzZq9TU7sS35L/Fj/fqjM/mUGau9gVJLhvQEtUlPjtR80hpn/m9HvBMyCXIw==",
+        "dependencies": {
+          "Google.Protobuf": "[3.31.1, 4.0.0]"
+        }
+      },
+      "Grpc.Core.Api": {
+        "type": "Transitive",
+        "resolved": "2.85.0",
+        "contentHash": "cpYu/nw/QhwHcRZMJbYD8lEllKrdwYMiDS4U3oH61nhYPUMNkcCcef4ulv11svHvTBThYV+ju332N9bCrfe7cQ=="
+      },
+      "Grpc.Net.Common": {
+        "type": "Transitive",
+        "resolved": "2.85.0",
+        "contentHash": "e+RczhQVHb5MacI1oMTLMK6InZLH22POZcE4gsy5SnolsElLaqhSwEhqm+cF0m4Q1JGmlhjf1nbnKh7sBbjJVg==",
+        "dependencies": {
+          "Grpc.Core.Api": "2.85.0"
+        }
+      },
+      "Microsoft.Extensions.DependencyInjection.Abstractions": {
+        "type": "Transitive",
+        "resolved": "10.0.13",
+        "contentHash": "G2GrGWNAPZBsii2F6AU8n+JT2tC1/I0Ml/e9ZyNCgPjf3hZqronP7o0X91aAynCmVeae8KkSIUNXXeXCNRmdVQ=="
+      },
+      "zafiro.agent.protocol": {
+        "type": "Project",
+        "dependencies": {
+          "Google.Protobuf": "[3.36.2, )",
+          "Grpc.Net.Client": "[2.85.0, )"
+        }
+      },
+      "Google.Protobuf": {
+        "type": "CentralTransitive",
+        "requested": "[3.36.2, )",
+        "resolved": "3.36.2",
+        "contentHash": "Ci1q1iJg74qAE5riTA2FbMS0wPbpruPQI/JQ9DrAsRo2VsSxgt1e/pmxGxgrci+pXJEgrSYg2vPl8rrStZkclQ=="
+      },
+      "Grpc.Net.Client": {
+        "type": "CentralTransitive",
+        "requested": "[2.85.0, )",
+        "resolved": "2.85.0",
+        "contentHash": "BPMA5mb96ihVQfXTuIUpC1aie2I0ODBD6QCc0UXYS5zQMK6sJW5yck8NZ2ffvGHfOanWyn2Yg0tJbYY3nV+zIw==",
+        "dependencies": {
+          "Grpc.Net.Common": "2.85.0",
+          "Microsoft.Extensions.Logging.Abstractions": "8.0.1"
+        }
+      }
+    }
+  }
+}
