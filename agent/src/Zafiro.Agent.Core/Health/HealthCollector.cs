@@ -70,21 +70,27 @@ public sealed class HealthCollector
             }
         }
 
-        var disks = Measure("disks", _probe.Disks, []);
-        if (disks.Count > _options.MaxDisks) disks = disks.Take(_options.MaxDisks).ToList();
-        var smartChanged = RefreshSmart(disks, now);
-        foreach (var d in disks)
+        // Бездисковый ПК (загрузка по сети с сервера образов): локальных дисков нет — тома образа виртуальные (iSCSI,
+        // RAM-диск кэша), их место и SMART ничего не говорят о ПК. Диски и SMART не читаются вовсе (S7-HA-13).
+        var smartChanged = false;
+        if (!_options.Diskless)
         {
-            var mount = Clean(d.Mount);
-            if (mount.Length == 0 || mount.Length > MaxMountLength) continue;
-            h.Disks.Add(new DiskHealth
+            var disks = Measure("disks", _probe.Disks, []);
+            if (disks.Count > _options.MaxDisks) disks = disks.Take(_options.MaxDisks).ToList();
+            smartChanged = RefreshSmart(disks, now);
+            foreach (var d in disks)
             {
-                Mount = mount,
-                System = d.System,
-                TotalMb = d.TotalMb,
-                FreeMb = Math.Min(d.FreeMb, d.TotalMb),
-                Smart = _smart is not null && _smart.TryGetValue(d.Mount, out var s) ? s : DiskSmart.Unspecified,
-            });
+                var mount = Clean(d.Mount);
+                if (mount.Length == 0 || mount.Length > MaxMountLength) continue;
+                h.Disks.Add(new DiskHealth
+                {
+                    Mount = mount,
+                    System = d.System,
+                    TotalMb = d.TotalMb,
+                    FreeMb = Math.Min(d.FreeMb, d.TotalMb),
+                    Smart = _smart is not null && _smart.TryGetValue(d.Mount, out var s) ? s : DiskSmart.Unspecified,
+                });
+            }
         }
 
         var peripheralsChanged = RefreshPeripherals();
@@ -259,6 +265,12 @@ public sealed class HealthCollectorOptions
     public TimeSpan CrashWindow { get; set; } = TimeSpan.FromDays(7);
 
     public int MaxDisks { get; set; } = 26;
+
+    /// <summary>
+    /// Бездисковый ПК (AgentOptions.Diskless, DeviceInfo.diskless): диски и SMART не собираются, ComputerHealth.disks
+    /// пуст (docs/open-questions/stage7-health-agent.md S7-HA-13).
+    /// </summary>
+    public bool Diskless { get; set; }
 
     public int MaxPeripherals { get; set; } = 16;
 

@@ -35,5 +35,7 @@ func verdictRules(h config.AgentHealth) health.VerdictRules {
 		Shutdowns: h.VerdictShutdowns, Bugchecks: h.VerdictBugchecks,
 		SystemDiskFreePercent: int64(h.SystemDiskFreePercent), // #nosec G115 -- ≤ 90 (config.validateHealth)
 		TempRiseC:             h.VerdictTempRiseC,
+		NetworkSlowHours:      h.VerdictNetworkSlowHours,
+		LinkFullMbps:          int64(h.LinkFullMbps),
 	}
 }

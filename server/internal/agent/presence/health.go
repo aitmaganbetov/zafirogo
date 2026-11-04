@@ -38,6 +38,9 @@ type Health struct {
 	UptimeSeconds uint64       `json:"up,omitempty"`
 	Shutdowns7d   uint32       `json:"sd7,omitempty"`
 	Bugchecks7d   uint32       `json:"bc7,omitempty"`
+	// Diskless — бездисковый ПК (сертификат по ключу образа): дисков нет (Disks пуст), проблемы и история по дискам
+	// не считаются, скорость сети — строже (agent/health.Evaluate; docs/agent-protocol.md §16.9).
+	Diskless bool `json:"dl,omitempty"`
 	// ReportedAt — когда сервер получил это здоровье (аптайм — на этот момент).
 	ReportedAt time.Time `json:"at"`
 }
@@ -114,6 +117,15 @@ func HealthFrom(h *agentv1.ComputerHealth, at time.Time) *Health {
 		}
 	}
 	return out
+}
+
+// WithoutDisks — здоровье бездискового ПК: диски (тома образа, присланные старым агентом или по ошибке настройки) не
+// хранятся и не оцениваются — их место и SMART ничего не говорят о ПК (S7-H-18).
+func (h *Health) WithoutDisks() *Health {
+	if h != nil {
+		h.Disks, h.Diskless = nil, true
+	}
+	return h
 }
 
 // HealthChanged — изменилось то, что агент сообщает сразу (agent.proto Status.health): набор периферии и её

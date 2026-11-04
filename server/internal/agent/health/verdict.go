@@ -23,6 +23,7 @@ const (
 	ReasonDiskLow      = "disk_low"      // на системном диске было свободно меньше порога → наблюдать
 	ReasonCPUTempRise  = "cpu_temp_rise" // средняя температура CPU выросла к прошлой неделе на ≥ порога → наблюдать
 	ReasonGPUTempRise  = "gpu_temp_rise" // то же для GPU
+	ReasonNetworkSlow  = "network_slow"  // бездисковый ПК: часов с медленной сетью больше NetworkSlowHours → наблюдать
 )
 
 // VerdictRules — пороги вердикта (agent.health.*). Нули — DefaultVerdictRules.
@@ -41,12 +42,16 @@ type VerdictRules struct {
 	SystemDiskFreePercent int64
 	// TempRiseC — «наблюдать», если средняя температура CPU/GPU выросла к прошлой неделе на столько °C (≥).
 	TempRiseC int32
+	// NetworkSlowHours — бездисковый ПК: «наблюдать», если часов с открытой проблемой network_slow больше этого.
+	NetworkSlowHours int64
+	// LinkFullMbps — порог медленной сети бездискового ПК (тот же, что у проблемы network_slow) — для текста причины.
+	LinkFullMbps int64
 }
 
 // DefaultVerdictRules — пороги по умолчанию (обоснование — docs/open-questions/stage7-health.md S7-H-15).
 func DefaultVerdictRules() VerdictRules {
 	return VerdictRules{CPUTempC: 90, GPUTempC: 85, HotHours: 2, HotHoursRepair: 24, Shutdowns: 3, Bugchecks: 1,
-		SystemDiskFreePercent: 10, TempRiseC: 5}
+		SystemDiskFreePercent: 10, TempRiseC: 5, NetworkSlowHours: 2, LinkFullMbps: 1000}
 }
 
 // WithDefaults — нулевые пороги заменены значениями по умолчанию.
@@ -76,6 +81,12 @@ func (r VerdictRules) WithDefaults() VerdictRules {
 	if r.TempRiseC <= 0 {
 		r.TempRiseC = d.TempRiseC
 	}
+	if r.NetworkSlowHours <= 0 {
+		r.NetworkSlowHours = d.NetworkSlowHours
+	}
+	if r.LinkFullMbps <= 0 {
+		r.LinkFullMbps = d.LinkFullMbps
+	}
 	return r
 }
 
@@ -88,6 +99,11 @@ type Week struct {
 	SystemDiskFreeBP int64
 	// SmartRank — худший SMART: 0 не измерено, 1 ok, 2 warning, 3 failing.
 	SmartRank int
+	// NetworkSlowHours — часов в сети с открытой проблемой network_slow.
+	NetworkSlowHours int64
+	// Diskless — бездисковый ПК: причины по дискам (SMART, место) не выдаются — дисков нет, а старые данные (до
+	// перевода ПК на загрузку по сети) к нему не относятся; сеть — причина network_slow (S7-H-18).
+	Diskless bool
 }
 
 // Reason — причина вердикта: код, уровень и числа для текста («Перегрев CPU (≥ 90 °C): 5 ч»).
@@ -115,6 +131,9 @@ func Judge(w Week, prev *Week, r VerdictRules) Verdict {
 			v.Level = level
 		}
 	}
+	if w.Diskless {
+		w.SmartRank, w.SystemDiskFreeBP = 0, -1
+	}
 	if w.SmartRank >= smartRankFailing {
 		add(ReasonSmartFailing, VerdictRepair, 0, 0)
 	}
@@ -140,6 +159,10 @@ func Judge(w Week, prev *Week, r VerdictRules) Verdict {
 	// Свободно < порога: free·100 < total·percent, доля уже в сотых процента (bp < percent·100) — без float.
 	if w.SystemDiskFreeBP >= 0 && w.SystemDiskFreeBP < r.SystemDiskFreePercent*100 {
 		add(ReasonDiskLow, VerdictWatch, w.SystemDiskFreeBP/100, r.SystemDiskFreePercent)
+	}
+	// Медленная сеть — «наблюдать», а не «ремонт»: частая причина — кабель или порт коммутатора, а не ПК.
+	if w.Diskless && w.NetworkSlowHours > r.NetworkSlowHours {
+		add(ReasonNetworkSlow, VerdictWatch, w.NetworkSlowHours, r.LinkFullMbps)
 	}
 	if prev != nil {
 		rise := func(code string, cur, before int64) {

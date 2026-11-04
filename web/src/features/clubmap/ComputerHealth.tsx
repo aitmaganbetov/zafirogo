@@ -49,9 +49,19 @@ export function PcLoad({ state }: { readonly state: ComputerState | undefined })
 const gb = (mb: number) => Math.round(mb / 1024);
 const deg = (deci: number) => Math.round(deci / 10);
 
+/** Пометка бездискового ПК (S7-H-18): дисков нет — вместо строк дисков и SMART. */
+function DisklessRow({ t }: { readonly t: TFunction }) {
+  return <div><dt>{t('Бездисковый ПК')}</dt><dd>{t('загрузка по сети, диски не проверяются')}</dd></div>;
+}
+
 function HealthList({ view, t }: { readonly view: HealthView; readonly t: TFunction }) {
   const h = view.health;
   const rows: { label: string; value: string; warn?: boolean }[] = [];
+  // Бездисковый ПК грузится по сети с сервера образов — сеть сразу после проблем, дисков нет.
+  const network = h?.link_mbps != null
+    ? { label: t('Сеть'), value: t('{{value}} Мбит/с', { value: h.link_mbps }), warn: view.problems.includes('network_slow') }
+    : null;
+  if (view.diskless && network) rows.push(network);
   if (view.load) {
     rows.push({ label: t('Загрузка CPU'), value: t('{{value}} %', { value: percent(view.load.cpu_bp) }) });
     rows.push({ label: t('ОЗУ'), value: t('{{value}} %', { value: percent(view.load.ram_bp) }) });
@@ -64,7 +74,7 @@ function HealthList({ view, t }: { readonly view: HealthView; readonly t: TFunct
     if (h.gpu_load_bp != null) {
       rows.push({ label: t('Загрузка GPU'), value: t('{{value}} %, память {{memory}} %', { value: percent(h.gpu_load_bp), memory: percent(h.gpu_memory_bp ?? 0) }) });
     }
-    for (const d of h.disks) {
+    for (const d of view.diskless ? [] : h.disks) {
       const smart = d.smart === 'failing' ? t('SMART: отказ') : d.smart === 'warning' ? t('SMART: предупреждение') : '';
       rows.push({
         label: t('Диск {{mount}}', { mount: d.mount }),
@@ -79,7 +89,7 @@ function HealthList({ view, t }: { readonly view: HealthView; readonly t: TFunct
         warn: !p.connected && p.kind !== 'headset',
       });
     }
-    if (h.link_mbps != null) rows.push({ label: t('Сеть'), value: t('{{value}} Мбит/с', { value: h.link_mbps }), warn: view.problems.includes('network_slow') });
+    if (network && !view.diskless) rows.push(network);
     if (h.uptime_seconds != null) rows.push({ label: t('Время работы'), value: uptime(t, h.uptime_seconds) });
     rows.push({
       label: t('Сбои за 7 суток'),
@@ -89,6 +99,7 @@ function HealthList({ view, t }: { readonly view: HealthView; readonly t: TFunct
   }
   return (
     <dl className="cm-info-list">
+      {view.diskless && <DisklessRow t={t} />}
       {view.problems.length > 0 && (
         <div><dt>{t('Проблемы')}</dt><dd id="computer-info-problems" className="cm-info-warning">{view.problems.map((p) => problemLabel(t, p)).join(', ')}</dd></div>
       )}
@@ -123,9 +134,10 @@ function LiveChart({ computerId, timeLabel }: { readonly computerId: number; rea
 
 const avgDeg = (deci?: number | null) => (deci == null ? null : Math.round(deci / 10));
 
-/** Сводка недели: онлайн, температуры, загрузка, сбои, диск. */
-function weekSummary(t: TFunction, w: HealthWeek): string[] {
+/** Сводка недели: онлайн, температуры, загрузка, сбои, диск (у бездискового — сеть вместо диска). */
+function weekSummary(t: TFunction, w: HealthWeek, diskless: boolean): string[] {
   const out = [t('Онлайн: {{hours}} ч, с проблемами: {{problems}} ч', { hours: Math.round(w.online_minutes / 60), problems: w.problem_hours })];
+  if (diskless) out.push(t('Медленная сеть: {{hours}} ч', { hours: w.network_slow_hours }));
   if (w.cpu_temp_avg_deci != null) {
     out.push(t('CPU: в среднем {{avg}} °C, максимум {{max}} °C', { avg: avgDeg(w.cpu_temp_avg_deci), max: avgDeg(w.cpu_temp_max_deci) }));
   }
@@ -138,7 +150,7 @@ function weekSummary(t: TFunction, w: HealthWeek): string[] {
   out.push(t('Сбои: выключений {{shutdowns}}, «синих экранов» {{bugchecks}}, отключений периферии {{peripherals}}', {
     shutdowns: w.unexpected_shutdowns, bugchecks: w.bugchecks, peripherals: w.peripheral_disconnects,
   }));
-  if (w.system_disk_free_bp != null) out.push(t('Системный диск: свободно не меньше {{value}} %', { value: Math.floor(w.system_disk_free_bp / 100) }));
+  if (w.system_disk_free_bp != null && !diskless) out.push(t('Системный диск: свободно не меньше {{value}} %', { value: Math.floor(w.system_disk_free_bp / 100) }));
   return out;
 }
 
@@ -167,9 +179,10 @@ function WeekChart({ computerId, week, hourLabel }: { readonly computerId: numbe
 }
 
 /** «По неделям»: недели (новые сверху) с вердиктом и причинами; выбор недели — график по часам. */
-function WeeksList({ computerId, weeks, day, hourLabel }: {
+function WeeksList({ computerId, weeks, diskless, day, hourLabel }: {
   readonly computerId: number;
   readonly weeks: readonly HealthWeek[];
+  readonly diskless: boolean;
   readonly day: (iso: string) => string;
   readonly hourLabel: (iso: string) => string;
 }) {
@@ -179,6 +192,7 @@ function WeeksList({ computerId, weeks, day, hourLabel }: {
   return (
     <>
       <dl className="cm-info-list">
+        {diskless && <DisklessRow t={t} />}
         {weeks.map((w) => (
           <div key={w.start} data-week={w.start}>
             <dt>
@@ -189,7 +203,7 @@ function WeeksList({ computerId, weeks, day, hourLabel }: {
             <dd className={w.verdict.level === 'ok' ? undefined : 'cm-info-warning'}>
               {[verdictLabel(t, w.verdict.level), ...w.verdict.reasons.map((r) => reasonLabel(t, r))].join(' · ')}
             </dd>
-            <dd>{weekSummary(t, w).join(' · ')}</dd>
+            <dd>{weekSummary(t, w, diskless).join(' · ')}</dd>
           </div>
         ))}
       </dl>
@@ -214,7 +228,11 @@ export function HealthSections({ computerId, fmt, locale = 'ru', tz = 'UTC' }: {
   const { data: weekly } = useQuery(healthWeeklyQuery(computerId));
   const events = useInfiniteQuery(healthEventsQuery(computerId));
   const [tab, setTab] = useState<'now' | 'weeks'>('now');
-  const items: HealthEvent[] = events.data?.pages.flatMap((p) => p.items) ?? [];
+  const diskless = !!(view?.diskless || weekly?.diskless);
+  // Бездисковый ПК: проблемы дисков в истории — от томов образа (старый агент или до перевода ПК на загрузку по сети).
+  const items: HealthEvent[] = (events.data?.pages.flatMap((p) => p.items) ?? []).filter(
+    (e) => !diskless || (e.kind !== 'disk_low' && e.kind !== 'disk_smart'),
+  );
   const weeks = weekly?.weeks ?? [];
   const hasState = !!view && (!!view.load || !!view.health || view.problems.length > 0);
   const hasWeeks = weeks.length > 0;
@@ -249,7 +267,9 @@ export function HealthSections({ computerId, fmt, locale = 'ru', tz = 'UTC' }: {
               <LiveChart computerId={computerId} timeLabel={timeLabel} />
             </>
           )}
-          {shown === 'weeks' && <WeeksList computerId={computerId} weeks={weeks} day={day} hourLabel={hourLabel} />}
+          {shown === 'weeks' && (
+            <WeeksList computerId={computerId} weeks={weeks} diskless={diskless} day={day} hourLabel={hourLabel} />
+          )}
         </section>
       )}
       {items.length > 0 && (

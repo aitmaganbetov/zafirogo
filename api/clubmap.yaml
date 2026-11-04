@@ -946,11 +946,13 @@ components:
       enum: [cpu_hot, gpu_hot, disk_low, disk_smart, mouse, keyboard, monitor, network_slow, unstable]
     ComputerHealthView:
       type: object
-      required: [computer_id, connection, problems]
+      required: [computer_id, connection, diskless, problems]
       properties:
         computer_id:
           type: integer
           format: int64
+        diskless:
+          $ref: "#/components/schemas/HealthDiskless"
         connection:
           type: string
           enum: [online, offline]
@@ -973,6 +975,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/HealthProblem"
+    HealthDiskless:
+      type: boolean
+      description: |
+        Бездисковый ПК (загрузка по сети с сервера образов; последний сертификат ПК выпущен по ключу образа,
+        agent_certificates.diskless). Локальных дисков нет: агент их не собирает, сервер не считает по ним проблемы и
+        причины вердикта, disks пуст, поля системного диска и SMART недель — null (docs/agent-protocol.md §16.9).
     HealthSnapshot:
       type: object
       required: [reported_at, disks, peripherals, unexpected_shutdowns_7d, bugchecks_7d]
@@ -1077,7 +1085,7 @@ components:
     HealthWeek:
       type: object
       required: [start, end, online_minutes, session_minutes, cpu_hot_hours, gpu_hot_hours, problem_hours,
-                 unexpected_shutdowns, bugchecks, peripheral_disconnects, verdict]
+                 network_slow_hours, unexpected_shutdowns, bugchecks, peripheral_disconnects, verdict]
       properties:
         start:
           type: string
@@ -1148,6 +1156,10 @@ components:
           type: integer
           format: int64
           description: Часов в сети, когда была открыта хоть одна проблема здоровья (computer_health_events).
+        network_slow_hours:
+          type: integer
+          format: int64
+          description: Часов в сети, когда была открыта проблема network_slow (скорость сети ниже порога).
         unexpected_shutdowns:
           type: integer
           format: int64
@@ -1203,8 +1215,10 @@ components:
             smart_failing / smart_warning — SMART диска; bugchecks — «синие экраны» (value — сколько, threshold — порог);
             cpu_hot / gpu_hot — часов перегрева (value — часы, threshold — °C); shutdowns — внезапные выключения;
             disk_low — свободно на системном диске (value, threshold — %); cpu_temp_rise / gpu_temp_rise — рост средней
-            температуры к прошлой неделе (value, threshold — °C).
-          enum: [smart_failing, bugchecks, cpu_hot, gpu_hot, smart_warning, shutdowns, disk_low, cpu_temp_rise, gpu_temp_rise]
+            температуры к прошлой неделе (value, threshold — °C); network_slow — только у бездискового ПК: часов с медленной
+            сетью (value — часы, threshold — Мбит/с).
+          enum: [smart_failing, bugchecks, cpu_hot, gpu_hot, smart_warning, shutdowns, disk_low, cpu_temp_rise, gpu_temp_rise,
+                 network_slow]
         level:
           type: string
           enum: [watch, repair]
@@ -1217,8 +1231,10 @@ components:
           format: int64
     HealthWeekPage:
       type: object
-      required: [weeks]
+      required: [diskless, weeks]
       properties:
+        diskless:
+          $ref: "#/components/schemas/HealthDiskless"
         weeks:
           type: array
           items:
@@ -1278,8 +1294,10 @@ components:
           nullable: true
     HealthHourPage:
       type: object
-      required: [items]
+      required: [diskless, items]
       properties:
+        diskless:
+          $ref: "#/components/schemas/HealthDiskless"
         items:
           type: array
           items:

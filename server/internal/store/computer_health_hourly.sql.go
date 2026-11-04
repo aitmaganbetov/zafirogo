@@ -161,8 +161,14 @@ SELECT date_trunc('week', h.hour AT TIME ZONE $1::text)::date AS week_start,
        count(*) FILTER (WHERE EXISTS (
            SELECT 1 FROM computer_health_events e
            WHERE e.club_id = h.club_id AND e.computer_id = h.computer_id
-             AND e.raised_at < h.hour + interval '1 hour' AND (e.cleared_at IS NULL OR e.cleared_at > h.hour)))::bigint
+             AND e.raised_at < h.hour + interval '1 hour' AND (e.cleared_at IS NULL OR e.cleared_at > h.hour)
+             AND NOT ($4::boolean AND e.kind IN ('disk_low', 'disk_smart'))))::bigint
            AS problem_hours,
+       count(*) FILTER (WHERE EXISTS (
+           SELECT 1 FROM computer_health_events e
+           WHERE e.club_id = h.club_id AND e.computer_id = h.computer_id AND e.kind = 'network_slow'
+             AND e.raised_at < h.hour + interval '1 hour' AND (e.cleared_at IS NULL OR e.cleared_at > h.hour)))::bigint
+           AS network_slow_hours,
        coalesce(sum(h.unexpected_shutdowns), 0)::bigint AS unexpected_shutdowns,
        coalesce(sum(h.bugchecks), 0)::bigint AS bugchecks,
        coalesce(sum(h.peripheral_disconnects), 0)::bigint AS peripheral_disconnects,
@@ -170,8 +176,8 @@ SELECT date_trunc('week', h.hour AT TIME ZONE $1::text)::date AS week_start,
        coalesce(min(h.system_disk_free_mb * 10000 / nullif(h.system_disk_total_mb, 0)), -1)::bigint AS system_disk_free_bp,
        coalesce(max(CASE h.smart_worst WHEN 'failing' THEN 3 WHEN 'warning' THEN 2 WHEN 'ok' THEN 1 END), 0)::integer AS smart_rank
 FROM computer_health_hourly h
-WHERE h.club_id = $4 AND h.computer_id = $5
-  AND h.hour >= $6::timestamptz AND h.hour < $7::timestamptz
+WHERE h.club_id = $5 AND h.computer_id = $6
+  AND h.hour >= $7::timestamptz AND h.hour < $8::timestamptz
 GROUP BY 1
 ORDER BY 1 DESC
 `
@@ -180,6 +186,7 @@ type ComputerHealthWeeklyParams struct {
 	Tz         string    `json:"tz"`
 	CpuHotDeci int32     `json:"cpu_hot_deci"`
 	GpuHotDeci int32     `json:"gpu_hot_deci"`
+	Diskless   bool      `json:"diskless"`
 	ClubID     int64     `json:"club_id"`
 	ComputerID int64     `json:"computer_id"`
 	FromAt     time.Time `json:"from_at"`
@@ -204,6 +211,7 @@ type ComputerHealthWeeklyRow struct {
 	CpuHotHours           int64     `json:"cpu_hot_hours"`
 	GpuHotHours           int64     `json:"gpu_hot_hours"`
 	ProblemHours          int64     `json:"problem_hours"`
+	NetworkSlowHours      int64     `json:"network_slow_hours"`
 	UnexpectedShutdowns   int64     `json:"unexpected_shutdowns"`
 	Bugchecks             int64     `json:"bugchecks"`
 	PeripheralDisconnects int64     `json:"peripheral_disconnects"`
@@ -215,13 +223,16 @@ type ComputerHealthWeeklyRow struct {
 // Панель ПК «По неделям»: агрегаты почасовой истории по неделям (понедельник 00:00 в поясе клуба). Период — диапазоном
 // по hour (индекс — первичный ключ club_id, computer_id, hour); границы недель считает сервер в том же поясе.
 // Средние — взвешенные по минутам онлайн (целочисленно, без float). Часы с проблемами — часы онлайн, в которые была
-// открыта хоть одна проблема журнала computer_health_events (индекс history_index). Нет измерений — -1 (smart_rank — 0:
+// открыта хоть одна проблема журнала computer_health_events (индекс history_index); у бездискового ПК (diskless)
+// проблемы дисков не считаются (записаны до того, как ПК стал бездисковым, или старым агентом). network_slow_hours —
+// часы онлайн с открытой проблемой network_slow (вердикт бездискового ПК). Нет измерений — -1 (smart_rank — 0:
 // 1 ok, 2 warning, 3 failing).
 func (q *Queries) ComputerHealthWeekly(ctx context.Context, arg ComputerHealthWeeklyParams) ([]ComputerHealthWeeklyRow, error) {
 	rows, err := q.db.Query(ctx, computerHealthWeekly,
 		arg.Tz,
 		arg.CpuHotDeci,
 		arg.GpuHotDeci,
+		arg.Diskless,
 		arg.ClubID,
 		arg.ComputerID,
 		arg.FromAt,
@@ -252,6 +263,7 @@ func (q *Queries) ComputerHealthWeekly(ctx context.Context, arg ComputerHealthWe
 			&i.CpuHotHours,
 			&i.GpuHotHours,
 			&i.ProblemHours,
+			&i.NetworkSlowHours,
 			&i.UnexpectedShutdowns,
 			&i.Bugchecks,
 			&i.PeripheralDisconnects,

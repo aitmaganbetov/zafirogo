@@ -200,3 +200,95 @@ func TestClubMapComputerHealthWeekly(t *testing.T) {
 		t.Errorf("other club weeks: %v", w)
 	}
 }
+
+// Бездисковый ПК (S7-H-18; последний сертификат — по ключу образа): API отдаёт diskless, у недели нет полей системного
+// диска и SMART, причин вердикта по дискам нет (строки истории — до перевода ПК на загрузку по сети), часы с проблемами
+// дисков не считаются, медленная сеть больше 2 ч — «наблюдать». Обычный ПК с теми же строками — причины по дискам есть,
+// медленная сеть в вердикт не входит.
+func TestClubMapComputerHealthDiskless(t *testing.T) {
+	now := time.Date(2026, 11, 4, 7, 0, 0, 0, time.UTC)
+	e := newWeeklyEnv(t, now)
+	_, manager := e.staff("Менеджер", "manager")
+	zone := e.scalar("INSERT INTO club_zones (club_id, name, created_at, updated_at) VALUES ($1, 'Зал', now(), now()) RETURNING id", e.club)
+	regular := e.scalar("INSERT INTO club_computers (club_id, club_zone_id, number, created_at, updated_at) VALUES ($1, $2, 1, now(), now()) RETURNING id", e.club, zone)
+	diskless := e.scalar("INSERT INTO club_computers (club_id, club_zone_id, number, created_at, updated_at) VALUES ($1, $2, 2, now(), now()) RETURNING id", e.club, zone)
+	cert := func(pc int64, serial string, diskless bool, issued string) {
+		t.Helper()
+		via := "enroll"
+		if diskless {
+			via = "image_key"
+		}
+		e.exec(`INSERT INTO agent_certificates (serial, club_id, club_computer_id, spki_sha256, not_before, not_after, issued_at,
+			issued_via, diskless, revoked_at, revoke_reason)
+			VALUES ($1, $2, $3, $4, $5::timestamptz, $5::timestamptz + interval '365 days', $5::timestamptz, $6, $7,
+			        CASE WHEN $7 THEN NULL ELSE $5::timestamptz + interval '1 day' END,
+			        CASE WHEN $7 THEN NULL ELSE 'reenrolled' END)`,
+			fmt.Sprintf("%x0%s", e.club, serial), e.club, pc, make([]byte, 32), issued, via, diskless)
+	}
+	// Обычный ПК — сертификат по коду. Бездисковый — сначала был с диском (код, год срока, отозван при переводе), затем
+	// сертификаты по ключу образа: решает последний выпущенный, а не самый долгий.
+	cert(regular, "a1", false, "2026-10-01T00:00:00Z")
+	cert(diskless, "b1", false, "2026-10-01T00:00:00Z")
+	cert(diskless, "b2", true, "2026-10-20T00:00:00Z")
+	for _, pc := range []int64{regular, diskless} {
+		for _, hour := range []string{"2026-11-02T10:00:00Z", "2026-11-02T11:00:00Z", "2026-11-02T12:00:00Z", "2026-11-02T13:00:00Z"} {
+			e.exec(`INSERT INTO computer_health_hourly (club_id, computer_id, hour, online_minutes, session_minutes,
+				system_disk_free_mb, system_disk_total_mb, smart_worst) VALUES ($1, $2, $3::timestamptz, 60, 0, 1000, 512000, 'failing')`,
+				e.club, pc, hour)
+		}
+		e.exec(`INSERT INTO computer_health_events (club_id, computer_id, kind, raised_at, cleared_at)
+			VALUES ($1, $2, 'disk_smart', '2026-11-02T09:00:00Z', '2026-11-02T14:00:00Z'),
+			       ($1, $2, 'network_slow', '2026-11-02T09:30:00Z', '2026-11-02T12:30:00Z')`, e.club, pc)
+	}
+
+	type view struct {
+		diskless bool
+		week     map[string]any
+		codes    []string
+	}
+	read := func(pc int64) view {
+		t.Helper()
+		r := e.get(manager, fmt.Sprintf("/api/club-computers/%d/health/weekly", pc))
+		expect(t, r, http.StatusOK, "weekly")
+		weeks := r.body["weeks"].([]any)
+		if len(weeks) != 1 {
+			t.Fatalf("weeks: %v", weeks)
+		}
+		w := weeks[0].(map[string]any)
+		v := view{diskless: r.body["diskless"] == true, week: w, codes: []string{}}
+		for _, x := range w["verdict"].(map[string]any)["reasons"].([]any) {
+			m := x.(map[string]any)
+			v.codes = append(v.codes, fmt.Sprintf("%s:%s:%v:%v", m["code"], m["level"], m["value"], m["threshold"]))
+		}
+		return v
+	}
+	reg := read(regular)
+	if reg.diskless || num(reg.week["system_disk_free_mb"]) != 1000 || reg.week["smart"] != "failing" ||
+		num(reg.week["problem_hours"]) != 4 || num(reg.week["network_slow_hours"]) != 3 ||
+		!reflect.DeepEqual(reg.codes, []string{"smart_failing:repair:0:0", "disk_low:watch:0:10"}) {
+		t.Errorf("regular PC: diskless %v, week %v, reasons %v", reg.diskless, reg.week, reg.codes)
+	}
+	dl := read(diskless)
+	if _, ok := dl.week["system_disk_free_mb"]; ok || dl.week["smart"] != nil || dl.week["system_disk_free_bp"] != nil {
+		t.Errorf("diskless PC week has disk fields: %v", dl.week)
+	}
+	if !dl.diskless || num(dl.week["problem_hours"]) != 3 || num(dl.week["network_slow_hours"]) != 3 ||
+		dl.week["verdict"].(map[string]any)["level"] != "watch" || !reflect.DeepEqual(dl.codes, []string{"network_slow:watch:3:1000"}) {
+		t.Errorf("diskless PC: diskless %v, week %v, reasons %v", dl.diskless, dl.week, dl.codes)
+	}
+
+	// Состояние и точки по часам тоже несут признак (фронт прячет разделы дисков даже у ПК не в сети).
+	for pc, want := range map[int64]bool{regular: false, diskless: true} {
+		r := e.get(manager, fmt.Sprintf("/api/club-computers/%d/health", pc))
+		expect(t, r, http.StatusOK, "health")
+		if r.body["diskless"] != want {
+			t.Errorf("health %d: diskless = %v, want %v", pc, r.body["diskless"], want)
+		}
+		q := "?from=" + url.QueryEscape("2026-11-02T00:00:00Z") + "&to=" + url.QueryEscape("2026-11-03T00:00:00Z")
+		r = e.get(manager, fmt.Sprintf("/api/club-computers/%d/health/hourly%s", pc, q))
+		expect(t, r, http.StatusOK, "hourly")
+		if r.body["diskless"] != want || len(r.body["items"].([]any)) != 4 {
+			t.Errorf("hourly %d: diskless = %v, want %v (%v)", pc, r.body["diskless"], want, r.body)
+		}
+	}
+}

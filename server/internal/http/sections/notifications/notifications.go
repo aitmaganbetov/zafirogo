@@ -313,7 +313,7 @@ var problemLabels = map[string]string{
 	health.KindMouse:       "Мышь не подключена",
 	health.KindKeyboard:    "Клавиатура не подключена",
 	health.KindMonitor:     "Монитор не подключён",
-	health.KindNetworkSlow: "Скорость сети упала",
+	health.KindNetworkSlow: "Медленная сеть",
 	health.KindUnstable:    "Нестабильная работа: сбои за 7 суток",
 }
 

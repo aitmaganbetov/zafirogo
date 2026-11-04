@@ -1,3 +1,4 @@
+using Zafiro.Agent.Core;
 using Zafiro.Agent.Core.Health;
 using Zafiro.Agent.Service.Platform;
 using Zafiro.Agent.Tests.Support;
@@ -50,6 +51,39 @@ public sealed class HealthTests : IDisposable
         Assert.Equal(3600ul, h.UptimeSeconds);
         Assert.Equal(2u, h.UnexpectedShutdowns7D);
         Assert.Equal(1u, h.Bugchecks7D);
+    }
+
+    [Fact]
+    public void Бездисковый_ПК_диски_и_SMART_не_собираются()
+    {
+        var c = new HealthCollector(_probe, _clock, options: new HealthCollectorOptions { Diskless = true });
+        for (var i = 0; i < 3; i++)
+        {
+            var h = c.Collect("agent.example", out var urgent);
+            Assert.False(urgent);
+            Assert.Empty(h.Disks);
+            Assert.Equal(650, h.CpuTempDecicelsius); // остальное — как обычно
+            Assert.Equal(1000u, h.LinkSpeedMbps);
+            Assert.Equal(4, h.Peripherals.Count);
+            _clock.Advance(TimeSpan.FromMinutes(6)); // дольше SmartRefresh
+        }
+
+        Assert.Equal(0, _probe.DiskCalls);
+        Assert.Equal(0, _probe.SmartCalls);
+    }
+
+    [Fact]
+    public async Task Runtime_бездискового_ПК_не_читает_диски()
+    {
+        var platform = new FakePlatform();
+        var options = new AgentOptions { EnrollEndpoint = "localhost:1", Diskless = true };
+        await using var rt = Runtimes.Create(_dir.Path, platform, _pki, time: _clock, options: options);
+        await rt.Health.TickAsync(CancellationToken.None);
+        var st = rt.NextStatus();
+        Assert.NotNull(st.Health);
+        Assert.Empty(st.Health.Disks);
+        Assert.Equal(0, platform.FakeHealth.DiskCalls);
+        Assert.Equal(0, platform.FakeHealth.SmartCalls);
     }
 
     [Fact]

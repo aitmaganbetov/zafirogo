@@ -12,7 +12,6 @@ import (
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
-	"github.com/aitmaganbetov/zafirogo/server/internal/clubmap"
 	clubmapapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/clubmap"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -50,11 +49,12 @@ func optPtr(v *int32) *int64 {
 	return &n
 }
 
-func weekOf(r store.ComputerHealthWeeklyRow) health.Week {
+func weekOf(r store.ComputerHealthWeeklyRow, diskless bool) health.Week {
 	return health.Week{
 		CPUTempAvgDeci: int64(r.CpuTempAvgDeci), GPUTempAvgDeci: int64(r.GpuTempAvgDeci),
 		CPUHotHours: r.CpuHotHours, GPUHotHours: r.GpuHotHours, Shutdowns: r.UnexpectedShutdowns, Bugchecks: r.Bugchecks,
-		SystemDiskFreeBP: r.SystemDiskFreeBp, SmartRank: int(r.SmartRank),
+		SystemDiskFreeBP: r.SystemDiskFreeBp, SmartRank: int(r.SmartRank), NetworkSlowHours: r.NetworkSlowHours,
+		Diskless: diskless,
 	}
 }
 
@@ -83,16 +83,14 @@ func (h *handlers) GetComputerHealthWeekly(ctx context.Context, req clubmapapi.G
 	clubID, now := httpx.ClubID(ctx), h.d.NowFunc()
 	rules := h.d.HealthVerdict.WithDefaults()
 	var (
-		rows []store.ComputerHealthWeeklyRow
-		loc  = time.UTC
+		rows     []store.ComputerHealthWeeklyRow
+		loc      = time.UTC
+		diskless bool
 	)
 	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
-		ok, err := q.ComputerHealthComputerExists(ctx, store.ComputerHealthComputerExistsParams{ClubID: clubID, ComputerID: req.ComputerId})
-		if err != nil {
+		var err error
+		if diskless, err = healthComputer(ctx, q, clubID, req.ComputerId); err != nil {
 			return err
-		}
-		if !ok {
-			return clubmap.ErrNotFound
 		}
 		club, err := q.ClubLocaleTimezone(ctx, clubID)
 		if err != nil {
@@ -103,7 +101,7 @@ func (h *handlers) GetComputerHealthWeekly(ctx context.Context, req clubmapapi.G
 		}
 		cur := weekStartIn(now, loc)
 		rows, err = q.ComputerHealthWeekly(ctx, store.ComputerHealthWeeklyParams{
-			Tz: loc.String(), CpuHotDeci: rules.CPUTempC * 10, GpuHotDeci: rules.GPUTempC * 10,
+			Tz: loc.String(), CpuHotDeci: rules.CPUTempC * 10, GpuHotDeci: rules.GPUTempC * 10, Diskless: diskless,
 			ClubID: clubID, ComputerID: req.ComputerId,
 			FromAt: cur.AddDate(0, 0, -7*weeks), ToAt: cur.AddDate(0, 0, 7), // +1 неделя раньше — для тренда
 		})
@@ -115,9 +113,9 @@ func (h *handlers) GetComputerHealthWeekly(ctx context.Context, req clubmapapi.G
 	first := weekStartIn(now, loc).AddDate(0, 0, -7*(weeks-1))
 	byDay := make(map[string]health.Week, len(rows))
 	for _, r := range rows {
-		byDay[r.WeekStart.Format(time.DateOnly)] = weekOf(r)
+		byDay[r.WeekStart.Format(time.DateOnly)] = weekOf(r, diskless)
 	}
-	out := clubmapapi.HealthWeekPage{Weeks: make([]clubmapapi.HealthWeek, 0, len(rows))}
+	out := clubmapapi.HealthWeekPage{Diskless: diskless, Weeks: make([]clubmapapi.HealthWeek, 0, len(rows))}
 	for _, r := range rows {
 		start := time.Date(r.WeekStart.Year(), r.WeekStart.Month(), r.WeekStart.Day(), 0, 0, 0, 0, loc)
 		if start.Before(first) {
@@ -134,12 +132,16 @@ func (h *handlers) GetComputerHealthWeekly(ctx context.Context, req clubmapapi.G
 			GpuLoadAvgBp: optInt(r.GpuLoadAvgBp), GpuLoadMaxBp: optInt(r.GpuLoadMaxBp),
 			CpuTempAvgDeci: optInt(r.CpuTempAvgDeci), CpuTempMaxDeci: optInt(r.CpuTempMaxDeci),
 			GpuTempAvgDeci: optInt(r.GpuTempAvgDeci), GpuTempMaxDeci: optInt(r.GpuTempMaxDeci),
-			CpuHotHours: r.CpuHotHours, GpuHotHours: r.GpuHotHours, ProblemHours: r.ProblemHours,
+			CpuHotHours: r.CpuHotHours, GpuHotHours: r.GpuHotHours, ProblemHours: r.ProblemHours, NetworkSlowHours: r.NetworkSlowHours,
 			UnexpectedShutdowns: r.UnexpectedShutdowns, Bugchecks: r.Bugchecks, PeripheralDisconnects: r.PeripheralDisconnects,
-			SystemDiskFreeMb: optInt(r.SystemDiskFreeMb), SystemDiskFreeBp: optInt(r.SystemDiskFreeBp),
-			Verdict: verdictOf(health.Judge(weekOf(r), prev, rules)),
+			Verdict: verdictOf(health.Judge(weekOf(r, diskless), prev, rules)),
 		}
-		if s := health.SmartName(int(r.SmartRank)); s != "" {
+		// Бездисковый ПК: дисков нет — поля системного диска и SMART не отдаются (старые строки истории — до перевода
+		// ПК на загрузку по сети).
+		if !diskless {
+			w.SystemDiskFreeMb, w.SystemDiskFreeBp = optInt(r.SystemDiskFreeMb), optInt(r.SystemDiskFreeBp)
+		}
+		if s := health.SmartName(int(r.SmartRank)); s != "" && !diskless {
 			v := clubmapapi.HealthWeekSmart(s)
 			w.Smart = &v
 		}
@@ -158,14 +160,14 @@ func (h *handlers) GetComputerHealthHourly(ctx context.Context, req clubmapapi.G
 		return nil, httpx.RuleErrorWith("to", "before_or_equal", "from + 8 days")
 	}
 	clubID := httpx.ClubID(ctx)
-	var rows []store.ComputerHealthHourlyPointsRow
+	var (
+		rows     []store.ComputerHealthHourlyPointsRow
+		diskless bool
+	)
 	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
-		ok, err := q.ComputerHealthComputerExists(ctx, store.ComputerHealthComputerExistsParams{ClubID: clubID, ComputerID: req.ComputerId})
-		if err != nil {
+		var err error
+		if diskless, err = healthComputer(ctx, q, clubID, req.ComputerId); err != nil {
 			return err
-		}
-		if !ok {
-			return clubmap.ErrNotFound
 		}
 		rows, err = q.ComputerHealthHourlyPoints(ctx, store.ComputerHealthHourlyPointsParams{
 			ClubID: clubID, ComputerID: req.ComputerId, FromAt: from, ToAt: to})
@@ -174,7 +176,7 @@ func (h *handlers) GetComputerHealthHourly(ctx context.Context, req clubmapapi.G
 	if err != nil {
 		return nil, err
 	}
-	out := clubmapapi.HealthHourPage{Items: make([]clubmapapi.HealthHour, 0, len(rows))}
+	out := clubmapapi.HealthHourPage{Diskless: diskless, Items: make([]clubmapapi.HealthHour, 0, len(rows))}
 	for _, r := range rows {
 		out.Items = append(out.Items, clubmapapi.HealthHour{
 			Hour: r.Hour, OnlineMinutes: int64(r.OnlineMinutes), SessionMinutes: int64(r.SessionMinutes),

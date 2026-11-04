@@ -242,6 +242,24 @@ return 1
 
 func i64(v int64) string { return strconv.FormatInt(v, 10) }
 
+// diskFacts — свободное место и объём системного диска (-1 — не измерено) и худший SMART измерения. Бездисковый ПК
+// (S7-H-18) — «не измерено»: тома образа к ПК не относятся.
+func diskFacts(hh *presence.Health) (free, total int64, smart int) {
+	free = -1
+	if hh.Diskless {
+		return free, 0, 0
+	}
+	for _, d := range hh.Disks {
+		if r := smartRank(d.Smart); r > smart {
+			smart = r
+		}
+		if d.System && d.TotalMB > 0 && free < 0 {
+			free, total = int64(d.FreeMB), int64(d.TotalMB) // #nosec G115 -- ≤ 1 ПиБ в МБ (stream.validateHealth)
+		}
+	}
+	return free, total, smart
+}
+
 // Record добавляет измерение в агрегат часа s.At (одна команда Valkey).
 func (h *Hourly) Record(ctx context.Context, s Sample) error {
 	if h == nil || s.ClubID <= 0 || s.ComputerID <= 0 {
@@ -264,14 +282,7 @@ func (h *Hourly) Record(ctx context.Context, s Sample) error {
 		if hh.GPUTempDeci > 0 {
 			gt = int64(hh.GPUTempDeci)
 		}
-		for _, d := range hh.Disks {
-			if r := smartRank(d.Smart); r > smart {
-				smart = r
-			}
-			if d.System && d.TotalMB > 0 && free < 0 {
-				free, total = int64(d.FreeMB), int64(d.TotalMB) // #nosec G115 -- ≤ 1 ПиБ в МБ (stream.validateHealth)
-			}
-		}
+		free, total, smart = diskFacts(hh)
 		sd, bc = int64(hh.Shutdowns7d), int64(hh.Bugchecks7d)
 	}
 	online := OnlineMinutes(s.Since, at, h.MaxGap)

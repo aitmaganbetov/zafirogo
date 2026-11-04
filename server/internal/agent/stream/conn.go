@@ -58,6 +58,8 @@ type conn struct {
 	caps    presence.Capabilities
 	// monitor — проблемы здоровья (nil — выключено); только горутина чтения.
 	monitor *health.Monitor
+	// diskless — бездисковый ПК (сертификат подключения выпущен по ключу образа): диски в здоровье не хранятся.
+	diskless bool
 
 	mu           sync.Mutex
 	queue        []*agentv1.ServerMessage
@@ -304,7 +306,7 @@ func (s *Service) Connect(st agentv1.AgentService_ConnectServer) error {
 		return statusErr(codes.Unavailable, agentv1.ErrorCode_ERROR_CODE_INTERNAL, "presence unavailable")
 	}
 	// Карточка (и последний seq) — после взятия владения.
-	row, err := s.rec.Load(ctx, id.ClubID, id.ComputerID)
+	row, err := s.rec.Load(ctx, id)
 	if err != nil {
 		relCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		_, _ = s.store.Release(relCtx, own, presence.State{ClubID: id.ClubID, ComputerID: id.ComputerID, LastSeenAt: s.o.Now().UTC()}, 0)
@@ -325,6 +327,7 @@ func (s *Service) Connect(st agentv1.AgentService_ConnectServer) error {
 		maxSent:  hello.GetLastCommandSeq(),
 		inflight: map[string]*inflight{},
 		tracker:  s.rec.Track(id.ClubID, id.ComputerID, row.AgentState),
+		diskless: row.Diskless,
 	}
 	if !s.o.Health.Disabled {
 		c.monitor = health.NewMonitor(s.o.Health.Thresholds, s.health, id.ClubID, id.ComputerID, s.o.Log)
@@ -363,7 +366,7 @@ func (s *Service) Connect(st agentv1.AgentService_ConnectServer) error {
 	if freshBoot && s.o.Events != nil {
 		if err := s.o.Events.FreshBoot(ctx, id); err != nil {
 			s.o.Log.Warn("agent fresh boot hook failed", "computer_id", id.ComputerID, "err", err)
-		} else if row, err = s.rec.Load(ctx, id.ClubID, id.ComputerID); err != nil {
+		} else if row, err = s.rec.Load(ctx, id); err != nil {
 			return statusErr(codes.Internal, agentv1.ErrorCode_ERROR_CODE_INTERNAL, "internal error")
 		}
 	}
@@ -503,6 +506,9 @@ func (c *conn) applyStatus(s *agentv1.Status, now time.Time) (significant bool) 
 	}
 	if s.GetHealth() != nil {
 		c.st.Health = presence.HealthFrom(s.GetHealth(), now)
+		if c.diskless {
+			c.st.Health.WithoutDisks()
+		}
 	}
 	c.st.LastSeenAt = now.UTC()
 	return c.st.Significant(prev)

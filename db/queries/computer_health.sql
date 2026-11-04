@@ -32,6 +32,11 @@ WHERE club_id = sqlc.arg(club_id) AND computer_id = sqlc.arg(computer_id)
 ORDER BY raised_at DESC, id DESC
 LIMIT sqlc.arg(page_size);
 
--- name: ComputerHealthComputerExists :one
--- Карточка ПК клуба есть (404 для чужого или удалённого ПК).
-SELECT EXISTS (SELECT 1 FROM club_computers WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(computer_id))::boolean;
+-- name: ComputerHealthComputer :one
+-- Карточка ПК клуба (нет строки — 404 для чужого или удалённого ПК) и признак «бездисковый»: последний выпущенный
+-- сертификат ПК — по ключу образа (agent_certificates.diskless, 0013, Q-037). Индекс club_computer_index.
+SELECT COALESCE((SELECT ac.diskless FROM agent_certificates ac
+                 WHERE ac.club_id = c.club_id AND ac.club_computer_id = c.id
+                 ORDER BY ac.issued_at DESC LIMIT 1), false)::boolean AS diskless
+FROM club_computers c
+WHERE c.club_id = sqlc.arg(club_id) AND c.id = sqlc.arg(computer_id);

@@ -142,6 +142,7 @@ const (
 	HealthVerdictReasonCodeDiskLow      HealthVerdictReasonCode = "disk_low"
 	HealthVerdictReasonCodeGpuHot       HealthVerdictReasonCode = "gpu_hot"
 	HealthVerdictReasonCodeGpuTempRise  HealthVerdictReasonCode = "gpu_temp_rise"
+	HealthVerdictReasonCodeNetworkSlow  HealthVerdictReasonCode = "network_slow"
 	HealthVerdictReasonCodeShutdowns    HealthVerdictReasonCode = "shutdowns"
 	HealthVerdictReasonCodeSmartFailing HealthVerdictReasonCode = "smart_failing"
 	HealthVerdictReasonCodeSmartWarning HealthVerdictReasonCode = "smart_warning"
@@ -161,6 +162,8 @@ func (e HealthVerdictReasonCode) Valid() bool {
 	case HealthVerdictReasonCodeGpuHot:
 		return true
 	case HealthVerdictReasonCodeGpuTempRise:
+		return true
+	case HealthVerdictReasonCodeNetworkSlow:
 		return true
 	case HealthVerdictReasonCodeShutdowns:
 		return true
@@ -287,10 +290,15 @@ type ComputerHealthView struct {
 	AgentVersion *string                      `json:"agent_version,omitempty"`
 	ComputerId   int64                        `json:"computer_id"`
 	Connection   ComputerHealthViewConnection `json:"connection"`
-	Health       *HealthSnapshot              `json:"health,omitempty"`
-	Load         *ComputerLoad                `json:"load,omitempty"`
-	Problems     []HealthProblem              `json:"problems"`
-	RttMs        *int64                       `json:"rtt_ms,omitempty"`
+
+	// Diskless Бездисковый ПК (загрузка по сети с сервера образов; последний сертификат ПК выпущен по ключу образа,
+	// agent_certificates.diskless). Локальных дисков нет: агент их не собирает, сервер не считает по ним проблемы и
+	// причины вердикта, disks пуст, поля системного диска и SMART недель — null (docs/agent-protocol.md §16.9).
+	Diskless HealthDiskless  `json:"diskless"`
+	Health   *HealthSnapshot `json:"health,omitempty"`
+	Load     *ComputerLoad   `json:"load,omitempty"`
+	Problems []HealthProblem `json:"problems"`
+	RttMs    *int64          `json:"rtt_ms,omitempty"`
 }
 
 // ComputerHealthViewConnection defines model for ComputerHealthView.Connection.
@@ -415,6 +423,11 @@ type EndSessionsResult struct {
 	Message string `json:"message"`
 }
 
+// HealthDiskless Бездисковый ПК (загрузка по сети с сервера образов; последний сертификат ПК выпущен по ключу образа,
+// agent_certificates.diskless). Локальных дисков нет: агент их не собирает, сервер не считает по ним проблемы и
+// причины вердикта, disks пуст, поля системного диска и SMART недель — null (docs/agent-protocol.md §16.9).
+type HealthDiskless = bool
+
 // HealthEvent defines model for HealthEvent.
 type HealthEvent struct {
 	// ClearedAt Когда проблема ушла (null — ещё есть).
@@ -456,7 +469,11 @@ type HealthHour struct {
 
 // HealthHourPage defines model for HealthHourPage.
 type HealthHourPage struct {
-	Items []HealthHour `json:"items"`
+	// Diskless Бездисковый ПК (загрузка по сети с сервера образов; последний сертификат ПК выпущен по ключу образа,
+	// agent_certificates.diskless). Локальных дисков нет: агент их не собирает, сервер не считает по ним проблемы и
+	// причины вердикта, disks пуст, поля системного диска и SMART недель — null (docs/agent-protocol.md §16.9).
+	Diskless HealthDiskless `json:"diskless"`
+	Items    []HealthHour   `json:"items"`
 }
 
 // HealthProblem Проблема здоровья ПК (agent.health.*): cpu_hot / gpu_hot — перегрев; disk_low — мало места; disk_smart —
@@ -502,7 +519,8 @@ type HealthVerdictReason struct {
 	// Code smart_failing / smart_warning — SMART диска; bugchecks — «синие экраны» (value — сколько, threshold — порог);
 	// cpu_hot / gpu_hot — часов перегрева (value — часы, threshold — °C); shutdowns — внезапные выключения;
 	// disk_low — свободно на системном диске (value, threshold — %); cpu_temp_rise / gpu_temp_rise — рост средней
-	// температуры к прошлой неделе (value, threshold — °C).
+	// температуры к прошлой неделе (value, threshold — °C); network_slow — только у бездискового ПК: часов с медленной
+	// сетью (value — часы, threshold — Мбит/с).
 	Code      HealthVerdictReasonCode  `json:"code"`
 	Level     HealthVerdictReasonLevel `json:"level"`
 	Threshold int64                    `json:"threshold"`
@@ -512,7 +530,8 @@ type HealthVerdictReason struct {
 // HealthVerdictReasonCode smart_failing / smart_warning — SMART диска; bugchecks — «синие экраны» (value — сколько, threshold — порог);
 // cpu_hot / gpu_hot — часов перегрева (value — часы, threshold — °C); shutdowns — внезапные выключения;
 // disk_low — свободно на системном диске (value, threshold — %); cpu_temp_rise / gpu_temp_rise — рост средней
-// температуры к прошлой неделе (value, threshold — °C).
+// температуры к прошлой неделе (value, threshold — °C); network_slow — только у бездискового ПК: часов с медленной
+// сетью (value — часы, threshold — Мбит/с).
 type HealthVerdictReasonCode string
 
 // HealthVerdictReasonLevel defines model for HealthVerdictReason.Level.
@@ -541,6 +560,9 @@ type HealthWeek struct {
 	GpuLoadMaxBp   *int64    `json:"gpu_load_max_bp,omitempty"`
 	GpuTempAvgDeci *int64    `json:"gpu_temp_avg_deci,omitempty"`
 	GpuTempMaxDeci *int64    `json:"gpu_temp_max_deci,omitempty"`
+
+	// NetworkSlowHours Часов в сети, когда была открыта проблема network_slow (скорость сети ниже порога).
+	NetworkSlowHours int64 `json:"network_slow_hours"`
 
 	// OnlineMinutes Минут в сети.
 	OnlineMinutes int64 `json:"online_minutes"`
@@ -581,7 +603,11 @@ type HealthWeekSmart string
 
 // HealthWeekPage defines model for HealthWeekPage.
 type HealthWeekPage struct {
-	Weeks []HealthWeek `json:"weeks"`
+	// Diskless Бездисковый ПК (загрузка по сети с сервера образов; последний сертификат ПК выпущен по ключу образа,
+	// agent_certificates.diskless). Локальных дисков нет: агент их не собирает, сервер не считает по ним проблемы и
+	// причины вердикта, disks пуст, поля системного диска и SMART недель — null (docs/agent-protocol.md §16.9).
+	Diskless HealthDiskless `json:"diskless"`
+	Weeks    []HealthWeek   `json:"weeks"`
 }
 
 // MapTariff defines model for MapTariff.

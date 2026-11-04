@@ -41,7 +41,9 @@ ON CONFLICT (club_id, computer_id, hour) DO UPDATE SET
 -- Панель ПК «По неделям»: агрегаты почасовой истории по неделям (понедельник 00:00 в поясе клуба). Период — диапазоном
 -- по hour (индекс — первичный ключ club_id, computer_id, hour); границы недель считает сервер в том же поясе.
 -- Средние — взвешенные по минутам онлайн (целочисленно, без float). Часы с проблемами — часы онлайн, в которые была
--- открыта хоть одна проблема журнала computer_health_events (индекс history_index). Нет измерений — -1 (smart_rank — 0:
+-- открыта хоть одна проблема журнала computer_health_events (индекс history_index); у бездискового ПК (diskless)
+-- проблемы дисков не считаются (записаны до того, как ПК стал бездисковым, или старым агентом). network_slow_hours —
+-- часы онлайн с открытой проблемой network_slow (вердикт бездискового ПК). Нет измерений — -1 (smart_rank — 0:
 -- 1 ok, 2 warning, 3 failing).
 SELECT date_trunc('week', h.hour AT TIME ZONE sqlc.arg(tz)::text)::date AS week_start,
        count(*)::bigint AS hours,
@@ -67,8 +69,14 @@ SELECT date_trunc('week', h.hour AT TIME ZONE sqlc.arg(tz)::text)::date AS week_
        count(*) FILTER (WHERE EXISTS (
            SELECT 1 FROM computer_health_events e
            WHERE e.club_id = h.club_id AND e.computer_id = h.computer_id
-             AND e.raised_at < h.hour + interval '1 hour' AND (e.cleared_at IS NULL OR e.cleared_at > h.hour)))::bigint
+             AND e.raised_at < h.hour + interval '1 hour' AND (e.cleared_at IS NULL OR e.cleared_at > h.hour)
+             AND NOT (sqlc.arg(diskless)::boolean AND e.kind IN ('disk_low', 'disk_smart'))))::bigint
            AS problem_hours,
+       count(*) FILTER (WHERE EXISTS (
+           SELECT 1 FROM computer_health_events e
+           WHERE e.club_id = h.club_id AND e.computer_id = h.computer_id AND e.kind = 'network_slow'
+             AND e.raised_at < h.hour + interval '1 hour' AND (e.cleared_at IS NULL OR e.cleared_at > h.hour)))::bigint
+           AS network_slow_hours,
        coalesce(sum(h.unexpected_shutdowns), 0)::bigint AS unexpected_shutdowns,
        coalesce(sum(h.bugchecks), 0)::bigint AS bugchecks,
        coalesce(sum(h.peripheral_disconnects), 0)::bigint AS peripheral_disconnects,

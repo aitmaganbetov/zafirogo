@@ -77,7 +77,8 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
         _bootId = platform.GetBootId();
         _device = platform.GetDeviceInfo(options.AgentVersion, options.Diskless);
         State.Changed += OnStateChanged;
-        var collector = new HealthCollector(platform.Health ?? NullHealthProbe.Instance, _time, loggers.CreateLogger("Zafiro.Agent.Health"));
+        var collector = new HealthCollector(platform.Health ?? NullHealthProbe.Instance, _time, loggers.CreateLogger("Zafiro.Agent.Health"),
+            new HealthCollectorOptions { Diskless = options.Diskless });
         _health = new HealthMonitor(collector, () => HealthCollectInterval, ServerHost, options.HealthPollInterval, options.HealthSourceTimeout, _time,
             loggers.CreateLogger("Zafiro.Agent.Health"));
         _health.Urgent += OnHealthUrgent;

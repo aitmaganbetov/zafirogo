@@ -251,3 +251,77 @@ func TestHealthPeripheralChangeBypassesStatusGap(t *testing.T) {
 		t.Fatalf("temperature-only status within the gap must still be dropped: %d", st.Health.CPUTempDeci)
 	}
 }
+
+// certificate — строка agent_certificates ПК (серийный номер подключения); diskless — выпущен по ключу образа.
+func certificate(t *testing.T, club, pc int64, serial string, diskless bool) {
+	t.Helper()
+	via := "enroll"
+	if diskless {
+		via = "image_key"
+	}
+	if _, err := testEnv.db.Owner.Exec(context.Background(), `INSERT INTO agent_certificates
+		(serial, club_id, club_computer_id, spki_sha256, not_before, not_after, issued_via, diskless)
+		VALUES ($1, $2, $3, $4, now() - interval '1 hour', now() + interval '1 day', $5, $6)`,
+		serial, club, pc, make([]byte, 32), via, diskless); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// badDisksStatus — health с «плохими» дисками (SMART предсказывает отказ, места нет) и сетью 100 Мбит/с.
+func badDisksStatus() *agentv1.AgentMessage {
+	return &agentv1.AgentMessage{Payload: &agentv1.AgentMessage_Status{Status: &agentv1.Status{
+		State: agentv1.ComputerState_COMPUTER_STATE_IDLE,
+		Health: &agentv1.ComputerHealth{CpuTempDecicelsius: 600, LinkSpeedMbps: 100,
+			Disks: []*agentv1.DiskHealth{{Mount: "C:", System: true, TotalMb: 512000, FreeMb: 1000, Smart: agentv1.DiskSmart_DISK_SMART_FAILING}}},
+	}}}
+}
+
+// Бездисковый ПК (сертификат по ключу образа, S7-H-18): диски из health (старый агент, тома образа) не хранятся и
+// проблем не дают, сеть 100 Мбит/с — проблема сразу; тот же Status обычного ПК — проблемы дисков, сеть 100 — норма.
+func TestHealthDisklessIgnoresDisks(t *testing.T) {
+	ctx := context.Background()
+	club := testEnv.club(t)
+	diskless, regular := testEnv.computer(t, club, 1), testEnv.computer(t, club, 2)
+	certificate(t, club, diskless, "d15c1e55", true)
+	certificate(t, club, regular, "0e9a1a01", false)
+	in := testEnv.instance(t, "a", healthTune(&liveRecorder{}))
+	a, _ := in.connectSerial(t, club, diskless, "d15c1e55", nil)
+	b, _ := in.connectSerial(t, club, regular, "0e9a1a01", nil)
+	a.send(badDisksStatus())
+	b.send(badDisksStatus())
+
+	problems := func(pc int64) (presence.State, bool) {
+		st, ok, err := in.svc.Presence().Get(ctx, club, pc)
+		return st, err == nil && ok && st.Health != nil
+	}
+	eventually(t, 3*time.Second, "regular PC: disk problems", func() bool {
+		st, ok := problems(regular)
+		return ok && slices.Equal(st.Problems, []string{health.KindDiskLow, health.KindDiskSmart})
+	})
+	eventually(t, 3*time.Second, "diskless PC: only slow network", func() bool {
+		st, ok := problems(diskless)
+		return ok && slices.Equal(st.Problems, []string{health.KindNetworkSlow})
+	})
+	st, _ := problems(diskless)
+	if !st.Health.Diskless || len(st.Health.Disks) != 0 {
+		t.Fatalf("diskless snapshot keeps disks: %+v", st.Health)
+	}
+	if st, _ := problems(regular); st.Health.Diskless || len(st.Health.Disks) != 1 {
+		t.Fatalf("regular snapshot: %+v", st.Health)
+	}
+	var kinds []string
+	rows, err := testEnv.db.Owner.Query(ctx, `SELECT kind FROM computer_health_events WHERE computer_id = $1 ORDER BY kind`, diskless)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			t.Fatal(err)
+		}
+		kinds = append(kinds, k)
+	}
+	if rows.Err() != nil || !slices.Equal(kinds, []string{health.KindNetworkSlow}) {
+		t.Fatalf("diskless history = %v (%v)", kinds, rows.Err())
+	}
+}

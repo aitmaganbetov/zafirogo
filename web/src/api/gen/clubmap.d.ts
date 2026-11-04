@@ -585,6 +585,7 @@ export interface components {
         ComputerHealthView: {
             /** Format: int64 */
             computer_id: number;
+            diskless: components["schemas"]["HealthDiskless"];
             /** @enum {string} */
             connection: "online" | "offline";
             agent_version?: string | null;
@@ -594,6 +595,12 @@ export interface components {
             health?: components["schemas"]["HealthSnapshot"] | null;
             problems: components["schemas"]["HealthProblem"][];
         };
+        /**
+         * @description Бездисковый ПК (загрузка по сети с сервера образов; последний сертификат ПК выпущен по ключу образа,
+         *     agent_certificates.diskless). Локальных дисков нет: агент их не собирает, сервер не считает по ним проблемы и
+         *     причины вердикта, disks пуст, поля системного диска и SMART недель — null (docs/agent-protocol.md §16.9).
+         */
+        HealthDiskless: boolean;
         HealthSnapshot: {
             /**
              * Format: date-time
@@ -724,6 +731,11 @@ export interface components {
             problem_hours: number;
             /**
              * Format: int64
+             * @description Часов в сети, когда была открыта проблема network_slow (скорость сети ниже порога).
+             */
+            network_slow_hours: number;
+            /**
+             * Format: int64
              * @description Внезапных выключений за неделю.
              */
             unexpected_shutdowns: number;
@@ -768,10 +780,11 @@ export interface components {
              * @description smart_failing / smart_warning — SMART диска; bugchecks — «синие экраны» (value — сколько, threshold — порог);
              *     cpu_hot / gpu_hot — часов перегрева (value — часы, threshold — °C); shutdowns — внезапные выключения;
              *     disk_low — свободно на системном диске (value, threshold — %); cpu_temp_rise / gpu_temp_rise — рост средней
-             *     температуры к прошлой неделе (value, threshold — °C).
+             *     температуры к прошлой неделе (value, threshold — °C); network_slow — только у бездискового ПК: часов с медленной
+             *     сетью (value — часы, threshold — Мбит/с).
              * @enum {string}
              */
-            code: "smart_failing" | "bugchecks" | "cpu_hot" | "gpu_hot" | "smart_warning" | "shutdowns" | "disk_low" | "cpu_temp_rise" | "gpu_temp_rise";
+            code: "smart_failing" | "bugchecks" | "cpu_hot" | "gpu_hot" | "smart_warning" | "shutdowns" | "disk_low" | "cpu_temp_rise" | "gpu_temp_rise" | "network_slow";
             /** @enum {string} */
             level: "watch" | "repair";
             /** Format: int64 */
@@ -780,6 +793,7 @@ export interface components {
             threshold: number;
         };
         HealthWeekPage: {
+            diskless: components["schemas"]["HealthDiskless"];
             weeks: components["schemas"]["HealthWeek"][];
         };
         HealthHour: {
@@ -811,6 +825,7 @@ export interface components {
             gpu_temp_max_deci?: number | null;
         };
         HealthHourPage: {
+            diskless: components["schemas"]["HealthDiskless"];
             items: components["schemas"]["HealthHour"][];
         };
         HealthEventPage: {

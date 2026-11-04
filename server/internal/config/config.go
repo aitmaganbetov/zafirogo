@@ -221,6 +221,9 @@ type AgentHealth struct {
 	VerdictShutdowns      int64 `koanf:"verdict_shutdowns"`
 	VerdictBugchecks      int64 `koanf:"verdict_bugchecks"`
 	VerdictTempRiseC      int32 `koanf:"verdict_temp_rise_c"`
+	// VerdictNetworkSlowHours — бездисковый ПК (S7-H-18): «наблюдать», если часов с медленной сетью (network_slow, у
+	// бездискового — ниже LinkFullMbps) за неделю больше этого.
+	VerdictNetworkSlowHours int64 `koanf:"verdict_network_slow_hours"`
 }
 
 // AgentUpdate — обновления агента. Решение «Обновления агента» (docs/DECISIONS.md): подпись Ed25519 обязательна,
@@ -647,6 +650,7 @@ func Defaults() map[string]any {
 		"agent.health.verdict_shutdowns":          3,
 		"agent.health.verdict_bugchecks":          1,
 		"agent.health.verdict_temp_rise_c":        5,
+		"agent.health.verdict_network_slow_hours": 2,
 
 		"events.stream.max_age":    "72h",
 		"events.stream.duplicates": "10m",
@@ -870,8 +874,9 @@ func (c *Config) validateHealth(add func(format string, args ...any)) {
 		add("agent.health.hourly_retention: должен быть ≥ 336h (две недели: вердикт сравнивает неделю с прошлой)")
 	}
 	if h.VerdictHotHours < 1 || h.VerdictHotHoursRepair <= h.VerdictHotHours || h.VerdictHotHoursRepair > 168 ||
-		h.VerdictShutdowns < 1 || h.VerdictBugchecks < 1 || h.VerdictTempRiseC < 1 || h.VerdictTempRiseC > 50 {
-		add("agent.health.verdict_*: hot_hours ≥ 1, hot_hours < hot_hours_repair ≤ 168, shutdowns ≥ 1, bugchecks ≥ 1, temp_rise_c 1..50")
+		h.VerdictShutdowns < 1 || h.VerdictBugchecks < 1 || h.VerdictTempRiseC < 1 || h.VerdictTempRiseC > 50 ||
+		h.VerdictNetworkSlowHours < 1 || h.VerdictNetworkSlowHours > 168 {
+		add("agent.health.verdict_*: hot_hours ≥ 1, hot_hours < hot_hours_repair ≤ 168, shutdowns ≥ 1, bugchecks ≥ 1, temp_rise_c 1..50, network_slow_hours 1..168")
 	}
 }
 

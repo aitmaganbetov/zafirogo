@@ -51,6 +51,16 @@ func TestJudge(t *testing.T) {
 		{"gpu rise without last week data — no trend", with(func(w *Week) { w.GPUTempAvgDeci = 900 }),
 			&Week{CPUTempAvgDeci: -1, GPUTempAvgDeci: -1}, VerdictOK, nil},
 		{"rise but no last week at all", with(func(w *Week) { w.CPUTempAvgDeci = 900 }), nil, VerdictOK, nil},
+		{"diskless: SMART failing and low disk give no reasons", with(func(w *Week) {
+			w.Diskless, w.SmartRank, w.SystemDiskFreeBP = true, smartRankFailing, 100
+		}), nil, VerdictOK, nil},
+		{"diskless: SMART warning — no reason", with(func(w *Week) { w.Diskless, w.SmartRank = true, smartRankWarning }), nil, VerdictOK, nil},
+		{"diskless: other rules still apply", with(func(w *Week) { w.Diskless, w.Bugchecks = true, 1 }), nil, VerdictRepair,
+			[]reason{{ReasonBugchecks, VerdictRepair, 1, 1}}},
+		{"diskless: slow network 2 h — not more than N", with(func(w *Week) { w.Diskless, w.NetworkSlowHours = true, 2 }), nil, VerdictOK, nil},
+		{"diskless: slow network 3 h → watch", with(func(w *Week) { w.Diskless, w.NetworkSlowHours = true, 3 }), nil, VerdictWatch,
+			[]reason{{ReasonNetworkSlow, VerdictWatch, 3, 1000}}},
+		{"regular PC: slow network is not a verdict reason", with(func(w *Week) { w.NetworkSlowHours = 30 }), nil, VerdictOK, nil},
 		{"repair wins over watch, reasons in rule order", with(func(w *Week) {
 			w.Shutdowns, w.Bugchecks, w.SmartRank = 4, 2, smartRankWarning
 		}), nil, VerdictRepair, []reason{{ReasonBugchecks, VerdictRepair, 2, 1}, {ReasonSmartWarning, VerdictWatch, 0, 0},

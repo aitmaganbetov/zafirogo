@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/identity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
@@ -49,12 +50,13 @@ func NewRecorder(pool db.Beginner, debounce time.Duration, now func() time.Time,
 // Writes — сколько UPDATE club_computers выполнил этот Recorder (метрика и тесты «нет записей без изменений»).
 func (r *Recorder) Writes() int64 { return r.writes.Load() }
 
-// Load читает карточку ПК клуба (для Hello и Welcome).
-func (r *Recorder) Load(ctx context.Context, clubID, computerID int64) (store.GetAgentComputerRow, error) {
+// Load читает карточку ПК клуба (для Hello и Welcome); Diskless — сертификат подключения выпущен по ключу образа.
+func (r *Recorder) Load(ctx context.Context, id identity.Identity) (store.GetAgentComputerRow, error) {
 	var row store.GetAgentComputerRow
-	err := db.InTenantTx(ctx, r.pool, clubID, func(q *store.Queries) error {
+	err := db.InTenantTx(ctx, r.pool, id.ClubID, func(q *store.Queries) error {
 		var err error
-		row, err = q.GetAgentComputer(ctx, store.GetAgentComputerParams{ClubID: clubID, ComputerID: computerID})
+		row, err = q.GetAgentComputer(ctx, store.GetAgentComputerParams{ClubID: id.ClubID, ComputerID: id.ComputerID,
+			CertSerial: id.CertSerial})
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

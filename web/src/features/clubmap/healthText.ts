@@ -6,7 +6,10 @@ import type { ComputerState, HealthProblem, HealthVerdictReason, HealthWeek } fr
 /** Сотые доли процента → целые проценты (0..100). */
 export const percent = (bp: number) => Math.min(100, Math.max(0, Math.round(bp / 100)));
 
-/** Подпись проблемы здоровья (ключи — литералы для проверки переводов). */
+/**
+ * Подпись проблемы здоровья (ключи — литералы для проверки переводов). «Медленная сеть» — одна подпись для всех ПК
+ * (у бездискового порог строже, S7-H-18, но проблема та же).
+ */
 export function problemLabel(t: TFunction, kind: HealthProblem | string): string {
   switch (kind) {
     case 'cpu_hot':
@@ -24,7 +27,7 @@ export function problemLabel(t: TFunction, kind: HealthProblem | string): string
     case 'monitor':
       return t('Монитор не подключён');
     case 'network_slow':
-      return t('Скорость сети упала');
+      return t('Медленная сеть');
     case 'unstable':
       return t('Нестабильная работа: сбои за 7 суток');
     default:
@@ -97,6 +100,8 @@ export function reasonLabel(t: TFunction, r: HealthVerdictReason): string {
       return t('Температура CPU выросла за неделю на {{value}} °C', { value: r.value });
     case 'gpu_temp_rise':
       return t('Температура GPU выросла за неделю на {{value}} °C', { value: r.value });
+    case 'network_slow':
+      return t('Медленная сеть (меньше {{threshold}} Мбит/с): {{hours}} ч', { threshold: r.threshold, hours: r.value });
     default:
       return r.code;
   }

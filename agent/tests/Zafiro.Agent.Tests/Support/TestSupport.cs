@@ -121,6 +121,7 @@ public sealed class FakeHealthProbe : IHealthProbe
 
     public int CpuTemp = 650;
     public int SmartCalls;
+    public int DiskCalls;
     public int CrashCalls;
     public int PeripheralCalls;
     public DiskSmart Smart = DiskSmart.Ok;
@@ -143,7 +144,11 @@ public sealed class FakeHealthProbe : IHealthProbe
 
     public GpuReading? Gpu() => GpuFails is { } e ? throw e : new GpuReading(710, 4200, 3100, true);
 
-    public IReadOnlyList<DiskSpace> Disks() => [new DiskSpace("C:", true, 476_000, 120_000), new DiskSpace("D:", false, 953_000, 800_000)];
+    public IReadOnlyList<DiskSpace> Disks()
+    {
+        Interlocked.Increment(ref DiskCalls);
+        return [new DiskSpace("C:", true, 476_000, 120_000), new DiskSpace("D:", false, 953_000, 800_000)];
+    }
 
     public IReadOnlyDictionary<string, DiskSmart> SmartStatus(IReadOnlyList<DiskSpace> disks)
     {

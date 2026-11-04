@@ -116,3 +116,16 @@ func TestRowFromAgg(t *testing.T) {
 		t.Errorf("empty aggregate: %+v", e)
 	}
 }
+
+// Почасовая история: системный диск и SMART — у обычного ПК; у бездискового — «не измерено», даже если диски пришли
+// (старый агент, тома образа).
+func TestDiskFactsDiskless(t *testing.T) {
+	disks := []presence.Disk{{Mount: "D:", TotalMB: 100, FreeMB: 1, Smart: presence.SmartWarning},
+		{Mount: "C:", System: true, TotalMB: 512000, FreeMB: 1000, Smart: presence.SmartFailing}}
+	if free, total, smart := diskFacts(&presence.Health{Disks: disks}); free != 1000 || total != 512000 || smart != smartRankFailing {
+		t.Errorf("regular: free %d total %d smart %d", free, total, smart)
+	}
+	if free, total, smart := diskFacts(&presence.Health{Disks: disks, Diskless: true}); free != -1 || total != 0 || smart != 0 {
+		t.Errorf("diskless: free %d total %d smart %d", free, total, smart)
+	}
+}

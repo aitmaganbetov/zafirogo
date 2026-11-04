@@ -313,6 +313,60 @@ describe('ClubMapPage', () => {
     expect(cur?.querySelector('button')?.getAttribute('aria-pressed')).toBe('true');
   });
 
+  // Бездисковый ПК (S7-H-18): ни строк дисков и SMART «Сейчас», ни системного диска «По неделям», ни проблем дисков в
+  // истории — пометка «Бездисковый ПК», сеть сразу после проблем, медленная сеть в сводке и причине вердикта.
+  it('hides disks of a diskless PC in both tabs', async () => {
+    const view = { ...onlineView(655), diskless: true, problems: ['network_slow'] };
+    view.health = { ...view.health, link_mbps: 100, disks: [{ mount: 'C:', system: true, total_mb: 512000, free_mb: 1024, smart: 'failing' }] };
+    const disklessWeeks = [{ ...weeks[0], network_slow_hours: 5,
+      verdict: { level: 'watch', reasons: [{ code: 'network_slow', level: 'watch', value: 5, threshold: 1000 }] } }];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/events')) {
+        return Promise.resolve(json({ items: [{ id: 2, kind: 'disk_smart', raised_at: '2026-10-15T08:00:00Z', cleared_at: null, details: {} },
+          { id: 1, kind: 'network_slow', raised_at: '2026-10-14T08:00:00Z', cleared_at: null, details: {} }], next_cursor: null }));
+      }
+      if (path.endsWith('/weekly')) return Promise.resolve(json({ diskless: true, weeks: disklessWeeks }));
+      return Promise.resolve(json(view));
+    });
+    setup();
+    fireEvent.click(document.querySelector('.cm-computer[data-id="7"]') as HTMLElement);
+    await waitFor(() => expect(document.querySelectorAll('#computer-health-info [role="tab"]')).toHaveLength(2));
+    const info = document.getElementById('computer-health-info') as HTMLElement;
+    const rows = () => [...info.querySelectorAll('dt')].map((dt) => dt.textContent);
+    expect(rows().slice(0, 3)).toEqual(['Бездисковый ПК', 'Проблемы', 'Сеть']);
+    expect(info.textContent).toContain('Медленная сеть');
+    expect(info.textContent).not.toContain('Диск C:');
+    expect(info.textContent).not.toContain('SMART');
+    const [, byWeek] = [...info.querySelectorAll('[role="tab"]')] as HTMLElement[];
+    fireEvent.click(byWeek as HTMLElement);
+    const week = info.querySelector('[data-week]') as HTMLElement;
+    expect(rows()[0]).toBe('Бездисковый ПК');
+    expect(week.textContent).toContain('Медленная сеть: 5 ч');
+    expect(week.textContent).toContain('Наблюдать · Медленная сеть (меньше 1000 Мбит/с): 5 ч');
+    expect(week.textContent).not.toContain('Системный диск');
+    await waitFor(() => expect(document.getElementById('computer-health-history')).not.toBeNull());
+    expect([...(document.getElementById('computer-health-history') as HTMLElement).querySelectorAll('dt')].map((dt) => dt.textContent))
+      .toEqual(['Медленная сеть']);
+  });
+
+  it('shows disks of a regular PC', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/events')) return Promise.resolve(json({ items: [], next_cursor: null }));
+      if (path.endsWith('/weekly')) return Promise.resolve(json({ diskless: false, weeks }));
+      return Promise.resolve(json({ ...onlineView(655), diskless: false }));
+    });
+    setup();
+    fireEvent.click(document.querySelector('.cm-computer[data-id="7"]') as HTMLElement);
+    await waitFor(() => expect(document.querySelectorAll('#computer-health-info [role="tab"]')).toHaveLength(2));
+    const info = document.getElementById('computer-health-info') as HTMLElement;
+    expect(info.textContent).toContain('Диск C:');
+    expect(info.textContent).not.toContain('Бездисковый ПК');
+    fireEvent.click([...info.querySelectorAll('[role="tab"]')][1] as HTMLElement);
+    expect(info.textContent).toContain('Системный диск: свободно не меньше 7 %');
+  });
+
   it('switches between the live state and weeks tabs', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const path = new URL((input as Request).url).pathname;

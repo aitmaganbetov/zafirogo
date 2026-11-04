@@ -520,7 +520,7 @@ func TestAgentHealth(t *testing.T) {
 		h.EventRetention != 90*24*time.Hour || h.LiveMinGap != 15*time.Second || h.LiveLoadStepPercent != 5 ||
 		h.LiveTempStepC != 2 || h.PingInterval != time.Minute || h.HourlyRetention != 180*24*time.Hour ||
 		h.VerdictHotHours != 2 || h.VerdictHotHoursRepair != 24 || h.VerdictShutdowns != 3 || h.VerdictBugchecks != 1 ||
-		h.VerdictTempRiseC != 5 {
+		h.VerdictTempRiseC != 5 || h.VerdictNetworkSlowHours != 2 {
 		t.Errorf("health defaults = %+v", h)
 	}
 	cfg, err = Load("", environ("ZAFIRO_AGENT_HEALTH_CPU_TEMP_C=95", "ZAFIRO_AGENT_HEALTH_PING_INTERVAL=0s"))
