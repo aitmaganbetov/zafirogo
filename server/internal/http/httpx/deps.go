@@ -13,6 +13,7 @@ import (
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/enroll"
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 	"github.com/aitmaganbetov/zafirogo/server/internal/apikey"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
@@ -67,6 +68,8 @@ type Deps struct {
 	Billing      *billingsvc.Service
 	Cash         *cashsvc.Service
 	Presence     Presence
+	// HealthVerdict — пороги вердикта исправности ПК за неделю (agent.health.verdict_*, Этап 7); нули — по умолчанию.
+	HealthVerdict health.VerdictRules
 	// Checkers / CheckTimeout — /readyz.
 	Checkers     []Checker
 	CheckTimeout time.Duration

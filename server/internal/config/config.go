@@ -211,6 +211,16 @@ type AgentHealth struct {
 	LiveTempStepC       int32         `koanf:"live_temp_step_c"`
 	// PingInterval — как часто мерить время ответа агента по стриму (0 — не мерить).
 	PingInterval time.Duration `koanf:"ping_interval"`
+	// HourlyRetention — срок хранения почасовой истории computer_health_hourly (месячные партиции, logs:retention).
+	HourlyRetention time.Duration `koanf:"hourly_retention"`
+	// Verdict* — вердикт исправности за неделю (health.VerdictRules, S7-H-15): «наблюдать», если часов с перегревом
+	// больше VerdictHotHours (больше VerdictHotHoursRepair — «ремонт»), внезапных выключений ≥ VerdictShutdowns, средняя
+	// температура выросла к прошлой неделе на ≥ VerdictTempRiseC; «ремонт» — «синих экранов» ≥ VerdictBugchecks.
+	VerdictHotHours       int64 `koanf:"verdict_hot_hours"`
+	VerdictHotHoursRepair int64 `koanf:"verdict_hot_hours_repair"`
+	VerdictShutdowns      int64 `koanf:"verdict_shutdowns"`
+	VerdictBugchecks      int64 `koanf:"verdict_bugchecks"`
+	VerdictTempRiseC      int32 `koanf:"verdict_temp_rise_c"`
 }
 
 // AgentUpdate — обновления агента. Решение «Обновления агента» (docs/DECISIONS.md): подпись Ed25519 обязательна,
@@ -631,6 +641,12 @@ func Defaults() map[string]any {
 		"agent.health.live_load_step_percent":     5,
 		"agent.health.live_temp_step_c":           2,
 		"agent.health.ping_interval":              "60s",
+		"agent.health.hourly_retention":           "4320h",
+		"agent.health.verdict_hot_hours":          2,
+		"agent.health.verdict_hot_hours_repair":   24,
+		"agent.health.verdict_shutdowns":          3,
+		"agent.health.verdict_bugchecks":          1,
+		"agent.health.verdict_temp_rise_c":        5,
 
 		"events.stream.max_age":    "72h",
 		"events.stream.duplicates": "10m",
@@ -849,6 +865,13 @@ func (c *Config) validateHealth(add func(format string, args ...any)) {
 	}
 	if h.PingInterval < 0 || (h.PingInterval > 0 && h.PingInterval < 5*time.Second) {
 		add("agent.health.ping_interval: 0 (не мерить) или ≥ 5s")
+	}
+	if h.HourlyRetention < 14*24*time.Hour {
+		add("agent.health.hourly_retention: должен быть ≥ 336h (две недели: вердикт сравнивает неделю с прошлой)")
+	}
+	if h.VerdictHotHours < 1 || h.VerdictHotHoursRepair <= h.VerdictHotHours || h.VerdictHotHoursRepair > 168 ||
+		h.VerdictShutdowns < 1 || h.VerdictBugchecks < 1 || h.VerdictTempRiseC < 1 || h.VerdictTempRiseC > 50 {
+		add("agent.health.verdict_*: hot_hours ≥ 1, hot_hours < hot_hours_repair ≤ 168, shutdowns ≥ 1, bugchecks ≥ 1, temp_rise_c 1..50")
 	}
 }
 

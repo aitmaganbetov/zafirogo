@@ -518,7 +518,9 @@ func TestAgentHealth(t *testing.T) {
 		h.SystemDiskFreeGB != 10 || h.OtherDiskFreePercent != 5 || h.LinkFullMbps != 1000 || h.LinkMinMbps != 100 ||
 		h.UnstableShutdowns != 3 || h.UnstableBugchecks != 1 || h.RaiseAfter != 2*time.Minute || h.ClearAfter != 5*time.Minute ||
 		h.EventRetention != 90*24*time.Hour || h.LiveMinGap != 15*time.Second || h.LiveLoadStepPercent != 5 ||
-		h.LiveTempStepC != 2 || h.PingInterval != time.Minute {
+		h.LiveTempStepC != 2 || h.PingInterval != time.Minute || h.HourlyRetention != 180*24*time.Hour ||
+		h.VerdictHotHours != 2 || h.VerdictHotHoursRepair != 24 || h.VerdictShutdowns != 3 || h.VerdictBugchecks != 1 ||
+		h.VerdictTempRiseC != 5 {
 		t.Errorf("health defaults = %+v", h)
 	}
 	cfg, err = Load("", environ("ZAFIRO_AGENT_HEALTH_CPU_TEMP_C=95", "ZAFIRO_AGENT_HEALTH_PING_INTERVAL=0s"))
@@ -539,6 +541,10 @@ func TestAgentHealth(t *testing.T) {
 		"live gap":   {"ZAFIRO_AGENT_HEALTH_LIVE_MIN_GAP=100ms"},
 		"live step":  {"ZAFIRO_AGENT_HEALTH_LIVE_LOAD_STEP_PERCENT=0"},
 		"ping":       {"ZAFIRO_AGENT_HEALTH_PING_INTERVAL=1s"},
+		"hourly":     {"ZAFIRO_AGENT_HEALTH_HOURLY_RETENTION=24h"},
+		"hot hours":  {"ZAFIRO_AGENT_HEALTH_VERDICT_HOT_HOURS=30"},
+		"temp rise":  {"ZAFIRO_AGENT_HEALTH_VERDICT_TEMP_RISE_C=0"},
+		"bugchecks":  {"ZAFIRO_AGENT_HEALTH_VERDICT_BUGCHECKS=0"},
 	}
 	for name, kv := range bad {
 		t.Run(name, func(t *testing.T) {

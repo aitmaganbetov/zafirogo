@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next';
-import type { ComputerState, HealthProblem } from './api';
+import type { ComputerState, HealthProblem, HealthVerdictReason, HealthWeek } from './api';
 
 /* Тексты состояния ПК (Этап 7): проценты, подписи проблем и периферии, длительности. Ключи — строковые литералы (проверка переводов). */
 
@@ -63,3 +63,41 @@ export function uptime(t: TFunction, seconds: number): string {
   return t('{{minutes}} мин', { minutes: m });
 }
 
+
+/** Вердикт исправности за неделю (S7-H-15). */
+export function verdictLabel(t: TFunction, level: HealthWeek['verdict']['level']): string {
+  switch (level) {
+    case 'repair':
+      return t('Требует ремонта');
+    case 'watch':
+      return t('Наблюдать');
+    default:
+      return t('Исправен');
+  }
+}
+
+/** Причина вердикта: ключ перевода с подстановками (value/threshold — числа сервера). */
+export function reasonLabel(t: TFunction, r: HealthVerdictReason): string {
+  switch (r.code) {
+    case 'smart_failing':
+      return t('SMART: отказ');
+    case 'smart_warning':
+      return t('SMART: предупреждение');
+    case 'bugchecks':
+      return t('«Синих экранов» за неделю: {{count}}', { count: r.value });
+    case 'shutdowns':
+      return t('Внезапных выключений за неделю: {{count}}', { count: r.value });
+    case 'cpu_hot':
+      return t('Перегрев CPU (от {{threshold}} °C): {{hours}} ч', { threshold: r.threshold, hours: r.value });
+    case 'gpu_hot':
+      return t('Перегрев GPU (от {{threshold}} °C): {{hours}} ч', { threshold: r.threshold, hours: r.value });
+    case 'disk_low':
+      return t('Системный диск: свободно {{value}} % (меньше {{threshold}} %)', { value: r.value, threshold: r.threshold });
+    case 'cpu_temp_rise':
+      return t('Температура CPU выросла за неделю на {{value}} °C', { value: r.value });
+    case 'gpu_temp_rise':
+      return t('Температура GPU выросла за неделю на {{value}} °C', { value: r.value });
+    default:
+      return r.code;
+  }
+}

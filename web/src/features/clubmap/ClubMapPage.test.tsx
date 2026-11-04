@@ -7,6 +7,7 @@ import { clubMapKey, type ClubMapPage as Page, type ComputerState } from './api'
 import { ClubMapPage } from './ClubMapPage';
 import { durationLabel } from './errors';
 import { percent } from './healthText';
+import { LIVE_WINDOW_MS, pushSample, resetLiveSeries, sampleFromEvent, samplesOf } from './liveSeries';
 import { mergeLoad, mergeStates } from './useMapLive';
 
 const page: Page = {
@@ -41,7 +42,32 @@ function setup(computer?: number) {
   return { qc, rt };
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  resetLiveSeries();
+});
+
+const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+const onlineView = (cpuTempDeci: number) => ({
+  computer_id: 7, connection: 'online', agent_version: '2.4.1', rtt_ms: 18, problems: [],
+  load: { cpu_bp: 4250, ram_bp: 6100, idle_seconds: 120 },
+  health: { reported_at: '2026-10-15T08:00:00Z', cpu_temp_deci: cpuTempDeci, gpu_temp_deci: null, gpu_load_bp: null, gpu_memory_bp: null,
+    disks: [{ mount: 'C:', system: true, total_mb: 512000, free_mb: 102400, smart: 'ok' }],
+    peripherals: [{ kind: 'mouse', connected: true, name: 'G102' }], link_mbps: 1000, uptime_seconds: 600,
+    unexpected_shutdowns_7d: 0, bugchecks_7d: 0 },
+});
+
+const weeks = [
+  { start: '2026-11-01T19:00:00Z', end: '2026-11-08T19:00:00Z', online_minutes: 150, session_minutes: 0, cpu_temp_avg_deci: 724, cpu_temp_max_deci: 950,
+    cpu_load_avg_bp: 3000, ram_avg_bp: 5000, cpu_hot_hours: 3, gpu_hot_hours: 0, problem_hours: 1, unexpected_shutdowns: 1, bugchecks: 1,
+    peripheral_disconnects: 2, system_disk_free_mb: 40000, system_disk_free_bp: 781, smart: 'warning',
+    verdict: { level: 'repair', reasons: [{ code: 'bugchecks', level: 'repair', value: 1, threshold: 1 }, { code: 'cpu_hot', level: 'watch', value: 3, threshold: 90 },
+      { code: 'disk_low', level: 'watch', value: 7, threshold: 10 }] } },
+  { start: '2026-10-25T19:00:00Z', end: '2026-11-01T19:00:00Z', online_minutes: 60, session_minutes: 0, cpu_temp_avg_deci: 600, cpu_temp_max_deci: 650,
+    cpu_hot_hours: 0, gpu_hot_hours: 0, problem_hours: 0, unexpected_shutdowns: 0, bugchecks: 0, peripheral_disconnects: 0,
+    verdict: { level: 'ok', reasons: [] } },
+];
 
 describe('ClubMapPage', () => {
   it('renders zones and PCs with status and glow classes', () => {
@@ -201,18 +227,109 @@ describe('ClubMapPage', () => {
 
   it('shows no state sections without agent data', async () => {
     const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input) =>
-      Promise.resolve(new URL((input as Request).url).pathname.endsWith('/events')
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = new URL((input as Request).url).pathname;
+      return Promise.resolve(path.endsWith('/events')
         ? json({ items: [], next_cursor: null })
-        : json({ computer_id: 8, connection: 'offline', problems: [] })));
+        : path.endsWith('/weekly') ? json({ weeks: [] }) : json({ computer_id: 8, connection: 'offline', problems: [] }));
+    });
     setup();
     fireEvent.click(document.querySelector('.cm-computer[data-id="8"]') as HTMLElement);
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3));
     await act(async () => {
       await Promise.resolve();
     });
     expect(document.getElementById('computer-health-info')).toBeNull();
     expect(document.getElementById('computer-health-history')).toBeNull();
+  });
+
+  // Открытая панель ПК обновляется живым событием computer.load без перезагрузки: состояние перечитывается
+  // (температуры, диски, периферия), точка — в живой график.
+  it('updates the open PC panel from a computer.load event', async () => {
+    let temp = 655;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/events')) return Promise.resolve(json({ items: [], next_cursor: null }));
+      if (path.endsWith('/weekly')) return Promise.resolve(json({ weeks: [] }));
+      return Promise.resolve(json(onlineView(temp)));
+    });
+    const { rt } = setup();
+    fireEvent.click(document.querySelector('.cm-computer[data-id="7"]') as HTMLElement);
+    await waitFor(() => expect(document.getElementById('computer-health-info')?.textContent).toContain('66 °C'));
+    temp = 801;
+    act(() => rt.dispatch({ type: 'computer.load', at: '', data: { computer_id: 7, load: { cpu_bp: 9000, ram_bp: 1000, idle_seconds: 5 }, problems: [], cpu_temp_deci: 801 } }));
+    await waitFor(() => expect(document.getElementById('computer-health-info')?.textContent).toContain('80 °C'));
+    expect(fetchSpy.mock.calls.filter((c) => new URL((c[0] as Request).url).pathname.endsWith('/health'))).toHaveLength(2);
+    const last = samplesOf(7).at(-1);
+    expect(last?.cpuTemp).toBe(80);
+    // Без вкладок, если недель нет; живой график — когда в окне ≥ 2 точек.
+    expect(document.querySelector('#computer-health-info [role="tablist"]')).toBeNull();
+    expect(document.getElementById('computer-health-live-chart')).toBeNull();
+    act(() => pushSample(7, { at: Date.now() + 60_000, cpu: 50, cpuTemp: 70 }));
+    expect(document.getElementById('computer-health-live-chart')).not.toBeNull();
+  });
+
+  it('keeps 15 minutes of live samples per PC', () => {
+    pushSample(7, sampleFromEvent({ computer_id: 7, load: { cpu_bp: 4250, ram_bp: 6100, idle_seconds: 0 }, cpu_temp_deci: 655 }, 1_000_000));
+    pushSample(7, sampleFromEvent({ computer_id: 7, load: { cpu_bp: 5000, ram_bp: 6100, idle_seconds: 0 } }, 1_000_500)); // то же измерение
+    expect(samplesOf(7)).toEqual([{ at: 1_000_500, cpu: 50, ram: 61, cpuTemp: undefined, gpuTemp: undefined }]);
+    pushSample(7, sampleFromEvent({ computer_id: 7 }, 1_100_000)); // без данных агента — не точка
+    pushSample(7, sampleFromEvent({ computer_id: 7, load: { cpu_bp: 100, ram_bp: 100, idle_seconds: 0 } }, 1_000_500 + LIVE_WINDOW_MS));
+    expect(samplesOf(7).map((s) => s.cpu)).toEqual([1]);
+    expect(samplesOf(8)).toEqual([]);
+  });
+
+  // «По неделям»: вердикт с причинами (ключи перевода с подстановками) и сводка; выбор недели — график по часам.
+  it('shows weekly verdicts and the hourly chart of a selected week', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = new URL((input as Request).url);
+      if (url.pathname.endsWith('/events')) return Promise.resolve(json({ items: [], next_cursor: null }));
+      if (url.pathname.endsWith('/weekly')) return Promise.resolve(json({ weeks }));
+      if (url.pathname.endsWith('/hourly')) {
+        return Promise.resolve(json({ items: [{ hour: '2026-11-01T19:00:00Z', online_minutes: 30, session_minutes: 0, cpu_temp_avg_deci: 700 },
+          { hour: '2026-11-02T10:00:00Z', online_minutes: 60, session_minutes: 0, cpu_temp_avg_deci: 700 }] }));
+      }
+      return Promise.resolve(json({ computer_id: 8, connection: 'offline', problems: [] }));
+    });
+    setup();
+    fireEvent.click(document.querySelector('.cm-computer[data-id="8"]') as HTMLElement);
+    await waitFor(() => expect(document.querySelectorAll('#computer-health-info [data-week]')).toHaveLength(2));
+    const info = document.getElementById('computer-health-info') as HTMLElement;
+    expect(info.querySelector('[role="tablist"]')).toBeNull(); // ПК не в сети — только недели
+    const [cur, prev] = [...info.querySelectorAll('[data-week]')] as HTMLElement[];
+    expect(cur?.querySelector('dd.cm-info-warning')?.textContent).toBe(
+      'Требует ремонта · «Синих экранов» за неделю: 1 · Перегрев CPU (от 90 °C): 3 ч · Системный диск: свободно 7 % (меньше 10 %)');
+    expect(cur?.textContent).toContain('Онлайн: 3 ч, с проблемами: 1 ч');
+    expect(cur?.textContent).toContain('CPU: в среднем 72 °C, максимум 95 °C');
+    expect(cur?.textContent).toContain('Сбои: выключений 1, «синих экранов» 1, отключений периферии 2');
+    expect(prev?.querySelector('dd')?.textContent).toBe('Исправен');
+    expect(prev?.querySelector('dd')?.className ?? '').toBe('');
+    expect(document.getElementById('computer-health-week-chart')).toBeNull();
+    fireEvent.click(cur?.querySelector('button') as HTMLElement);
+    await waitFor(() => expect(document.getElementById('computer-health-week-chart')).not.toBeNull());
+    const hourly = fetchSpy.mock.calls.map((c) => new URL((c[0] as Request).url)).find((u) => u.pathname.endsWith('/hourly'));
+    expect(hourly?.searchParams.get('from')).toBe('2026-11-01T19:00:00Z');
+    expect(hourly?.searchParams.get('to')).toBe('2026-11-08T19:00:00Z');
+    expect(cur?.querySelector('button')?.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('switches between the live state and weeks tabs', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/events')) return Promise.resolve(json({ items: [], next_cursor: null }));
+      if (path.endsWith('/weekly')) return Promise.resolve(json({ weeks }));
+      return Promise.resolve(json(onlineView(655)));
+    });
+    setup();
+    fireEvent.click(document.querySelector('.cm-computer[data-id="7"]') as HTMLElement);
+    await waitFor(() => expect(document.querySelectorAll('#computer-health-info [role="tab"]')).toHaveLength(2));
+    const [now, byWeek] = [...document.querySelectorAll('#computer-health-info [role="tab"]')] as HTMLElement[];
+    expect(now?.getAttribute('aria-selected')).toBe('true');
+    expect(document.getElementById('computer-health-info')?.textContent).toContain('66 °C');
+    expect(document.querySelector('#computer-health-info [data-week]')).toBeNull();
+    fireEvent.click(byWeek as HTMLElement);
+    expect(document.querySelectorAll('#computer-health-info [data-week]')).toHaveLength(2);
+    expect(document.getElementById('computer-health-info')?.textContent).not.toContain('66 °C');
   });
 
   it('merges computer.load and converts basis points', () => {

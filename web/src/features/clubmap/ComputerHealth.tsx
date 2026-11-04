@@ -1,8 +1,21 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import type { TFunction } from 'i18next';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
-import { computerHealthQuery, healthEventsQuery, type ComputerState, type HealthEvent, type HealthView } from './api';
-import { peripheralLabel, percent, problemLabel, uptime } from './healthText';
+import {
+  computerHealthQuery,
+  healthEventsQuery,
+  healthHourlyQuery,
+  healthWeeklyQuery,
+  type ComputerState,
+  type HealthEvent,
+  type HealthHour,
+  type HealthView,
+  type HealthWeek,
+} from './api';
+import { HealthChart, type ChartSeries } from './HealthChart';
+import { peripheralLabel, percent, problemLabel, reasonLabel, uptime, verdictLabel } from './healthText';
+import { pushSample, sampleFromView, samplesOf, SERIES_COLORS, subscribeSamples } from './liveSeries';
 
 /*
  * Состояние ПК (Этап 7, нового в старом Laravel не было; осознанное отличие от дизайна старой карты —
@@ -86,22 +99,157 @@ function HealthList({ view, t }: { readonly view: HealthView; readonly t: TFunct
   );
 }
 
-/**
- * Разделы «Состояние» и «История проблем» панели ПК. Данные — по REST при открытии панели, обновляются событием
- * computer.load (useMapLive). Пусто — разделов нет.
- */
-export function HealthSections({ computerId, fmt }: { readonly computerId: number; readonly fmt: (v?: string | null) => string }) {
+/** Живой график «Сейчас»: последние 15 минут из живых событий (liveSeries). Меньше двух точек — графика нет. */
+function LiveChart({ computerId, timeLabel }: { readonly computerId: number; readonly timeLabel: (ms: number) => string }) {
   const { t } = useTranslation();
-  const { data: view } = useQuery(computerHealthQuery(computerId));
-  const events = useInfiniteQuery(healthEventsQuery(computerId));
-  const items: HealthEvent[] = events.data?.pages.flatMap((p) => p.items) ?? [];
-  const hasState = !!view && (!!view.load || !!view.health || view.problems.length > 0);
+  const samples = useSyncExternalStore(subscribeSamples, () => samplesOf(computerId));
+  const labels = useMemo(() => samples.map((s) => timeLabel(s.at)), [samples, timeLabel]);
+  const cpu = t('Загрузка CPU');
+  const ram = t('ОЗУ');
+  const cpuTemp = t('Температура CPU');
+  const gpuTemp = t('Температура GPU');
+  const series = useMemo<ChartSeries[]>(
+    () => [
+      { label: cpu, data: samples.map((s) => s.cpu ?? null), color: SERIES_COLORS.cpu, axis: 'load' },
+      { label: ram, data: samples.map((s) => s.ram ?? null), color: SERIES_COLORS.ram, axis: 'load' },
+      { label: cpuTemp, data: samples.map((s) => s.cpuTemp ?? null), color: SERIES_COLORS.cpuTemp, axis: 'temp' },
+      { label: gpuTemp, data: samples.map((s) => s.gpuTemp ?? null), color: SERIES_COLORS.gpuTemp, axis: 'temp' },
+    ],
+    [samples, cpu, ram, cpuTemp, gpuTemp],
+  );
+  if (samples.length < 2) return null;
+  return <HealthChart id="computer-health-live-chart" labels={labels} series={series} />;
+}
+
+const avgDeg = (deci?: number | null) => (deci == null ? null : Math.round(deci / 10));
+
+/** Сводка недели: онлайн, температуры, загрузка, сбои, диск. */
+function weekSummary(t: TFunction, w: HealthWeek): string[] {
+  const out = [t('Онлайн: {{hours}} ч, с проблемами: {{problems}} ч', { hours: Math.round(w.online_minutes / 60), problems: w.problem_hours })];
+  if (w.cpu_temp_avg_deci != null) {
+    out.push(t('CPU: в среднем {{avg}} °C, максимум {{max}} °C', { avg: avgDeg(w.cpu_temp_avg_deci), max: avgDeg(w.cpu_temp_max_deci) }));
+  }
+  if (w.gpu_temp_avg_deci != null) {
+    out.push(t('GPU: в среднем {{avg}} °C, максимум {{max}} °C', { avg: avgDeg(w.gpu_temp_avg_deci), max: avgDeg(w.gpu_temp_max_deci) }));
+  }
+  if (w.cpu_load_avg_bp != null) {
+    out.push(t('Загрузка: CPU {{cpu}} %, ОЗУ {{ram}} %', { cpu: percent(w.cpu_load_avg_bp), ram: percent(w.ram_avg_bp ?? 0) }));
+  }
+  out.push(t('Сбои: выключений {{shutdowns}}, «синих экранов» {{bugchecks}}, отключений периферии {{peripherals}}', {
+    shutdowns: w.unexpected_shutdowns, bugchecks: w.bugchecks, peripherals: w.peripheral_disconnects,
+  }));
+  if (w.system_disk_free_bp != null) out.push(t('Системный диск: свободно не меньше {{value}} %', { value: Math.floor(w.system_disk_free_bp / 100) }));
+  return out;
+}
+
+/** График недели по часам: средние температуры CPU/GPU и загрузка CPU/ОЗУ. */
+function WeekChart({ computerId, week, hourLabel }: { readonly computerId: number; readonly week: HealthWeek; readonly hourLabel: (iso: string) => string }) {
+  const { t } = useTranslation();
+  const { data } = useQuery(healthHourlyQuery(computerId, week.start, week.end));
+  const items: readonly HealthHour[] = useMemo(() => data?.items ?? [], [data]);
+  const labels = useMemo(() => items.map((h) => hourLabel(h.hour)), [items, hourLabel]);
+  const cpu = t('Загрузка CPU');
+  const ram = t('ОЗУ');
+  const cpuTemp = t('Температура CPU');
+  const gpuTemp = t('Температура GPU');
+  const pct = (bp?: number | null) => (bp == null ? null : percent(bp));
+  const series = useMemo<ChartSeries[]>(
+    () => [
+      { label: cpuTemp, data: items.map((h) => avgDeg(h.cpu_temp_avg_deci)), color: SERIES_COLORS.cpuTemp, axis: 'temp' },
+      { label: gpuTemp, data: items.map((h) => avgDeg(h.gpu_temp_avg_deci)), color: SERIES_COLORS.gpuTemp, axis: 'temp' },
+      { label: cpu, data: items.map((h) => pct(h.cpu_load_avg_bp)), color: SERIES_COLORS.cpu, axis: 'load' },
+      { label: ram, data: items.map((h) => pct(h.ram_avg_bp)), color: SERIES_COLORS.ram, axis: 'load' },
+    ],
+    [items, cpu, ram, cpuTemp, gpuTemp],
+  );
+  if (items.length === 0) return null;
+  return <HealthChart id="computer-health-week-chart" labels={labels} series={series} />;
+}
+
+/** «По неделям»: недели (новые сверху) с вердиктом и причинами; выбор недели — график по часам. */
+function WeeksList({ computerId, weeks, day, hourLabel }: {
+  readonly computerId: number;
+  readonly weeks: readonly HealthWeek[];
+  readonly day: (iso: string) => string;
+  readonly hourLabel: (iso: string) => string;
+}) {
+  const { t } = useTranslation();
+  const [selected, setSelected] = useState<string | null>(null);
+  const week = weeks.find((w) => w.start === selected);
   return (
     <>
-      {hasState && (
+      <dl className="cm-info-list">
+        {weeks.map((w) => (
+          <div key={w.start} data-week={w.start}>
+            <dt>
+              <button type="button" className="cm-info-more" aria-pressed={w.start === selected} onClick={() => setSelected(w.start === selected ? null : w.start)}>
+                {t('{{from}} — {{to}}', { from: day(w.start), to: day(new Date(new Date(w.end).getTime() - 1).toISOString()) })}
+              </button>
+            </dt>
+            <dd className={w.verdict.level === 'ok' ? undefined : 'cm-info-warning'}>
+              {[verdictLabel(t, w.verdict.level), ...w.verdict.reasons.map((r) => reasonLabel(t, r))].join(' · ')}
+            </dd>
+            <dd>{weekSummary(t, w).join(' · ')}</dd>
+          </div>
+        ))}
+      </dl>
+      {week && <WeekChart computerId={computerId} week={week} hourLabel={hourLabel} />}
+    </>
+  );
+}
+
+/**
+ * Разделы «Состояние» и «История проблем» панели ПК. «Состояние» — вкладки «Сейчас» (живые значения и график последних
+ * 15 минут; данные — по REST при открытии панели, обновляются событием computer.load, useMapLive) и «По неделям»
+ * (вердикт исправности и график по часам выбранной недели). Нет данных — нет ни раздела, ни вкладки.
+ */
+export function HealthSections({ computerId, fmt, locale = 'ru', tz = 'UTC' }: {
+  readonly computerId: number;
+  readonly fmt: (v?: string | null) => string;
+  readonly locale?: string;
+  readonly tz?: string;
+}) {
+  const { t } = useTranslation();
+  const { data: view, dataUpdatedAt } = useQuery(computerHealthQuery(computerId));
+  const { data: weekly } = useQuery(healthWeeklyQuery(computerId));
+  const events = useInfiniteQuery(healthEventsQuery(computerId));
+  const [tab, setTab] = useState<'now' | 'weeks'>('now');
+  const items: HealthEvent[] = events.data?.pages.flatMap((p) => p.items) ?? [];
+  const weeks = weekly?.weeks ?? [];
+  const hasState = !!view && (!!view.load || !!view.health || view.problems.length > 0);
+  const hasWeeks = weeks.length > 0;
+  // Свежее состояние панели — точка живого графика (событие без температуры, перечитанное состояние — с ней).
+  useEffect(() => {
+    if (view && dataUpdatedAt) pushSample(computerId, sampleFromView(view, dataUpdatedAt));
+  }, [computerId, view, dataUpdatedAt]);
+  const timeLabel = useMemo(() => {
+    const f = new Intl.DateTimeFormat(locale, { timeStyle: 'short', timeZone: tz });
+    return (ms: number) => f.format(new Date(ms));
+  }, [locale, tz]);
+  const [day, hourLabel] = useMemo(() => {
+    const d = new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', timeZone: tz });
+    const h = new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: tz });
+    return [(iso: string) => d.format(new Date(iso)), (iso: string) => h.format(new Date(iso))];
+  }, [locale, tz]);
+  const shown = hasState && hasWeeks ? tab : hasState ? 'now' : 'weeks';
+  return (
+    <>
+      {(hasState || hasWeeks) && (
         <section id="computer-health-info" className="cm-info-section">
           <h4>{t('Состояние')}</h4>
-          <HealthList view={view} t={t} />
+          {hasState && hasWeeks && (
+            <div role="tablist">
+              <button type="button" role="tab" className="cm-info-more" aria-selected={shown === 'now'} onClick={() => setTab('now')}>{t('Сейчас')}</button>{' '}
+              <button type="button" role="tab" className="cm-info-more" aria-selected={shown === 'weeks'} onClick={() => setTab('weeks')}>{t('По неделям')}</button>
+            </div>
+          )}
+          {shown === 'now' && view && (
+            <>
+              <HealthList view={view} t={t} />
+              <LiveChart computerId={computerId} timeLabel={timeLabel} />
+            </>
+          )}
+          {shown === 'weeks' && <WeeksList computerId={computerId} weeks={weeks} day={day} hourLabel={hourLabel} />}
         </section>
       )}
       {items.length > 0 && (

@@ -295,6 +295,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/club-computers/{computerId}/health/weekly": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                computerId: components["parameters"]["ComputerId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Здоровье ПК по неделям с вердиктом исправности
+         * @description Новое (Этап 7, docs/agent-protocol.md §16.6–16.7). Агрегаты почасовой истории (computer_health_hourly) по неделям
+         *     (понедельник 00:00 в поясе клуба), новые сверху; только недели с данными. Вердикт — «Исправен» / «Наблюдать» /
+         *     «Требует ремонта» с причинами (правила и пороги agent.health.*, тренд — к предыдущей неделе). Нет измерения —
+         *     поле null. Право — club_map.view (club-map.state). Чужой ПК — 404; weeks вне 1..12 — 422.
+         */
+        get: operations["getComputerHealthWeekly"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/club-computers/{computerId}/health/hourly": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                computerId: components["parameters"]["ComputerId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Здоровье ПК по часам (график недели)
+         * @description Новое (Этап 7). Почасовые агрегаты за период [from, to) — не длиннее 8 суток; часы без данных (ПК не в сети)
+         *     отсутствуют. Право — club_map.view. Чужой ПК — 404; to ≤ from или период длиннее 8 суток — 422.
+         */
+        get: operations["getComputerHealthHourly"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -614,6 +662,156 @@ export interface components {
             details: {
                 [key: string]: unknown;
             };
+        };
+        HealthWeek: {
+            /**
+             * Format: date-time
+             * @description Начало недели — понедельник 00:00 в поясе клуба.
+             */
+            start: string;
+            /**
+             * Format: date-time
+             * @description Конец недели (не включительно).
+             */
+            end: string;
+            /**
+             * Format: int64
+             * @description Минут в сети.
+             */
+            online_minutes: number;
+            /**
+             * Format: int64
+             * @description Минут в сессии.
+             */
+            session_minutes: number;
+            /**
+             * Format: int64
+             * @description Средняя загрузка CPU за неделю (по минутам в сети), сотые доли процента.
+             */
+            cpu_load_avg_bp?: number | null;
+            /** Format: int64 */
+            cpu_load_max_bp?: number | null;
+            /** Format: int64 */
+            ram_avg_bp?: number | null;
+            /** Format: int64 */
+            ram_max_bp?: number | null;
+            /** Format: int64 */
+            gpu_load_avg_bp?: number | null;
+            /** Format: int64 */
+            gpu_load_max_bp?: number | null;
+            /**
+             * Format: int64
+             * @description Средняя температура CPU, десятые доли °C.
+             */
+            cpu_temp_avg_deci?: number | null;
+            /** Format: int64 */
+            cpu_temp_max_deci?: number | null;
+            /** Format: int64 */
+            gpu_temp_avg_deci?: number | null;
+            /** Format: int64 */
+            gpu_temp_max_deci?: number | null;
+            /**
+             * Format: int64
+             * @description Часов, когда максимум температуры CPU был не ниже порога перегрева (agent.health.cpu_temp_c).
+             */
+            cpu_hot_hours: number;
+            /** Format: int64 */
+            gpu_hot_hours: number;
+            /**
+             * Format: int64
+             * @description Часов в сети, когда была открыта хоть одна проблема здоровья (computer_health_events).
+             */
+            problem_hours: number;
+            /**
+             * Format: int64
+             * @description Внезапных выключений за неделю.
+             */
+            unexpected_shutdowns: number;
+            /**
+             * Format: int64
+             * @description «Синих экранов» за неделю.
+             */
+            bugchecks: number;
+            /**
+             * Format: int64
+             * @description Сколько раз отключались мышь, клавиатура или монитор.
+             */
+            peripheral_disconnects: number;
+            /**
+             * Format: int64
+             * @description Минимум свободного места на системном диске, МБ.
+             */
+            system_disk_free_mb?: number | null;
+            /**
+             * Format: int64
+             * @description Минимум свободного места на системном диске, сотые доли процента.
+             */
+            system_disk_free_bp?: number | null;
+            /**
+             * @description Худшее состояние SMART за неделю (null — не измерено).
+             * @enum {string|null}
+             */
+            smart?: "ok" | "warning" | "failing" | null;
+            verdict: components["schemas"]["HealthVerdict"];
+        };
+        /**
+         * @description Вердикт исправности за неделю (docs/agent-protocol.md §16.7): ok — исправен, watch — наблюдать, repair — требует
+         *     ремонта; уровень — наихудший из причин.
+         */
+        HealthVerdict: {
+            /** @enum {string} */
+            level: "ok" | "watch" | "repair";
+            reasons: components["schemas"]["HealthVerdictReason"][];
+        };
+        HealthVerdictReason: {
+            /**
+             * @description smart_failing / smart_warning — SMART диска; bugchecks — «синие экраны» (value — сколько, threshold — порог);
+             *     cpu_hot / gpu_hot — часов перегрева (value — часы, threshold — °C); shutdowns — внезапные выключения;
+             *     disk_low — свободно на системном диске (value, threshold — %); cpu_temp_rise / gpu_temp_rise — рост средней
+             *     температуры к прошлой неделе (value, threshold — °C).
+             * @enum {string}
+             */
+            code: "smart_failing" | "bugchecks" | "cpu_hot" | "gpu_hot" | "smart_warning" | "shutdowns" | "disk_low" | "cpu_temp_rise" | "gpu_temp_rise";
+            /** @enum {string} */
+            level: "watch" | "repair";
+            /** Format: int64 */
+            value: number;
+            /** Format: int64 */
+            threshold: number;
+        };
+        HealthWeekPage: {
+            weeks: components["schemas"]["HealthWeek"][];
+        };
+        HealthHour: {
+            /** Format: date-time */
+            hour: string;
+            /** Format: int64 */
+            online_minutes: number;
+            /** Format: int64 */
+            session_minutes: number;
+            /** Format: int64 */
+            cpu_load_avg_bp?: number | null;
+            /** Format: int64 */
+            cpu_load_max_bp?: number | null;
+            /** Format: int64 */
+            ram_avg_bp?: number | null;
+            /** Format: int64 */
+            ram_max_bp?: number | null;
+            /** Format: int64 */
+            gpu_load_avg_bp?: number | null;
+            /** Format: int64 */
+            gpu_load_max_bp?: number | null;
+            /** Format: int64 */
+            cpu_temp_avg_deci?: number | null;
+            /** Format: int64 */
+            cpu_temp_max_deci?: number | null;
+            /** Format: int64 */
+            gpu_temp_avg_deci?: number | null;
+            /** Format: int64 */
+            gpu_temp_max_deci?: number | null;
+        };
+        HealthHourPage: {
+            items: components["schemas"]["HealthHour"][];
         };
         HealthEventPage: {
             items: components["schemas"]["HealthEvent"][];
@@ -1117,6 +1315,66 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getComputerHealthWeekly: {
+        parameters: {
+            query?: {
+                /** @description Сколько недель, включая текущую (1..12, по умолчанию 8). */
+                weeks?: number;
+            };
+            header?: never;
+            path: {
+                computerId: components["parameters"]["ComputerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Недели. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthWeekPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getComputerHealthHourly: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path: {
+                computerId: components["parameters"]["ComputerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Точки по часам. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthHourPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
 }

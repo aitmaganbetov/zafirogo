@@ -179,3 +179,28 @@ func (c *conn) pingResult(res *agentv1.CommandResult, now time.Time) bool {
 	c.pingID = ""
 	return true
 }
+
+// recordHourly — принятый Status в почасовую историю (агрегат часа в Valkey, health.Hourly; горутина чтения стрима).
+// prevHealth — здоровье до этого Status (отключения периферии), st — снимок после него. Сбой Valkey не рвёт стрим:
+// измерение пропускается (история — сводка, а не учёт).
+func (c *conn) recordHourly(ctx context.Context, s *agentv1.Status, prevHealth *presence.Health, st presence.State, now time.Time) {
+	h := c.svc.hourly
+	if h == nil {
+		return
+	}
+	sm := health.Sample{ClubID: c.id.ClubID, ComputerID: c.id.ComputerID, At: now, Since: c.hourlyAt,
+		InSession: st.AgentState == presence.StateInSession || st.SessionID != ""}
+	if s.GetLoad() != nil {
+		l := st.Load
+		sm.Load = &l
+	}
+	if s.GetHealth() != nil {
+		sm.Health = st.Health
+		sm.PeripheralDisconnects = health.PeripheralDisconnects(prevHealth, st.Health)
+	}
+	if err := h.Record(ctx, sm); err != nil {
+		c.svc.o.Log.Warn("agent health: hourly", "computer_id", c.id.ComputerID, "err", err)
+		return
+	}
+	c.hourlyAt = now
+}

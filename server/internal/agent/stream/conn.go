@@ -71,6 +71,7 @@ type conn struct {
 	live         liveMark  // последнее живое обновление карты (health.go)
 	pingID       string    // command_id неотвеченного Ping
 	pingSent     time.Time // когда отправлен последний Ping
+	hourlyAt     time.Time // последний Status, учтённый в почасовой истории (health.go recordHourly)
 }
 
 func (c *conn) close(err error) {
@@ -338,6 +339,7 @@ func (s *Service) Connect(st agentv1.AgentService_ConnectServer) error {
 		c.applyStatus(hs, now)
 		c.tracker.Observe(c.st.AgentState)
 		c.observeHealth(ctx, c.st.Health, now)
+		c.recordHourly(ctx, hs, nil, c.st, now)
 	}
 	// Подключение и так перечитывает ПК на карте (computer.state) — живое обновление считается отправленным.
 	c.live = markOf(c.st, now)
@@ -653,11 +655,12 @@ func (c *conn) onStatus(ctx context.Context, s *agentv1.Status) {
 		return
 	}
 	c.lastStatusAt = now
-	fresh := c.st.Health
+	fresh, cur := c.st.Health, c.st
 	c.mu.Unlock()
 	if s.GetHealth() != nil {
 		c.observeHealth(ctx, fresh, now)
 	}
+	c.recordHourly(ctx, s, prev.Health, cur, now)
 
 	if err := c.writePresence(ctx); err != nil && !errors.Is(err, presence.ErrNotOwner) {
 		c.svc.o.Log.Warn("agent presence write failed", "computer_id", c.id.ComputerID, "err", err)

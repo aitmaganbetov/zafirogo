@@ -27,6 +27,8 @@ var access = httpx.Access{
 		// Этап 7 (новое): состояние ПК и история проблем — то же право, что у состояния карты (club_map.view).
 		"GetComputerHealth":        "club-map.state",
 		"ListComputerHealthEvents": "club-map.state",
+		"GetComputerHealthWeekly":  "club-map.state",
+		"GetComputerHealthHourly":  "club-map.state",
 	},
 }
 

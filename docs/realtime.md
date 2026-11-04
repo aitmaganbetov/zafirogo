@@ -98,7 +98,7 @@ ordered consumer club.>, только новые            фильтр club.*.
 |---|---|---|
 | `notifications.changed` | `{}` | изменилось что-то, из чего строится колокольчик (`ClubNotifications::for()`): журнал из списка событий колокольчика, чат, заказ, остаток, ПК офлайн, переход проблемы здоровья ПК (`health.Journal.Record`, только при вставке или закрытии строки `computer_health_events`). Клиент перечитывает `GET /notifications` (список зависит от роли и `notifications_seen_at`) |
 | `computer.state` | `{"computer_id": 7, "status": "online\|offline\|busy\|maintenance", "session": {"user_id": 5, "ends_at": "…"} \| null, "reserved": bool, "maintenance": bool, "agent_version": "1.2.3"}` | дифф одного ПК (поля как у элемента `computerStates` старого `/club-map/state`); пишется только при изменении состояния, не на heartbeat |
-| `computer.load` | `{"computer_id": 7, "load": {"cpu_bp": 4250, "ram_bp": 6100, "idle_seconds": 30} \| отсутствует, "problems": ["cpu_hot"], "rtt_ms": 18}` | Этап 7: загрузка и проблемы здоровья ПК (поля как `load`/`problems`/`rtt_ms` у `ComputerState`). **Не через outbox** — §7; не чаще раза в 15 с на ПК и только при заметном изменении |
+| `computer.load` | `{"computer_id": 7, "load": {"cpu_bp": 4250, "ram_bp": 6100, "idle_seconds": 30} \| отсутствует, "problems": ["cpu_hot"], "rtt_ms": 18, "cpu_temp_deci": 655, "gpu_temp_deci": 712}` | Этап 7: загрузка и проблемы здоровья ПК (поля как `load`/`problems`/`rtt_ms` у `ComputerState`) и температуры CPU/GPU в десятых °C (нет измерения — поля нет) для живого графика панели ПК. **Не через outbox** — §7; не чаще раза в 15 с на ПК и только при заметном изменении |
 | `computer.session.expired` | `{"computer_id": 7, "session_id": 123}` | воркер истечения сессий |
 | `computer.reservation_changed` | `{"computer_ids": [7], "reserved": true}` | флаг брони ПК: карта клуба (reserve) и API v1 `PUT /computers/{id}/reservation` (тип-вебхук, как в старом; брони экрана «Брони» шлют `reservation.changed` и `computer.state`) |
 | `computer.controlled` | `{"computer_ids": [7], "action": "power_on\|restart\|power_off\|service", "status": "restarting\|offline" \| null}` | команда управления (тип-вебхук) |
@@ -162,6 +162,7 @@ Status агента (стрим, инстанс ПК) ─ ограничение
   клиент перечитывает экран по REST, где те же поля есть в `/api/club-map/state`.
 - По живому каналу принимаются только события данных: служебное `staff.access_changed` игнорируется.
 - Клиент (`web/src/features/clubmap/useMapLive.ts`) подставляет данные без запроса; открытая панель ПК перечитывает
-  `GET /api/club-computers/{id}/health`.
+  `GET /api/club-computers/{id}/health` (температуры, диски, периферия). Точки событий (и перечитанного состояния) копятся
+  в браузере 15 минут на ПК (`liveSeries.ts`) — живой график раздела «Состояние → Сейчас», без серверного хранения.
 - Нагрузка — `docs/load-test.md` §6.3.
 

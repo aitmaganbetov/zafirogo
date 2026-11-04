@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
 	"github.com/aitmaganbetov/zafirogo/server/internal/config"
 )
 
@@ -21,5 +22,15 @@ func TestHealthOptions(t *testing.T) {
 	h.Enabled, h.PingInterval = false, 0
 	if o := healthOptions(h); !o.Disabled || o.PingInterval >= 0 {
 		t.Errorf("disabled / ping 0 (не мерить): %+v", o)
+	}
+}
+
+func TestVerdictRules(t *testing.T) {
+	cfg, err := config.Load("", func() []string { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := verdictRules(cfg.Agent.Health); r != health.DefaultVerdictRules() {
+		t.Errorf("verdict rules from defaults = %+v, want %+v", r, health.DefaultVerdictRules())
 	}
 }
