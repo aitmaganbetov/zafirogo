@@ -15,7 +15,7 @@ import {
 } from './api';
 import { HealthChart, type ChartSeries } from './HealthChart';
 import { peripheralLabel, percent, problemLabel, reasonLabel, uptime, verdictLabel } from './healthText';
-import { pushSample, sampleFromView, samplesOf, SERIES_COLORS, subscribeSamples } from './liveSeries';
+import { pruneLiveSeries, pushSample, sampleFromView, samplesOf, SERIES_COLORS, subscribeSamples, weekHours } from './liveSeries';
 
 /*
  * Состояние ПК (Этап 7, нового в старом Laravel не было; осознанное отличие от дизайна старой карты —
@@ -114,6 +114,11 @@ function HealthList({ view, t }: { readonly view: HealthView; readonly t: TFunct
 function LiveChart({ computerId, timeLabel }: { readonly computerId: number; readonly timeLabel: (ms: number) => string }) {
   const { t } = useTranslation();
   const samples = useSyncExternalStore(subscribeSamples, () => samplesOf(computerId));
+  // Окно — по часам браузера: у ПК без новых событий старые точки уходят, а не висят бесконечно.
+  useEffect(() => {
+    const id = setInterval(() => pruneLiveSeries(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
   const labels = useMemo(() => samples.map((s) => timeLabel(s.at)), [samples, timeLabel]);
   const cpu = t('Загрузка CPU');
   const ram = t('ОЗУ');
@@ -154,12 +159,13 @@ function weekSummary(t: TFunction, w: HealthWeek, diskless: boolean): string[] {
   return out;
 }
 
-/** График недели по часам: средние температуры CPU/GPU и загрузка CPU/ОЗУ. */
+/** График недели по часам: средние температуры CPU/GPU и загрузка CPU/ОЗУ; ось — все часы недели (офлайн — разрыв). */
 function WeekChart({ computerId, week, hourLabel }: { readonly computerId: number; readonly week: HealthWeek; readonly hourLabel: (iso: string) => string }) {
   const { t } = useTranslation();
   const { data } = useQuery(healthHourlyQuery(computerId, week.start, week.end));
-  const items: readonly HealthHour[] = useMemo(() => data?.items ?? [], [data]);
-  const labels = useMemo(() => items.map((h) => hourLabel(h.hour)), [items, hourLabel]);
+  const rows: readonly HealthHour[] = useMemo(() => data?.items ?? [], [data]);
+  const hours = useMemo(() => weekHours(week.start, week.end, rows), [week.start, week.end, rows]);
+  const labels = useMemo(() => hours.map((h) => hourLabel(new Date(h.at).toISOString())), [hours, hourLabel]);
   const cpu = t('Загрузка CPU');
   const ram = t('ОЗУ');
   const cpuTemp = t('Температура CPU');
@@ -167,14 +173,14 @@ function WeekChart({ computerId, week, hourLabel }: { readonly computerId: numbe
   const pct = (bp?: number | null) => (bp == null ? null : percent(bp));
   const series = useMemo<ChartSeries[]>(
     () => [
-      { label: cpuTemp, data: items.map((h) => avgDeg(h.cpu_temp_avg_deci)), color: SERIES_COLORS.cpuTemp, axis: 'temp' },
-      { label: gpuTemp, data: items.map((h) => avgDeg(h.gpu_temp_avg_deci)), color: SERIES_COLORS.gpuTemp, axis: 'temp' },
-      { label: cpu, data: items.map((h) => pct(h.cpu_load_avg_bp)), color: SERIES_COLORS.cpu, axis: 'load' },
-      { label: ram, data: items.map((h) => pct(h.ram_avg_bp)), color: SERIES_COLORS.ram, axis: 'load' },
+      { label: cpuTemp, data: hours.map((h) => avgDeg(h.row?.cpu_temp_avg_deci)), color: SERIES_COLORS.cpuTemp, axis: 'temp' },
+      { label: gpuTemp, data: hours.map((h) => avgDeg(h.row?.gpu_temp_avg_deci)), color: SERIES_COLORS.gpuTemp, axis: 'temp' },
+      { label: cpu, data: hours.map((h) => pct(h.row?.cpu_load_avg_bp)), color: SERIES_COLORS.cpu, axis: 'load' },
+      { label: ram, data: hours.map((h) => pct(h.row?.ram_avg_bp)), color: SERIES_COLORS.ram, axis: 'load' },
     ],
-    [items, cpu, ram, cpuTemp, gpuTemp],
+    [hours, cpu, ram, cpuTemp, gpuTemp],
   );
-  if (items.length === 0) return null;
+  if (rows.length === 0) return null;
   return <HealthChart id="computer-health-week-chart" labels={labels} series={series} />;
 }
 
@@ -229,10 +235,9 @@ export function HealthSections({ computerId, fmt, locale = 'ru', tz = 'UTC' }: {
   const events = useInfiniteQuery(healthEventsQuery(computerId));
   const [tab, setTab] = useState<'now' | 'weeks'>('now');
   const diskless = !!(view?.diskless || weekly?.diskless);
-  // Бездисковый ПК: проблемы дисков в истории — от томов образа (старый агент или до перевода ПК на загрузку по сети).
-  const items: HealthEvent[] = (events.data?.pages.flatMap((p) => p.items) ?? []).filter(
-    (e) => !diskless || (e.kind !== 'disk_low' && e.kind !== 'disk_smart'),
-  );
+  // Проблемы дисков бездискового ПК (тома образа, запись до перевода на загрузку по сети) отсекает сервер — до
+  // keyset-страницы (S7-H-18), иначе страница могла бы оказаться пустой, а «Показать ещё» — скрытым.
+  const items: HealthEvent[] = events.data?.pages.flatMap((p) => p.items) ?? [];
   const weeks = weekly?.weeks ?? [];
   const hasState = !!view && (!!view.load || !!view.health || view.problems.length > 0);
   const hasWeeks = weeks.length > 0;

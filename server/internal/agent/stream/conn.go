@@ -60,6 +60,8 @@ type conn struct {
 	monitor *health.Monitor
 	// diskless — бездисковый ПК (сертификат подключения выпущен по ключу образа): диски в здоровье не хранятся.
 	diskless bool
+	// bootID — Hello.boot_id: прирост сбоев «перед загрузкой» в почасовой истории (health.Sample.BootID).
+	bootID string
 
 	mu           sync.Mutex
 	queue        []*agentv1.ServerMessage
@@ -328,6 +330,7 @@ func (s *Service) Connect(st agentv1.AgentService_ConnectServer) error {
 		inflight: map[string]*inflight{},
 		tracker:  s.rec.Track(id.ClubID, id.ComputerID, row.AgentState),
 		diskless: row.Diskless,
+		bootID:   hello.GetBootId(),
 	}
 	if !s.o.Health.Disabled {
 		c.monitor = health.NewMonitor(s.o.Health.Thresholds, s.health, id.ClubID, id.ComputerID, s.o.Log)
@@ -342,7 +345,7 @@ func (s *Service) Connect(st agentv1.AgentService_ConnectServer) error {
 		c.applyStatus(hs, now)
 		c.tracker.Observe(c.st.AgentState)
 		c.observeHealth(ctx, c.st.Health, now)
-		c.recordHourly(ctx, hs, nil, c.st, now)
+		c.recordHourly(ctx, hs, s.lastHealth(ctx, id, hs), c.st, now)
 	}
 	// Подключение и так перечитывает ПК на карте (computer.state) — живое обновление считается отправленным.
 	c.live = markOf(c.st, now)

@@ -39,6 +39,7 @@ func TestValidateHealth(t *testing.T) {
 		{Peripherals: []*agentv1.Peripheral{periph(strings.Repeat("ы", 128)), periph("Logitech G102 «Lightsync»")}},
 		// Неизвестный вид периферии (агент новее сервера) — не ошибка, HealthFrom его пропустит.
 		{Peripherals: []*agentv1.Peripheral{{Kind: 99, Name: "x"}}},
+		{UnexpectedShutdowns_7D: 10000, Bugchecks_7D: 10000, UnexpectedShutdownsBoot: 10000, BugchecksBoot: 10000, CrashesBootMeasured: true},
 	}
 	for i, h := range good {
 		if err := validateHealth(h); err != nil {
@@ -63,6 +64,11 @@ func TestValidateHealth(t *testing.T) {
 		{Peripherals: []*agentv1.Peripheral{periph("mouse\x1b[31m")}},
 		{Peripherals: []*agentv1.Peripheral{periph("abc\u202Eexe.gpj")}},
 		{Peripherals: []*agentv1.Peripheral{periph("\xff\xfe")}},
+		// Счётчики сбоев — не больше предела агента (10 000 событий): иначе сумма за неделю переполнила бы integer.
+		{UnexpectedShutdowns_7D: 10001},
+		{Bugchecks_7D: 10001},
+		{UnexpectedShutdownsBoot: 10001, CrashesBootMeasured: true},
+		{BugchecksBoot: 10001, CrashesBootMeasured: true},
 	}
 	for i, h := range bad {
 		if err := validateHealth(h); err == nil {

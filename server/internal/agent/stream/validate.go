@@ -121,6 +121,7 @@ const (
 	maxDiskMount       = 16      // символов («C:», точка монтирования)
 	maxDiskTotalMB     = 1 << 30 // 1 ПиБ: free·100 и total·percent не переполняют uint64
 	maxBasisPoints     = 10000
+	maxCrashes         = 10000 // событий сбоев (предел подсчёта агента, SystemEventLog.MaxCount)
 	healthFieldInvalid = "health: %s"
 )
 
@@ -162,6 +163,9 @@ func validateHealth(h *agentv1.ComputerHealth) error {
 		if d.GetTotalMb() > maxDiskTotalMB || d.GetFreeMb() > d.GetTotalMb() {
 			return fmt.Errorf(healthFieldInvalid, "disk free_mb must not exceed total_mb (≤ 1 PiB)")
 		}
+	}
+	if max(h.GetUnexpectedShutdowns_7D(), h.GetBugchecks_7D(), h.GetUnexpectedShutdownsBoot(), h.GetBugchecksBoot()) > maxCrashes {
+		return fmt.Errorf(healthFieldInvalid, "crash counters must be 0..10000")
 	}
 	if len(h.GetPeripherals()) > maxPeripherals {
 		return fmt.Errorf(healthFieldInvalid, "too many peripherals")

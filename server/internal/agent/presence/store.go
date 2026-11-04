@@ -282,6 +282,27 @@ func (s *Store) Get(ctx context.Context, clubID, computerID int64) (State, bool,
 	return st, true, nil
 }
 
+// LastHealth — здоровье из последнего снимка ПК (в сети, ещё в ожидании переподключения или перед перебалансировкой;
+// свежесть не проверяется — снимок убирает Sweeper после grace). Нужен первому Status нового подключения: с чем сравнить
+// периферию (отключённая между подключениями — тоже отключение). nil — снимка или здоровья нет.
+func (s *Store) LastHealth(ctx context.Context, clubID, computerID int64) (*Health, error) {
+	v, err := s.c.Do(ctx, s.c.B().Hget().Key(s.clubKey(clubID)).Field(strconv.FormatInt(computerID, 10)).Build()).AsBytes()
+	if valkey.IsValkeyNil(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("presence: last health: %w", err)
+	}
+	var st State
+	if err := json.Unmarshal(v, &st); err != nil {
+		return nil, fmt.Errorf("presence: decode: %w", err)
+	}
+	if st.ClubID != clubID {
+		return nil, nil
+	}
+	return st.Health, nil
+}
+
 // List — все ПК клуба, о которых есть живой снимок (в сети или в ожидании переподключения).
 // Размер — число ПК клуба (сотни), поэтому без пагинации.
 func (s *Store) List(ctx context.Context, clubID int64) ([]State, error) {

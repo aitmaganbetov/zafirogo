@@ -39,13 +39,16 @@ ON CONFLICT (club_id, computer_id, hour) DO UPDATE SET
 
 -- name: ComputerHealthWeekly :many
 -- Панель ПК «По неделям»: агрегаты почасовой истории по неделям (понедельник 00:00 в поясе клуба). Период — диапазоном
--- по hour (индекс — первичный ключ club_id, computer_id, hour); границы недель считает сервер в том же поясе.
+-- по hour (индекс — первичный ключ club_id, computer_id, hour). Границы недель (bounds, по возрастанию; from_at — первая,
+-- to_at — последняя) считает сервер в поясе клуба (Go time.LoadLocation), а неделя строки — номер интервала
+-- width_bucket(hour, bounds) (1 — первая неделя): пояс в Postgres не передаётся, поэтому пояс, известный Go, но не
+-- Postgres (другая tzdata), не ломает запрос.
 -- Средние — взвешенные по минутам онлайн (целочисленно, без float). Часы с проблемами — часы онлайн, в которые была
 -- открыта хоть одна проблема журнала computer_health_events (индекс history_index); у бездискового ПК (diskless)
 -- проблемы дисков не считаются (записаны до того, как ПК стал бездисковым, или старым агентом). network_slow_hours —
 -- часы онлайн с открытой проблемой network_slow (вердикт бездискового ПК). Нет измерений — -1 (smart_rank — 0:
 -- 1 ok, 2 warning, 3 failing).
-SELECT date_trunc('week', h.hour AT TIME ZONE sqlc.arg(tz)::text)::date AS week_start,
+SELECT width_bucket(h.hour, sqlc.arg(bounds)::timestamptz[])::integer AS week_index,
        count(*)::bigint AS hours,
        coalesce(sum(h.online_minutes), 0)::bigint AS online_minutes,
        coalesce(sum(h.session_minutes), 0)::bigint AS session_minutes,

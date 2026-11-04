@@ -227,11 +227,37 @@ public sealed class HealthTests : IDisposable
         collector.Collect(null, out _);
         _clock.Advance(TimeSpan.FromMinutes(9));
         var h = collector.Collect(null, out _);
-        Assert.Equal(1, _probe.CrashCalls);
+        Assert.Equal(2, _probe.CrashCalls); // окна «7 суток» и «с загрузки»
         Assert.Equal(2u, h.UnexpectedShutdowns7D); // из кэша
+        Assert.Equal(2u, h.UnexpectedShutdownsBoot);
         _clock.Advance(TimeSpan.FromMinutes(1));
         collector.Collect(null, out _);
-        Assert.Equal(2, _probe.CrashCalls);
+        Assert.Equal(4, _probe.CrashCalls);
+    }
+
+    [Fact]
+    public void Сбои_перед_загрузкой_считаются_с_начала_загрузки()
+    {
+        // Окно «с загрузки» — время работы (1 ч) и 2 мин запаса; за 7 суток — свои числа.
+        _probe.CrashesBy = since => T0 - since < TimeSpan.FromDays(1) ? new CrashCounts(1, 0) : new CrashCounts(3, 2);
+        var h = Collector().Collect(null, out _);
+        Assert.Equal([T0 - TimeSpan.FromDays(7), T0 - TimeSpan.FromMinutes(62)], _probe.CrashSince);
+        Assert.Equal(3u, h.UnexpectedShutdowns7D);
+        Assert.Equal(2u, h.Bugchecks7D);
+        Assert.True(h.CrashesBootMeasured);
+        Assert.Equal(1u, h.UnexpectedShutdownsBoot);
+        Assert.Equal(0u, h.BugchecksBoot);
+    }
+
+    [Fact]
+    public void Без_времени_работы_сбои_перед_загрузкой_не_измерены()
+    {
+        _probe.Uptime = 0;
+        var h = Collector().Collect(null, out _);
+        Assert.Single(_probe.CrashSince);
+        Assert.False(h.CrashesBootMeasured);
+        Assert.Equal(0u, h.UnexpectedShutdownsBoot);
+        Assert.Equal(2u, h.UnexpectedShutdowns7D);
     }
 
     // ------------------------------------------------------------------ фоновый сбор

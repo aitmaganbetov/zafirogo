@@ -37,6 +37,7 @@ public sealed class HealthCollector
     private IReadOnlyDictionary<string, DiskSmart>? _smart;
     private DateTimeOffset _smartAt;
     private CrashCounts? _crashes;
+    private CrashCounts? _bootCrashes;
     private DateTimeOffset? _crashesAt;
 
     public HealthCollector(IHealthProbe probe, TimeProvider? time = null, ILogger? log = null, HealthCollectorOptions? options = null)
@@ -102,6 +103,14 @@ public sealed class HealthCollector
         if (_crashesAt is null || now - _crashesAt.Value >= _options.CrashRefresh)
         {
             _crashes = Measure("crashes", () => _probe.Crashes(now - _options.CrashWindow), null);
+            // Сбои перед этой загрузкой: события пишет загрузка после сбоя, поэтому окно — с начала загрузки (время работы)
+            // с запасом на поправку часов при загрузке. Из такого окна события не выпадают — сервер считает по ним точный
+            // прирост вместе с boot_id (agent.proto ComputerHealth.unexpected_shutdowns_boot). Время работы не измерено —
+            // и это не измерено.
+            var uptime = h.UptimeSeconds;
+            _bootCrashes = uptime > 0
+                ? Measure("crashes_boot", () => _probe.Crashes(now - TimeSpan.FromSeconds(uptime) - _options.BootCrashMargin), null)
+                : null;
             _crashesAt = now;
         }
 
@@ -109,6 +118,13 @@ public sealed class HealthCollector
         {
             h.UnexpectedShutdowns7D = c.UnexpectedShutdowns;
             h.Bugchecks7D = c.BugChecks;
+        }
+
+        if (_bootCrashes is { } b)
+        {
+            h.CrashesBootMeasured = true;
+            h.UnexpectedShutdownsBoot = b.UnexpectedShutdowns;
+            h.BugchecksBoot = b.BugChecks;
         }
 
         urgent = peripheralsChanged || smartChanged;
@@ -263,6 +279,12 @@ public sealed class HealthCollectorOptions
 
     /// <summary>Окно подсчёта сбоев (agent.proto: «за 7 суток»).</summary>
     public TimeSpan CrashWindow { get; set; } = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// Запас окна «сбои перед этой загрузкой» раньше начала загрузки (поправка часов при загрузке). Больше нельзя: сбой
+    /// загрузки, прожившей меньше запаса, посчитался бы и в следующей.
+    /// </summary>
+    public TimeSpan BootCrashMargin { get; set; } = TimeSpan.FromMinutes(2);
 
     public int MaxDisks { get; set; } = 26;
 

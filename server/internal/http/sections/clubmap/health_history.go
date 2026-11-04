@@ -32,6 +32,16 @@ func weekStartIn(t time.Time, loc *time.Location) time.Time {
 	return d.AddDate(0, 0, -((int(d.Weekday()) + 6) % 7))
 }
 
+// weekBounds — границы weeks+1 недель по возрастанию: неделя до показываемых (тренд), показываемые и конец текущей
+// (cur — начало текущей недели в поясе клуба; AddDate в поясе — переход на летнее время учтён).
+func weekBounds(cur time.Time, weeks int) []time.Time {
+	out := make([]time.Time, 0, weeks+2)
+	for i := weeks; i >= -1; i-- {
+		out = append(out, cur.AddDate(0, 0, -7*i))
+	}
+	return out
+}
+
 // optInt — -1 (нет измерения в SQL) → null.
 func optInt[T int32 | int64](v T) *int64 {
 	if v < 0 {
@@ -85,6 +95,7 @@ func (h *handlers) GetComputerHealthWeekly(ctx context.Context, req clubmapapi.G
 	var (
 		rows     []store.ComputerHealthWeeklyRow
 		loc      = time.UTC
+		bounds   []time.Time
 		diskless bool
 	)
 	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
@@ -99,34 +110,34 @@ func (h *handlers) GetComputerHealthWeekly(ctx context.Context, req clubmapapi.G
 		if l, err := time.LoadLocation(club.Timezone); err == nil {
 			loc = l // неизвестный пояс — UTC (CurrentClub::timezone())
 		}
-		cur := weekStartIn(now, loc)
+		bounds = weekBounds(weekStartIn(now, loc), weeks)
 		rows, err = q.ComputerHealthWeekly(ctx, store.ComputerHealthWeeklyParams{
-			Tz: loc.String(), CpuHotDeci: rules.CPUTempC * 10, GpuHotDeci: rules.GPUTempC * 10, Diskless: diskless,
-			ClubID: clubID, ComputerID: req.ComputerId,
-			FromAt: cur.AddDate(0, 0, -7*weeks), ToAt: cur.AddDate(0, 0, 7), // +1 неделя раньше — для тренда
+			Bounds: bounds, CpuHotDeci: rules.CPUTempC * 10, GpuHotDeci: rules.GPUTempC * 10, Diskless: diskless,
+			ClubID: clubID, ComputerID: req.ComputerId, FromAt: bounds[0], ToAt: bounds[len(bounds)-1],
 		})
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	first := weekStartIn(now, loc).AddDate(0, 0, -7*(weeks-1))
-	byDay := make(map[string]health.Week, len(rows))
+	byIndex := make(map[int32]health.Week, len(rows))
 	for _, r := range rows {
-		byDay[r.WeekStart.Format(time.DateOnly)] = weekOf(r, diskless)
+		byIndex[r.WeekIndex] = weekOf(r, diskless)
 	}
 	out := clubmapapi.HealthWeekPage{Diskless: diskless, Weeks: make([]clubmapapi.HealthWeek, 0, len(rows))}
 	for _, r := range rows {
-		start := time.Date(r.WeekStart.Year(), r.WeekStart.Month(), r.WeekStart.Day(), 0, 0, 0, 0, loc)
-		if start.Before(first) {
+		// Интервал 1 — неделя до показываемых (только для тренда); вне границ (не бывает: выборка — тем же диапазоном) —
+		// пропуск.
+		if r.WeekIndex < 2 || int(r.WeekIndex) >= len(bounds) {
 			continue
 		}
+		start := bounds[r.WeekIndex-1]
 		var prev *health.Week
-		if p, ok := byDay[start.AddDate(0, 0, -7).Format(time.DateOnly)]; ok {
+		if p, ok := byIndex[r.WeekIndex-1]; ok {
 			prev = &p
 		}
 		w := clubmapapi.HealthWeek{
-			Start: start, End: start.AddDate(0, 0, 7), OnlineMinutes: r.OnlineMinutes, SessionMinutes: r.SessionMinutes,
+			Start: start, End: bounds[r.WeekIndex], OnlineMinutes: r.OnlineMinutes, SessionMinutes: r.SessionMinutes,
 			CpuLoadAvgBp: optInt(r.CpuLoadAvgBp), CpuLoadMaxBp: optInt(r.CpuLoadMaxBp),
 			RamAvgBp: optInt(r.RamAvgBp), RamMaxBp: optInt(r.RamMaxBp),
 			GpuLoadAvgBp: optInt(r.GpuLoadAvgBp), GpuLoadMaxBp: optInt(r.GpuLoadMaxBp),

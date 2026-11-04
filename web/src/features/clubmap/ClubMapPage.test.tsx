@@ -323,8 +323,9 @@ describe('ClubMapPage', () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/events')) {
-        return Promise.resolve(json({ items: [{ id: 2, kind: 'disk_smart', raised_at: '2026-10-15T08:00:00Z', cleared_at: null, details: {} },
-          { id: 1, kind: 'network_slow', raised_at: '2026-10-14T08:00:00Z', cleared_at: null, details: {} }], next_cursor: null }));
+        // Проблемы дисков сервер отсек до страницы (SQL, diskless) — страница не пустая, дальше есть ещё.
+        return Promise.resolve(json({ items: [{ id: 1, kind: 'network_slow', raised_at: '2026-10-14T08:00:00Z', cleared_at: null, details: {} }],
+          next_cursor: 'next' }));
       }
       if (path.endsWith('/weekly')) return Promise.resolve(json({ diskless: true, weeks: disklessWeeks }));
       return Promise.resolve(json(view));
@@ -346,8 +347,9 @@ describe('ClubMapPage', () => {
     expect(week.textContent).toContain('Наблюдать · Медленная сеть (меньше 1000 Мбит/с): 5 ч');
     expect(week.textContent).not.toContain('Системный диск');
     await waitFor(() => expect(document.getElementById('computer-health-history')).not.toBeNull());
-    expect([...(document.getElementById('computer-health-history') as HTMLElement).querySelectorAll('dt')].map((dt) => dt.textContent))
-      .toEqual(['Медленная сеть']);
+    const history = document.getElementById('computer-health-history') as HTMLElement;
+    expect([...history.querySelectorAll('dt')].map((dt) => dt.textContent)).toEqual(['Медленная сеть']);
+    expect(history.querySelector('.cm-info-more')?.textContent).toBe('Показать ещё');
   });
 
   it('shows disks of a regular PC', async () => {

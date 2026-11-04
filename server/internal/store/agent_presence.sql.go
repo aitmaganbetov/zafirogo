@@ -169,20 +169,26 @@ SELECT c.id, c.club_id, c.number, c.display_name, c.device_name, z.name AS zone_
        c.current_session_id, c.current_session_user_id, c.session_guest, c.session_ends_at,
        COALESCE((SELECT k.last_seq FROM agent_command_counters k
                  WHERE k.club_id = c.club_id AND k.computer_id = c.id), 0)::bigint AS last_command_seq,
-       -- Бездисковый ПК: сертификат этого подключения выпущен по ключу образа (0013, Q-037; поиск по первичному ключу).
+       -- Бездисковый ПК (0013, Q-037) — то же правило, что у панели (computer_health.sql ComputerHealthComputer):
+       -- действующий сертификат ПК (не отозван, не истёк; у ПК в сети это сертификат подключения — все действующие
+       -- сертификаты ПК одного вида: выпуск по коду или ключу образа отзывает прежние, продление сохраняет признак),
+       -- иначе последний выпущенный. Индекс club_computer_index: диапазон not_after > now() — одна-две строки.
        COALESCE((SELECT ac.diskless FROM agent_certificates ac
-                 WHERE ac.serial = $1::text AND ac.club_id = c.club_id
-                   AND ac.club_computer_id = c.id), false)::boolean AS diskless
+                 WHERE ac.club_id = c.club_id AND ac.club_computer_id = c.id AND ac.not_after > now()
+                   AND ac.revoked_at IS NULL
+                 ORDER BY ac.issued_at DESC LIMIT 1),
+                (SELECT ac.diskless FROM agent_certificates ac
+                 WHERE ac.club_id = c.club_id AND ac.club_computer_id = c.id
+                 ORDER BY ac.issued_at DESC LIMIT 1), false)::boolean AS diskless
 FROM club_computers c
 JOIN club_zones z ON z.club_id = c.club_id AND z.id = c.club_zone_id
 JOIN clubs cl ON cl.id = c.club_id
-WHERE c.club_id = $2 AND c.id = $3
+WHERE c.club_id = $1 AND c.id = $2
 `
 
 type GetAgentComputerParams struct {
-	CertSerial string `json:"cert_serial"`
-	ClubID     int64  `json:"club_id"`
-	ComputerID int64  `json:"computer_id"`
+	ClubID     int64 `json:"club_id"`
+	ComputerID int64 `json:"computer_id"`
 }
 
 type GetAgentComputerRow struct {
@@ -222,7 +228,7 @@ type GetAgentComputerRow struct {
 // Карточка ПК для Hello/Welcome: номер, зона, клуб, сохранённое состояние агента, активная сессия и последний
 // выданный seq команды (одним запросом: подключение 50 000 ПК после перезапуска — это 50 000 таких чтений).
 func (q *Queries) GetAgentComputer(ctx context.Context, arg GetAgentComputerParams) (GetAgentComputerRow, error) {
-	row := q.db.QueryRow(ctx, getAgentComputer, arg.CertSerial, arg.ClubID, arg.ComputerID)
+	row := q.db.QueryRow(ctx, getAgentComputer, arg.ClubID, arg.ComputerID)
 	var i GetAgentComputerRow
 	err := row.Scan(
 		&i.ID,

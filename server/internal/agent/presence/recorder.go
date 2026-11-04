@@ -50,13 +50,13 @@ func NewRecorder(pool db.Beginner, debounce time.Duration, now func() time.Time,
 // Writes — сколько UPDATE club_computers выполнил этот Recorder (метрика и тесты «нет записей без изменений»).
 func (r *Recorder) Writes() int64 { return r.writes.Load() }
 
-// Load читает карточку ПК клуба (для Hello и Welcome); Diskless — сертификат подключения выпущен по ключу образа.
+// Load читает карточку ПК клуба (для Hello и Welcome); Diskless — действующий сертификат ПК выпущен по ключу образа
+// (то же правило, что у панели ПК, S7-H-18).
 func (r *Recorder) Load(ctx context.Context, id identity.Identity) (store.GetAgentComputerRow, error) {
 	var row store.GetAgentComputerRow
 	err := db.InTenantTx(ctx, r.pool, id.ClubID, func(q *store.Queries) error {
 		var err error
-		row, err = q.GetAgentComputer(ctx, store.GetAgentComputerParams{ClubID: id.ClubID, ComputerID: id.ComputerID,
-			CertSerial: id.CertSerial})
+		row, err = q.GetAgentComputer(ctx, store.GetAgentComputerParams{ClubID: id.ClubID, ComputerID: id.ComputerID})
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

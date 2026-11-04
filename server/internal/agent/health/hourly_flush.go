@@ -208,13 +208,20 @@ func (f *HourlyFlusher) Tick(ctx context.Context) (rows int, err error) {
 	return rows, err
 }
 
-// FlushHour пишет строки часа hour (начало часа UTC) пачками: прочитать агрегаты → UPSERT по клубам → удалить ключи и
-// члены индекса. Сбой посреди — оставшиеся ПК сбросятся следующим тиком, записанные повторно перезапишутся теми же
+// FlushHour закрывает час hour (начало часа UTC) для записи и пишет его строки пачками: прочитать агрегаты → UPSERT по
+// клубам → удалить ключи и члены индекса. Сбой посреди — оставшиеся ПК сбросятся следующим тиком, записанные повторно перезапишутся теми же
 // значениями.
 func (f *HourlyFlusher) FlushHour(ctx context.Context, hour time.Time) (rows int, err error) {
 	k := f.keys()
 	hour = hour.UTC().Truncate(time.Hour)
 	idx := k.indexKey(hour)
+	// Сначала — «час закрыт»: Record больше не пишет в этот час (атомарно с проверкой в скрипте). Иначе Status,
+	// опоздавший после чтения агрегата, терялся бы, а пришедший после удаления ключей создал бы новый частичный агрегат,
+	// и следующий тик перезаписал бы им полную строку часа. Маркер живёт, пока в час может прийти запись (TTL агрегата).
+	if err := f.Valkey.Do(ctx, f.Valkey.B().Set().Key(k.closedKey(hour)).Value("1").
+		Ex(HourlyKeyTTL).Build()).Error(); err != nil {
+		return 0, fmt.Errorf("health: hourly close: %w", err)
+	}
 	var cursor uint64
 	for {
 		res, err := f.Valkey.Do(ctx, f.Valkey.B().Sscan().Key(idx).Cursor(cursor).Count(hourlyBatch).Build()).AsScanEntry()

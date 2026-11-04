@@ -92,8 +92,8 @@ func snapshotOf(h *presence.Health) *clubmapapi.HealthSnapshot {
 	return out
 }
 
-// healthComputer — ПК принадлежит клубу из аутентификации (иначе 404); diskless — бездисковый (последний сертификат
-// выпущен по ключу образа, S7-H-18).
+// healthComputer — ПК принадлежит клубу из аутентификации (иначе 404); diskless — бездисковый (действующий, иначе
+// последний выпущенный сертификат — по ключу образа; то же правило, что у стрима, S7-H-18).
 func healthComputer(ctx context.Context, q *store.Queries, clubID, computerID int64) (diskless bool, err error) {
 	diskless, err = q.ComputerHealthComputer(ctx, store.ComputerHealthComputerParams{ClubID: clubID, ComputerID: computerID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -156,14 +156,14 @@ func (h *handlers) ListComputerHealthEvents(ctx context.Context, req clubmapapi.
 	size := httpx.PageSize(req.Params.Limit)
 	var rows []store.ComputerHealthHistoryRow
 	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
-		if _, err := healthComputer(ctx, q, clubID, req.ComputerId); err != nil {
+		diskless, err := healthComputer(ctx, q, clubID, req.ComputerId)
+		if err != nil {
 			return err
 		}
-		p := store.ComputerHealthHistoryParams{ClubID: clubID, ComputerID: req.ComputerId, PageSize: size + 1}
+		p := store.ComputerHealthHistoryParams{ClubID: clubID, ComputerID: req.ComputerId, Diskless: diskless, PageSize: size + 1}
 		if cur.ID > 0 {
 			p.BeforeAt, p.BeforeID = &cur.At, &cur.ID
 		}
-		var err error
 		rows, err = q.ComputerHealthHistory(ctx, p)
 		return err
 	})

@@ -8,32 +8,39 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 )
 
-// Минуты онлайн, которые отмечает Status: своя минута и минуты с предыдущего Status (разрыв ≤ maxGap), только в
-// текущем часе.
+// Минуты онлайн, которые отмечает Status: своя минута и минуты с предыдущего Status (разрыв ≤ maxGap); минуты разрыва
+// через границу часа — в прошлом часе (prev).
 func TestOnlineMinutes(t *testing.T) {
 	h := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
 	gap := 150 * time.Second
 	cases := []struct {
 		name      string
 		since, at time.Time
-		want      []int
+		prev, cur []int
 	}{
-		{"first status", time.Time{}, h.Add(30 * time.Second), []int{0}},
-		{"status every 60 s skipping a minute", h.Add(59 * time.Second), h.Add(2 * time.Minute), []int{0, 1, 2}},
-		{"same minute", h.Add(10 * time.Second), h.Add(40 * time.Second), []int{0}},
-		{"across the hour — only this hour", h.Add(-30 * time.Second), h.Add(40 * time.Second), []int{0}},
-		{"previous status from last hour, later minute", h.Add(-20 * time.Second), h.Add(70 * time.Second), []int{0, 1}},
-		{"gap too long — only this minute", h.Add(10 * time.Minute), h.Add(20 * time.Minute), []int{20}},
-		{"since after at (clock skew)", h.Add(5 * time.Minute), h.Add(4 * time.Minute), []int{4}},
-		{"last minute of hour", h.Add(58*time.Minute + 30*time.Second), h.Add(59*time.Minute + 59*time.Second), []int{58, 59}},
-		{"local time zone input", time.Time{}, h.Add(15 * time.Minute).In(time.FixedZone("x", 5*3600+1800)), []int{15}},
+		{"first status", time.Time{}, h.Add(30 * time.Second), nil, []int{0}},
+		{"status every 60 s skipping a minute", h.Add(59 * time.Second), h.Add(2 * time.Minute), nil, []int{0, 1, 2}},
+		{"same minute", h.Add(10 * time.Second), h.Add(40 * time.Second), nil, []int{0}},
+		{"across the hour", h.Add(-30 * time.Second), h.Add(40 * time.Second), []int{59}, []int{0}},
+		{"across the hour skipping minute 59", h.Add(-70 * time.Second), h.Add(10 * time.Second), []int{58, 59}, []int{0}},
+		{"previous status from last hour, later minute", h.Add(-20 * time.Second), h.Add(70 * time.Second), []int{59}, []int{0, 1}},
+		{"gap too long — only this minute", h.Add(10 * time.Minute), h.Add(20 * time.Minute), nil, []int{20}},
+		{"gap too long across the hour", h.Add(-5 * time.Minute), h.Add(10 * time.Second), nil, []int{0}},
+		{"since after at (clock skew)", h.Add(5 * time.Minute), h.Add(4 * time.Minute), nil, []int{4}},
+		{"last minute of hour", h.Add(58*time.Minute + 30*time.Second), h.Add(59*time.Minute + 59*time.Second), nil, []int{58, 59}},
+		{"local time zone input", time.Time{}, h.Add(15 * time.Minute).In(time.FixedZone("x", 5*3600+1800)), nil, []int{15}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := OnlineMinutes(tc.since, tc.at, gap); !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("OnlineMinutes = %v, want %v", got, tc.want)
+			prev, cur := OnlineMinutes(tc.since, tc.at, gap)
+			if !reflect.DeepEqual(prev, tc.prev) || !reflect.DeepEqual(cur, tc.cur) {
+				t.Errorf("OnlineMinutes = %v %v, want %v %v", prev, cur, tc.prev, tc.cur)
 			}
 		})
+	}
+	// Разрыв больше часа (огромный maxGap) — только прошлый час целиком.
+	if prev, cur := OnlineMinutes(h.Add(-90*time.Minute), h.Add(time.Minute), 3*time.Hour); len(prev) != 60 || len(cur) != 2 {
+		t.Errorf("gap over an hour: %v %v", prev, cur)
 	}
 }
 
@@ -43,18 +50,21 @@ func TestSessionMinutes(t *testing.T) {
 	cases := []struct {
 		name      string
 		since, at time.Time
-		want      []int
+		prev, cur []int
 	}{
-		{"first status", time.Time{}, h.Add(10*time.Minute + 5*time.Second), []int{10}},
-		{"next minute", h.Add(9*time.Minute + 5*time.Second), h.Add(10*time.Minute + 5*time.Second), []int{10}},
-		{"skipped minute", h.Add(8*time.Minute + 59*time.Second), h.Add(10 * time.Minute), []int{9, 10}},
-		{"same minute", h.Add(10 * time.Minute), h.Add(10*time.Minute + 30*time.Second), []int{10}},
-		{"previous status in last hour", h.Add(-20 * time.Second), h.Add(70 * time.Second), []int{0, 1}},
+		{"first status", time.Time{}, h.Add(10*time.Minute + 5*time.Second), nil, []int{10}},
+		{"next minute", h.Add(9*time.Minute + 5*time.Second), h.Add(10*time.Minute + 5*time.Second), nil, []int{10}},
+		{"skipped minute", h.Add(8*time.Minute + 59*time.Second), h.Add(10 * time.Minute), nil, []int{9, 10}},
+		{"same minute", h.Add(10 * time.Minute), h.Add(10*time.Minute + 30*time.Second), nil, []int{10}},
+		{"previous status in last hour", h.Add(-20 * time.Second), h.Add(70 * time.Second), []int{}, []int{0, 1}},
+		{"previous status in last hour, skipped minute 59", h.Add(-70 * time.Second), h.Add(10 * time.Second), []int{59}, []int{0}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := SessionMinutes(OnlineMinutes(tc.since, tc.at, 150*time.Second), tc.since, tc.at); !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("SessionMinutes = %v, want %v", got, tc.want)
+			op, oc := OnlineMinutes(tc.since, tc.at, 150*time.Second)
+			prev, cur := SessionMinutes(op, oc, tc.since, tc.at)
+			if !reflect.DeepEqual(prev, tc.prev) || !reflect.DeepEqual(cur, tc.cur) {
+				t.Errorf("SessionMinutes = %v %v, want %v %v", prev, cur, tc.prev, tc.cur)
 			}
 		})
 	}

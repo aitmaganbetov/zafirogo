@@ -41,6 +41,10 @@ func (q *Queries) ComputerHealthClear(ctx context.Context, arg ComputerHealthCle
 
 const computerHealthComputer = `-- name: ComputerHealthComputer :one
 SELECT COALESCE((SELECT ac.diskless FROM agent_certificates ac
+                 WHERE ac.club_id = c.club_id AND ac.club_computer_id = c.id AND ac.not_after > now()
+                   AND ac.revoked_at IS NULL
+                 ORDER BY ac.issued_at DESC LIMIT 1),
+                (SELECT ac.diskless FROM agent_certificates ac
                  WHERE ac.club_id = c.club_id AND ac.club_computer_id = c.id
                  ORDER BY ac.issued_at DESC LIMIT 1), false)::boolean AS diskless
 FROM club_computers c
@@ -52,8 +56,10 @@ type ComputerHealthComputerParams struct {
 	ComputerID int64 `json:"computer_id"`
 }
 
-// Карточка ПК клуба (нет строки — 404 для чужого или удалённого ПК) и признак «бездисковый»: последний выпущенный
-// сертификат ПК — по ключу образа (agent_certificates.diskless, 0013, Q-037). Индекс club_computer_index.
+// Карточка ПК клуба (нет строки — 404 для чужого или удалённого ПК) и признак «бездисковый» (agent_certificates.diskless,
+// 0013, Q-037) — то же правило, что у стрима (agent_presence.sql GetAgentComputer): действующий сертификат ПК (не
+// отозван, не истёк), иначе последний выпущенный (ПК давно не в сети: сертификат по ключу образа живёт сутки).
+// Индекс club_computer_index.
 func (q *Queries) ComputerHealthComputer(ctx context.Context, arg ComputerHealthComputerParams) (bool, error) {
 	row := q.db.QueryRow(ctx, computerHealthComputer, arg.ClubID, arg.ComputerID)
 	var diskless bool
@@ -65,15 +71,19 @@ const computerHealthHistory = `-- name: ComputerHealthHistory :many
 SELECT id, kind, raised_at, cleared_at, details
 FROM computer_health_events
 WHERE club_id = $1 AND computer_id = $2
-  AND ($3::timestamptz IS NULL
-       OR (raised_at, id) < ($3::timestamptz, $4::bigint))
+  -- Бездисковый ПК (S7-H-18): проблем дисков в истории не показываем (тома образа или запись до перевода ПК) — фильтр
+  -- до keyset-страницы, иначе страница могла бы оказаться пустой при следующей.
+  AND NOT ($3::boolean AND kind IN ('disk_low', 'disk_smart'))
+  AND ($4::timestamptz IS NULL
+       OR (raised_at, id) < ($4::timestamptz, $5::bigint))
 ORDER BY raised_at DESC, id DESC
-LIMIT $5
+LIMIT $6
 `
 
 type ComputerHealthHistoryParams struct {
 	ClubID     int64      `json:"club_id"`
 	ComputerID int64      `json:"computer_id"`
+	Diskless   bool       `json:"diskless"`
 	BeforeAt   *time.Time `json:"before_at"`
 	BeforeID   *int64     `json:"before_id"`
 	PageSize   int32      `json:"page_size"`
@@ -92,6 +102,7 @@ func (q *Queries) ComputerHealthHistory(ctx context.Context, arg ComputerHealthH
 	rows, err := q.db.Query(ctx, computerHealthHistory,
 		arg.ClubID,
 		arg.ComputerID,
+		arg.Diskless,
 		arg.BeforeAt,
 		arg.BeforeID,
 		arg.PageSize,

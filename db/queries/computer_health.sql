@@ -27,15 +27,24 @@ WHERE club_id = sqlc.arg(club_id) AND computer_id = sqlc.arg(computer_id) AND ki
 SELECT id, kind, raised_at, cleared_at, details
 FROM computer_health_events
 WHERE club_id = sqlc.arg(club_id) AND computer_id = sqlc.arg(computer_id)
+  -- Бездисковый ПК (S7-H-18): проблем дисков в истории не показываем (тома образа или запись до перевода ПК) — фильтр
+  -- до keyset-страницы, иначе страница могла бы оказаться пустой при следующей.
+  AND NOT (sqlc.arg(diskless)::boolean AND kind IN ('disk_low', 'disk_smart'))
   AND (sqlc.narg(before_at)::timestamptz IS NULL
        OR (raised_at, id) < (sqlc.narg(before_at)::timestamptz, sqlc.narg(before_id)::bigint))
 ORDER BY raised_at DESC, id DESC
 LIMIT sqlc.arg(page_size);
 
 -- name: ComputerHealthComputer :one
--- Карточка ПК клуба (нет строки — 404 для чужого или удалённого ПК) и признак «бездисковый»: последний выпущенный
--- сертификат ПК — по ключу образа (agent_certificates.diskless, 0013, Q-037). Индекс club_computer_index.
+-- Карточка ПК клуба (нет строки — 404 для чужого или удалённого ПК) и признак «бездисковый» (agent_certificates.diskless,
+-- 0013, Q-037) — то же правило, что у стрима (agent_presence.sql GetAgentComputer): действующий сертификат ПК (не
+-- отозван, не истёк), иначе последний выпущенный (ПК давно не в сети: сертификат по ключу образа живёт сутки).
+-- Индекс club_computer_index.
 SELECT COALESCE((SELECT ac.diskless FROM agent_certificates ac
+                 WHERE ac.club_id = c.club_id AND ac.club_computer_id = c.id AND ac.not_after > now()
+                   AND ac.revoked_at IS NULL
+                 ORDER BY ac.issued_at DESC LIMIT 1),
+                (SELECT ac.diskless FROM agent_certificates ac
                  WHERE ac.club_id = c.club_id AND ac.club_computer_id = c.id
                  ORDER BY ac.issued_at DESC LIMIT 1), false)::boolean AS diskless
 FROM club_computers c

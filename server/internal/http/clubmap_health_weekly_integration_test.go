@@ -292,3 +292,72 @@ func TestClubMapComputerHealthDiskless(t *testing.T) {
 		}
 	}
 }
+
+// Пояс клуба, известный Go, но не Postgres ('Local'): недели считаются по границам из Go — без пояса в SQL, без 500.
+func TestClubMapComputerHealthWeeklyGoOnlyZone(t *testing.T) {
+	now := time.Date(2026, 11, 4, 7, 0, 0, 0, time.UTC)
+	e := newWeeklyEnv(t, now)
+	_, manager := e.staff("Менеджер", "manager")
+	e.exec("UPDATE clubs SET timezone = 'Local' WHERE id = $1", e.club)
+	zone := e.scalar("INSERT INTO club_zones (club_id, name, created_at, updated_at) VALUES ($1, 'Зал', now(), now()) RETURNING id", e.club)
+	pc := e.scalar("INSERT INTO club_computers (club_id, club_zone_id, number, created_at, updated_at) VALUES ($1, $2, 1, now(), now()) RETURNING id", e.club, zone)
+	e.exec(`INSERT INTO computer_health_hourly (club_id, computer_id, hour, online_minutes, session_minutes)
+		VALUES ($1, $2, '2026-11-03T10:00:00Z', 60, 0)`, e.club, pc)
+	r := e.get(manager, fmt.Sprintf("/api/club-computers/%d/health/weekly", pc))
+	expect(t, r, http.StatusOK, "weekly with a Go-only zone")
+	weeks := r.body["weeks"].([]any)
+	if len(weeks) != 1 || num(weeks[0].(map[string]any)["online_minutes"]) != 60 {
+		t.Fatalf("weeks: %v", weeks)
+	}
+}
+
+// Бездисковый ПК: проблемы дисков отсекаются в SQL до keyset-страницы — страница не пустеет и «Показать ещё» ведёт
+// дальше. Признак бездискового — тем же правилом, что у стрима: действующий сертификат, а не просто последний
+// выпущенный (истёкший сертификат по коду, выпущенный позже, не делает ПК «с дисками»).
+func TestClubMapComputerHealthEventsDiskless(t *testing.T) {
+	now := time.Date(2026, 11, 4, 7, 0, 0, 0, time.UTC)
+	e := newWeeklyEnv(t, now)
+	_, manager := e.staff("Менеджер", "manager")
+	zone := e.scalar("INSERT INTO club_zones (club_id, name, created_at, updated_at) VALUES ($1, 'Зал', now(), now()) RETURNING id", e.club)
+	pc := e.scalar("INSERT INTO club_computers (club_id, club_zone_id, number, created_at, updated_at) VALUES ($1, $2, 1, now(), now()) RETURNING id", e.club, zone)
+	cert := func(serial string, diskless bool, issued, notAfter string) {
+		t.Helper()
+		e.exec(`INSERT INTO agent_certificates (serial, club_id, club_computer_id, spki_sha256, not_before, not_after, issued_at,
+			issued_via, diskless) VALUES ($1, $2, $3, $4, $5::timestamptz, $6::timestamptz, $5::timestamptz, $7, $8)`,
+			fmt.Sprintf("%x0%s", e.club, serial), e.club, pc, make([]byte, 32), issued, notAfter,
+			map[bool]string{true: "image_key", false: "enroll"}[diskless], diskless)
+	}
+	cert("c1", true, "2026-10-20T00:00:00Z", "2099-01-01T00:00:00Z")  // действующий, по ключу образа
+	cert("c2", false, "2026-10-25T00:00:00Z", "2026-10-26T00:00:00Z") // выпущен позже, но истёк
+	// Новые сверху: три проблемы дисков, затем две «сетевые».
+	e.exec(`INSERT INTO computer_health_events (club_id, computer_id, kind, raised_at, cleared_at) VALUES
+		($1, $2, 'network_slow', '2026-11-01T08:00:00Z', '2026-11-01T09:00:00Z'),
+		($1, $2, 'mouse', '2026-11-01T10:00:00Z', '2026-11-01T11:00:00Z'),
+		($1, $2, 'disk_low', '2026-11-02T08:00:00Z', NULL),
+		($1, $2, 'disk_smart', '2026-11-02T09:00:00Z', NULL),
+		($1, $2, 'disk_low', '2026-11-02T10:00:00Z', '2026-11-02T11:00:00Z')`, e.club, pc)
+	r := e.get(manager, fmt.Sprintf("/api/club-computers/%d/health", pc))
+	expect(t, r, http.StatusOK, "health")
+	if r.body["diskless"] != true {
+		t.Fatalf("diskless = %v, want true (valid image-key certificate)", r.body["diskless"])
+	}
+	var kinds []string
+	path := fmt.Sprintf("/api/club-computers/%d/health/events?limit=1", pc)
+	for range 5 {
+		r := e.get(manager, path)
+		expect(t, r, http.StatusOK, "events")
+		items := r.body["items"].([]any)
+		if len(items) != 1 {
+			t.Fatalf("page %v: %v (a page must not be empty)", kinds, r.body)
+		}
+		kinds = append(kinds, items[0].(map[string]any)["kind"].(string))
+		next, _ := r.body["next_cursor"].(string)
+		if next == "" {
+			break
+		}
+		path = fmt.Sprintf("/api/club-computers/%d/health/events?limit=1&cursor=%s", pc, url.QueryEscape(next))
+	}
+	if !reflect.DeepEqual(kinds, []string{"mouse", "network_slow"}) {
+		t.Fatalf("events of a diskless PC: %v, want [mouse network_slow]", kinds)
+	}
+}

@@ -137,7 +137,7 @@ func (q *Queries) ComputerHealthHourlyUpsert(ctx context.Context, arg ComputerHe
 }
 
 const computerHealthWeekly = `-- name: ComputerHealthWeekly :many
-SELECT date_trunc('week', h.hour AT TIME ZONE $1::text)::date AS week_start,
+SELECT width_bucket(h.hour, $1::timestamptz[])::integer AS week_index,
        count(*)::bigint AS hours,
        coalesce(sum(h.online_minutes), 0)::bigint AS online_minutes,
        coalesce(sum(h.session_minutes), 0)::bigint AS session_minutes,
@@ -183,45 +183,48 @@ ORDER BY 1 DESC
 `
 
 type ComputerHealthWeeklyParams struct {
-	Tz         string    `json:"tz"`
-	CpuHotDeci int32     `json:"cpu_hot_deci"`
-	GpuHotDeci int32     `json:"gpu_hot_deci"`
-	Diskless   bool      `json:"diskless"`
-	ClubID     int64     `json:"club_id"`
-	ComputerID int64     `json:"computer_id"`
-	FromAt     time.Time `json:"from_at"`
-	ToAt       time.Time `json:"to_at"`
+	Bounds     []time.Time `json:"bounds"`
+	CpuHotDeci int32       `json:"cpu_hot_deci"`
+	GpuHotDeci int32       `json:"gpu_hot_deci"`
+	Diskless   bool        `json:"diskless"`
+	ClubID     int64       `json:"club_id"`
+	ComputerID int64       `json:"computer_id"`
+	FromAt     time.Time   `json:"from_at"`
+	ToAt       time.Time   `json:"to_at"`
 }
 
 type ComputerHealthWeeklyRow struct {
-	WeekStart             time.Time `json:"week_start"`
-	Hours                 int64     `json:"hours"`
-	OnlineMinutes         int64     `json:"online_minutes"`
-	SessionMinutes        int64     `json:"session_minutes"`
-	CpuLoadAvgBp          int32     `json:"cpu_load_avg_bp"`
-	CpuLoadMaxBp          int32     `json:"cpu_load_max_bp"`
-	RamAvgBp              int32     `json:"ram_avg_bp"`
-	RamMaxBp              int32     `json:"ram_max_bp"`
-	GpuLoadAvgBp          int32     `json:"gpu_load_avg_bp"`
-	GpuLoadMaxBp          int32     `json:"gpu_load_max_bp"`
-	CpuTempAvgDeci        int32     `json:"cpu_temp_avg_deci"`
-	CpuTempMaxDeci        int32     `json:"cpu_temp_max_deci"`
-	GpuTempAvgDeci        int32     `json:"gpu_temp_avg_deci"`
-	GpuTempMaxDeci        int32     `json:"gpu_temp_max_deci"`
-	CpuHotHours           int64     `json:"cpu_hot_hours"`
-	GpuHotHours           int64     `json:"gpu_hot_hours"`
-	ProblemHours          int64     `json:"problem_hours"`
-	NetworkSlowHours      int64     `json:"network_slow_hours"`
-	UnexpectedShutdowns   int64     `json:"unexpected_shutdowns"`
-	Bugchecks             int64     `json:"bugchecks"`
-	PeripheralDisconnects int64     `json:"peripheral_disconnects"`
-	SystemDiskFreeMb      int64     `json:"system_disk_free_mb"`
-	SystemDiskFreeBp      int64     `json:"system_disk_free_bp"`
-	SmartRank             int32     `json:"smart_rank"`
+	WeekIndex             int32 `json:"week_index"`
+	Hours                 int64 `json:"hours"`
+	OnlineMinutes         int64 `json:"online_minutes"`
+	SessionMinutes        int64 `json:"session_minutes"`
+	CpuLoadAvgBp          int32 `json:"cpu_load_avg_bp"`
+	CpuLoadMaxBp          int32 `json:"cpu_load_max_bp"`
+	RamAvgBp              int32 `json:"ram_avg_bp"`
+	RamMaxBp              int32 `json:"ram_max_bp"`
+	GpuLoadAvgBp          int32 `json:"gpu_load_avg_bp"`
+	GpuLoadMaxBp          int32 `json:"gpu_load_max_bp"`
+	CpuTempAvgDeci        int32 `json:"cpu_temp_avg_deci"`
+	CpuTempMaxDeci        int32 `json:"cpu_temp_max_deci"`
+	GpuTempAvgDeci        int32 `json:"gpu_temp_avg_deci"`
+	GpuTempMaxDeci        int32 `json:"gpu_temp_max_deci"`
+	CpuHotHours           int64 `json:"cpu_hot_hours"`
+	GpuHotHours           int64 `json:"gpu_hot_hours"`
+	ProblemHours          int64 `json:"problem_hours"`
+	NetworkSlowHours      int64 `json:"network_slow_hours"`
+	UnexpectedShutdowns   int64 `json:"unexpected_shutdowns"`
+	Bugchecks             int64 `json:"bugchecks"`
+	PeripheralDisconnects int64 `json:"peripheral_disconnects"`
+	SystemDiskFreeMb      int64 `json:"system_disk_free_mb"`
+	SystemDiskFreeBp      int64 `json:"system_disk_free_bp"`
+	SmartRank             int32 `json:"smart_rank"`
 }
 
 // Панель ПК «По неделям»: агрегаты почасовой истории по неделям (понедельник 00:00 в поясе клуба). Период — диапазоном
-// по hour (индекс — первичный ключ club_id, computer_id, hour); границы недель считает сервер в том же поясе.
+// по hour (индекс — первичный ключ club_id, computer_id, hour). Границы недель (bounds, по возрастанию; from_at — первая,
+// to_at — последняя) считает сервер в поясе клуба (Go time.LoadLocation), а неделя строки — номер интервала
+// width_bucket(hour, bounds) (1 — первая неделя): пояс в Postgres не передаётся, поэтому пояс, известный Go, но не
+// Postgres (другая tzdata), не ломает запрос.
 // Средние — взвешенные по минутам онлайн (целочисленно, без float). Часы с проблемами — часы онлайн, в которые была
 // открыта хоть одна проблема журнала computer_health_events (индекс history_index); у бездискового ПК (diskless)
 // проблемы дисков не считаются (записаны до того, как ПК стал бездисковым, или старым агентом). network_slow_hours —
@@ -229,7 +232,7 @@ type ComputerHealthWeeklyRow struct {
 // 1 ok, 2 warning, 3 failing).
 func (q *Queries) ComputerHealthWeekly(ctx context.Context, arg ComputerHealthWeeklyParams) ([]ComputerHealthWeeklyRow, error) {
 	rows, err := q.db.Query(ctx, computerHealthWeekly,
-		arg.Tz,
+		arg.Bounds,
 		arg.CpuHotDeci,
 		arg.GpuHotDeci,
 		arg.Diskless,
@@ -246,7 +249,7 @@ func (q *Queries) ComputerHealthWeekly(ctx context.Context, arg ComputerHealthWe
 	for rows.Next() {
 		var i ComputerHealthWeeklyRow
 		if err := rows.Scan(
-			&i.WeekStart,
+			&i.WeekIndex,
 			&i.Hours,
 			&i.OnlineMinutes,
 			&i.SessionMinutes,

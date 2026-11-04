@@ -208,8 +208,12 @@ func TestHealthHourlyUpsertIdempotent(t *testing.T) {
 		}
 	}
 	f := &health.HourlyFlusher{Valkey: testEnv.valkey, Prefix: "t:" + t.Name() + ":", App: testEnv.db.App}
-	// Первый сброс «упал» после записи: ключи на месте — повторяем их копией.
+	// Первый сброс «упал» после записи: ключи на месте — повторяем их копией (маркер «час закрыт» снимаем, чтобы
+	// записать ту же копию).
 	if _, err := f.FlushHour(ctx, hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := testEnv.valkey.Do(ctx, testEnv.valkey.B().Del().Key("t:"+t.Name()+":hhc:"+strconv.FormatInt(hour.Unix(), 10)).Build()).Error(); err != nil {
 		t.Fatal(err)
 	}
 	for i := range 3 {
@@ -305,4 +309,195 @@ func valkeyUsedMemory(t *testing.T) int64 {
 		}
 	}
 	return 0
+}
+
+// hourEnv — клуб, ПК, прошлый час реального времени (партиции есть) и запись/сброс с отдельным префиксом ключей.
+func hourEnv(t *testing.T, hoursAgo int) (club, pc int64, hour time.Time, h *health.Hourly, f *health.HourlyFlusher) {
+	t.Helper()
+	club = testEnv.club(t)
+	pc = testEnv.computer(t, club, 1)
+	hour = time.Now().UTC().Truncate(time.Hour).Add(-time.Duration(hoursAgo) * time.Hour)
+	if _, err := db.EnsurePartitions(context.Background(), testEnv.db.Platform, hour.AddDate(0, -1, 0), 3); err != nil {
+		t.Fatal(err)
+	}
+	prefix := "t:" + t.Name() + ":"
+	h = health.NewHourly(testEnv.valkey, prefix, 0)
+	f = &health.HourlyFlusher{Valkey: testEnv.valkey, Prefix: prefix, App: testEnv.db.App,
+		Now: func() time.Time { return hour.Add(time.Hour + 6*time.Minute) }}
+	return club, pc, hour, h, f
+}
+
+// Опоздавший Status (часы инстанса отстают больше DefaultHourlyDelay, задержка обработки) после сброса часа не
+// перезаписывает полную строку часа частичным агрегатом: час закрыт — измерение в него не пишется.
+func TestHealthHourlyLateStatusAfterFlush(t *testing.T) {
+	ctx := context.Background()
+	club, pc, hour, h, f := hourEnv(t, 7)
+	at := func(m int) time.Time { return hour.Add(time.Duration(m)*time.Minute + 30*time.Second) }
+	for m := range 60 {
+		var since time.Time
+		if m > 0 {
+			since = at(m - 1)
+		}
+		if err := h.Record(ctx, health.Sample{ClubID: club, ComputerID: pc, At: at(m), Since: since,
+			Load: &presence.Load{CPUBasisPoints: 5000}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := f.FlushHour(ctx, hour); err != nil || n != 1 {
+		t.Fatalf("flush: %d, %v", n, err)
+	}
+	// Опоздавший Status за 59-ю минуту — после сброса.
+	if err := h.Record(ctx, health.Sample{ClubID: club, ComputerID: pc, At: hour.Add(59*time.Minute + 50*time.Second),
+		Load: &presence.Load{CPUBasisPoints: 9000}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.FlushHour(ctx, hour); err != nil {
+		t.Fatal(err)
+	}
+	var rows, online, avg, mx int
+	if err := testEnv.db.Owner.QueryRow(ctx, `SELECT count(*), max(online_minutes), max(cpu_load_avg_bp), max(cpu_load_max_bp)
+		FROM computer_health_hourly WHERE computer_id = $1`, pc).Scan(&rows, &online, &avg, &mx); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 || online != 60 || avg != 5000 || mx != 5000 {
+		t.Fatalf("after a late status: rows %d online %d avg %d max %d, want 1 60 5000 5000", rows, online, avg, mx)
+	}
+	if h.Late() != 1 {
+		t.Errorf("late statuses: %d, want 1", h.Late())
+	}
+}
+
+// Status раз в минуту «перешагнул» границу часа (09:58:50 → 10:00:10): минута 59 прошлого часа отмечается в прошлом
+// часе (он ещё не сброшен) — ПК, бывший онлайн весь час, получает 60 минут, а не 59. Сброшенный час — не трогается.
+func TestHealthHourlyGapAcrossHour(t *testing.T) {
+	ctx := context.Background()
+	club, pc, hour, h, f := hourEnv(t, 9)
+	at := func(m int) time.Time { return hour.Add(time.Duration(m)*time.Minute + 50*time.Second) }
+	rec := func(s health.Sample) {
+		t.Helper()
+		if err := h.Record(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for m := range 59 { // 00:50 … 58:50
+		var since time.Time
+		if m > 0 {
+			since = at(m - 1)
+		}
+		rec(health.Sample{ClubID: club, ComputerID: pc, At: at(m), Since: since, InSession: true})
+	}
+	next := hour.Add(time.Hour + 10*time.Second)
+	rec(health.Sample{ClubID: club, ComputerID: pc, At: next, Since: at(58), InSession: true})
+	rec(health.Sample{ClubID: club, ComputerID: pc, At: next.Add(time.Minute), Since: next, InSession: true})
+	if n, err := f.FlushHour(ctx, hour); err != nil || n != 1 {
+		t.Fatalf("flush: %d, %v", n, err)
+	}
+	var online, session int
+	if err := testEnv.db.Owner.QueryRow(ctx, `SELECT online_minutes, session_minutes FROM computer_health_hourly
+		WHERE computer_id = $1 AND hour = $2`, pc, hour).Scan(&online, &session); err != nil {
+		t.Fatal(err)
+	}
+	if online != 60 || session != 60 {
+		t.Fatalf("hour across the boundary: online %d session %d, want 60 60", online, session)
+	}
+	// Следующий час закрыт сбросом — Status в начале часа после него минуты в сброшенный час не дописывает.
+	f2 := &health.HourlyFlusher{Valkey: f.Valkey, Prefix: f.Prefix, App: f.App}
+	if _, err := f2.FlushHour(ctx, hour.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	rec(health.Sample{ClubID: club, ComputerID: pc, At: hour.Add(2*time.Hour + 20*time.Second),
+		Since: hour.Add(time.Hour + 59*time.Minute), InSession: true})
+	if _, err := f2.FlushHour(ctx, hour.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := testEnv.db.Owner.QueryRow(ctx, `SELECT online_minutes FROM computer_health_hourly
+		WHERE computer_id = $1 AND hour = $2`, pc, hour.Add(time.Hour)).Scan(&online); err != nil {
+		t.Fatal(err)
+	}
+	if online != 2 {
+		t.Fatalf("closed hour rewritten: online %d, want 2", online)
+	}
+}
+
+// Мышь отключили, пока ПК был не на связи (перезагрузка, переподключение): первый Status нового подключения
+// сравнивается со здоровьем из снимка присутствия прошлого подключения — отключение попадает в историю часа.
+func TestHealthHourlyPeripheralDisconnectedBetweenConnections(t *testing.T) {
+	ctx := context.Background()
+	club := testEnv.club(t)
+	pc := testEnv.computer(t, club, 1)
+	hour := time.Now().UTC().Truncate(time.Hour)
+	if _, err := db.EnsurePartitions(ctx, testEnv.db.Platform, hour.AddDate(0, -1, 0), 3); err != nil {
+		t.Fatal(err)
+	}
+	a := testEnv.instance(t, "a", func(o *Options) { o.Health = HealthOptions{PingInterval: -1} })
+	withMouse := func(connected bool) *agentv1.Hello {
+		h := defaultHello()
+		h.Status = &agentv1.Status{State: agentv1.ComputerState_COMPUTER_STATE_IDLE, Health: &agentv1.ComputerHealth{
+			Peripherals: []*agentv1.Peripheral{{Kind: agentv1.PeripheralKind_PERIPHERAL_KIND_MOUSE, Connected: connected, Name: "G102"}}}}
+		return h
+	}
+	first, _ := a.connect(t, club, pc, withMouse(true))
+	eventually(t, 3*time.Second, "snapshot with health", func() bool {
+		h, err := a.svc.Presence().LastHealth(ctx, club, pc)
+		return err == nil && h != nil && len(h.Peripherals) == 1
+	})
+	first.hangUp()
+	eventually(t, 3*time.Second, "released", func() bool {
+		st, _, _ := a.svc.Presence().Get(ctx, club, pc)
+		return !st.Online
+	})
+	a.connect(t, club, pc, withMouse(false))
+	eventually(t, 3*time.Second, "both recorded", func() bool { return a.svc.HealthHourly().Writes() == 2 })
+	f := &health.HourlyFlusher{Valkey: testEnv.valkey, Prefix: a.svc.Presence().Prefix(), App: testEnv.db.App}
+	if n, err := f.FlushHour(ctx, hour); err != nil || n != 1 {
+		t.Fatalf("flush: %d, %v", n, err)
+	}
+	var pd int
+	if err := testEnv.db.Owner.QueryRow(ctx, `SELECT peripheral_disconnects FROM computer_health_hourly WHERE computer_id = $1`,
+		pc).Scan(&pd); err != nil {
+		t.Fatal(err)
+	}
+	if pd != 1 {
+		t.Fatalf("peripheral_disconnects = %d, want 1 (mouse unplugged between connections)", pd)
+	}
+}
+
+// Прирост сбоев — по счётчикам «перед этой загрузкой» и boot_id (новый агент): старый сбой выпал из окна 7 суток, а
+// новый случился между двумя Status — счётчик за 7 суток не изменился, но новая загрузка со сбоем перед ней
+// засчитывается. Повтор той же загрузки (переподключение) — не засчитывается; старый агент — по счётчикам за 7 суток.
+func TestHealthHourlyCrashesPerBoot(t *testing.T) {
+	ctx := context.Background()
+	club, pc, hour, h, f := hourEnv(t, 11)
+	rec := func(m int, boot string, sd7, sdb, bc7, bcb uint32, measured bool) {
+		t.Helper()
+		hh := &presence.Health{Shutdowns7d: sd7, Bugchecks7d: bc7}
+		if measured {
+			hh.CrashesBootMeasured, hh.ShutdownsBoot, hh.BugchecksBoot = true, sdb, bcb
+		}
+		if err := h.Record(ctx, health.Sample{ClubID: club, ComputerID: pc, At: hour.Add(time.Duration(m) * time.Minute),
+			Health: hh, BootID: boot}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec(0, "boot-a", 1, 0, 1, 0, true)  // первое значение ПК — не засчитывается (старые сбои)
+	rec(1, "boot-a", 1, 0, 1, 0, true)  // то же
+	rec(5, "boot-b", 1, 1, 1, 1, true)  // перезагрузка после сбоя: за 7 суток всё ещё 1 (старый выпал) — +1 и +1
+	rec(6, "boot-b", 1, 1, 1, 1, true)  // переподключение той же загрузки — без прироста
+	rec(7, "boot-b", 1, 2, 1, 1, true)  // запоздалая запись журнала той же загрузки — +1 выключение
+	rec(9, "boot-c", 2, 0, 1, 0, false) // старый агент — по счётчикам за 7 суток: 1 → 2, +1
+	if _, err := f.FlushHour(ctx, hour); err != nil {
+		t.Fatal(err)
+	}
+	var sd, bc int
+	if err := testEnv.db.Owner.QueryRow(ctx, `SELECT unexpected_shutdowns, bugchecks FROM computer_health_hourly
+		WHERE computer_id = $1 AND hour = $2`, pc, hour).Scan(&sd, &bc); err != nil {
+		t.Fatal(err)
+	}
+	// +1 (boot-b), +1 (та же загрузка: 1 → 2), +1 (старый агент: за 7 суток 1 → 2); «синих экранов» — +1 (boot-b).
+	if sd != 3 || bc != 1 {
+		t.Fatalf("crashes: shutdowns %d bugchecks %d, want 3 1", sd, bc)
+	}
 }
