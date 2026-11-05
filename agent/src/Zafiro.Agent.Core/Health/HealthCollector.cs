@@ -38,6 +38,8 @@ public sealed class HealthCollector
     private DateTimeOffset _smartAt;
     private CrashCounts? _crashes;
     private CrashCounts? _bootCrashes;
+    // Сбои перед загрузкой больше не изменятся (загрузка давно прошла, см. BootCrashSettle) — журнал не перечитывается.
+    private bool _bootCrashesFinal;
     private DateTimeOffset? _crashesAt;
 
     public HealthCollector(IHealthProbe probe, TimeProvider? time = null, ILogger? log = null, HealthCollectorOptions? options = null)
@@ -107,10 +109,17 @@ public sealed class HealthCollector
             // с запасом на поправку часов при загрузке. Из такого окна события не выпадают — сервер считает по ним точный
             // прирост вместе с boot_id (agent.proto ComputerHealth.unexpected_shutdowns_boot). Время работы не измерено —
             // и это не измерено.
+            // События пишутся в первые минуты загрузки, поэтому после BootCrashMargin + BootCrashSettle времени работы
+            // ответ уже не изменится (окно начинается в одном и том же месте) — он запоминается до конца работы службы.
             var uptime = h.UptimeSeconds;
-            _bootCrashes = uptime > 0
-                ? Measure("crashes_boot", () => _probe.Crashes(now - TimeSpan.FromSeconds(uptime) - _options.BootCrashMargin), null)
-                : null;
+            if (!_bootCrashesFinal)
+            {
+                _bootCrashes = uptime > 0
+                    ? Measure("crashes_boot", () => _probe.Crashes(now - TimeSpan.FromSeconds(uptime) - _options.BootCrashMargin), null)
+                    : null;
+                _bootCrashesFinal = _bootCrashes is not null &&
+                    TimeSpan.FromSeconds(uptime) > _options.BootCrashMargin + _options.BootCrashSettle;
+            }
             _crashesAt = now;
         }
 
@@ -285,6 +294,12 @@ public sealed class HealthCollectorOptions
     /// загрузки, прожившей меньше запаса, посчитался бы и в следующей.
     /// </summary>
     public TimeSpan BootCrashMargin { get; set; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Сколько после <see cref="BootCrashMargin"/> ждать, прежде чем считать «сбои перед этой загрузкой» окончательными
+    /// (Windows дописывает события сбоя в первые минуты загрузки): дальше журнал для них не перечитывается.
+    /// </summary>
+    public TimeSpan BootCrashSettle { get; set; } = TimeSpan.FromMinutes(5);
 
     public int MaxDisks { get; set; } = 26;
 

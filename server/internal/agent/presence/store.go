@@ -263,21 +263,37 @@ func (s *Store) OwnerOf(ctx context.Context, computerID int64) (Owner, bool, err
 // staleAfter — снимок старше этого не показывается, даже если Sweeper ещё не убрал его.
 func (s *Store) staleAfter() time.Duration { return 2 * s.ttl }
 
-// Get — состояние ПК клуба; ok = false — ПК не в сети (и не в ожидании переподключения).
-func (s *Store) Get(ctx context.Context, clubID, computerID int64) (State, bool, error) {
-	v, err := s.c.Do(ctx, s.c.B().Hget().Key(s.clubKey(clubID)).Field(strconv.FormatInt(computerID, 10)).Build()).AsBytes()
+// read — снимок ПК клуба из hash клуба, разобранный в T (State или его часть); ok = false — снимка нет или он чужого
+// клуба (T несёт club_id).
+func read[T interface{ clubID() int64 }](ctx context.Context, s *Store, clubID, computerID int64) (v T, ok bool, err error) {
+	b, err := s.c.Do(ctx, s.c.B().Hget().Key(s.clubKey(clubID)).Field(strconv.FormatInt(computerID, 10)).Build()).AsBytes()
 	if valkey.IsValkeyNil(err) {
-		return State{}, false, nil
+		return v, false, nil
 	}
 	if err != nil {
-		return State{}, false, fmt.Errorf("presence: get: %w", err)
+		return v, false, fmt.Errorf("presence: read: %w", err)
 	}
-	var st State
-	if err := json.Unmarshal(v, &st); err != nil {
-		return State{}, false, fmt.Errorf("presence: decode: %w", err)
+	if err := json.Unmarshal(b, &v); err != nil {
+		return v, false, fmt.Errorf("presence: decode: %w", err)
 	}
-	if st.ClubID != clubID || time.Since(st.LastSeenAt) > s.staleAfter() {
-		return State{}, false, nil
+	return v, v.clubID() == clubID, nil
+}
+
+func (st State) clubID() int64 { return st.ClubID }
+
+// healthOnly — из снимка только клуб и здоровье (LastHealth не разбирает остальное).
+type healthOnly struct {
+	ClubID int64   `json:"club_id"`
+	Health *Health `json:"health,omitempty"`
+}
+
+func (h healthOnly) clubID() int64 { return h.ClubID }
+
+// Get — состояние ПК клуба; ok = false — ПК не в сети (и не в ожидании переподключения).
+func (s *Store) Get(ctx context.Context, clubID, computerID int64) (State, bool, error) {
+	st, ok, err := read[State](ctx, s, clubID, computerID)
+	if !ok || time.Since(st.LastSeenAt) > s.staleAfter() {
+		return State{}, false, err
 	}
 	return st, true, nil
 }
@@ -286,21 +302,11 @@ func (s *Store) Get(ctx context.Context, clubID, computerID int64) (State, bool,
 // свежесть не проверяется — снимок убирает Sweeper после grace). Нужен первому Status нового подключения: с чем сравнить
 // периферию (отключённая между подключениями — тоже отключение). nil — снимка или здоровья нет.
 func (s *Store) LastHealth(ctx context.Context, clubID, computerID int64) (*Health, error) {
-	v, err := s.c.Do(ctx, s.c.B().Hget().Key(s.clubKey(clubID)).Field(strconv.FormatInt(computerID, 10)).Build()).AsBytes()
-	if valkey.IsValkeyNil(err) {
-		return nil, nil
+	h, ok, err := read[healthOnly](ctx, s, clubID, computerID)
+	if !ok {
+		return nil, err
 	}
-	if err != nil {
-		return nil, fmt.Errorf("presence: last health: %w", err)
-	}
-	var st State
-	if err := json.Unmarshal(v, &st); err != nil {
-		return nil, fmt.Errorf("presence: decode: %w", err)
-	}
-	if st.ClubID != clubID {
-		return nil, nil
-	}
-	return st.Health, nil
+	return h.Health, nil
 }
 
 // List — все ПК клуба, о которых есть живой снимок (в сети или в ожидании переподключения).

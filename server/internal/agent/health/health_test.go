@@ -73,10 +73,15 @@ func TestEvaluateThresholds(t *testing.T) {
 // Бездисковый ПК (S7-H-18): «плохие» диски (тома образа от старого агента) проблем не дают, сеть — строже; тот же
 // снимок у обычного ПК — даёт проблемы дисков.
 func TestEvaluateDiskless(t *testing.T) {
+	// Бездисковый — как его видит Evaluate: диски убраны при приёме Status (stream applyStatus → MarkDiskless).
 	bad := func(diskless bool, link uint32) *presence.Health {
-		return &presence.Health{Diskless: diskless, LinkMbps: link, Disks: []presence.Disk{
+		h := &presence.Health{LinkMbps: link, Disks: []presence.Disk{
 			{Mount: "C:", System: true, TotalMB: 100 * gb, FreeMB: 1 * gb, Smart: presence.SmartFailing},
 			{Mount: "D:", TotalMB: 1000 * gb, FreeMB: 1 * gb, Smart: presence.SmartWarning}}}
+		if diskless {
+			h.MarkDiskless()
+		}
+		return h
 	}
 	cases := []struct {
 		name string

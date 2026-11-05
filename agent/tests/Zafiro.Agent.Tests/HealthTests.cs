@@ -232,7 +232,34 @@ public sealed class HealthTests : IDisposable
         Assert.Equal(2u, h.UnexpectedShutdownsBoot);
         _clock.Advance(TimeSpan.FromMinutes(1));
         collector.Collect(null, out _);
+        Assert.Equal(3, _probe.CrashCalls); // «с загрузки» при времени работы 1 ч — окончательно, не перечитывается
+    }
+
+    [Fact]
+    public void Сбои_перед_загрузкой_перечитываются_только_в_первые_минуты_загрузки()
+    {
+        // Время работы 3 мин (≤ 2 мин запаса + 5 мин): события сбоя ещё могут дописываться — окно «с загрузки» читается
+        // при каждом обновлении журнала; после 7 мин работы — последний раз, дальше только «7 суток».
+        _probe.Uptime = 180;
+        var collector = Collector();
+        collector.Collect(null, out _);
+        Assert.Equal(2, _probe.CrashCalls);
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        _probe.Uptime = 780;
+        _probe.CrashesBy = since => new CrashCounts(3, 1);
+        var h = collector.Collect(null, out _);
         Assert.Equal(4, _probe.CrashCalls);
+        Assert.Equal(3u, h.UnexpectedShutdownsBoot);
+        for (var i = 0; i < 3; i++)
+        {
+            _clock.Advance(TimeSpan.FromMinutes(10));
+            _probe.Uptime += 600;
+            h = collector.Collect(null, out _);
+        }
+        Assert.Equal(7, _probe.CrashCalls); // +1 («7 суток») на каждое обновление
+        Assert.True(h.CrashesBootMeasured);
+        Assert.Equal(3u, h.UnexpectedShutdownsBoot);
+        Assert.Equal(1u, h.BugchecksBoot);
     }
 
     [Fact]

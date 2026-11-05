@@ -51,10 +51,11 @@ func TestJudge(t *testing.T) {
 		{"gpu rise without last week data — no trend", with(func(w *Week) { w.GPUTempAvgDeci = 900 }),
 			&Week{CPUTempAvgDeci: -1, GPUTempAvgDeci: -1}, VerdictOK, nil},
 		{"rise but no last week at all", with(func(w *Week) { w.CPUTempAvgDeci = 900 }), nil, VerdictOK, nil},
-		{"diskless: SMART failing and low disk give no reasons", with(func(w *Week) {
-			w.Diskless, w.SmartRank, w.SystemDiskFreeBP = true, smartRankFailing, 100
+		// Данные дисков бездискового ПК отбрасывает выборка недель (ComputerHealthWeekly diskless; проверка —
+		// http TestClubMapComputerHealthDiskless): неделя приходит без SMART и места — причин по дискам нет.
+		{"diskless: week without disk data gives no disk reasons", with(func(w *Week) {
+			w.Diskless, w.SmartRank, w.SystemDiskFreeBP = true, 0, -1
 		}), nil, VerdictOK, nil},
-		{"diskless: SMART warning — no reason", with(func(w *Week) { w.Diskless, w.SmartRank = true, smartRankWarning }), nil, VerdictOK, nil},
 		{"diskless: other rules still apply", with(func(w *Week) { w.Diskless, w.Bugchecks = true, 1 }), nil, VerdictRepair,
 			[]reason{{ReasonBugchecks, VerdictRepair, 1, 1}}},
 		{"diskless: slow network 2 h — not more than N", with(func(w *Week) { w.Diskless, w.NetworkSlowHours = true, 2 }), nil, VerdictOK, nil},
@@ -86,7 +87,8 @@ func TestJudge(t *testing.T) {
 
 // Пороги из конфигурации меняют правила.
 func TestJudgeCustomRules(t *testing.T) {
-	r := VerdictRules{CPUTempC: 80, HotHours: 5, HotHoursRepair: 10, Shutdowns: 1, Bugchecks: 3, SystemDiskFreePercent: 20, TempRiseC: 2}
+	r := VerdictRules{Thresholds: Thresholds{CPUTempC: 80, SystemDiskFreePercent: 20}, HotHours: 5, HotHoursRepair: 10,
+		Shutdowns: 1, Bugchecks: 3, TempRiseC: 2}
 	v := Judge(Week{CPUHotHours: 6, Shutdowns: 1, Bugchecks: 2, SystemDiskFreeBP: 1500, CPUTempAvgDeci: 620},
 		&Week{CPUTempAvgDeci: 600}, r)
 	codes := []string{}

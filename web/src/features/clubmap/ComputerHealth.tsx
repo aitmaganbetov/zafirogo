@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import type { TFunction } from 'i18next';
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   computerHealthQuery,
@@ -13,9 +13,10 @@ import {
   type HealthView,
   type HealthWeek,
 } from './api';
-import { HealthChart, type ChartSeries } from './HealthChart';
-import { peripheralLabel, percent, problemLabel, reasonLabel, uptime, verdictLabel } from './healthText';
-import { pruneLiveSeries, pushSample, sampleFromView, samplesOf, SERIES_COLORS, subscribeSamples, weekHours } from './liveSeries';
+import { HealthChart } from './HealthChart';
+import { healthSeries, weekHours, type HealthSeriesKey } from './healthSeries';
+import { degOrNull, peripheralLabel, pctOrNull, percent, problemLabel, reasonLabel, smartLabel, uptime, verdictLabel } from './healthText';
+import { pruneLiveSeries, pushSample, sample, samplesOf, subscribeSamples, type LiveSample } from './liveSeries';
 
 /*
  * Состояние ПК (Этап 7, нового в старом Laravel не было; осознанное отличие от дизайна старой карты —
@@ -47,7 +48,6 @@ export function PcLoad({ state }: { readonly state: ComputerState | undefined })
 }
 
 const gb = (mb: number) => Math.round(mb / 1024);
-const deg = (deci: number) => Math.round(deci / 10);
 
 /** Пометка бездискового ПК (S7-H-18): дисков нет — вместо строк дисков и SMART. */
 function DisklessRow({ t }: { readonly t: TFunction }) {
@@ -69,13 +69,14 @@ function HealthList({ view, t }: { readonly view: HealthView; readonly t: TFunct
   }
   if (view.rtt_ms != null) rows.push({ label: t('Пинг'), value: t('{{value}} мс', { value: view.rtt_ms }) });
   if (h) {
-    if (h.cpu_temp_deci != null) rows.push({ label: t('Температура CPU'), value: t('{{value}} °C', { value: deg(h.cpu_temp_deci) }), warn: view.problems.includes('cpu_hot') });
-    if (h.gpu_temp_deci != null) rows.push({ label: t('Температура GPU'), value: t('{{value}} °C', { value: deg(h.gpu_temp_deci) }), warn: view.problems.includes('gpu_hot') });
+    if (h.cpu_temp_deci != null) rows.push({ label: t('Температура CPU'), value: t('{{value}} °C', { value: degOrNull(h.cpu_temp_deci) }), warn: view.problems.includes('cpu_hot') });
+    if (h.gpu_temp_deci != null) rows.push({ label: t('Температура GPU'), value: t('{{value}} °C', { value: degOrNull(h.gpu_temp_deci) }), warn: view.problems.includes('gpu_hot') });
     if (h.gpu_load_bp != null) {
       rows.push({ label: t('Загрузка GPU'), value: t('{{value}} %, память {{memory}} %', { value: percent(h.gpu_load_bp), memory: percent(h.gpu_memory_bp ?? 0) }) });
     }
-    for (const d of view.diskless ? [] : h.disks) {
-      const smart = d.smart === 'failing' ? t('SMART: отказ') : d.smart === 'warning' ? t('SMART: предупреждение') : '';
+    // У бездискового ПК дисков в здоровье нет — их убирает сервер при приёме Status.
+    for (const d of h.disks) {
+      const smart = smartLabel(t, d.smart);
       rows.push({
         label: t('Диск {{mount}}', { mount: d.mount }),
         value: [t('свободно {{free}} из {{total}} ГБ', { free: gb(d.free_mb), total: gb(d.total_mb) }), smart].filter(Boolean).join(' · '),
@@ -110,44 +111,36 @@ function HealthList({ view, t }: { readonly view: HealthView; readonly t: TFunct
   );
 }
 
+/** Порядок серий (и легенды): «Сейчас» — сначала загрузка, неделя — сначала температуры. */
+const LIVE_ORDER: readonly HealthSeriesKey[] = ['cpu', 'ram', 'cpuTemp', 'gpuTemp'];
+const WEEK_ORDER: readonly HealthSeriesKey[] = ['cpuTemp', 'gpuTemp', 'cpu', 'ram'];
+
+const liveValue = (s: LiveSample, key: HealthSeriesKey) => s[key];
+
 /** Живой график «Сейчас»: последние 15 минут из живых событий (liveSeries). Меньше двух точек — графика нет. */
 function LiveChart({ computerId, timeLabel }: { readonly computerId: number; readonly timeLabel: (ms: number) => string }) {
   const { t } = useTranslation();
   const samples = useSyncExternalStore(subscribeSamples, () => samplesOf(computerId));
   // Окно — по часам браузера: у ПК без новых событий старые точки уходят, а не висят бесконечно.
   useEffect(() => {
-    const id = setInterval(() => pruneLiveSeries(Date.now()), 30_000);
+    const id = setInterval(() => pruneLiveSeries(), 30_000);
     return () => clearInterval(id);
   }, []);
   const labels = useMemo(() => samples.map((s) => timeLabel(s.at)), [samples, timeLabel]);
-  const cpu = t('Загрузка CPU');
-  const ram = t('ОЗУ');
-  const cpuTemp = t('Температура CPU');
-  const gpuTemp = t('Температура GPU');
-  const series = useMemo<ChartSeries[]>(
-    () => [
-      { label: cpu, data: samples.map((s) => s.cpu ?? null), color: SERIES_COLORS.cpu, axis: 'load' },
-      { label: ram, data: samples.map((s) => s.ram ?? null), color: SERIES_COLORS.ram, axis: 'load' },
-      { label: cpuTemp, data: samples.map((s) => s.cpuTemp ?? null), color: SERIES_COLORS.cpuTemp, axis: 'temp' },
-      { label: gpuTemp, data: samples.map((s) => s.gpuTemp ?? null), color: SERIES_COLORS.gpuTemp, axis: 'temp' },
-    ],
-    [samples, cpu, ram, cpuTemp, gpuTemp],
-  );
+  const series = useMemo(() => healthSeries(t, LIVE_ORDER, samples, liveValue), [t, samples]);
   if (samples.length < 2) return null;
   return <HealthChart id="computer-health-live-chart" labels={labels} series={series} />;
 }
-
-const avgDeg = (deci?: number | null) => (deci == null ? null : Math.round(deci / 10));
 
 /** Сводка недели: онлайн, температуры, загрузка, сбои, диск (у бездискового — сеть вместо диска). */
 function weekSummary(t: TFunction, w: HealthWeek, diskless: boolean): string[] {
   const out = [t('Онлайн: {{hours}} ч, с проблемами: {{problems}} ч', { hours: Math.round(w.online_minutes / 60), problems: w.problem_hours })];
   if (diskless) out.push(t('Медленная сеть: {{hours}} ч', { hours: w.network_slow_hours }));
   if (w.cpu_temp_avg_deci != null) {
-    out.push(t('CPU: в среднем {{avg}} °C, максимум {{max}} °C', { avg: avgDeg(w.cpu_temp_avg_deci), max: avgDeg(w.cpu_temp_max_deci) }));
+    out.push(t('CPU: в среднем {{avg}} °C, максимум {{max}} °C', { avg: degOrNull(w.cpu_temp_avg_deci), max: degOrNull(w.cpu_temp_max_deci) }));
   }
   if (w.gpu_temp_avg_deci != null) {
-    out.push(t('GPU: в среднем {{avg}} °C, максимум {{max}} °C', { avg: avgDeg(w.gpu_temp_avg_deci), max: avgDeg(w.gpu_temp_max_deci) }));
+    out.push(t('GPU: в среднем {{avg}} °C, максимум {{max}} °C', { avg: degOrNull(w.gpu_temp_avg_deci), max: degOrNull(w.gpu_temp_max_deci) }));
   }
   if (w.cpu_load_avg_bp != null) {
     out.push(t('Загрузка: CPU {{cpu}} %, ОЗУ {{ram}} %', { cpu: percent(w.cpu_load_avg_bp), ram: percent(w.ram_avg_bp ?? 0) }));
@@ -155,31 +148,33 @@ function weekSummary(t: TFunction, w: HealthWeek, diskless: boolean): string[] {
   out.push(t('Сбои: выключений {{shutdowns}}, «синих экранов» {{bugchecks}}, отключений периферии {{peripherals}}', {
     shutdowns: w.unexpected_shutdowns, bugchecks: w.bugchecks, peripherals: w.peripheral_disconnects,
   }));
-  if (w.system_disk_free_bp != null && !diskless) out.push(t('Системный диск: свободно не меньше {{value}} %', { value: Math.floor(w.system_disk_free_bp / 100) }));
+  // У бездискового ПК системного диска в неделе нет (сервер не отдаёт поле).
+  if (w.system_disk_free_bp != null) out.push(t('Системный диск: свободно не меньше {{value}} %', { value: Math.floor(w.system_disk_free_bp / 100) }));
   return out;
 }
 
+/** Значение часа недели для графика: средние температуры (°C) и загрузка (%); нет строки или измерения — null. */
+function hourValue(row: HealthHour | null, key: HealthSeriesKey): number | null {
+  switch (key) {
+    case 'cpu':
+      return pctOrNull(row?.cpu_load_avg_bp);
+    case 'ram':
+      return pctOrNull(row?.ram_avg_bp);
+    case 'cpuTemp':
+      return degOrNull(row?.cpu_temp_avg_deci);
+    case 'gpuTemp':
+      return degOrNull(row?.gpu_temp_avg_deci);
+  }
+}
+
 /** График недели по часам: средние температуры CPU/GPU и загрузка CPU/ОЗУ; ось — все часы недели (офлайн — разрыв). */
-function WeekChart({ computerId, week, hourLabel }: { readonly computerId: number; readonly week: HealthWeek; readonly hourLabel: (iso: string) => string }) {
+function WeekChart({ computerId, week, hourLabel }: { readonly computerId: number; readonly week: HealthWeek; readonly hourLabel: (ms: number) => string }) {
   const { t } = useTranslation();
   const { data } = useQuery(healthHourlyQuery(computerId, week.start, week.end));
   const rows: readonly HealthHour[] = useMemo(() => data?.items ?? [], [data]);
   const hours = useMemo(() => weekHours(week.start, week.end, rows), [week.start, week.end, rows]);
-  const labels = useMemo(() => hours.map((h) => hourLabel(new Date(h.at).toISOString())), [hours, hourLabel]);
-  const cpu = t('Загрузка CPU');
-  const ram = t('ОЗУ');
-  const cpuTemp = t('Температура CPU');
-  const gpuTemp = t('Температура GPU');
-  const pct = (bp?: number | null) => (bp == null ? null : percent(bp));
-  const series = useMemo<ChartSeries[]>(
-    () => [
-      { label: cpuTemp, data: hours.map((h) => avgDeg(h.row?.cpu_temp_avg_deci)), color: SERIES_COLORS.cpuTemp, axis: 'temp' },
-      { label: gpuTemp, data: hours.map((h) => avgDeg(h.row?.gpu_temp_avg_deci)), color: SERIES_COLORS.gpuTemp, axis: 'temp' },
-      { label: cpu, data: hours.map((h) => pct(h.row?.cpu_load_avg_bp)), color: SERIES_COLORS.cpu, axis: 'load' },
-      { label: ram, data: hours.map((h) => pct(h.row?.ram_avg_bp)), color: SERIES_COLORS.ram, axis: 'load' },
-    ],
-    [hours, cpu, ram, cpuTemp, gpuTemp],
-  );
+  const labels = useMemo(() => hours.map((h) => hourLabel(h.at)), [hours, hourLabel]);
+  const series = useMemo(() => healthSeries(t, WEEK_ORDER, hours, (h, key) => hourValue(h.row, key)), [t, hours]);
   if (rows.length === 0) return null;
   return <HealthChart id="computer-health-week-chart" labels={labels} series={series} />;
 }
@@ -190,7 +185,7 @@ function WeeksList({ computerId, weeks, diskless, day, hourLabel }: {
   readonly weeks: readonly HealthWeek[];
   readonly diskless: boolean;
   readonly day: (iso: string) => string;
-  readonly hourLabel: (iso: string) => string;
+  readonly hourLabel: (ms: number) => string;
 }) {
   const { t } = useTranslation();
   const [selected, setSelected] = useState<string | null>(null);
@@ -234,16 +229,20 @@ export function HealthSections({ computerId, fmt, locale = 'ru', tz = 'UTC' }: {
   const { data: weekly } = useQuery(healthWeeklyQuery(computerId));
   const events = useInfiniteQuery(healthEventsQuery(computerId));
   const [tab, setTab] = useState<'now' | 'weeks'>('now');
-  const diskless = !!(view?.diskless || weekly?.diskless);
+  // Пометка «Бездисковый ПК» у каждой вкладки — по признаку её же ответа (оба считает одно правило сервера).
+  const disklessWeeks = !!weekly?.diskless;
   // Проблемы дисков бездискового ПК (тома образа, запись до перевода на загрузку по сети) отсекает сервер — до
   // keyset-страницы (S7-H-18), иначе страница могла бы оказаться пустой, а «Показать ещё» — скрытым.
   const items: HealthEvent[] = events.data?.pages.flatMap((p) => p.items) ?? [];
   const weeks = weekly?.weeks ?? [];
   const hasState = !!view && (!!view.load || !!view.health || view.problems.length > 0);
   const hasWeeks = weeks.length > 0;
-  // Свежее состояние панели — точка живого графика (событие без температуры, перечитанное состояние — с ней).
+  // Первое состояние панели — точка живого графика (дальше точки несут события computer.load, в том числе температуры).
+  const seeded = useRef(false);
   useEffect(() => {
-    if (view && dataUpdatedAt) pushSample(computerId, sampleFromView(view, dataUpdatedAt));
+    if (seeded.current || !view || !dataUpdatedAt) return;
+    seeded.current = true;
+    pushSample(computerId, sample(dataUpdatedAt, view.load, view.health?.cpu_temp_deci, view.health?.gpu_temp_deci));
   }, [computerId, view, dataUpdatedAt]);
   const timeLabel = useMemo(() => {
     const f = new Intl.DateTimeFormat(locale, { timeStyle: 'short', timeZone: tz });
@@ -252,7 +251,7 @@ export function HealthSections({ computerId, fmt, locale = 'ru', tz = 'UTC' }: {
   const [day, hourLabel] = useMemo(() => {
     const d = new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', timeZone: tz });
     const h = new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: tz });
-    return [(iso: string) => d.format(new Date(iso)), (iso: string) => h.format(new Date(iso))];
+    return [(iso: string) => d.format(new Date(iso)), (ms: number) => h.format(new Date(ms))];
   }, [locale, tz]);
   const shown = hasState && hasWeeks ? tab : hasState ? 'now' : 'weeks';
   return (
@@ -273,7 +272,7 @@ export function HealthSections({ computerId, fmt, locale = 'ru', tz = 'UTC' }: {
             </>
           )}
           {shown === 'weeks' && (
-            <WeeksList computerId={computerId} weeks={weeks} diskless={diskless} day={day} hourLabel={hourLabel} />
+            <WeeksList computerId={computerId} weeks={weeks} diskless={disklessWeeks} day={day} hourLabel={hourLabel} />
           )}
         </section>
       )}

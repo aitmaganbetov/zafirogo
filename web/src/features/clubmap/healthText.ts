@@ -6,6 +6,28 @@ import type { ComputerState, HealthProblem, HealthVerdictReason, HealthWeek } fr
 /** Сотые доли процента → целые проценты (0..100). */
 export const percent = (bp: number) => Math.min(100, Math.max(0, Math.round(bp / 100)));
 
+/** То же для необязательного значения: нет значения — null (точка графика без измерения). */
+export const pctOrNull = (bp?: number | null): number | null => (bp == null ? null : percent(bp));
+
+/**
+ * Десятые доли °C → целые °C; нет значения — null. zeroIsMissing — 0 тоже «нет данных» (живые температуры: агент шлёт 0,
+ * если датчика нет); в истории 0 — значение.
+ */
+export const degOrNull = (deci?: number | null, zeroIsMissing = false): number | null =>
+  deci == null || (zeroIsMissing && deci === 0) ? null : Math.round(deci / 10);
+
+/** SMART тома: «SMART: отказ» / «SMART: предупреждение»; исправен или не измерен — пусто. */
+export function smartLabel(t: TFunction, smart: string | null | undefined): string {
+  switch (smart) {
+    case 'failing':
+      return t('SMART: отказ');
+    case 'warning':
+      return t('SMART: предупреждение');
+    default:
+      return '';
+  }
+}
+
 /**
  * Подпись проблемы здоровья (ключи — литералы для проверки переводов). «Медленная сеть» — одна подпись для всех ПК
  * (у бездискового порог строже, S7-H-18, но проблема та же).
@@ -66,7 +88,6 @@ export function uptime(t: TFunction, seconds: number): string {
   return t('{{minutes}} мин', { minutes: m });
 }
 
-
 /** Вердикт исправности за неделю (S7-H-15). */
 export function verdictLabel(t: TFunction, level: HealthWeek['verdict']['level']): string {
   switch (level) {
@@ -83,9 +104,9 @@ export function verdictLabel(t: TFunction, level: HealthWeek['verdict']['level']
 export function reasonLabel(t: TFunction, r: HealthVerdictReason): string {
   switch (r.code) {
     case 'smart_failing':
-      return t('SMART: отказ');
+      return smartLabel(t, 'failing');
     case 'smart_warning':
-      return t('SMART: предупреждение');
+      return smartLabel(t, 'warning');
     case 'bugchecks':
       return t('«Синих экранов» за неделю: {{count}}', { count: r.value });
     case 'shutdowns':

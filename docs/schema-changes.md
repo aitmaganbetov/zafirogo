@@ -577,4 +577,8 @@ Telegram в `platform_settings` — `Crypt::encryptString` (`app/Services/Telegr
   измерений (повтор UPSERT); ключ строки (клуб, ПК, час) не изменить, строки не удалить; `zafiro_platform` — SELECT.
   Проверки — `TestAppRoleLeastPrivilege`, `TestClubMapComputerHealthWeekly` (строка чужого клуба с id нашего ПК не видна).
 - **Запись**: задача `agent:health-hourly` (один исполнитель, Q-086) — `INSERT … SELECT FROM jsonb_to_recordset(…) JOIN
-  club_computers (ПК этого клуба) ON CONFLICT DO UPDATE`; объём и время — `docs/load-test.md` §6.4.
+  club_computers (ПК этого клуба) ON CONFLICT DO UPDATE`, одна транзакция на клуб за час; объём и время —
+  `docs/load-test.md` §6.4.
+- **`zafiro_computer_diskless(club_id, computer_id)`** — признак «бездисковый ПК» (S7-H-18, S7-H-22) одним правилом для
+  стрима и панели: действующий неотозванный сертификат ПК, иначе последний выпущенный, иначе false. `LANGUAGE sql STABLE`,
+  SECURITY INVOKER — `agent_certificates` читается с RLS вызывающего; права — как у `zafiro_current_club_id` (0004).

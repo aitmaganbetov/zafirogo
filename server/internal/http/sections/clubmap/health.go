@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 	"github.com/aitmaganbetov/zafirogo/server/internal/clubmap"
 	clubmapapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/clubmap"
@@ -92,8 +93,8 @@ func snapshotOf(h *presence.Health) *clubmapapi.HealthSnapshot {
 	return out
 }
 
-// healthComputer — ПК принадлежит клубу из аутентификации (иначе 404); diskless — бездисковый (действующий, иначе
-// последний выпущенный сертификат — по ключу образа; то же правило, что у стрима, S7-H-18).
+// healthComputer — ПК принадлежит клубу из аутентификации (иначе 404); diskless — бездисковый (0031
+// zafiro_computer_diskless — то же правило, что у стрима, S7-H-18).
 func healthComputer(ctx context.Context, q *store.Queries, clubID, computerID int64) (diskless bool, err error) {
 	diskless, err = q.ComputerHealthComputer(ctx, store.ComputerHealthComputerParams{ClubID: clubID, ComputerID: computerID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -102,20 +103,22 @@ func healthComputer(ctx context.Context, q *store.Queries, clubID, computerID in
 	return diskless, err
 }
 
-// computerExists — healthComputer в своей транзакции.
-func (h *handlers) computerExists(ctx context.Context, clubID, computerID int64) (diskless bool, err error) {
-	err = h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
-		diskless, err = healthComputer(ctx, q, clubID, computerID)
-		return err
-	})
-	return diskless, err
+// hiddenKinds — виды проблем, которых не учитывают история и недели ПК: у бездискового — проблемы дисков (S7-H-18).
+func hiddenKinds(diskless bool) []string {
+	if diskless {
+		return health.DiskKinds
+	}
+	return []string{}
 }
 
 // GetComputerHealth — состояние ПК: загрузка, здоровье, проблемы, время ответа агента.
 func (h *handlers) GetComputerHealth(ctx context.Context, req clubmapapi.GetComputerHealthRequestObject) (clubmapapi.GetComputerHealthResponseObject, error) {
 	clubID := httpx.ClubID(ctx)
-	diskless, err := h.computerExists(ctx, clubID, req.ComputerId)
-	if err != nil {
+	var diskless bool
+	if err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) (err error) {
+		diskless, err = healthComputer(ctx, q, clubID, req.ComputerId)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	out := clubmapapi.ComputerHealthView{ComputerId: req.ComputerId, Connection: clubmapapi.ComputerHealthViewConnectionOffline,
@@ -128,13 +131,9 @@ func (h *handlers) GetComputerHealth(ctx context.Context, req clubmapapi.GetComp
 		}
 		out.RttMs = nonZero(st.RTTMillis)
 		out.Load = loadOf(st)
-		if diskless && st.Health != nil && len(st.Health.Disks) > 0 {
-			// Снимок записан до того, как ПК стал бездисковым (подключение по прежнему сертификату): тома не показываем.
-			hh := *st.Health
-			out.Health = snapshotOf(hh.WithoutDisks())
-		} else {
-			out.Health = snapshotOf(st.Health)
-		}
+		// Здоровье и проблемы — как в снимке: у бездискового ПК диски убраны ещё при приёме Status (stream applyStatus);
+		// перевод ПК на загрузку по сети отзывает прежний сертификат и закрывает его поток (app kickRevoked).
+		out.Health = snapshotOf(st.Health)
 		out.Problems = problemsOf(st.Problems)
 	}
 	return clubmapapi.GetComputerHealth200JSONResponse(out), nil
@@ -160,7 +159,8 @@ func (h *handlers) ListComputerHealthEvents(ctx context.Context, req clubmapapi.
 		if err != nil {
 			return err
 		}
-		p := store.ComputerHealthHistoryParams{ClubID: clubID, ComputerID: req.ComputerId, Diskless: diskless, PageSize: size + 1}
+		p := store.ComputerHealthHistoryParams{ClubID: clubID, ComputerID: req.ComputerId, HiddenKinds: hiddenKinds(diskless),
+			PageSize: size + 1}
 		if cur.ID > 0 {
 			p.BeforeAt, p.BeforeID = &cur.At, &cur.ID
 		}

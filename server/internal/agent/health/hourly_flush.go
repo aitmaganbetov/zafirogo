@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -31,7 +32,7 @@ const (
 	DefaultHourlyInterval = time.Minute
 	// hourlyLookback — на сколько часов назад смотреть (агрегат живёт HourlyKeyTTL).
 	hourlyLookback = 24
-	// hourlyBatch — ПК за один проход (SSCAN COUNT и одна вставка на клуб).
+	// hourlyBatch — ПК за одно чтение агрегатов, SSCAN COUNT и одну вставку (пачки — внутри транзакции клуба).
 	hourlyBatch = 500
 )
 
@@ -142,7 +143,7 @@ func (f *HourlyFlusher) log() *slog.Logger {
 	return slog.Default()
 }
 
-func (f *HourlyFlusher) keys() *Hourly { return NewHourly(f.Valkey, f.Prefix, 0) }
+func (f *HourlyFlusher) keys() hourlyKeys { return newHourlyKeys(f.Prefix) }
 
 // Run выполняет тики до отмены ctx (первый — сразу).
 func (f *HourlyFlusher) Run(ctx context.Context) error {
@@ -183,7 +184,7 @@ func (f *HourlyFlusher) Tick(ctx context.Context) (rows int, err error) {
 		for i := range hourlyLookback {
 			hour := last.Add(-time.Duration(i) * time.Hour)
 			hours = append(hours, hour)
-			cmds = append(cmds, f.Valkey.B().Exists().Key(k.indexKey(hour)).Build())
+			cmds = append(cmds, f.Valkey.B().Exists().Key(k.index(hourPart(hour))).Build())
 		}
 		for i, res := range f.Valkey.DoMulti(ctx, cmds...) {
 			n, err := res.AsInt64()
@@ -208,104 +209,144 @@ func (f *HourlyFlusher) Tick(ctx context.Context) (rows int, err error) {
 	return rows, err
 }
 
-// FlushHour закрывает час hour (начало часа UTC) для записи и пишет его строки пачками: прочитать агрегаты → UPSERT по
-// клубам → удалить ключи и члены индекса. Сбой посреди — оставшиеся ПК сбросятся следующим тиком, записанные повторно перезапишутся теми же
-// значениями.
+// FlushHour закрывает час hour (начало часа UTC) для записи и пишет его строки по клубам: члены индекса часа
+// группируются по клубу, и на клуб — ОДНА тенантная транзакция за час (агрегаты читаются пачками по hourlyBatch ПК,
+// UPSERT — теми же пачками внутри транзакции), затем ключи ПК клуба и их члены индекса удаляются. Сбой посреди —
+// оставшиеся клубы сбросятся следующим тиком (транзакция клуба откатывается целиком), записанные повторно перезапишутся
+// теми же значениями.
 func (f *HourlyFlusher) FlushHour(ctx context.Context, hour time.Time) (rows int, err error) {
 	k := f.keys()
 	hour = hour.UTC().Truncate(time.Hour)
-	idx := k.indexKey(hour)
+	hp := hourPart(hour)
+	idx := k.index(hp)
 	// Сначала — «час закрыт»: Record больше не пишет в этот час (атомарно с проверкой в скрипте). Иначе Status,
 	// опоздавший после чтения агрегата, терялся бы, а пришедший после удаления ключей создал бы новый частичный агрегат,
 	// и следующий тик перезаписал бы им полную строку часа. Маркер живёт, пока в час может прийти запись (TTL агрегата).
-	if err := f.Valkey.Do(ctx, f.Valkey.B().Set().Key(k.closedKey(hour)).Value("1").
+	if err := f.Valkey.Do(ctx, f.Valkey.B().Set().Key(k.closed(hp)).Value("1").
 		Ex(HourlyKeyTTL).Build()).Error(); err != nil {
 		return 0, fmt.Errorf("health: hourly close: %w", err)
 	}
+	// Члены индекса — весь час сразу (≤ число ПК в сети за час: 50 000 строк «club:computer» — единицы МБ); члены,
+	// добавленные во время прохода (не должно быть: час закончился), — следующим тиком.
+	byClub := map[int64][]hourlyMember{}
 	var cursor uint64
 	for {
 		res, err := f.Valkey.Do(ctx, f.Valkey.B().Sscan().Key(idx).Cursor(cursor).Count(hourlyBatch).Build()).AsScanEntry()
 		if err != nil {
 			return rows, fmt.Errorf("health: hourly scan: %w", err)
 		}
-		if members := slices.Compact(slices.Sorted(slices.Values(res.Elements))); len(members) > 0 {
-			n, err := f.flushBatch(ctx, k, hour, idx, members)
-			rows += n
-			if err != nil {
-				return rows, err
-			}
+		for _, m := range res.Elements {
+			hm := parseHourlyMember(m)
+			byClub[hm.club] = append(byClub[hm.club], hm)
 		}
-		if cursor = res.Cursor; cursor != 0 {
-			continue
+		if cursor = res.Cursor; cursor == 0 {
+			break
 		}
-		// Проход закончен; члены, добавленные во время прохода (не должно быть: час закончился), — следующим тиком.
-		return rows, nil
 	}
+	for _, club := range slices.Sorted(maps.Keys(byClub)) {
+		// SSCAN может вернуть член повторно — по одному разу.
+		members := slices.CompactFunc(slices.SortedFunc(slices.Values(byClub[club]), compareHourlyMembers),
+			func(a, b hourlyMember) bool { return a.raw == b.raw })
+		n, err := f.flushClub(ctx, k, hour, idx, club, members)
+		rows += n
+		if err != nil {
+			return rows, err
+		}
+	}
+	return rows, nil
 }
 
-func (f *HourlyFlusher) flushBatch(ctx context.Context, k *Hourly, hour time.Time, idx string, members []string) (int, error) {
-	type pc struct{ club, computer int64 }
-	pcs := make([]pc, len(members))
-	cmds := make(valkey.Commands, 0, 3*len(members))
-	for i, m := range members {
-		c, p, _ := strings.Cut(m, ":")
-		pcs[i].club, _ = strconv.ParseInt(c, 10, 64)
-		pcs[i].computer, _ = strconv.ParseInt(p, 10, 64)
-		cmds = append(cmds,
-			f.Valkey.B().Hgetall().Key(k.aggKey(hour, pcs[i].computer)).Build(),
-			f.Valkey.B().Bitcount().Key(k.bitsKey(hour, pcs[i].computer)).Start(0).End(7).Build(),
-			f.Valkey.B().Bitcount().Key(k.bitsKey(hour, pcs[i].computer)).Start(8).End(15).Build())
+// hourlyMember — член индекса часа «club:computer» (club, computer ≤ 0 — испорчен: только убрать из индекса).
+type hourlyMember struct {
+	raw            string
+	club, computer int64
+}
+
+func parseHourlyMember(m string) hourlyMember {
+	c, p, _ := strings.Cut(m, ":")
+	out := hourlyMember{raw: m}
+	out.club, _ = strconv.ParseInt(c, 10, 64)
+	out.computer, _ = strconv.ParseInt(p, 10, 64)
+	if out.club <= 0 || out.computer <= 0 {
+		out.club = 0
 	}
-	res := f.Valkey.DoMulti(ctx, cmds...)
-	byClub := map[int64][]HourlyRow{}
-	for i, p := range pcs {
-		agg, err := res[3*i].AsStrMap()
-		if err != nil {
-			return 0, fmt.Errorf("health: hourly read: %w", err)
+	return out
+}
+
+func compareHourlyMembers(a, b hourlyMember) int { return strings.Compare(a.raw, b.raw) }
+
+// flushClub — строки часа ПК одного клуба (club = 0 — испорченные члены индекса: только удалить).
+func (f *HourlyFlusher) flushClub(ctx context.Context, k hourlyKeys, hour time.Time, idx string, club int64, members []hourlyMember) (int, error) {
+	hp := hourPart(hour)
+	rows := make([]HourlyRow, 0, len(members))
+	for batch := range slices.Chunk(members, hourlyBatch) {
+		cmds := make(valkey.Commands, 0, 3*len(batch))
+		for _, m := range batch {
+			pc := strconv.FormatInt(m.computer, 10)
+			cmds = append(cmds,
+				f.Valkey.B().Hgetall().Key(k.agg(hp, pc)).Build(),
+				f.Valkey.B().Bitcount().Key(k.bits(hp, pc)).Start(0).End(7).Build(),
+				f.Valkey.B().Bitcount().Key(k.bits(hp, pc)).Start(8).End(15).Build())
 		}
-		online, err := res[3*i+1].AsInt64()
-		if err != nil {
-			return 0, fmt.Errorf("health: hourly read: %w", err)
+		res := f.Valkey.DoMulti(ctx, cmds...)
+		for i, m := range batch {
+			agg, err := res[3*i].AsStrMap()
+			if err != nil {
+				return 0, fmt.Errorf("health: hourly read: %w", err)
+			}
+			online, err := res[3*i+1].AsInt64()
+			if err != nil {
+				return 0, fmt.Errorf("health: hourly read: %w", err)
+			}
+			session, err := res[3*i+2].AsInt64()
+			if err != nil {
+				return 0, fmt.Errorf("health: hourly read: %w", err)
+			}
+			if club <= 0 || len(agg) == 0 {
+				continue // ключ истёк или член испорчен — только убрать из индекса
+			}
+			rows = append(rows, rowFromAgg(club, m.computer, hour, agg, online, session))
 		}
-		session, err := res[3*i+2].AsInt64()
-		if err != nil {
-			return 0, fmt.Errorf("health: hourly read: %w", err)
-		}
-		if p.club <= 0 || p.computer <= 0 || len(agg) == 0 {
-			continue // ключ истёк или испорчен — только убрать из индекса
-		}
-		byClub[p.club] = append(byClub[p.club], rowFromAgg(p.club, p.computer, hour, agg, online, session))
 	}
-	written := 0
-	clubs := make([]int64, 0, len(byClub))
-	for c := range byClub {
-		clubs = append(clubs, c)
-	}
-	slices.Sort(clubs)
-	for _, club := range clubs {
-		b, err := json.Marshal(byClub[club])
-		if err != nil {
-			return written, err
-		}
-		var n int64
+	var written int64
+	if len(rows) > 0 {
 		if err := db.InTenantTx(ctx, f.App, club, func(q *store.Queries) error {
-			n, err = q.ComputerHealthHourlyUpsert(ctx, store.ComputerHealthHourlyUpsertParams{ClubID: club, Rows: b})
-			return err
+			written = 0
+			for batch := range slices.Chunk(rows, hourlyBatch) {
+				b, err := json.Marshal(batch)
+				if err != nil {
+					return err
+				}
+				n, err := q.ComputerHealthHourlyUpsert(ctx, store.ComputerHealthHourlyUpsertParams{ClubID: club, Rows: b})
+				if err != nil {
+					return err
+				}
+				written += n
+			}
+			return nil
 		}); err != nil {
-			return written, fmt.Errorf("health: hourly upsert club %d: %w", club, err)
+			return 0, fmt.Errorf("health: hourly upsert club %d: %w", club, err)
 		}
-		written += int(n)
-		f.rows.Add(n)
+		f.rows.Add(written)
 	}
-	del := make(valkey.Commands, 0, len(members)+1)
-	for _, p := range pcs {
-		del = append(del, f.Valkey.B().Del().Key(k.aggKey(hour, p.computer), k.bitsKey(hour, p.computer)).Build())
+	del := make(valkey.Commands, 0, len(members)+len(members)/hourlyBatch+1)
+	for _, m := range members {
+		if club > 0 { // ключи испорченного члена не трогаем (истекут по TTL): номер ПК в нём ненадёжен
+			pc := strconv.FormatInt(m.computer, 10)
+			del = append(del, f.Valkey.B().Del().Key(k.agg(hp, pc), k.bits(hp, pc)).Build())
+		}
 	}
-	del = append(del, f.Valkey.B().Srem().Key(idx).Member(members...).Build())
+	for batch := range slices.Chunk(members, hourlyBatch) {
+		raw := make([]string, len(batch))
+		for i, m := range batch {
+			raw[i] = m.raw
+		}
+		del = append(del, f.Valkey.B().Srem().Key(idx).Member(raw...).Build())
+	}
 	for _, r := range f.Valkey.DoMulti(ctx, del...) {
 		if err := r.Error(); err != nil {
-			return written, fmt.Errorf("health: hourly cleanup: %w", err)
+			return int(written), fmt.Errorf("health: hourly cleanup: %w", err)
 		}
 	}
-	return written, nil
+	return int(written), nil
 }

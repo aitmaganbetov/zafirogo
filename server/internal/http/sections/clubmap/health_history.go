@@ -12,6 +12,7 @@ import (
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
+	"github.com/aitmaganbetov/zafirogo/server/internal/club"
 	clubmapapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/clubmap"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -25,13 +26,6 @@ const (
 	maxHourlySpan = 8 * 24 * time.Hour
 )
 
-// weekStartIn — понедельник 00:00 недели момента t в поясе loc (как date_trunc('week', … AT TIME ZONE tz) в SQL).
-func weekStartIn(t time.Time, loc *time.Location) time.Time {
-	l := t.In(loc)
-	d := time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, loc)
-	return d.AddDate(0, 0, -((int(d.Weekday()) + 6) % 7))
-}
-
 // weekBounds — границы weeks+1 недель по возрастанию: неделя до показываемых (тренд), показываемые и конец текущей
 // (cur — начало текущей недели в поясе клуба; AddDate в поясе — переход на летнее время учтён).
 func weekBounds(cur time.Time, weeks int) []time.Time {
@@ -42,16 +36,8 @@ func weekBounds(cur time.Time, weeks int) []time.Time {
 	return out
 }
 
-// optInt — -1 (нет измерения в SQL) → null.
-func optInt[T int32 | int64](v T) *int64 {
-	if v < 0 {
-		return nil
-	}
-	n := int64(v)
-	return &n
-}
-
-func optPtr(v *int32) *int64 {
+// opt — нет измерения (NULL в SQL) → null в API.
+func opt[T int32 | int64](v *T) *int64 {
 	if v == nil {
 		return nil
 	}
@@ -59,11 +45,19 @@ func optPtr(v *int32) *int64 {
 	return &n
 }
 
+// orUnmeasured — значение для health.Week: нет измерения — -1.
+func orUnmeasured[T int32 | int64](v *T) int64 {
+	if v == nil {
+		return -1
+	}
+	return int64(*v)
+}
+
 func weekOf(r store.ComputerHealthWeeklyRow, diskless bool) health.Week {
 	return health.Week{
-		CPUTempAvgDeci: int64(r.CpuTempAvgDeci), GPUTempAvgDeci: int64(r.GpuTempAvgDeci),
+		CPUTempAvgDeci: orUnmeasured(r.CpuTempAvgDeci), GPUTempAvgDeci: orUnmeasured(r.GpuTempAvgDeci),
 		CPUHotHours: r.CpuHotHours, GPUHotHours: r.GpuHotHours, Shutdowns: r.UnexpectedShutdowns, Bugchecks: r.Bugchecks,
-		SystemDiskFreeBP: r.SystemDiskFreeBp, SmartRank: int(r.SmartRank), NetworkSlowHours: r.NetworkSlowHours,
+		SystemDiskFreeBP: orUnmeasured(r.SystemDiskFreeBp), SmartRank: int(r.SmartRank), NetworkSlowHours: r.NetworkSlowHours,
 		Diskless: diskless,
 	}
 }
@@ -78,7 +72,7 @@ func verdictOf(v health.Verdict) clubmapapi.HealthVerdict {
 }
 
 // GetComputerHealthWeekly — недели ПК (новые сверху) с вердиктом; тренд — к предыдущей неделе (она читается тем же
-// запросом, но не показывается, если выходит за weeks).
+// запросом, но не показывается, если выходит за weeks). Данные дисков бездискового ПК отбрасывает запрос (diskless).
 func (h *handlers) GetComputerHealthWeekly(ctx context.Context, req clubmapapi.GetComputerHealthWeeklyRequestObject) (clubmapapi.GetComputerHealthWeeklyResponseObject, error) {
 	weeks := defaultHealthWeeks
 	if w := req.Params.Weeks; w != nil {
@@ -91,10 +85,8 @@ func (h *handlers) GetComputerHealthWeekly(ctx context.Context, req clubmapapi.G
 		weeks = int(*w)
 	}
 	clubID, now := httpx.ClubID(ctx), h.d.NowFunc()
-	rules := h.d.HealthVerdict.WithDefaults()
 	var (
 		rows     []store.ComputerHealthWeeklyRow
-		loc      = time.UTC
 		bounds   []time.Time
 		diskless bool
 	)
@@ -103,17 +95,15 @@ func (h *handlers) GetComputerHealthWeekly(ctx context.Context, req clubmapapi.G
 		if diskless, err = healthComputer(ctx, q, clubID, req.ComputerId); err != nil {
 			return err
 		}
-		club, err := q.ClubLocaleTimezone(ctx, clubID)
+		info, err := club.Load(ctx, q, clubID) // неизвестный пояс — UTC (CurrentClub::timezone())
 		if err != nil {
 			return err
 		}
-		if l, err := time.LoadLocation(club.Timezone); err == nil {
-			loc = l // неизвестный пояс — UTC (CurrentClub::timezone())
-		}
-		bounds = weekBounds(weekStartIn(now, loc), weeks)
+		bounds = weekBounds(info.StartOfWeek(now), weeks)
 		rows, err = q.ComputerHealthWeekly(ctx, store.ComputerHealthWeeklyParams{
-			Bounds: bounds, CpuHotDeci: rules.CPUTempC * 10, GpuHotDeci: rules.GPUTempC * 10, Diskless: diskless,
-			ClubID: clubID, ComputerID: req.ComputerId, FromAt: bounds[0], ToAt: bounds[len(bounds)-1],
+			Bounds: bounds, CpuHotDeci: h.verdict.CPUTempC * 10, GpuHotDeci: h.verdict.GPUTempC * 10, Diskless: diskless,
+			HiddenKinds: hiddenKinds(diskless), ClubID: clubID, ComputerID: req.ComputerId,
+			FromAt: bounds[0], ToAt: bounds[len(bounds)-1],
 		})
 		return err
 	})
@@ -131,28 +121,23 @@ func (h *handlers) GetComputerHealthWeekly(ctx context.Context, req clubmapapi.G
 		if r.WeekIndex < 2 || int(r.WeekIndex) >= len(bounds) {
 			continue
 		}
-		start := bounds[r.WeekIndex-1]
 		var prev *health.Week
 		if p, ok := byIndex[r.WeekIndex-1]; ok {
 			prev = &p
 		}
 		w := clubmapapi.HealthWeek{
-			Start: start, End: bounds[r.WeekIndex], OnlineMinutes: r.OnlineMinutes, SessionMinutes: r.SessionMinutes,
-			CpuLoadAvgBp: optInt(r.CpuLoadAvgBp), CpuLoadMaxBp: optInt(r.CpuLoadMaxBp),
-			RamAvgBp: optInt(r.RamAvgBp), RamMaxBp: optInt(r.RamMaxBp),
-			GpuLoadAvgBp: optInt(r.GpuLoadAvgBp), GpuLoadMaxBp: optInt(r.GpuLoadMaxBp),
-			CpuTempAvgDeci: optInt(r.CpuTempAvgDeci), CpuTempMaxDeci: optInt(r.CpuTempMaxDeci),
-			GpuTempAvgDeci: optInt(r.GpuTempAvgDeci), GpuTempMaxDeci: optInt(r.GpuTempMaxDeci),
+			Start: bounds[r.WeekIndex-1], End: bounds[r.WeekIndex], OnlineMinutes: r.OnlineMinutes, SessionMinutes: r.SessionMinutes,
+			CpuLoadAvgBp: opt(r.CpuLoadAvgBp), CpuLoadMaxBp: opt(r.CpuLoadMaxBp),
+			RamAvgBp: opt(r.RamAvgBp), RamMaxBp: opt(r.RamMaxBp),
+			GpuLoadAvgBp: opt(r.GpuLoadAvgBp), GpuLoadMaxBp: opt(r.GpuLoadMaxBp),
+			CpuTempAvgDeci: opt(r.CpuTempAvgDeci), CpuTempMaxDeci: opt(r.CpuTempMaxDeci),
+			GpuTempAvgDeci: opt(r.GpuTempAvgDeci), GpuTempMaxDeci: opt(r.GpuTempMaxDeci),
 			CpuHotHours: r.CpuHotHours, GpuHotHours: r.GpuHotHours, ProblemHours: r.ProblemHours, NetworkSlowHours: r.NetworkSlowHours,
 			UnexpectedShutdowns: r.UnexpectedShutdowns, Bugchecks: r.Bugchecks, PeripheralDisconnects: r.PeripheralDisconnects,
-			Verdict: verdictOf(health.Judge(weekOf(r, diskless), prev, rules)),
+			SystemDiskFreeMb: opt(r.SystemDiskFreeMb), SystemDiskFreeBp: opt(r.SystemDiskFreeBp),
+			Verdict: verdictOf(health.Judge(byIndex[r.WeekIndex], prev, h.verdict)),
 		}
-		// Бездисковый ПК: дисков нет — поля системного диска и SMART не отдаются (старые строки истории — до перевода
-		// ПК на загрузку по сети).
-		if !diskless {
-			w.SystemDiskFreeMb, w.SystemDiskFreeBp = optInt(r.SystemDiskFreeMb), optInt(r.SystemDiskFreeBp)
-		}
-		if s := health.SmartName(int(r.SmartRank)); s != "" && !diskless {
+		if s := health.SmartName(int(r.SmartRank)); s != "" {
 			v := clubmapapi.HealthWeekSmart(s)
 			w.Smart = &v
 		}
@@ -191,11 +176,11 @@ func (h *handlers) GetComputerHealthHourly(ctx context.Context, req clubmapapi.G
 	for _, r := range rows {
 		out.Items = append(out.Items, clubmapapi.HealthHour{
 			Hour: r.Hour, OnlineMinutes: int64(r.OnlineMinutes), SessionMinutes: int64(r.SessionMinutes),
-			CpuLoadAvgBp: optPtr(r.CpuLoadAvgBp), CpuLoadMaxBp: optPtr(r.CpuLoadMaxBp),
-			RamAvgBp: optPtr(r.RamAvgBp), RamMaxBp: optPtr(r.RamMaxBp),
-			GpuLoadAvgBp: optPtr(r.GpuLoadAvgBp), GpuLoadMaxBp: optPtr(r.GpuLoadMaxBp),
-			CpuTempAvgDeci: optPtr(r.CpuTempAvgDeci), CpuTempMaxDeci: optPtr(r.CpuTempMaxDeci),
-			GpuTempAvgDeci: optPtr(r.GpuTempAvgDeci), GpuTempMaxDeci: optPtr(r.GpuTempMaxDeci),
+			CpuLoadAvgBp: opt(r.CpuLoadAvgBp), CpuLoadMaxBp: opt(r.CpuLoadMaxBp),
+			RamAvgBp: opt(r.RamAvgBp), RamMaxBp: opt(r.RamMaxBp),
+			GpuLoadAvgBp: opt(r.GpuLoadAvgBp), GpuLoadMaxBp: opt(r.GpuLoadMaxBp),
+			CpuTempAvgDeci: opt(r.CpuTempAvgDeci), CpuTempMaxDeci: opt(r.CpuTempMaxDeci),
+			GpuTempAvgDeci: opt(r.GpuTempAvgDeci), GpuTempMaxDeci: opt(r.GpuTempMaxDeci),
 		})
 	}
 	return clubmapapi.GetComputerHealthHourly200JSONResponse(out), nil

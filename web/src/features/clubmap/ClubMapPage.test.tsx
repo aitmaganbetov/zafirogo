@@ -7,7 +7,7 @@ import { clubMapKey, type ClubMapPage as Page, type ComputerState } from './api'
 import { ClubMapPage } from './ClubMapPage';
 import { durationLabel } from './errors';
 import { percent } from './healthText';
-import { LIVE_WINDOW_MS, pushSample, resetLiveSeries, sampleFromEvent, samplesOf } from './liveSeries';
+import { LIVE_WINDOW_MS, pushSample, resetLiveSeries, sample, samplesOf } from './liveSeries';
 import { mergeLoad, mergeStates } from './useMapLive';
 
 const page: Page = {
@@ -270,13 +270,16 @@ describe('ClubMapPage', () => {
   });
 
   it('keeps 15 minutes of live samples per PC', () => {
-    pushSample(7, sampleFromEvent({ computer_id: 7, load: { cpu_bp: 4250, ram_bp: 6100, idle_seconds: 0 }, cpu_temp_deci: 655 }, 1_000_000));
-    pushSample(7, sampleFromEvent({ computer_id: 7, load: { cpu_bp: 5000, ram_bp: 6100, idle_seconds: 0 } }, 1_000_500)); // то же измерение
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_100_000); // окно — от часов браузера
+    pushSample(7, sample(1_000_000, { cpu_bp: 4250, ram_bp: 6100, idle_seconds: 0 }, 655));
+    pushSample(7, sample(1_000_500, { cpu_bp: 5000, ram_bp: 6100, idle_seconds: 0 })); // то же измерение
     expect(samplesOf(7)).toEqual([{ at: 1_000_500, cpu: 50, ram: 61, cpuTemp: undefined, gpuTemp: undefined }]);
-    pushSample(7, sampleFromEvent({ computer_id: 7 }, 1_100_000)); // без данных агента — не точка
-    pushSample(7, sampleFromEvent({ computer_id: 7, load: { cpu_bp: 100, ram_bp: 100, idle_seconds: 0 } }, 1_000_500 + LIVE_WINDOW_MS));
+    pushSample(7, sample(1_100_000, undefined)); // без данных агента — не точка
+    now.mockReturnValue(1_000_500 + LIVE_WINDOW_MS);
+    pushSample(7, sample(1_000_500 + LIVE_WINDOW_MS, { cpu_bp: 100, ram_bp: 100, idle_seconds: 0 }));
     expect(samplesOf(7).map((s) => s.cpu)).toEqual([1]);
     expect(samplesOf(8)).toEqual([]);
+    now.mockRestore();
   });
 
   // «По неделям»: вердикт с причинами (ключи перевода с подстановками) и сводка; выбор недели — график по часам.
@@ -317,8 +320,10 @@ describe('ClubMapPage', () => {
   // истории — пометка «Бездисковый ПК», сеть сразу после проблем, медленная сеть в сводке и причине вердикта.
   it('hides disks of a diskless PC in both tabs', async () => {
     const view = { ...onlineView(655), diskless: true, problems: ['network_slow'] };
-    view.health = { ...view.health, link_mbps: 100, disks: [{ mount: 'C:', system: true, total_mb: 512000, free_mb: 1024, smart: 'failing' }] };
-    const disklessWeeks = [{ ...weeks[0], network_slow_hours: 5,
+    // Дисков бездискового ПК сервер не отдаёт (убраны при приёме Status) — панель их и не фильтрует.
+    view.health = { ...view.health, link_mbps: 100, disks: [] };
+    // Системного диска и SMART у недель бездискового ПК сервер не отдаёт (ComputerHealthWeekly diskless).
+    const disklessWeeks = [{ ...weeks[0], system_disk_free_mb: undefined, system_disk_free_bp: undefined, smart: undefined, network_slow_hours: 5,
       verdict: { level: 'watch', reasons: [{ code: 'network_slow', level: 'watch', value: 5, threshold: 1000 }] } }];
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const path = new URL((input as Request).url).pathname;

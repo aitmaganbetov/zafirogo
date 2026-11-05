@@ -6,6 +6,17 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/config"
 )
 
+// thresholds — agent.health.* → пороги проблем (общие для стрима и вердикта недели).
+func thresholds(h config.AgentHealth) health.Thresholds {
+	return health.Thresholds{
+		CPUTempC: h.CPUTempC, GPUTempC: h.GPUTempC, TempHysteresisC: h.TempHysteresisC,
+		SystemDiskFreePercent: h.SystemDiskFreePercent, SystemDiskFreeGB: h.SystemDiskFreeGB,
+		OtherDiskFreePercent: h.OtherDiskFreePercent, LinkFullMbps: h.LinkFullMbps, LinkMinMbps: h.LinkMinMbps,
+		UnstableShutdowns: h.UnstableShutdowns, UnstableBugchecks: h.UnstableBugchecks,
+		RaiseAfter: h.RaiseAfter, ClearAfter: h.ClearAfter,
+	}
+}
+
 // healthOptions — agent.health.* → stream.HealthOptions (Этап 7, здоровье ПК; docs/open-questions/stage7-health.md).
 func healthOptions(h config.AgentHealth) stream.HealthOptions {
 	ping := h.PingInterval
@@ -13,14 +24,8 @@ func healthOptions(h config.AgentHealth) stream.HealthOptions {
 		ping = -1 // 0 в конфигурации — «не мерить»; 0 в stream — «по умолчанию»
 	}
 	return stream.HealthOptions{
-		Disabled: !h.Enabled,
-		Thresholds: health.Thresholds{
-			CPUTempC: h.CPUTempC, GPUTempC: h.GPUTempC, TempHysteresisC: h.TempHysteresisC,
-			SystemDiskFreePercent: h.SystemDiskFreePercent, SystemDiskFreeGB: h.SystemDiskFreeGB,
-			OtherDiskFreePercent: h.OtherDiskFreePercent, LinkFullMbps: h.LinkFullMbps, LinkMinMbps: h.LinkMinMbps,
-			UnstableShutdowns: h.UnstableShutdowns, UnstableBugchecks: h.UnstableBugchecks,
-			RaiseAfter: h.RaiseAfter, ClearAfter: h.ClearAfter,
-		},
+		Disabled:         !h.Enabled,
+		Thresholds:       thresholds(h),
 		LiveMinGap:       h.LiveMinGap,
 		LiveLoadStepBP:   h.LiveLoadStepPercent * 100,
 		LiveTempStepDeci: h.LiveTempStepC * 10,
@@ -31,11 +36,8 @@ func healthOptions(h config.AgentHealth) stream.HealthOptions {
 // verdictRules — agent.health.* → пороги вердикта исправности ПК за неделю (health.VerdictRules, S7-H-15).
 func verdictRules(h config.AgentHealth) health.VerdictRules {
 	return health.VerdictRules{
-		CPUTempC: h.CPUTempC, GPUTempC: h.GPUTempC, HotHours: h.VerdictHotHours, HotHoursRepair: h.VerdictHotHoursRepair,
-		Shutdowns: h.VerdictShutdowns, Bugchecks: h.VerdictBugchecks,
-		SystemDiskFreePercent: int64(h.SystemDiskFreePercent), // #nosec G115 -- ≤ 90 (config.validateHealth)
-		TempRiseC:             h.VerdictTempRiseC,
-		NetworkSlowHours:      h.VerdictNetworkSlowHours,
-		LinkFullMbps:          int64(h.LinkFullMbps),
+		Thresholds: thresholds(h), HotHours: h.VerdictHotHours, HotHoursRepair: h.VerdictHotHoursRepair,
+		Shutdowns: h.VerdictShutdowns, Bugchecks: h.VerdictBugchecks, TempRiseC: h.VerdictTempRiseC,
+		NetworkSlowHours: h.VerdictNetworkSlowHours,
 	}
 }

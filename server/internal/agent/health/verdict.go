@@ -28,8 +28,10 @@ const (
 
 // VerdictRules — пороги вердикта (agent.health.*). Нули — DefaultVerdictRules.
 type VerdictRules struct {
-	// CPUTempC, GPUTempC — перегрев, °C (те же, что у проблем cpu_hot/gpu_hot).
-	CPUTempC, GPUTempC int32
+	// Thresholds — общие с проблемами пороги: CPUTempC, GPUTempC (перегрев, те же, что у cpu_hot/gpu_hot),
+	// SystemDiskFreePercent («наблюдать», если на системном диске было свободно меньше процента) и LinkFullMbps (порог
+	// медленной сети бездискового ПК, тот же, что у network_slow, — для текста причины). Остальные поля не используются.
+	Thresholds
 	// HotHours — «наблюдать», если часов с максимумом температуры ≥ порога перегрева больше этого.
 	HotHours int64
 	// HotHoursRepair — «ремонт», если таких часов больше этого (хронический перегрев: чистка, термопаста, охлаждение).
@@ -38,55 +40,37 @@ type VerdictRules struct {
 	Shutdowns int64
 	// Bugchecks — «ремонт» при стольких «синих экранах» за неделю (≥).
 	Bugchecks int64
-	// SystemDiskFreePercent — «наблюдать», если на системном диске было свободно меньше процента.
-	SystemDiskFreePercent int64
 	// TempRiseC — «наблюдать», если средняя температура CPU/GPU выросла к прошлой неделе на столько °C (≥).
 	TempRiseC int32
 	// NetworkSlowHours — бездисковый ПК: «наблюдать», если часов с открытой проблемой network_slow больше этого.
 	NetworkSlowHours int64
-	// LinkFullMbps — порог медленной сети бездискового ПК (тот же, что у проблемы network_slow) — для текста причины.
-	LinkFullMbps int64
 }
 
-// DefaultVerdictRules — пороги по умолчанию (обоснование — docs/open-questions/stage7-health.md S7-H-15).
+// DefaultVerdictRules — пороги по умолчанию (обоснование — docs/open-questions/stage7-health.md S7-H-15); общие с
+// проблемами — Defaults().
 func DefaultVerdictRules() VerdictRules {
-	return VerdictRules{CPUTempC: 90, GPUTempC: 85, HotHours: 2, HotHoursRepair: 24, Shutdowns: 3, Bugchecks: 1,
-		SystemDiskFreePercent: 10, TempRiseC: 5, NetworkSlowHours: 2, LinkFullMbps: 1000}
+	return VerdictRules{Thresholds: Defaults(), HotHours: 2, HotHoursRepair: 24, Shutdowns: 3, Bugchecks: 1, TempRiseC: 5,
+		NetworkSlowHours: 2}
+}
+
+// orDefault — v, а если он не задан (≤ 0), — d.
+func orDefault[T int32 | int64 | uint32 | uint64](v, d T) T {
+	if v <= 0 {
+		return d
+	}
+	return v
 }
 
 // WithDefaults — нулевые пороги заменены значениями по умолчанию.
 func (r VerdictRules) WithDefaults() VerdictRules {
 	d := DefaultVerdictRules()
-	if r.CPUTempC <= 0 {
-		r.CPUTempC = d.CPUTempC
-	}
-	if r.GPUTempC <= 0 {
-		r.GPUTempC = d.GPUTempC
-	}
-	if r.HotHours <= 0 {
-		r.HotHours = d.HotHours
-	}
-	if r.HotHoursRepair <= 0 {
-		r.HotHoursRepair = d.HotHoursRepair
-	}
-	if r.Shutdowns <= 0 {
-		r.Shutdowns = d.Shutdowns
-	}
-	if r.Bugchecks <= 0 {
-		r.Bugchecks = d.Bugchecks
-	}
-	if r.SystemDiskFreePercent <= 0 {
-		r.SystemDiskFreePercent = d.SystemDiskFreePercent
-	}
-	if r.TempRiseC <= 0 {
-		r.TempRiseC = d.TempRiseC
-	}
-	if r.NetworkSlowHours <= 0 {
-		r.NetworkSlowHours = d.NetworkSlowHours
-	}
-	if r.LinkFullMbps <= 0 {
-		r.LinkFullMbps = d.LinkFullMbps
-	}
+	r.CPUTempC, r.GPUTempC = orDefault(r.CPUTempC, d.CPUTempC), orDefault(r.GPUTempC, d.GPUTempC)
+	r.SystemDiskFreePercent = orDefault(r.SystemDiskFreePercent, d.SystemDiskFreePercent)
+	r.LinkFullMbps = orDefault(r.LinkFullMbps, d.LinkFullMbps)
+	r.HotHours, r.HotHoursRepair = orDefault(r.HotHours, d.HotHours), orDefault(r.HotHoursRepair, d.HotHoursRepair)
+	r.Shutdowns, r.Bugchecks = orDefault(r.Shutdowns, d.Shutdowns), orDefault(r.Bugchecks, d.Bugchecks)
+	r.TempRiseC = orDefault(r.TempRiseC, d.TempRiseC)
+	r.NetworkSlowHours = orDefault(r.NetworkSlowHours, d.NetworkSlowHours)
 	return r
 }
 
@@ -101,8 +85,8 @@ type Week struct {
 	SmartRank int
 	// NetworkSlowHours — часов в сети с открытой проблемой network_slow.
 	NetworkSlowHours int64
-	// Diskless — бездисковый ПК: причины по дискам (SMART, место) не выдаются — дисков нет, а старые данные (до
-	// перевода ПК на загрузку по сети) к нему не относятся; сеть — причина network_slow (S7-H-18).
+	// Diskless — бездисковый ПК: сеть — причина network_slow (S7-H-18). Данных дисков у него нет (SmartRank 0,
+	// SystemDiskFreeBP -1): их отбрасывает выборка недель (ComputerHealthWeekly diskless) — причин по дискам нет.
 	Diskless bool
 }
 
@@ -131,9 +115,6 @@ func Judge(w Week, prev *Week, r VerdictRules) Verdict {
 			v.Level = level
 		}
 	}
-	if w.Diskless {
-		w.SmartRank, w.SystemDiskFreeBP = 0, -1
-	}
 	if w.SmartRank >= smartRankFailing {
 		add(ReasonSmartFailing, VerdictRepair, 0, 0)
 	}
@@ -157,12 +138,13 @@ func Judge(w Week, prev *Week, r VerdictRules) Verdict {
 		add(ReasonShutdowns, VerdictWatch, w.Shutdowns, r.Shutdowns)
 	}
 	// Свободно < порога: free·100 < total·percent, доля уже в сотых процента (bp < percent·100) — без float.
-	if w.SystemDiskFreeBP >= 0 && w.SystemDiskFreeBP < r.SystemDiskFreePercent*100 {
-		add(ReasonDiskLow, VerdictWatch, w.SystemDiskFreeBP/100, r.SystemDiskFreePercent)
+	diskPercent := int64(min(r.SystemDiskFreePercent, 100)) // #nosec G115 -- ≤ 100
+	if w.SystemDiskFreeBP >= 0 && w.SystemDiskFreeBP < diskPercent*100 {
+		add(ReasonDiskLow, VerdictWatch, w.SystemDiskFreeBP/100, diskPercent)
 	}
 	// Медленная сеть — «наблюдать», а не «ремонт»: частая причина — кабель или порт коммутатора, а не ПК.
 	if w.Diskless && w.NetworkSlowHours > r.NetworkSlowHours {
-		add(ReasonNetworkSlow, VerdictWatch, w.NetworkSlowHours, r.LinkFullMbps)
+		add(ReasonNetworkSlow, VerdictWatch, w.NetworkSlowHours, int64(r.LinkFullMbps))
 	}
 	if prev != nil {
 		rise := func(code string, cur, before int64) {

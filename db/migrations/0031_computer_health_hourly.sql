@@ -144,6 +144,25 @@ END
 $$;
 -- +goose StatementEnd
 
+-- Бездисковый ПК (0013, Q-037; S7-H-18) — одно правило для стрима (agent_presence.sql GetAgentComputer) и панели ПК
+-- (computer_health.sql ComputerHealthComputer): действующий сертификат ПК (не отозван, не истёк; у ПК в сети это
+-- сертификат подключения — все действующие сертификаты ПК одного вида: выпуск по коду или ключу образа отзывает прежние,
+-- продление сохраняет признак), иначе последний выпущенный (ПК давно не в сети: сертификат по ключу образа живёт сутки),
+-- иначе false. SECURITY INVOKER (по умолчанию): agent_certificates читается с RLS вызывающего — чужой клуб не виден.
+-- Индекс club_computer_index: диапазон not_after > now() — одна-две строки. Права — как у zafiro_current_club_id (0004).
+-- +goose StatementBegin
+CREATE FUNCTION zafiro_computer_diskless(p_club_id bigint, p_computer_id bigint) RETURNS boolean
+    LANGUAGE sql STABLE PARALLEL SAFE AS $$
+    SELECT COALESCE((SELECT ac.diskless FROM agent_certificates ac
+                     WHERE ac.club_id = p_club_id AND ac.club_computer_id = p_computer_id AND ac.not_after > now()
+                       AND ac.revoked_at IS NULL
+                     ORDER BY ac.issued_at DESC LIMIT 1),
+                    (SELECT ac.diskless FROM agent_certificates ac
+                     WHERE ac.club_id = p_club_id AND ac.club_computer_id = p_computer_id
+                     ORDER BY ac.issued_at DESC LIMIT 1), false)
+$$;
+-- +goose StatementEnd
+
 -- Партиции: текущий месяц и 3 вперёд (дальше — db.EnsurePartitions раз в сутки).
 -- +goose StatementBegin
 DO $$
@@ -154,6 +173,7 @@ $$;
 -- +goose StatementEnd
 
 -- +goose Down
+DROP FUNCTION IF EXISTS zafiro_computer_diskless(bigint, bigint);
 DROP TABLE computer_health_hourly;
 
 -- +goose StatementBegin

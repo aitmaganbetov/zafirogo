@@ -127,13 +127,13 @@ func HealthFrom(h *agentv1.ComputerHealth, at time.Time) *Health {
 	return out
 }
 
-// WithoutDisks — здоровье бездискового ПК: диски (тома образа, присланные старым агентом или по ошибке настройки) не
-// хранятся и не оцениваются — их место и SMART ничего не говорят о ПК (S7-H-18).
-func (h *Health) WithoutDisks() *Health {
+// MarkDiskless — здоровье бездискового ПК: диски (тома образа, присланные старым агентом или по ошибке настройки) не
+// хранятся и не оцениваются — их место и SMART ничего не говорят о ПК (S7-H-18). Единственная точка — приём Status
+// стримом (stream applyStatus): снимок, проблемы и почасовая история дальше видят здоровье уже без дисков.
+func (h *Health) MarkDiskless() {
 	if h != nil {
 		h.Disks, h.Diskless = nil, true
 	}
-	return h
 }
 
 // HealthChanged — изменилось то, что агент сообщает сразу (agent.proto Status.health): набор периферии и её

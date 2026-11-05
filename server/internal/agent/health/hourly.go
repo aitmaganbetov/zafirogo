@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -38,7 +39,8 @@ const HourlyKeyTTL = 26 * time.Hour
 // включения не посчитал старые сбои заново.
 const lastCountersTTL = 8 * 24 * time.Hour
 
-// Smart-ранги агрегата: чем больше, тем хуже (0 — не измерено).
+// Smart-ранги агрегата: чем больше, тем хуже (0 — не измерено). Те же числа считает SQL недель
+// (db/queries/computer_health_hourly.sql ComputerHealthWeekly smart_rank) — меняются вместе.
 const (
 	smartRankOK      = 1
 	smartRankWarning = 2
@@ -92,25 +94,41 @@ type Sample struct {
 	BootID string
 }
 
+// hourlyKeys — ключи почасовой истории от префикса присутствия (общие для Hourly и HourlyFlusher). Час и ПК — уже
+// строками (hourPart, strconv.FormatInt): Record считает их один раз на измерение.
+type hourlyKeys struct{ prefix string }
+
+func newHourlyKeys(prefix string) hourlyKeys {
+	if prefix == "" {
+		prefix = presence.DefaultPrefix
+	}
+	return hourlyKeys{prefix: prefix}
+}
+
+func hourPart(hour time.Time) string { return strconv.FormatInt(hour.Unix(), 10) }
+
+func (k hourlyKeys) agg(hour, pc string) string  { return k.prefix + "hh:" + hour + ":" + pc }
+func (k hourlyKeys) bits(hour, pc string) string { return k.prefix + "hhb:" + hour + ":" + pc }
+func (k hourlyKeys) index(hour string) string    { return k.prefix + "hhi:" + hour }
+func (k hourlyKeys) closed(hour string) string   { return k.prefix + "hhc:" + hour }
+func (k hourlyKeys) last(pc string) string       { return k.prefix + "hhl:" + pc }
+
 // Hourly — запись измерений в агрегат часа (Valkey). Потокобезопасен.
 type Hourly struct {
-	c      valkey.Client
-	prefix string
-	// MaxGap — наибольший разрыв между Status одного подключения, при котором минуты между ними считаются онлайн.
-	MaxGap time.Duration
+	c    valkey.Client
+	keys hourlyKeys
+	// maxGap — наибольший разрыв между Status одного подключения, при котором минуты между ними считаются онлайн.
+	maxGap time.Duration
 	writes atomic.Int64
 	late   atomic.Int64
 }
 
 // NewHourly создаёт запись агрегатов. prefix — префикс ключей присутствия (presence.Store.Prefix()).
 func NewHourly(c valkey.Client, prefix string, maxGap time.Duration) *Hourly {
-	if prefix == "" {
-		prefix = presence.DefaultPrefix
-	}
 	if maxGap <= 0 {
 		maxGap = 150 * time.Second
 	}
-	return &Hourly{c: c, prefix: prefix, MaxGap: maxGap}
+	return &Hourly{c: c, keys: newHourlyKeys(prefix), maxGap: maxGap}
 }
 
 // Writes — сколько измерений записано (тесты, замеры).
@@ -118,20 +136,6 @@ func (h *Hourly) Writes() int64 { return h.writes.Load() }
 
 // Late — сколько измерений пришло в уже закрытый (сброшенный) час и не записано.
 func (h *Hourly) Late() int64 { return h.late.Load() }
-
-func hourKeyPart(hour time.Time) string { return strconv.FormatInt(hour.Unix(), 10) }
-
-func (h *Hourly) aggKey(hour time.Time, computerID int64) string {
-	return h.prefix + "hh:" + hourKeyPart(hour) + ":" + strconv.FormatInt(computerID, 10)
-}
-func (h *Hourly) bitsKey(hour time.Time, computerID int64) string {
-	return h.prefix + "hhb:" + hourKeyPart(hour) + ":" + strconv.FormatInt(computerID, 10)
-}
-func (h *Hourly) indexKey(hour time.Time) string  { return h.prefix + "hhi:" + hourKeyPart(hour) }
-func (h *Hourly) closedKey(hour time.Time) string { return h.prefix + "hhc:" + hourKeyPart(hour) }
-func (h *Hourly) lastKey(computerID int64) string {
-	return h.prefix + "hhl:" + strconv.FormatInt(computerID, 10)
-}
 
 // OnlineMinutes — минуты онлайн, которые отмечает Status в момент at: cur — минуты часа at (0..59): минута at и, если
 // предыдущий Status был не раньше maxGap назад, все минуты с него; prev — минуты ПРЕДЫДУЩЕГО часа с предыдущего Status
@@ -187,8 +191,8 @@ func SessionMinutes(prev, cur []int, since, at time.Time) (sPrev, sCur []int) {
 // пропало из списка) в cur. Гарнитура не считается (её снимают и уносят — это не неисправность, S7-H-1). Нет одного из
 // снимков — 0 (не с чем сравнить: первое здоровье подключения).
 func PeripheralDisconnects(prev, cur *presence.Health) int {
-	if prev == nil || cur == nil {
-		return 0
+	if prev == nil || cur == nil || slices.Equal(prev.Peripherals, cur.Peripherals) {
+		return 0 // нечего сравнивать или периферия не изменилась (почти каждый Status) — без map
 	}
 	type dev struct{ kind, name string }
 	was := map[dev]int{}
@@ -221,95 +225,138 @@ func PeripheralDisconnects(prev, cur *presence.Health) int {
 //	      15 «синих экранов» перед этой загрузкой Windows (-1 нет: старый агент), 16 boot_id, 17 TTL последних счётчиков (с),
 //	      18–21 — число минут: онлайн и в сессии этого часа, онлайн и в сессии прошлого часа; дальше — сами минуты.
 //
+// Немного команд на Status (их 5 000–50 000 в минуту): агрегат и последние счётчики читаются одним HMGET каждый, min /
+// max / суммы считает Lua, запись — одним HSET со всеми полями, минуты — одним BITFIELD; TTL ставится, когда ключ
+// создан (агрегат — по полю v, член индекса — по ответу SADD), а не на каждый Status. Поля и значения агрегата — те же,
+// что давали HINCRBY / HSET по полю (hourly_script_integration_test.go сверяет побитно). Суммы — целые много меньше
+// 10^14 (tostring без экспоненты; ≤ 1 800 Status в час × 10 000).
+//
 // Возврат: 1 — записано, 0 — час уже закрыт (опоздавшее измерение не пишется: иначе после сброса появился бы частичный
 // агрегат и перезаписал бы полную строку часа в Postgres). Счётчики сбоев тогда тоже не трогаются — прирост попадёт в
 // час следующего измерения.
 var hourlyScript = valkey.NewLuaScript(`
 if redis.call('EXISTS', KEYS[5]) == 1 then return 0 end
-local h = KEYS[1]
-local function acc(f, s)
+local h, L, ttl, member = KEYS[1], KEYS[3], ARGV[1], ARGV[2]
+-- Поля агрегата: 1 v, 2 df, 3 sm, 4 pd, 5 sd, 6 bc, затем по 4 на показатель (_n, _s, _mn, _mx) в порядке ARGV 3..7.
+local cur = redis.call('HMGET', h, 'v', 'df', 'sm', 'pd', 'sd', 'bc',
+  'cpu_n', 'cpu_s', 'cpu_mn', 'cpu_mx', 'ram_n', 'ram_s', 'ram_mn', 'ram_mx', 'gl_n', 'gl_s', 'gl_mn', 'gl_mx',
+  'ct_n', 'ct_s', 'ct_mn', 'ct_mx', 'gt_n', 'gt_s', 'gt_mn', 'gt_mx')
+local stats = {'cpu', 'ram', 'gl', 'ct', 'gt'}
+local set, ns = {'v', '1'}, 2
+for i = 1, 5 do
+  local s = ARGV[2 + i]
   local v = tonumber(s)
-  if v < 0 then return end
-  redis.call('HINCRBY', h, f .. '_n', 1)
-  redis.call('HINCRBY', h, f .. '_s', s)
-  local mn = redis.call('HGET', h, f .. '_mn')
-  if not mn or v < tonumber(mn) then redis.call('HSET', h, f .. '_mn', s) end
-  local mx = redis.call('HGET', h, f .. '_mx')
-  if not mx or v > tonumber(mx) then redis.call('HSET', h, f .. '_mx', s) end
-end
-acc('cpu', ARGV[3])
-acc('ram', ARGV[4])
-acc('gl', ARGV[5])
-acc('ct', ARGV[6])
-acc('gt', ARGV[7])
-if tonumber(ARGV[8]) >= 0 then
-  local cur = redis.call('HGET', h, 'df')
-  if not cur or tonumber(ARGV[8]) < tonumber(cur) then redis.call('HSET', h, 'df', ARGV[8], 'dt', ARGV[9]) end
-end
-if tonumber(ARGV[10]) > 0 then
-  local cur = tonumber(redis.call('HGET', h, 'sm') or '0')
-  if tonumber(ARGV[10]) > cur then redis.call('HSET', h, 'sm', ARGV[10]) end
-end
-if tonumber(ARGV[11]) > 0 then redis.call('HINCRBY', h, 'pd', ARGV[11]) end
-local L = KEYS[3]
-local function add(f, n) if n > 0 then redis.call('HINCRBY', h, f, n) end end
-local function delta(f, s)
-  local v = tonumber(s)
-  if v < 0 then return end
-  local last = redis.call('HGET', L, f)
-  if last then add(f, v - tonumber(last)) end
-end
-local sdb, bcb, boot = tonumber(ARGV[14]), tonumber(ARGV[15]), ARGV[16]
-local lastBoot = redis.call('HGET', L, 'boot')
-if sdb >= 0 and boot ~= '' and lastBoot then
-  -- Сбои перед загрузкой: события пишутся при загрузке после сбоя и из окна «с загрузки» не выпадают — прирост точный.
-  if lastBoot == boot then
-    add('sd', sdb - tonumber(redis.call('HGET', L, 'sdb') or '0'))
-    add('bc', bcb - tonumber(redis.call('HGET', L, 'bcb') or '0'))
-  else
-    add('sd', sdb)
-    add('bc', bcb)
+  if v >= 0 then
+    local b, f = 6 + 4 * (i - 1), stats[i]
+    local mn, mx = cur[b + 3], cur[b + 4]
+    set[ns + 1] = f .. '_n'; set[ns + 2] = tostring((tonumber(cur[b + 1]) or 0) + 1)
+    set[ns + 3] = f .. '_s'; set[ns + 4] = tostring((tonumber(cur[b + 2]) or 0) + v)
+    ns = ns + 4
+    if not mn or v < tonumber(mn) then set[ns + 1] = f .. '_mn'; set[ns + 2] = s; ns = ns + 2 end
+    if not mx or v > tonumber(mx) then set[ns + 1] = f .. '_mx'; set[ns + 2] = s; ns = ns + 2 end
   end
+end
+local free = tonumber(ARGV[8])
+if free >= 0 and (not cur[2] or free < tonumber(cur[2])) then
+  set[ns + 1] = 'df'; set[ns + 2] = ARGV[8]; set[ns + 3] = 'dt'; set[ns + 4] = ARGV[9]; ns = ns + 4
+end
+if tonumber(ARGV[10]) > (tonumber(cur[3]) or 0) then set[ns + 1] = 'sm'; set[ns + 2] = ARGV[10]; ns = ns + 2 end
+local pd = tonumber(ARGV[11])
+if pd > 0 then set[ns + 1] = 'pd'; set[ns + 2] = tostring((tonumber(cur[4]) or 0) + pd); ns = ns + 2 end
+-- Прирост сбоев (поля sd, bc агрегата): по счётчикам «перед загрузкой» и boot_id либо по счётчикам за 7 суток.
+local last = redis.call('HMGET', L, 'sd', 'bc', 'boot', 'sdb', 'bcb')
+local dsd, dbc = 0, 0
+local sdb, boot = tonumber(ARGV[14]), ARGV[16]
+if sdb >= 0 and boot ~= '' and last[3] then
+  -- Сбои перед загрузкой: события пишутся при загрузке после сбоя и из окна «с загрузки» не выпадают — прирост точный.
+  dsd, dbc = sdb, tonumber(ARGV[15])
+  if last[3] == boot then dsd, dbc = dsd - (tonumber(last[4]) or 0), dbc - (tonumber(last[5]) or 0) end
 else
-  delta('sd', ARGV[12])
-  delta('bc', ARGV[13])
+  local sd, bc = tonumber(ARGV[12]), tonumber(ARGV[13])
+  if sd >= 0 and last[1] then dsd = sd - tonumber(last[1]) end
+  if bc >= 0 and last[2] then dbc = bc - tonumber(last[2]) end
 end
-if tonumber(ARGV[12]) >= 0 then redis.call('HSET', L, 'sd', ARGV[12], 'bc', ARGV[13]) end
-if sdb >= 0 and boot ~= '' then redis.call('HSET', L, 'boot', boot, 'sdb', ARGV[14], 'bcb', ARGV[15]) end
+if dsd > 0 then set[ns + 1] = 'sd'; set[ns + 2] = tostring((tonumber(cur[5]) or 0) + dsd); ns = ns + 2 end
+if dbc > 0 then set[ns + 1] = 'bc'; set[ns + 2] = tostring((tonumber(cur[6]) or 0) + dbc); ns = ns + 2 end
+if tonumber(ARGV[12]) >= 0 then
+  if sdb >= 0 and boot ~= '' then
+    redis.call('HSET', L, 'sd', ARGV[12], 'bc', ARGV[13], 'boot', boot, 'sdb', ARGV[14], 'bcb', ARGV[15])
+  else
+    redis.call('HSET', L, 'sd', ARGV[12], 'bc', ARGV[13])
+  end
+elseif sdb >= 0 and boot ~= '' then
+  redis.call('HSET', L, 'boot', boot, 'sdb', ARGV[14], 'bcb', ARGV[15])
+end
 redis.call('EXPIRE', L, ARGV[17])
-local function minutes(bits, from, n, off)
-  for i = from, from + n - 1 do redis.call('SETBIT', bits, tonumber(ARGV[i]) + off, 1) end
-  return from + n
+redis.call('HSET', h, unpack(set))
+-- Минуты часа (биты 0..59 онлайн, 64..123 в сессии) одним BITFIELD; TTL агрегата и минут — при создании агрегата,
+-- TTL индекса — когда ПК впервые попал в индекс часа.
+local function touch(agg, bits, idx, created, from, n, nses)
+  local ops, k = {}, 0
+  for i = from, from + n + nses - 1 do
+    local off = tonumber(ARGV[i])
+    if i >= from + n then off = off + 64 end
+    ops[k + 1] = 'SET'; ops[k + 2] = 'u1'; ops[k + 3] = off; ops[k + 4] = 1
+    k = k + 4
+  end
+  if k > 0 then redis.call('BITFIELD', bits, unpack(ops)) end
+  if created then
+    redis.call('EXPIRE', agg, ttl)
+    redis.call('EXPIRE', bits, ttl)
+  end
+  if redis.call('SADD', idx, member) == 1 then redis.call('EXPIRE', idx, ttl) end
+  return from + n + nses
 end
-local i = minutes(KEYS[2], 22, tonumber(ARGV[18]), 0)
-i = minutes(KEYS[2], i, tonumber(ARGV[19]), 64)
-redis.call('HSET', h, 'v', '1')
-redis.call('EXPIRE', h, ARGV[1])
-redis.call('EXPIRE', KEYS[2], ARGV[1])
-redis.call('SADD', KEYS[4], ARGV[2])
-redis.call('EXPIRE', KEYS[4], ARGV[1])
-local np, nps = tonumber(ARGV[20]), tonumber(ARGV[21])
+local n, nses, np, nps = tonumber(ARGV[18]), tonumber(ARGV[19]), tonumber(ARGV[20]), tonumber(ARGV[21])
+local i = touch(h, KEYS[2], KEYS[4], not cur[1], 22, n, nses)
 if np > 0 and redis.call('EXISTS', KEYS[9]) == 0 then
-  i = minutes(KEYS[7], i, np, 0)
-  minutes(KEYS[7], i, nps, 64)
-  redis.call('HSET', KEYS[6], 'v', '1')
-  redis.call('EXPIRE', KEYS[6], ARGV[1])
-  redis.call('EXPIRE', KEYS[7], ARGV[1])
-  redis.call('SADD', KEYS[8], ARGV[2])
-  redis.call('EXPIRE', KEYS[8], ARGV[1])
+  touch(KEYS[6], KEYS[7], KEYS[8], redis.call('HSETNX', KEYS[6], 'v', '1') == 1, i, np, nps)
 end
 return 1
 `)
 
 func i64(v int64) string { return strconv.FormatInt(v, 10) }
 
-// diskFacts — свободное место и объём системного диска (-1 — не измерено) и худший SMART измерения. Бездисковый ПК
-// (S7-H-18) — «не измерено»: тома образа к ПК не относятся.
+// measurement — измерения одного Status для скрипта: -1 — не измерено (smart: 0).
+type measurement struct {
+	cpu, ram, gpuLoad, cpuTemp, gpuTemp int64
+	diskFree, diskTotal                 int64
+	smart                               int
+	shutdowns7d, bugchecks7d            int64
+	shutdownsBoot, bugchecksBoot        int64
+}
+
+func measurementOf(s Sample) measurement {
+	m := measurement{cpu: -1, ram: -1, gpuLoad: -1, cpuTemp: -1, gpuTemp: -1, diskFree: -1,
+		shutdowns7d: -1, bugchecks7d: -1, shutdownsBoot: -1, bugchecksBoot: -1}
+	if s.Load != nil {
+		m.cpu, m.ram = int64(s.Load.CPUBasisPoints), int64(s.Load.RAMBasisPoints)
+	}
+	hh := s.Health
+	if hh == nil {
+		return m
+	}
+	if hh.GPUMeasured {
+		m.gpuLoad = int64(hh.GPULoadBP)
+	}
+	if hh.CPUTempDeci > 0 {
+		m.cpuTemp = int64(hh.CPUTempDeci)
+	}
+	if hh.GPUTempDeci > 0 {
+		m.gpuTemp = int64(hh.GPUTempDeci)
+	}
+	m.diskFree, m.diskTotal, m.smart = diskFacts(hh)
+	m.shutdowns7d, m.bugchecks7d = int64(hh.Shutdowns7d), int64(hh.Bugchecks7d)
+	if hh.CrashesBootMeasured {
+		m.shutdownsBoot, m.bugchecksBoot = int64(hh.ShutdownsBoot), int64(hh.BugchecksBoot)
+	}
+	return m
+}
+
+// diskFacts — свободное место и объём системного диска (-1 — не измерено) и худший SMART измерения. У бездискового ПК
+// дисков в здоровье нет (stream applyStatus: presence.Health.MarkDiskless) — «не измерено».
 func diskFacts(hh *presence.Health) (free, total int64, smart int) {
 	free = -1
-	if hh.Diskless {
-		return free, 0, 0
-	}
 	for _, d := range hh.Disks {
 		if r := smartRank(d.Smart); r > smart {
 			smart = r
@@ -321,56 +368,46 @@ func diskFacts(hh *presence.Health) (free, total int64, smart int) {
 	return free, total, smart
 }
 
-// Record добавляет измерение в агрегат часа s.At (одна команда Valkey). Час уже закрыт сбросом (опоздавшее
+// call — KEYS и ARGV скрипта для измерения s (час — s.At в UTC).
+func (h *Hourly) call(s Sample) (keys, args []string) {
+	at := s.At.UTC()
+	hour := at.Truncate(time.Hour)
+	m := measurementOf(s)
+	prevOnline, online := OnlineMinutes(s.Since, at, h.maxGap)
+	var prevSession, session []int
+	if s.InSession {
+		prevSession, session = SessionMinutes(prevOnline, online, s.Since, at)
+	}
+	const fixed = 21
+	args = make([]string, 0, fixed+len(online)+len(session)+len(prevOnline)+len(prevSession))
+	pc := strconv.FormatInt(s.ComputerID, 10)
+	args = append(args,
+		i64(int64(HourlyKeyTTL/time.Second)), strconv.FormatInt(s.ClubID, 10)+":"+pc,
+		i64(m.cpu), i64(m.ram), i64(m.gpuLoad), i64(m.cpuTemp), i64(m.gpuTemp), i64(m.diskFree), i64(m.diskTotal),
+		strconv.Itoa(m.smart), strconv.Itoa(max(s.PeripheralDisconnects, 0)),
+		i64(m.shutdowns7d), i64(m.bugchecks7d), i64(m.shutdownsBoot), i64(m.bugchecksBoot), s.BootID,
+		i64(int64(lastCountersTTL/time.Second)),
+		strconv.Itoa(len(online)), strconv.Itoa(len(session)), strconv.Itoa(len(prevOnline)), strconv.Itoa(len(prevSession)))
+	for _, list := range [][]int{online, session, prevOnline, prevSession} {
+		for _, m := range list {
+			args = append(args, strconv.Itoa(m))
+		}
+	}
+	cur, prev := hourPart(hour), hourPart(hour.Add(-time.Hour))
+	k := h.keys
+	keys = []string{k.agg(cur, pc), k.bits(cur, pc), k.last(pc), k.index(cur), k.closed(cur),
+		k.agg(prev, pc), k.bits(prev, pc), k.index(prev), k.closed(prev)}
+	return keys, args
+}
+
+// Record добавляет измерение в агрегат часа s.At (один скрипт Valkey). Час уже закрыт сбросом (опоздавшее
 // измерение: часы инстанса отстали больше DefaultHourlyDelay или обработка задержалась) — измерение не пишется
 // (Late()), ошибки нет.
 func (h *Hourly) Record(ctx context.Context, s Sample) error {
 	if h == nil || s.ClubID <= 0 || s.ComputerID <= 0 {
 		return nil
 	}
-	at := s.At.UTC()
-	hour := at.Truncate(time.Hour)
-	cpu, ram, gl, ct, gt := int64(-1), int64(-1), int64(-1), int64(-1), int64(-1)
-	free, total, smart, sd, bc, sdb, bcb := int64(-1), int64(0), 0, int64(-1), int64(-1), int64(-1), int64(-1)
-	if s.Load != nil {
-		cpu, ram = int64(s.Load.CPUBasisPoints), int64(s.Load.RAMBasisPoints)
-	}
-	if hh := s.Health; hh != nil {
-		if hh.GPUMeasured {
-			gl = int64(hh.GPULoadBP)
-		}
-		if hh.CPUTempDeci > 0 {
-			ct = int64(hh.CPUTempDeci)
-		}
-		if hh.GPUTempDeci > 0 {
-			gt = int64(hh.GPUTempDeci)
-		}
-		free, total, smart = diskFacts(hh)
-		sd, bc = int64(hh.Shutdowns7d), int64(hh.Bugchecks7d)
-		if hh.CrashesBootMeasured {
-			sdb, bcb = int64(hh.ShutdownsBoot), int64(hh.BugchecksBoot)
-		}
-	}
-	prevOnline, online := OnlineMinutes(s.Since, at, h.MaxGap)
-	var prevSession, session []int
-	if s.InSession {
-		prevSession, session = SessionMinutes(prevOnline, online, s.Since, at)
-	}
-	args := []string{
-		i64(int64(HourlyKeyTTL / time.Second)), strconv.FormatInt(s.ClubID, 10) + ":" + strconv.FormatInt(s.ComputerID, 10),
-		i64(cpu), i64(ram), i64(gl), i64(ct), i64(gt), i64(free), i64(total), strconv.Itoa(smart),
-		strconv.Itoa(max(s.PeripheralDisconnects, 0)), i64(sd), i64(bc), i64(sdb), i64(bcb), s.BootID,
-		i64(int64(lastCountersTTL / time.Second)),
-		strconv.Itoa(len(online)), strconv.Itoa(len(session)), strconv.Itoa(len(prevOnline)), strconv.Itoa(len(prevSession)),
-	}
-	for _, list := range [][]int{online, session, prevOnline, prevSession} {
-		for _, m := range list {
-			args = append(args, strconv.Itoa(m))
-		}
-	}
-	prev := hour.Add(-time.Hour)
-	keys := []string{h.aggKey(hour, s.ComputerID), h.bitsKey(hour, s.ComputerID), h.lastKey(s.ComputerID), h.indexKey(hour),
-		h.closedKey(hour), h.aggKey(prev, s.ComputerID), h.bitsKey(prev, s.ComputerID), h.indexKey(prev), h.closedKey(prev)}
+	keys, args := h.call(s)
 	n, err := hourlyScript.Exec(ctx, h.c, keys, args).AsInt64()
 	if err != nil {
 		return fmt.Errorf("health: hourly record: %w", err)

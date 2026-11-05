@@ -607,6 +607,11 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	if a.workers, err = withoutWorkers(a.workers, cfg.Dev.DisableWorkers); err != nil {
 		return err
 	}
+	if a.Stream.HealthHourly() == nil {
+		// Здоровье выключено (agent.health.enabled = false): агрегатов часа нет — задача сброса не нужна. Убирается после
+		// dev.disable_workers, чтобы её имя там оставалось допустимым.
+		a.workers = slices.DeleteFunc(a.workers, func(w namedWorker) bool { return w.name == "agent-health-hourly" })
+	}
 	for i := range a.workers {
 		a.workers[i].run = a.Obs.TrackWorker(a.workers[i].name, a.workers[i].run) // worker_up, worker_errors_total
 	}
