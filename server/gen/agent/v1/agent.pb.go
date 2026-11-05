@@ -1058,15 +1058,16 @@ type ComputerHealth struct {
 	LinkSpeedMbps uint32 `protobuf:"varint,8,opt,name=link_speed_mbps,json=linkSpeedMbps,proto3" json:"link_speed_mbps,omitempty"`
 	// Сколько секунд Windows работает с последней загрузки.
 	UptimeSeconds uint64 `protobuf:"varint,9,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
-	// Внезапных выключений за 7 суток (журнал System: Kernel-Power 41, EventLog 6008).
+	// Внезапных выключений за 7 суток (журнал System: Kernel-Power 41, EventLog 6008). По ним — проблема unstable; в
+	// почасовую историю не идут (там — счётчики перед загрузкой).
 	UnexpectedShutdowns_7D uint32 `protobuf:"varint,10,opt,name=unexpected_shutdowns_7d,json=unexpectedShutdowns7d,proto3" json:"unexpected_shutdowns_7d,omitempty"`
-	// «Синих экранов» за 7 суток (журнал System: BugCheck 1001).
+	// «Синих экранов» за 7 суток (журнал System: BugCheck 1001), как unexpected_shutdowns_7d.
 	Bugchecks_7D uint32 `protobuf:"varint,11,opt,name=bugchecks_7d,json=bugchecks7d,proto3" json:"bugchecks_7d,omitempty"`
 	// Внезапных выключений и «синих экранов» перед ТЕКУЩЕЙ загрузкой Windows: те же события журнала, записанные с начала
 	// этой загрузки (их пишет загрузка после сбоя; окно «время работы + 2 мин»). Из окна они не выпадают, пока Windows
 	// работает, поэтому сервер считает по ним точный прирост для почасовой истории (вместе с Hello.boot_id), а не по
 	// счётчикам за 7 суток (там выпавший из окна старый сбой и новый между двумя Status взаимно гасятся). Есть, только
-	// если crashes_boot_measured (старый агент — нет: сервер считает прирост по счётчикам за 7 суток).
+	// если crashes_boot_measured (иначе — время работы не измерено — сервер не добавляет сбои в почасовую историю).
 	UnexpectedShutdownsBoot uint32 `protobuf:"varint,12,opt,name=unexpected_shutdowns_boot,json=unexpectedShutdownsBoot,proto3" json:"unexpected_shutdowns_boot,omitempty"`
 	BugchecksBoot           uint32 `protobuf:"varint,13,opt,name=bugchecks_boot,json=bugchecksBoot,proto3" json:"bugchecks_boot,omitempty"`
 	CrashesBootMeasured     bool   `protobuf:"varint,14,opt,name=crashes_boot_measured,json=crashesBootMeasured,proto3" json:"crashes_boot_measured,omitempty"`

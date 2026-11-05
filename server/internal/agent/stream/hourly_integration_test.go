@@ -36,8 +36,8 @@ func (c *fakeClock) set(t time.Time) {
 }
 
 // hourlyStatus — Status минуты m часа: загрузка и температура растут с минутой, мышь отключена с 20-й минуты, с 30-й
-// минуты агент насчитал на одно внезапное выключение и один «синий экран» больше, с 40-й SMART предупреждает, минуты
-// 10..19 — в сессии.
+// минуты агент насчитал на одно внезапное выключение и один «синий экран» перед этой загрузкой больше (запоздалая запись
+// журнала; за 7 суток — тоже), с 40-й SMART предупреждает, минуты 10..19 — в сессии.
 func hourlyStatus(m int) *agentv1.Status {
 	state := agentv1.ComputerState_COMPUTER_STATE_IDLE
 	if m >= 10 && m < 20 {
@@ -47,15 +47,16 @@ func hourlyStatus(m int) *agentv1.Status {
 	if m >= 40 {
 		smart = agentv1.DiskSmart_DISK_SMART_WARNING
 	}
-	sd, bc := uint32(1), uint32(0)
+	sd, bc, sdb, bcb := uint32(1), uint32(0), uint32(0), uint32(0)
 	if m >= 30 {
-		sd, bc = 2, 1
+		sd, bc, sdb, bcb = 2, 1, 1, 1
 	}
 	return &agentv1.Status{
 		State: state, Load: &agentv1.ComputerLoad{CpuBasisPoints: uint32(1000 + 100*m), RamBasisPoints: 5000},
 		Health: &agentv1.ComputerHealth{
 			CpuTempDecicelsius: int32(500 + 5*m), GpuTempDecicelsius: 600, GpuMeasured: true, GpuLoadBasisPoints: 3000,
 			LinkSpeedMbps: 1000, UnexpectedShutdowns_7D: sd, Bugchecks_7D: bc,
+			UnexpectedShutdownsBoot: sdb, BugchecksBoot: bcb, CrashesBootMeasured: true,
 			Disks: []*agentv1.DiskHealth{{Mount: "C:", System: true, TotalMb: 512000, FreeMb: uint64(100000 - 100*m), Smart: smart},
 				{Mount: "D:", TotalMb: 1000000, FreeMb: 10}},
 			Peripherals: []*agentv1.Peripheral{{Kind: agentv1.PeripheralKind_PERIPHERAL_KIND_MOUSE, Connected: m < 20, Name: "G102"}},
@@ -64,12 +65,12 @@ func hourlyStatus(m int) *agentv1.Status {
 }
 
 type hourlyRow struct {
-	online, session                  int
-	cpuMin, cpuAvg, cpuMax           int
-	ctMin, ctAvg, ctMax, gtMax, glMx int
-	diskFree, diskTotal              int64
-	smart                            string
-	pd, sd, bc                       int
+	online, session           int
+	cpuAvg, cpuMax            int
+	ctAvg, ctMax, gtMax, glMx int
+	diskFree, diskTotal       int64
+	smart                     string
+	pd, sd, bc                int
 }
 
 func readHourly(t *testing.T, pc int64, hour time.Time) (rows int, r hourlyRow) {
@@ -81,11 +82,11 @@ func readHourly(t *testing.T, pc int64, hour time.Time) (rows int, r hourlyRow) 
 	if rows == 0 {
 		return
 	}
-	if err := testEnv.db.Owner.QueryRow(ctx, `SELECT online_minutes, session_minutes, cpu_load_min_bp, cpu_load_avg_bp,
-		cpu_load_max_bp, cpu_temp_min_deci, cpu_temp_avg_deci, cpu_temp_max_deci, gpu_temp_max_deci, gpu_load_max_bp,
+	if err := testEnv.db.Owner.QueryRow(ctx, `SELECT online_minutes, session_minutes, cpu_load_avg_bp,
+		cpu_load_max_bp, cpu_temp_avg_deci, cpu_temp_max_deci, gpu_temp_max_deci, gpu_load_max_bp,
 		system_disk_free_mb, system_disk_total_mb, smart_worst, peripheral_disconnects, unexpected_shutdowns, bugchecks
 		FROM computer_health_hourly WHERE computer_id = $1 AND hour = $2`, pc, hour).Scan(
-		&r.online, &r.session, &r.cpuMin, &r.cpuAvg, &r.cpuMax, &r.ctMin, &r.ctAvg, &r.ctMax, &r.gtMax, &r.glMx,
+		&r.online, &r.session, &r.cpuAvg, &r.cpuMax, &r.ctAvg, &r.ctMax, &r.gtMax, &r.glMx,
 		&r.diskFree, &r.diskTotal, &r.smart, &r.pd, &r.sd, &r.bc); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +149,7 @@ func checkHourRow(t *testing.T, pc int64, hour time.Time) {
 		t.Fatalf("hourly rows = %d, want 1", rows)
 	}
 	// CPU 1000 + 100·m (m = 0..59): среднее 3950; t CPU 500 + 5·m: среднее 647 (647.5 → целое деление).
-	want := hourlyRow{online: 60, session: 10, cpuMin: 1000, cpuAvg: 3950, cpuMax: 6900, ctMin: 500, ctAvg: 647, ctMax: 795,
+	want := hourlyRow{online: 60, session: 10, cpuAvg: 3950, cpuMax: 6900, ctAvg: 647, ctMax: 795,
 		gtMax: 600, glMx: 3000, diskFree: 100000 - 5900, diskTotal: 512000, smart: "warning", pd: 1, sd: 1, bc: 1}
 	if r != want {
 		t.Fatalf("hour row =\n%+v\nwant\n%+v", r, want)
@@ -252,6 +253,7 @@ func TestHealthHourlyLoad(t *testing.T) {
 	prefix := "t:" + t.Name() + ":"
 	h := health.NewHourly(testEnv.valkey, prefix, 0)
 	memBefore := valkeyUsedMemory(t)
+	luaCalls, luaUsec := valkeyScriptStats(t)
 	start := time.Now()
 	var wg sync.WaitGroup
 	work := make(chan int, 1024)
@@ -265,7 +267,7 @@ func TestHealthHourlyLoad(t *testing.T) {
 				ld := presence.LoadFrom(st.GetLoad())
 				if err := h.Record(ctx, health.Sample{ClubID: club, ComputerID: pc, At: hour.Add(time.Duration(m)*time.Minute + time.Second),
 					Since: hour.Add(time.Duration(m-1)*time.Minute + time.Second), Load: &ld,
-					Health: presence.HealthFrom(st.GetHealth(), hour)}); err != nil {
+					Health: presence.HealthFrom(st.GetHealth(), hour), BootID: "boot-1"}); err != nil {
 					t.Error(err)
 					return
 				}
@@ -279,6 +281,8 @@ func TestHealthHourlyLoad(t *testing.T) {
 	wg.Wait()
 	rec := time.Since(start)
 	mem := valkeyUsedMemory(t) - memBefore
+	calls, usec := valkeyScriptStats(t)
+	luaPerStatus := float64(usec-luaUsec) / float64(max(calls-luaCalls, 1))
 	f := &health.HourlyFlusher{Valkey: testEnv.valkey, Prefix: prefix, App: testEnv.db.App}
 	start = time.Now()
 	rows, err := f.FlushHour(ctx, hour)
@@ -291,9 +295,41 @@ func TestHealthHourlyLoad(t *testing.T) {
 	if err := testEnv.db.Owner.QueryRow(ctx, "SELECT pg_total_relation_size($1::regclass)", part).Scan(&size); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("hourly load: %d PC × 60 Status in %s (%.0f Status/s, 64 goroutines); Valkey +%d KB (%.0f B/PC); flush %d rows in %s; "+
-		"partition %d KB (≈ %d B/row incl. PK)", n, rec.Round(time.Millisecond), float64(n*60)/rec.Seconds(), mem/1024,
+	t.Logf("hourly load: %d PC × 60 Status in %s (%.0f Status/s, 64 goroutines; script %.1f µs/Status in Valkey); "+
+		"Valkey +%d KB (%.0f B/PC); flush %d rows in %s; "+
+		"partition %d KB (≈ %d B/row incl. PK)", n, rec.Round(time.Millisecond), float64(n*60)/rec.Seconds(), luaPerStatus, mem/1024,
 		float64(mem)/float64(n), rows, flush.Round(time.Millisecond), size/1024, size/int64(n))
+}
+
+// valkeyScriptStats — сколько вызовов EVAL/EVALSHA выполнил Valkey и сколько микросекунд они заняли (INFO commandstats):
+// работа скрипта агрегата внутри Valkey, без сети.
+func valkeyScriptStats(t *testing.T) (calls, usec int64) {
+	t.Helper()
+	info, err := testEnv.valkey.Do(context.Background(), testEnv.valkey.B().Info().Section("commandstats").Build()).ToString()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(info, "\n") {
+		line = strings.TrimSpace(line)
+		rest, ok := strings.CutPrefix(line, "cmdstat_evalsha:")
+		if !ok {
+			rest, ok = strings.CutPrefix(line, "cmdstat_eval:")
+		}
+		if !ok {
+			continue
+		}
+		for _, kv := range strings.Split(rest, ",") {
+			k, v, _ := strings.Cut(kv, "=")
+			n, _ := strconv.ParseInt(v, 10, 64)
+			switch k {
+			case "calls":
+				calls += n
+			case "usec":
+				usec += n
+			}
+		}
+	}
+	return calls, usec
 }
 
 func valkeyUsedMemory(t *testing.T) int64 {
@@ -467,7 +503,8 @@ func TestHealthHourlyPeripheralDisconnectedBetweenConnections(t *testing.T) {
 
 // Прирост сбоев — по счётчикам «перед этой загрузкой» и boot_id (новый агент): старый сбой выпал из окна 7 суток, а
 // новый случился между двумя Status — счётчик за 7 суток не изменился, но новая загрузка со сбоем перед ней
-// засчитывается. Повтор той же загрузки (переподключение) — не засчитывается; старый агент — по счётчикам за 7 суток.
+// засчитывается. Повтор той же загрузки (переподключение) — не засчитывается. Сбои перед загрузкой не измерены (старый
+// агент, нет времени работы) — в почасовую историю сбои не добавляются, даже если выросли счётчики за 7 суток (S7-H-27).
 func TestHealthHourlyCrashesPerBoot(t *testing.T) {
 	ctx := context.Background()
 	club, pc, hour, h, f := hourEnv(t, 11)
@@ -482,12 +519,13 @@ func TestHealthHourlyCrashesPerBoot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rec(0, "boot-a", 1, 0, 1, 0, true)  // первое значение ПК — не засчитывается (старые сбои)
-	rec(1, "boot-a", 1, 0, 1, 0, true)  // то же
-	rec(5, "boot-b", 1, 1, 1, 1, true)  // перезагрузка после сбоя: за 7 суток всё ещё 1 (старый выпал) — +1 и +1
-	rec(6, "boot-b", 1, 1, 1, 1, true)  // переподключение той же загрузки — без прироста
-	rec(7, "boot-b", 1, 2, 1, 1, true)  // запоздалая запись журнала той же загрузки — +1 выключение
-	rec(9, "boot-c", 2, 0, 1, 0, false) // старый агент — по счётчикам за 7 суток: 1 → 2, +1
+	rec(0, "boot-a", 1, 0, 1, 0, true)   // первое значение ПК — не засчитывается (старые сбои)
+	rec(1, "boot-a", 1, 0, 1, 0, true)   // то же
+	rec(5, "boot-b", 1, 1, 1, 1, true)   // перезагрузка после сбоя: за 7 суток всё ещё 1 (старый выпал) — +1 и +1
+	rec(6, "boot-b", 1, 1, 1, 1, true)   // переподключение той же загрузки — без прироста
+	rec(7, "boot-b", 1, 2, 1, 1, true)   // запоздалая запись журнала той же загрузки — +1 выключение
+	rec(9, "boot-c", 2, 0, 1, 0, false)  // не измерено — 0, хотя за 7 суток 1 → 2
+	rec(10, "boot-c", 3, 0, 2, 0, false) // не измерено — 0 (за 7 суток 2 → 3 и 1 → 2)
 	if _, err := f.FlushHour(ctx, hour); err != nil {
 		t.Fatal(err)
 	}
@@ -496,8 +534,8 @@ func TestHealthHourlyCrashesPerBoot(t *testing.T) {
 		WHERE computer_id = $1 AND hour = $2`, pc, hour).Scan(&sd, &bc); err != nil {
 		t.Fatal(err)
 	}
-	// +1 (boot-b), +1 (та же загрузка: 1 → 2), +1 (старый агент: за 7 суток 1 → 2); «синих экранов» — +1 (boot-b).
-	if sd != 3 || bc != 1 {
-		t.Fatalf("crashes: shutdowns %d bugchecks %d, want 3 1", sd, bc)
+	// +1 (boot-b), +1 (та же загрузка: 1 → 2), не измерено — 0; «синих экранов» — +1 (boot-b).
+	if sd != 2 || bc != 1 {
+		t.Fatalf("crashes: shutdowns %d bugchecks %d, want 2 1", sd, bc)
 	}
 }

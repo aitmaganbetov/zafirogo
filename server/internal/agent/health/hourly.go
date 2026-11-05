@@ -14,7 +14,7 @@ import (
 )
 
 // Почасовая история здоровья ПК (Этап 7, docs/agent-protocol.md §16.6, S7-H-13): агрегат часа по каждому ПК копится в
-// Valkey из присылаемых Status (min/avg/max загрузки и температур, минимум свободного места системного диска, худший
+// Valkey из присылаемых Status (avg/max загрузки и температур, минимум свободного места системного диска, худший
 // SMART, минуты онлайн и в сессии, отключения периферии, прирост внезапных выключений и «синих экранов»). В Postgres —
 // одна строка на ПК и час после конца часа (HourlyFlusher), а не каждый Status (CLAUDE.md «Производительность»).
 //
@@ -29,14 +29,13 @@ import (
 //	<p>hhb:<hour>:<computer>  — битовая карта минут: биты 0..59 — онлайн, 64..123 — в сессии;
 //	<p>hhi:<hour>             — set «club:computer» ПК, у которых есть агрегат этого часа (что сбрасывать);
 //	<p>hhc:<hour>             — «час закрыт»: HourlyFlusher начал его сбрасывать, измерения в него больше не пишутся;
-//	<p>hhl:<computer>         — последние счётчики сбоев агента: за 7 суток (sd, bc) и перед загрузкой (boot, sdb, bcb),
-//	                            TTL 8 суток.
+//	<p>hhl:<computer>         — последние счётчики сбоев агента перед загрузкой с её boot_id (boot, sdb, bcb), TTL 8 суток.
 
 // HourlyKeyTTL — сколько живёт агрегат часа в Valkey, если его так и не сбросили (сброс оглядывается на сутки назад).
 const HourlyKeyTTL = 26 * time.Hour
 
-// lastCountersTTL — последние счётчики сбоев ПК: дольше окна агента (7 суток), чтобы ПК, выключенный на неделю, после
-// включения не посчитал старые сбои заново.
+// lastCountersTTL — последние счётчики сбоев ПК перед загрузкой: пока они есть, сбой перед следующей загрузкой
+// засчитывается и после недели выключения; без них первое значение ПК — 0 (старые сбои не засчитываются).
 const lastCountersTTL = 8 * 24 * time.Hour
 
 // Smart-ранги агрегата: чем больше, тем хуже (0 — не измерено). Те же числа считает SQL недель
@@ -221,38 +220,42 @@ func PeripheralDisconnects(prev, cur *presence.Health) int {
 //	      (HourlyFlusher уже сбрасывает или сбросил час), 6–9 — то же для предыдущего часа (минуты разрыва через границу).
 //	ARGV: 1 TTL агрегата (с), 2 член индекса, 3 CPU, 4 ОЗУ, 5 GPU (сотые доли %), 6 t CPU, 7 t GPU (десятые °C) — -1 нет;
 //	      8 свободно на системном диске (МБ, -1 нет), 9 объём (МБ), 10 ранг SMART (0 нет), 11 отключений периферии,
-//	      12 внезапных выключений за 7 суток, 13 «синих экранов» за 7 суток (-1 нет), 14 внезапных выключений и
-//	      15 «синих экранов» перед этой загрузкой Windows (-1 нет: старый агент), 16 boot_id, 17 TTL последних счётчиков (с),
-//	      18–21 — число минут: онлайн и в сессии этого часа, онлайн и в сессии прошлого часа; дальше — сами минуты.
+//	      12 внезапных выключений и 13 «синих экранов» перед этой загрузкой Windows (-1 — не измерено:
+//	      crashes_boot_measured = false), 14 boot_id, 15 TTL последних счётчиков (с), 16–19 — число минут: онлайн и в
+//	      сессии этого часа, онлайн и в сессии прошлого часа; дальше — сами минуты.
 //
-// Немного команд на Status (их 5 000–50 000 в минуту): агрегат и последние счётчики читаются одним HMGET каждый, min /
-// max / суммы считает Lua, запись — одним HSET со всеми полями, минуты — одним BITFIELD; TTL ставится, когда ключ
-// создан (агрегат — по полю v, член индекса — по ответу SADD), а не на каждый Status. Поля и значения агрегата — те же,
-// что давали HINCRBY / HSET по полю (hourly_script_integration_test.go сверяет побитно). Суммы — целые много меньше
-// 10^14 (tostring без экспоненты; ≤ 1 800 Status в час × 10 000).
+// Немного команд на Status (их 5 000–50 000 в минуту): агрегат читается одним HMGET, avg (сумма и число) и max считает
+// Lua, запись — одним HSET со всеми полями, минуты — одним BITFIELD; последние счётчики сбоев читаются и пишутся, только
+// если сбои перед загрузкой измерены; TTL ставится, когда ключ создан (агрегат — по полю v, член индекса — по ответу
+// SADD), а не на каждый Status. Минимумы не считаются (S7-H-26: для решения о ремонте нужны максимумы и средние).
+// Поля и значения агрегата — те же, что давали HINCRBY / HSET по полю (hourly_script_integration_test.go сверяет
+// побитно). Суммы — целые много меньше 10^14 (tostring без экспоненты; ≤ 1 800 Status в час × 10 000).
+//
+// Прирост сбоев за час (поля sd, bc агрегата, S7-H-20, S7-H-27) — только по счётчикам «перед загрузкой» и boot_id: та же
+// загрузка — прирост от прошлого значения, новая — всё значение, первое значение ПК — 0 (старые сбои не засчитываются).
+// Не измерено (crashes_boot_measured = false) — сбои в почасовую историю не добавляются.
 //
 // Возврат: 1 — записано, 0 — час уже закрыт (опоздавшее измерение не пишется: иначе после сброса появился бы частичный
 // агрегат и перезаписал бы полную строку часа в Postgres). Счётчики сбоев тогда тоже не трогаются — прирост попадёт в
 // час следующего измерения.
 var hourlyScript = valkey.NewLuaScript(`
 if redis.call('EXISTS', KEYS[5]) == 1 then return 0 end
-local h, L, ttl, member = KEYS[1], KEYS[3], ARGV[1], ARGV[2]
--- Поля агрегата: 1 v, 2 df, 3 sm, 4 pd, 5 sd, 6 bc, затем по 4 на показатель (_n, _s, _mn, _mx) в порядке ARGV 3..7.
+local h, ttl, member = KEYS[1], ARGV[1], ARGV[2]
+-- Поля агрегата: 1 v, 2 df, 3 sm, 4 pd, 5 sd, 6 bc, затем по 3 на показатель (_n, _s, _mx) в порядке ARGV 3..7.
 local cur = redis.call('HMGET', h, 'v', 'df', 'sm', 'pd', 'sd', 'bc',
-  'cpu_n', 'cpu_s', 'cpu_mn', 'cpu_mx', 'ram_n', 'ram_s', 'ram_mn', 'ram_mx', 'gl_n', 'gl_s', 'gl_mn', 'gl_mx',
-  'ct_n', 'ct_s', 'ct_mn', 'ct_mx', 'gt_n', 'gt_s', 'gt_mn', 'gt_mx')
+  'cpu_n', 'cpu_s', 'cpu_mx', 'ram_n', 'ram_s', 'ram_mx', 'gl_n', 'gl_s', 'gl_mx',
+  'ct_n', 'ct_s', 'ct_mx', 'gt_n', 'gt_s', 'gt_mx')
 local stats = {'cpu', 'ram', 'gl', 'ct', 'gt'}
 local set, ns = {'v', '1'}, 2
 for i = 1, 5 do
   local s = ARGV[2 + i]
   local v = tonumber(s)
   if v >= 0 then
-    local b, f = 6 + 4 * (i - 1), stats[i]
-    local mn, mx = cur[b + 3], cur[b + 4]
+    local b, f = 6 + 3 * (i - 1), stats[i]
+    local mx = cur[b + 3]
     set[ns + 1] = f .. '_n'; set[ns + 2] = tostring((tonumber(cur[b + 1]) or 0) + 1)
     set[ns + 3] = f .. '_s'; set[ns + 4] = tostring((tonumber(cur[b + 2]) or 0) + v)
     ns = ns + 4
-    if not mn or v < tonumber(mn) then set[ns + 1] = f .. '_mn'; set[ns + 2] = s; ns = ns + 2 end
     if not mx or v > tonumber(mx) then set[ns + 1] = f .. '_mx'; set[ns + 2] = s; ns = ns + 2 end
   end
 end
@@ -263,31 +266,23 @@ end
 if tonumber(ARGV[10]) > (tonumber(cur[3]) or 0) then set[ns + 1] = 'sm'; set[ns + 2] = ARGV[10]; ns = ns + 2 end
 local pd = tonumber(ARGV[11])
 if pd > 0 then set[ns + 1] = 'pd'; set[ns + 2] = tostring((tonumber(cur[4]) or 0) + pd); ns = ns + 2 end
--- Прирост сбоев (поля sd, bc агрегата): по счётчикам «перед загрузкой» и boot_id либо по счётчикам за 7 суток.
-local last = redis.call('HMGET', L, 'sd', 'bc', 'boot', 'sdb', 'bcb')
-local dsd, dbc = 0, 0
-local sdb, boot = tonumber(ARGV[14]), ARGV[16]
-if sdb >= 0 and boot ~= '' and last[3] then
-  -- Сбои перед загрузкой: события пишутся при загрузке после сбоя и из окна «с загрузки» не выпадают — прирост точный.
-  dsd, dbc = sdb, tonumber(ARGV[15])
-  if last[3] == boot then dsd, dbc = dsd - (tonumber(last[4]) or 0), dbc - (tonumber(last[5]) or 0) end
-else
-  local sd, bc = tonumber(ARGV[12]), tonumber(ARGV[13])
-  if sd >= 0 and last[1] then dsd = sd - tonumber(last[1]) end
-  if bc >= 0 and last[2] then dbc = bc - tonumber(last[2]) end
-end
-if dsd > 0 then set[ns + 1] = 'sd'; set[ns + 2] = tostring((tonumber(cur[5]) or 0) + dsd); ns = ns + 2 end
-if dbc > 0 then set[ns + 1] = 'bc'; set[ns + 2] = tostring((tonumber(cur[6]) or 0) + dbc); ns = ns + 2 end
-if tonumber(ARGV[12]) >= 0 then
-  if sdb >= 0 and boot ~= '' then
-    redis.call('HSET', L, 'sd', ARGV[12], 'bc', ARGV[13], 'boot', boot, 'sdb', ARGV[14], 'bcb', ARGV[15])
-  else
-    redis.call('HSET', L, 'sd', ARGV[12], 'bc', ARGV[13])
+-- Прирост сбоев: только по счётчикам «перед загрузкой» с boot_id (события сбоя пишет загрузка после него — каждое
+-- попадает ровно в одну загрузку и из окна «с загрузки» не выпадает).
+local sdb, boot = tonumber(ARGV[12]), ARGV[14]
+if sdb >= 0 and boot ~= '' then
+  local L = KEYS[3]
+  local last = redis.call('HMGET', L, 'boot', 'sdb', 'bcb')
+  if last[1] then
+    local dsd, dbc = sdb, tonumber(ARGV[13])
+    if last[1] == boot then dsd, dbc = dsd - (tonumber(last[2]) or 0), dbc - (tonumber(last[3]) or 0) end
+    if dsd > 0 then set[ns + 1] = 'sd'; set[ns + 2] = tostring((tonumber(cur[5]) or 0) + dsd); ns = ns + 2 end
+    if dbc > 0 then set[ns + 1] = 'bc'; set[ns + 2] = tostring((tonumber(cur[6]) or 0) + dbc); ns = ns + 2 end
   end
-elseif sdb >= 0 and boot ~= '' then
-  redis.call('HSET', L, 'boot', boot, 'sdb', ARGV[14], 'bcb', ARGV[15])
+  if last[1] ~= boot or last[2] ~= ARGV[12] or last[3] ~= ARGV[13] then
+    redis.call('HSET', L, 'boot', boot, 'sdb', ARGV[12], 'bcb', ARGV[13])
+  end
+  redis.call('EXPIRE', L, ARGV[15])
 end
-redis.call('EXPIRE', L, ARGV[17])
 redis.call('HSET', h, unpack(set))
 -- Минуты часа (биты 0..59 онлайн, 64..123 в сессии) одним BITFIELD; TTL агрегата и минут — при создании агрегата,
 -- TTL индекса — когда ПК впервые попал в индекс часа.
@@ -307,8 +302,8 @@ local function touch(agg, bits, idx, created, from, n, nses)
   if redis.call('SADD', idx, member) == 1 then redis.call('EXPIRE', idx, ttl) end
   return from + n + nses
 end
-local n, nses, np, nps = tonumber(ARGV[18]), tonumber(ARGV[19]), tonumber(ARGV[20]), tonumber(ARGV[21])
-local i = touch(h, KEYS[2], KEYS[4], not cur[1], 22, n, nses)
+local n, nses, np, nps = tonumber(ARGV[16]), tonumber(ARGV[17]), tonumber(ARGV[18]), tonumber(ARGV[19])
+local i = touch(h, KEYS[2], KEYS[4], not cur[1], 20, n, nses)
 if np > 0 and redis.call('EXISTS', KEYS[9]) == 0 then
   touch(KEYS[6], KEYS[7], KEYS[8], redis.call('HSETNX', KEYS[6], 'v', '1') == 1, i, np, nps)
 end
@@ -322,13 +317,12 @@ type measurement struct {
 	cpu, ram, gpuLoad, cpuTemp, gpuTemp int64
 	diskFree, diskTotal                 int64
 	smart                               int
-	shutdowns7d, bugchecks7d            int64
 	shutdownsBoot, bugchecksBoot        int64
 }
 
 func measurementOf(s Sample) measurement {
 	m := measurement{cpu: -1, ram: -1, gpuLoad: -1, cpuTemp: -1, gpuTemp: -1, diskFree: -1,
-		shutdowns7d: -1, bugchecks7d: -1, shutdownsBoot: -1, bugchecksBoot: -1}
+		shutdownsBoot: -1, bugchecksBoot: -1}
 	if s.Load != nil {
 		m.cpu, m.ram = int64(s.Load.CPUBasisPoints), int64(s.Load.RAMBasisPoints)
 	}
@@ -346,7 +340,6 @@ func measurementOf(s Sample) measurement {
 		m.gpuTemp = int64(hh.GPUTempDeci)
 	}
 	m.diskFree, m.diskTotal, m.smart = diskFacts(hh)
-	m.shutdowns7d, m.bugchecks7d = int64(hh.Shutdowns7d), int64(hh.Bugchecks7d)
 	if hh.CrashesBootMeasured {
 		m.shutdownsBoot, m.bugchecksBoot = int64(hh.ShutdownsBoot), int64(hh.BugchecksBoot)
 	}
@@ -378,14 +371,14 @@ func (h *Hourly) call(s Sample) (keys, args []string) {
 	if s.InSession {
 		prevSession, session = SessionMinutes(prevOnline, online, s.Since, at)
 	}
-	const fixed = 21
+	const fixed = 19
 	args = make([]string, 0, fixed+len(online)+len(session)+len(prevOnline)+len(prevSession))
 	pc := strconv.FormatInt(s.ComputerID, 10)
 	args = append(args,
 		i64(int64(HourlyKeyTTL/time.Second)), strconv.FormatInt(s.ClubID, 10)+":"+pc,
 		i64(m.cpu), i64(m.ram), i64(m.gpuLoad), i64(m.cpuTemp), i64(m.gpuTemp), i64(m.diskFree), i64(m.diskTotal),
 		strconv.Itoa(m.smart), strconv.Itoa(max(s.PeripheralDisconnects, 0)),
-		i64(m.shutdowns7d), i64(m.bugchecks7d), i64(m.shutdownsBoot), i64(m.bugchecksBoot), s.BootID,
+		i64(m.shutdownsBoot), i64(m.bugchecksBoot), s.BootID,
 		i64(int64(lastCountersTTL/time.Second)),
 		strconv.Itoa(len(online)), strconv.Itoa(len(session)), strconv.Itoa(len(prevOnline)), strconv.Itoa(len(prevSession)))
 	for _, list := range [][]int{online, session, prevOnline, prevSession} {

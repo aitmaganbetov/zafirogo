@@ -43,19 +43,14 @@ type HourlyRow struct {
 	Hour                  time.Time `json:"hour"`
 	OnlineMinutes         int       `json:"online_minutes"`
 	SessionMinutes        int       `json:"session_minutes"`
-	CPULoadMinBP          *int64    `json:"cpu_load_min_bp"`
 	CPULoadAvgBP          *int64    `json:"cpu_load_avg_bp"`
 	CPULoadMaxBP          *int64    `json:"cpu_load_max_bp"`
-	RAMMinBP              *int64    `json:"ram_min_bp"`
 	RAMAvgBP              *int64    `json:"ram_avg_bp"`
 	RAMMaxBP              *int64    `json:"ram_max_bp"`
-	GPULoadMinBP          *int64    `json:"gpu_load_min_bp"`
 	GPULoadAvgBP          *int64    `json:"gpu_load_avg_bp"`
 	GPULoadMaxBP          *int64    `json:"gpu_load_max_bp"`
-	CPUTempMinDeci        *int64    `json:"cpu_temp_min_deci"`
 	CPUTempAvgDeci        *int64    `json:"cpu_temp_avg_deci"`
 	CPUTempMaxDeci        *int64    `json:"cpu_temp_max_deci"`
-	GPUTempMinDeci        *int64    `json:"gpu_temp_min_deci"`
 	GPUTempAvgDeci        *int64    `json:"gpu_temp_avg_deci"`
 	GPUTempMaxDeci        *int64    `json:"gpu_temp_max_deci"`
 	SystemDiskFreeMB      *int64    `json:"system_disk_free_mb"`
@@ -66,7 +61,7 @@ type HourlyRow struct {
 	Bugchecks             int64     `json:"bugchecks"`
 }
 
-// rowFromAgg — строка часа из hash агрегата и числа минут (min/avg/max — целые; среднее — с отбрасыванием дробной части).
+// rowFromAgg — строка часа из hash агрегата и числа минут (avg/max — целые; среднее — с отбрасыванием дробной части).
 func rowFromAgg(clubID, computerID int64, hour time.Time, agg map[string]string, online, session int64) HourlyRow {
 	num := func(f string) (int64, bool) {
 		v, ok := agg[f]
@@ -82,22 +77,22 @@ func rowFromAgg(clubID, computerID int64, hour time.Time, agg map[string]string,
 		}
 		return nil
 	}
-	stat := func(f string) (mn, avg, mx *int64) {
+	stat := func(f string) (avg, mx *int64) {
 		n, ok := num(f + "_n")
 		s, ok2 := num(f + "_s")
 		if !ok || !ok2 || n <= 0 {
-			return nil, nil, nil
+			return nil, nil
 		}
 		a := s / n
-		return ptr(f + "_mn"), &a, ptr(f + "_mx")
+		return &a, ptr(f + "_mx")
 	}
 	r := HourlyRow{ClubID: clubID, ComputerID: computerID, Hour: hour.UTC(),
 		OnlineMinutes: int(min(online, 60)), SessionMinutes: int(min(session, 60))} // #nosec G115 -- ≤ 60
-	r.CPULoadMinBP, r.CPULoadAvgBP, r.CPULoadMaxBP = stat("cpu")
-	r.RAMMinBP, r.RAMAvgBP, r.RAMMaxBP = stat("ram")
-	r.GPULoadMinBP, r.GPULoadAvgBP, r.GPULoadMaxBP = stat("gl")
-	r.CPUTempMinDeci, r.CPUTempAvgDeci, r.CPUTempMaxDeci = stat("ct")
-	r.GPUTempMinDeci, r.GPUTempAvgDeci, r.GPUTempMaxDeci = stat("gt")
+	r.CPULoadAvgBP, r.CPULoadMaxBP = stat("cpu")
+	r.RAMAvgBP, r.RAMMaxBP = stat("ram")
+	r.GPULoadAvgBP, r.GPULoadMaxBP = stat("gl")
+	r.CPUTempAvgDeci, r.CPUTempMaxDeci = stat("ct")
+	r.GPUTempAvgDeci, r.GPUTempMaxDeci = stat("gt")
 	if f := ptr("df"); f != nil {
 		r.SystemDiskFreeMB, r.SystemDiskTotalMB = f, ptr("dt")
 	}

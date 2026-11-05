@@ -179,7 +179,7 @@ function WeekChart({ computerId, week, hourLabel }: { readonly computerId: numbe
   return <HealthChart id="computer-health-week-chart" labels={labels} series={series} />;
 }
 
-/** «По неделям»: недели (новые сверху) с вердиктом и причинами; выбор недели — график по часам. */
+/** «По неделям»: недели (новые сверху) с вердиктом и причинами; выбор недели — график по часам; недель нет — «Истории пока нет». */
 function WeeksList({ computerId, weeks, diskless, day, hourLabel }: {
   readonly computerId: number;
   readonly weeks: readonly HealthWeek[];
@@ -194,6 +194,7 @@ function WeeksList({ computerId, weeks, diskless, day, hourLabel }: {
     <>
       <dl className="cm-info-list">
         {diskless && <DisklessRow t={t} />}
+        {weeks.length === 0 && <div id="computer-health-weeks-empty"><dt>{t('Истории пока нет')}</dt></div>}
         {weeks.map((w) => (
           <div key={w.start} data-week={w.start}>
             <dt>
@@ -216,7 +217,8 @@ function WeeksList({ computerId, weeks, diskless, day, hourLabel }: {
 /**
  * Разделы «Состояние» и «История проблем» панели ПК. «Состояние» — вкладки «Сейчас» (живые значения и график последних
  * 15 минут; данные — по REST при открытии панели, обновляются событием computer.load, useMapLive) и «По неделям»
- * (вердикт исправности и график по часам выбранной недели). Нет данных — нет ни раздела, ни вкладки.
+ * (вердикт исправности и график по часам выбранной недели; запрос недель — только при открытии вкладки, S7-H-28).
+ * Вкладки — когда есть живые данные; нет их — нет ни раздела, ни вкладок, ни запроса недель (разметка как в старом шаблоне).
  */
 export function HealthSections({ computerId, fmt, locale = 'ru', tz = 'UTC' }: {
   readonly computerId: number;
@@ -226,17 +228,17 @@ export function HealthSections({ computerId, fmt, locale = 'ru', tz = 'UTC' }: {
 }) {
   const { t } = useTranslation();
   const { data: view, dataUpdatedAt } = useQuery(computerHealthQuery(computerId));
-  const { data: weekly } = useQuery(healthWeeklyQuery(computerId));
   const events = useInfiniteQuery(healthEventsQuery(computerId));
   const [tab, setTab] = useState<'now' | 'weeks'>('now');
+  const hasState = !!view && (!!view.load || !!view.health || view.problems.length > 0);
+  const shown = hasState ? tab : null;
+  // Недели — лениво: запрос только при открытой вкладке «По неделям» (не при каждом открытии панели ПК).
+  const { data: weekly } = useQuery({ ...healthWeeklyQuery(computerId), enabled: shown === 'weeks' });
   // Пометка «Бездисковый ПК» у каждой вкладки — по признаку её же ответа (оба считает одно правило сервера).
   const disklessWeeks = !!weekly?.diskless;
   // Проблемы дисков бездискового ПК (тома образа, запись до перевода на загрузку по сети) отсекает сервер — до
   // keyset-страницы (S7-H-18), иначе страница могла бы оказаться пустой, а «Показать ещё» — скрытым.
   const items: HealthEvent[] = events.data?.pages.flatMap((p) => p.items) ?? [];
-  const weeks = weekly?.weeks ?? [];
-  const hasState = !!view && (!!view.load || !!view.health || view.problems.length > 0);
-  const hasWeeks = weeks.length > 0;
   // Первое состояние панели — точка живого графика (дальше точки несут события computer.load, в том числе температуры).
   const seeded = useRef(false);
   useEffect(() => {
@@ -253,26 +255,23 @@ export function HealthSections({ computerId, fmt, locale = 'ru', tz = 'UTC' }: {
     const h = new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: tz });
     return [(iso: string) => d.format(new Date(iso)), (ms: number) => h.format(new Date(ms))];
   }, [locale, tz]);
-  const shown = hasState && hasWeeks ? tab : hasState ? 'now' : 'weeks';
   return (
     <>
-      {(hasState || hasWeeks) && (
+      {hasState && (
         <section id="computer-health-info" className="cm-info-section">
           <h4>{t('Состояние')}</h4>
-          {hasState && hasWeeks && (
-            <div role="tablist">
-              <button type="button" role="tab" className="cm-info-more" aria-selected={shown === 'now'} onClick={() => setTab('now')}>{t('Сейчас')}</button>{' '}
-              <button type="button" role="tab" className="cm-info-more" aria-selected={shown === 'weeks'} onClick={() => setTab('weeks')}>{t('По неделям')}</button>
-            </div>
-          )}
+          <div role="tablist">
+            <button type="button" role="tab" className="cm-info-more" aria-selected={shown === 'now'} onClick={() => setTab('now')}>{t('Сейчас')}</button>{' '}
+            <button type="button" role="tab" className="cm-info-more" aria-selected={shown === 'weeks'} onClick={() => setTab('weeks')}>{t('По неделям')}</button>
+          </div>
           {shown === 'now' && view && (
             <>
               <HealthList view={view} t={t} />
               <LiveChart computerId={computerId} timeLabel={timeLabel} />
             </>
           )}
-          {shown === 'weeks' && (
-            <WeeksList computerId={computerId} weeks={weeks} diskless={disklessWeeks} day={day} hourLabel={hourLabel} />
+          {shown === 'weeks' && weekly && (
+            <WeeksList computerId={computerId} weeks={weekly.weeks} diskless={disklessWeeks} day={day} hourLabel={hourLabel} />
           )}
         </section>
       )}

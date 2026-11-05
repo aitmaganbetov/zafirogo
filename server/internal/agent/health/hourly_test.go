@@ -107,15 +107,15 @@ func TestPeripheralDisconnects(t *testing.T) {
 func TestRowFromAgg(t *testing.T) {
 	hour := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
 	agg := map[string]string{"v": "1",
-		"cpu_n": "3", "cpu_s": "10000", "cpu_mn": "1000", "cpu_mx": "6000",
-		"ct_n": "2", "ct_s": "1301", "ct_mn": "600", "ct_mx": "701",
+		"cpu_n": "3", "cpu_s": "10000", "cpu_mx": "6000",
+		"ct_n": "2", "ct_s": "1301", "ct_mx": "701",
 		"df": "40960", "dt": "512000", "sm": "2", "pd": "1", "sd": "2", "bc": "1"}
 	r := rowFromAgg(5, 7, hour, agg, 58, 70)
 	i := func(v int64) *int64 { return &v }
 	warn := presence.SmartWarning
 	want := HourlyRow{ClubID: 5, ComputerID: 7, Hour: hour, OnlineMinutes: 58, SessionMinutes: 60,
-		CPULoadMinBP: i(1000), CPULoadAvgBP: i(3333), CPULoadMaxBP: i(6000),
-		CPUTempMinDeci: i(600), CPUTempAvgDeci: i(650), CPUTempMaxDeci: i(701),
+		CPULoadAvgBP: i(3333), CPULoadMaxBP: i(6000),
+		CPUTempAvgDeci: i(650), CPUTempMaxDeci: i(701),
 		SystemDiskFreeMB: i(40960), SystemDiskTotalMB: i(512000), SmartWorst: &warn,
 		PeripheralDisconnects: 1, UnexpectedShutdowns: 2, Bugchecks: 1}
 	if !reflect.DeepEqual(r, want) {

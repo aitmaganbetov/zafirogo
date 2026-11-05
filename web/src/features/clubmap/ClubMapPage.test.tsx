@@ -235,12 +235,14 @@ describe('ClubMapPage', () => {
     });
     setup();
     fireEvent.click(document.querySelector('.cm-computer[data-id="8"]') as HTMLElement);
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
     await act(async () => {
       await Promise.resolve();
     });
     expect(document.getElementById('computer-health-info')).toBeNull();
     expect(document.getElementById('computer-health-history')).toBeNull();
+    // Без живых данных нет вкладок — и запроса недель (S7-H-28).
+    expect(fetchSpy.mock.calls.some((c) => new URL((c[0] as Request).url).pathname.endsWith('/weekly'))).toBe(false);
   });
 
   // Открытая панель ПК обновляется живым событием computer.load без перезагрузки: состояние перечитывается
@@ -262,8 +264,9 @@ describe('ClubMapPage', () => {
     expect(fetchSpy.mock.calls.filter((c) => new URL((c[0] as Request).url).pathname.endsWith('/health'))).toHaveLength(2);
     const last = samplesOf(7).at(-1);
     expect(last?.cpuTemp).toBe(80);
-    // Без вкладок, если недель нет; живой график — когда в окне ≥ 2 точек.
-    expect(document.querySelector('#computer-health-info [role="tablist"]')).toBeNull();
+    // Вкладки — всегда при живых данных; недели не запрошены, пока вкладка не открыта; живой график — когда в окне ≥ 2 точек.
+    expect(document.querySelectorAll('#computer-health-info [role="tab"]')).toHaveLength(2);
+    expect(fetchSpy.mock.calls.some((c) => new URL((c[0] as Request).url).pathname.endsWith('/weekly'))).toBe(false);
     expect(document.getElementById('computer-health-live-chart')).toBeNull();
     act(() => pushSample(7, { at: Date.now() + 60_000, cpu: 50, cpuTemp: 70 }));
     expect(document.getElementById('computer-health-live-chart')).not.toBeNull();
@@ -292,13 +295,14 @@ describe('ClubMapPage', () => {
         return Promise.resolve(json({ items: [{ hour: '2026-11-01T19:00:00Z', online_minutes: 30, session_minutes: 0, cpu_temp_avg_deci: 700 },
           { hour: '2026-11-02T10:00:00Z', online_minutes: 60, session_minutes: 0, cpu_temp_avg_deci: 700 }] }));
       }
-      return Promise.resolve(json({ computer_id: 8, connection: 'offline', problems: [] }));
+      return Promise.resolve(json(onlineView(655)));
     });
     setup();
-    fireEvent.click(document.querySelector('.cm-computer[data-id="8"]') as HTMLElement);
+    fireEvent.click(document.querySelector('.cm-computer[data-id="7"]') as HTMLElement);
+    await waitFor(() => expect(document.querySelectorAll('#computer-health-info [role="tab"]')).toHaveLength(2));
+    fireEvent.click([...document.querySelectorAll('#computer-health-info [role="tab"]')][1] as HTMLElement);
     await waitFor(() => expect(document.querySelectorAll('#computer-health-info [data-week]')).toHaveLength(2));
     const info = document.getElementById('computer-health-info') as HTMLElement;
-    expect(info.querySelector('[role="tablist"]')).toBeNull(); // ПК не в сети — только недели
     const [cur, prev] = [...info.querySelectorAll('[data-week]')] as HTMLElement[];
     expect(cur?.querySelector('dd.cm-info-warning')?.textContent).toBe(
       'Требует ремонта · «Синих экранов» за неделю: 1 · Перегрев CPU (от 90 °C): 3 ч · Системный диск: свободно 7 % (меньше 10 %)');
@@ -346,6 +350,7 @@ describe('ClubMapPage', () => {
     expect(info.textContent).not.toContain('SMART');
     const [, byWeek] = [...info.querySelectorAll('[role="tab"]')] as HTMLElement[];
     fireEvent.click(byWeek as HTMLElement);
+    await waitFor(() => expect(info.querySelector('[data-week]')).not.toBeNull());
     const week = info.querySelector('[data-week]') as HTMLElement;
     expect(rows()[0]).toBe('Бездисковый ПК');
     expect(week.textContent).toContain('Медленная сеть: 5 ч');
@@ -371,11 +376,12 @@ describe('ClubMapPage', () => {
     expect(info.textContent).toContain('Диск C:');
     expect(info.textContent).not.toContain('Бездисковый ПК');
     fireEvent.click([...info.querySelectorAll('[role="tab"]')][1] as HTMLElement);
-    expect(info.textContent).toContain('Системный диск: свободно не меньше 7 %');
+    await waitFor(() => expect(info.textContent).toContain('Системный диск: свободно не меньше 7 %'));
   });
 
+  // Недели — лениво (S7-H-28): запрос /weekly — только при открытии вкладки «По неделям», повторное открытие — из кэша.
   it('switches between the live state and weeks tabs', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/events')) return Promise.resolve(json({ items: [], next_cursor: null }));
       if (path.endsWith('/weekly')) return Promise.resolve(json({ weeks }));
@@ -388,9 +394,39 @@ describe('ClubMapPage', () => {
     expect(now?.getAttribute('aria-selected')).toBe('true');
     expect(document.getElementById('computer-health-info')?.textContent).toContain('66 °C');
     expect(document.querySelector('#computer-health-info [data-week]')).toBeNull();
+    const weeklyCalls = () => fetchSpy.mock.calls.filter((c) => new URL((c[0] as Request).url).pathname.endsWith('/weekly')).length;
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(weeklyCalls()).toBe(0);
+    fireEvent.click(byWeek as HTMLElement);
+    await waitFor(() => expect(document.querySelectorAll('#computer-health-info [data-week]')).toHaveLength(2));
+    expect(weeklyCalls()).toBe(1);
+    expect(byWeek?.getAttribute('aria-selected')).toBe('true');
+    expect(document.getElementById('computer-health-info')?.textContent).not.toContain('66 °C');
+    fireEvent.click(now as HTMLElement);
+    expect(document.getElementById('computer-health-info')?.textContent).toContain('66 °C');
     fireEvent.click(byWeek as HTMLElement);
     expect(document.querySelectorAll('#computer-health-info [data-week]')).toHaveLength(2);
-    expect(document.getElementById('computer-health-info')?.textContent).not.toContain('66 °C');
+    expect(weeklyCalls()).toBe(1);
+  });
+
+  // Вкладки — при живых данных, даже если недель ещё нет: во вкладке «По неделям» — «Истории пока нет».
+  it('shows an empty weeks tab when there is no history yet', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/events')) return Promise.resolve(json({ items: [], next_cursor: null }));
+      if (path.endsWith('/weekly')) return Promise.resolve(json({ diskless: false, weeks: [] }));
+      return Promise.resolve(json(onlineView(655)));
+    });
+    setup();
+    fireEvent.click(document.querySelector('.cm-computer[data-id="7"]') as HTMLElement);
+    await waitFor(() => expect(document.querySelectorAll('#computer-health-info [role="tab"]')).toHaveLength(2));
+    expect(document.getElementById('computer-health-weeks-empty')).toBeNull();
+    fireEvent.click([...document.querySelectorAll('#computer-health-info [role="tab"]')][1] as HTMLElement);
+    await waitFor(() => expect(document.getElementById('computer-health-weeks-empty')?.textContent).toBe('Истории пока нет'));
+    expect(document.querySelector('#computer-health-info [data-week]')).toBeNull();
+    expect(document.getElementById('computer-health-week-chart')).toBeNull();
   });
 
   it('merges computer.load and converts basis points', () => {

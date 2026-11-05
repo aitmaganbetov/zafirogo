@@ -565,10 +565,12 @@ Telegram в `platform_settings` — `Crypt::encryptString` (`app/Services/Telegr
 и час** после конца часа.
 
 - **`computer_health_hourly`**: `club_id` → `clubs`, `computer_id` → `club_computers` (ON DELETE CASCADE), `hour` (начало
-  часа UTC, CHECK `date_trunc('hour', hour) = hour`), `online_minutes`, `session_minutes` (0..60), min/avg/max загрузки
-  CPU, ОЗУ, GPU (сотые доли %) и температур CPU, GPU (десятые доли °C; NULL — не измерено), `system_disk_free_mb` (минимум
-  за час) и `system_disk_total_mb`, `smart_worst` (CHECK `ok`/`warning`/`failing`, NULL — не измерено),
-  `peripheral_disconnects`, `unexpected_shutdowns`, `bugchecks` (прирост за час, ≥ 0). Без float.
+  часа UTC, CHECK `date_trunc('hour', hour) = hour`), `online_minutes`, `session_minutes` (0..60), среднее и максимум
+  загрузки CPU, ОЗУ, GPU (сотые доли %) и температур CPU, GPU (десятые доли °C; NULL — не измерено; минимумов нет —
+  S7-H-26: для решения о ремонте нужны максимумы и средние), `system_disk_free_mb` (минимум за час) и
+  `system_disk_total_mb`, `smart_worst` (CHECK `ok`/`warning`/`failing`, NULL — не измерено), `peripheral_disconnects`,
+  `unexpected_shutdowns`, `bugchecks` (прирост за час по счётчикам агента «перед загрузкой», ≥ 0; не измерено — 0,
+  S7-H-27). Без float.
 - **PK** (`club_id`, `computer_id`, `hour`) — он же составной индекс выборок «ПК за период» и ключ UPSERT сброса.
 - **Партиции** по месяцам `hour` (UTC): белые списки `zafiro_create_monthly_partitions` и
   `zafiro_drop_monthly_partitions` расширены, таблица в `db.PartitionedTables` и `db.RetentionTables`; срок —

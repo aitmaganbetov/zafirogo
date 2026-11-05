@@ -86,34 +86,28 @@ func (q *Queries) ComputerHealthHourlyPoints(ctx context.Context, arg ComputerHe
 const computerHealthHourlyUpsert = `-- name: ComputerHealthHourlyUpsert :execrows
 INSERT INTO computer_health_hourly (
     club_id, computer_id, hour, online_minutes, session_minutes,
-    cpu_load_min_bp, cpu_load_avg_bp, cpu_load_max_bp, ram_min_bp, ram_avg_bp, ram_max_bp,
-    gpu_load_min_bp, gpu_load_avg_bp, gpu_load_max_bp,
-    cpu_temp_min_deci, cpu_temp_avg_deci, cpu_temp_max_deci, gpu_temp_min_deci, gpu_temp_avg_deci, gpu_temp_max_deci,
+    cpu_load_avg_bp, cpu_load_max_bp, ram_avg_bp, ram_max_bp, gpu_load_avg_bp, gpu_load_max_bp,
+    cpu_temp_avg_deci, cpu_temp_max_deci, gpu_temp_avg_deci, gpu_temp_max_deci,
     system_disk_free_mb, system_disk_total_mb, smart_worst, peripheral_disconnects, unexpected_shutdowns, bugchecks)
 SELECT c.club_id, c.id, r.hour, r.online_minutes, r.session_minutes,
-       r.cpu_load_min_bp, r.cpu_load_avg_bp, r.cpu_load_max_bp, r.ram_min_bp, r.ram_avg_bp, r.ram_max_bp,
-       r.gpu_load_min_bp, r.gpu_load_avg_bp, r.gpu_load_max_bp,
-       r.cpu_temp_min_deci, r.cpu_temp_avg_deci, r.cpu_temp_max_deci, r.gpu_temp_min_deci, r.gpu_temp_avg_deci,
-       r.gpu_temp_max_deci, r.system_disk_free_mb, r.system_disk_total_mb, r.smart_worst,
+       r.cpu_load_avg_bp, r.cpu_load_max_bp, r.ram_avg_bp, r.ram_max_bp, r.gpu_load_avg_bp, r.gpu_load_max_bp,
+       r.cpu_temp_avg_deci, r.cpu_temp_max_deci, r.gpu_temp_avg_deci, r.gpu_temp_max_deci,
+       r.system_disk_free_mb, r.system_disk_total_mb, r.smart_worst,
        r.peripheral_disconnects, r.unexpected_shutdowns, r.bugchecks
 FROM jsonb_to_recordset($1::jsonb) AS r(
          computer_id bigint, hour timestamptz, online_minutes smallint, session_minutes smallint,
-         cpu_load_min_bp integer, cpu_load_avg_bp integer, cpu_load_max_bp integer,
-         ram_min_bp integer, ram_avg_bp integer, ram_max_bp integer,
-         gpu_load_min_bp integer, gpu_load_avg_bp integer, gpu_load_max_bp integer,
-         cpu_temp_min_deci integer, cpu_temp_avg_deci integer, cpu_temp_max_deci integer,
-         gpu_temp_min_deci integer, gpu_temp_avg_deci integer, gpu_temp_max_deci integer,
+         cpu_load_avg_bp integer, cpu_load_max_bp integer, ram_avg_bp integer, ram_max_bp integer,
+         gpu_load_avg_bp integer, gpu_load_max_bp integer,
+         cpu_temp_avg_deci integer, cpu_temp_max_deci integer, gpu_temp_avg_deci integer, gpu_temp_max_deci integer,
          system_disk_free_mb bigint, system_disk_total_mb bigint, smart_worst varchar,
          peripheral_disconnects integer, unexpected_shutdowns integer, bugchecks integer)
 JOIN club_computers c ON c.club_id = $2 AND c.id = r.computer_id
 ON CONFLICT (club_id, computer_id, hour) DO UPDATE SET
     online_minutes = EXCLUDED.online_minutes, session_minutes = EXCLUDED.session_minutes,
-    cpu_load_min_bp = EXCLUDED.cpu_load_min_bp, cpu_load_avg_bp = EXCLUDED.cpu_load_avg_bp,
-    cpu_load_max_bp = EXCLUDED.cpu_load_max_bp, ram_min_bp = EXCLUDED.ram_min_bp, ram_avg_bp = EXCLUDED.ram_avg_bp,
-    ram_max_bp = EXCLUDED.ram_max_bp, gpu_load_min_bp = EXCLUDED.gpu_load_min_bp,
+    cpu_load_avg_bp = EXCLUDED.cpu_load_avg_bp, cpu_load_max_bp = EXCLUDED.cpu_load_max_bp,
+    ram_avg_bp = EXCLUDED.ram_avg_bp, ram_max_bp = EXCLUDED.ram_max_bp,
     gpu_load_avg_bp = EXCLUDED.gpu_load_avg_bp, gpu_load_max_bp = EXCLUDED.gpu_load_max_bp,
-    cpu_temp_min_deci = EXCLUDED.cpu_temp_min_deci, cpu_temp_avg_deci = EXCLUDED.cpu_temp_avg_deci,
-    cpu_temp_max_deci = EXCLUDED.cpu_temp_max_deci, gpu_temp_min_deci = EXCLUDED.gpu_temp_min_deci,
+    cpu_temp_avg_deci = EXCLUDED.cpu_temp_avg_deci, cpu_temp_max_deci = EXCLUDED.cpu_temp_max_deci,
     gpu_temp_avg_deci = EXCLUDED.gpu_temp_avg_deci, gpu_temp_max_deci = EXCLUDED.gpu_temp_max_deci,
     system_disk_free_mb = EXCLUDED.system_disk_free_mb, system_disk_total_mb = EXCLUDED.system_disk_total_mb,
     smart_worst = EXCLUDED.smart_worst, peripheral_disconnects = EXCLUDED.peripheral_disconnects,

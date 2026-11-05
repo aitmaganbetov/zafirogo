@@ -13,7 +13,8 @@
 -- * Первичный ключ (club_id, computer_id, hour) — он же составной индекс выборок «ПК за период».
 -- * Права — как у computer_health_events: пул клуба zafiro_app читает, вставляет и обновляет только измерения (UPSERT
 --   повтора), но не ключ строки и не удаляет; zafiro_platform — только чтение.
--- * Температуры — десятые доли °C, загрузка — сотые доли процента (как Status агента), без float.
+-- * Температуры — десятые доли °C, загрузка — сотые доли процента (как Status агента), без float. По показателю — среднее
+--   и максимум за час; минимумов нет (S7-H-26: для решения о ремонте нужны максимумы и средние, минимумы никто не читает).
 
 -- +goose Up
 CREATE TABLE computer_health_hourly (
@@ -25,19 +26,14 @@ CREATE TABLE computer_health_hourly (
         CHECK (online_minutes BETWEEN 0 AND 60),
     session_minutes         smallint    NOT NULL CONSTRAINT computer_health_hourly_session_check
         CHECK (session_minutes BETWEEN 0 AND 60),
-    cpu_load_min_bp         integer,
     cpu_load_avg_bp         integer,
     cpu_load_max_bp         integer,
-    ram_min_bp              integer,
     ram_avg_bp              integer,
     ram_max_bp              integer,
-    gpu_load_min_bp         integer,
     gpu_load_avg_bp         integer,
     gpu_load_max_bp         integer,
-    cpu_temp_min_deci       integer,
     cpu_temp_avg_deci       integer,
     cpu_temp_max_deci       integer,
-    gpu_temp_min_deci       integer,
     gpu_temp_avg_deci       integer,
     gpu_temp_max_deci       integer,
     system_disk_free_mb     bigint,
@@ -55,7 +51,7 @@ COMMENT ON TABLE computer_health_hourly IS
 COMMENT ON COLUMN computer_health_hourly.system_disk_free_mb IS
     'Минимум свободного места на системном диске за час (МБ) и объём диска в тот момент (system_disk_total_mb)';
 COMMENT ON COLUMN computer_health_hourly.unexpected_shutdowns IS
-    'Прирост счётчика внезапных выключений агента (за 7 суток) за этот час; bugchecks — то же для «синих экранов»';
+    'Внезапных выключений за этот час (прирост счётчика агента «перед загрузкой» по boot_id; не измерено — 0); bugchecks — то же для «синих экранов»';
 
 ALTER TABLE computer_health_hourly ENABLE ROW LEVEL SECURITY;
 ALTER TABLE computer_health_hourly FORCE ROW LEVEL SECURITY;
@@ -65,10 +61,10 @@ CREATE POLICY platform_access ON computer_health_hourly TO zafiro_platform USING
 
 REVOKE ALL ON computer_health_hourly FROM zafiro_app, zafiro_platform;
 GRANT SELECT, INSERT ON computer_health_hourly TO zafiro_app;
-GRANT UPDATE (online_minutes, session_minutes, cpu_load_min_bp, cpu_load_avg_bp, cpu_load_max_bp, ram_min_bp, ram_avg_bp,
-              ram_max_bp, gpu_load_min_bp, gpu_load_avg_bp, gpu_load_max_bp, cpu_temp_min_deci, cpu_temp_avg_deci,
-              cpu_temp_max_deci, gpu_temp_min_deci, gpu_temp_avg_deci, gpu_temp_max_deci, system_disk_free_mb,
-              system_disk_total_mb, smart_worst, peripheral_disconnects, unexpected_shutdowns, bugchecks)
+GRANT UPDATE (online_minutes, session_minutes, cpu_load_avg_bp, cpu_load_max_bp, ram_avg_bp, ram_max_bp,
+              gpu_load_avg_bp, gpu_load_max_bp, cpu_temp_avg_deci, cpu_temp_max_deci, gpu_temp_avg_deci,
+              gpu_temp_max_deci, system_disk_free_mb, system_disk_total_mb, smart_worst, peripheral_disconnects,
+              unexpected_shutdowns, bugchecks)
     ON computer_health_hourly TO zafiro_app;
 GRANT SELECT ON computer_health_hourly TO zafiro_platform;
 
