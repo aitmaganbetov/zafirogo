@@ -1,3 +1,4 @@
+using Zafiro.Agent.Core;
 using Zafiro.Agent.Core.Health;
 using Zafiro.Agent.Service.Platform;
 using Zafiro.Agent.Tests.Support;
@@ -50,6 +51,39 @@ public sealed class HealthTests : IDisposable
         Assert.Equal(3600ul, h.UptimeSeconds);
         Assert.Equal(2u, h.UnexpectedShutdowns7D);
         Assert.Equal(1u, h.Bugchecks7D);
+    }
+
+    [Fact]
+    public void Бездисковый_ПК_диски_и_SMART_не_собираются()
+    {
+        var c = new HealthCollector(_probe, _clock, options: new HealthCollectorOptions { Diskless = true });
+        for (var i = 0; i < 3; i++)
+        {
+            var h = c.Collect("agent.example", out var urgent);
+            Assert.False(urgent);
+            Assert.Empty(h.Disks);
+            Assert.Equal(650, h.CpuTempDecicelsius); // остальное — как обычно
+            Assert.Equal(1000u, h.LinkSpeedMbps);
+            Assert.Equal(4, h.Peripherals.Count);
+            _clock.Advance(TimeSpan.FromMinutes(6)); // дольше SmartRefresh
+        }
+
+        Assert.Equal(0, _probe.DiskCalls);
+        Assert.Equal(0, _probe.SmartCalls);
+    }
+
+    [Fact]
+    public async Task Runtime_бездискового_ПК_не_читает_диски()
+    {
+        var platform = new FakePlatform();
+        var options = new AgentOptions { EnrollEndpoint = "localhost:1", Diskless = true };
+        await using var rt = Runtimes.Create(_dir.Path, platform, _pki, time: _clock, options: options);
+        await rt.Health.TickAsync(CancellationToken.None);
+        var st = rt.NextStatus();
+        Assert.NotNull(st.Health);
+        Assert.Empty(st.Health.Disks);
+        Assert.Equal(0, platform.FakeHealth.DiskCalls);
+        Assert.Equal(0, platform.FakeHealth.SmartCalls);
     }
 
     [Fact]
@@ -193,11 +227,64 @@ public sealed class HealthTests : IDisposable
         collector.Collect(null, out _);
         _clock.Advance(TimeSpan.FromMinutes(9));
         var h = collector.Collect(null, out _);
-        Assert.Equal(1, _probe.CrashCalls);
+        Assert.Equal(2, _probe.CrashCalls); // окна «7 суток» и «с загрузки»
         Assert.Equal(2u, h.UnexpectedShutdowns7D); // из кэша
+        Assert.Equal(2u, h.UnexpectedShutdownsBoot);
         _clock.Advance(TimeSpan.FromMinutes(1));
         collector.Collect(null, out _);
+        Assert.Equal(3, _probe.CrashCalls); // «с загрузки» при времени работы 1 ч — окончательно, не перечитывается
+    }
+
+    [Fact]
+    public void Сбои_перед_загрузкой_перечитываются_только_в_первые_минуты_загрузки()
+    {
+        // Время работы 3 мин (≤ 2 мин запаса + 5 мин): события сбоя ещё могут дописываться — окно «с загрузки» читается
+        // при каждом обновлении журнала; после 7 мин работы — последний раз, дальше только «7 суток».
+        _probe.Uptime = 180;
+        var collector = Collector();
+        collector.Collect(null, out _);
         Assert.Equal(2, _probe.CrashCalls);
+        _clock.Advance(TimeSpan.FromMinutes(10));
+        _probe.Uptime = 780;
+        _probe.CrashesBy = since => new CrashCounts(3, 1);
+        var h = collector.Collect(null, out _);
+        Assert.Equal(4, _probe.CrashCalls);
+        Assert.Equal(3u, h.UnexpectedShutdownsBoot);
+        for (var i = 0; i < 3; i++)
+        {
+            _clock.Advance(TimeSpan.FromMinutes(10));
+            _probe.Uptime += 600;
+            h = collector.Collect(null, out _);
+        }
+        Assert.Equal(7, _probe.CrashCalls); // +1 («7 суток») на каждое обновление
+        Assert.True(h.CrashesBootMeasured);
+        Assert.Equal(3u, h.UnexpectedShutdownsBoot);
+        Assert.Equal(1u, h.BugchecksBoot);
+    }
+
+    [Fact]
+    public void Сбои_перед_загрузкой_считаются_с_начала_загрузки()
+    {
+        // Окно «с загрузки» — время работы (1 ч) и 2 мин запаса; за 7 суток — свои числа.
+        _probe.CrashesBy = since => T0 - since < TimeSpan.FromDays(1) ? new CrashCounts(1, 0) : new CrashCounts(3, 2);
+        var h = Collector().Collect(null, out _);
+        Assert.Equal([T0 - TimeSpan.FromDays(7), T0 - TimeSpan.FromMinutes(62)], _probe.CrashSince);
+        Assert.Equal(3u, h.UnexpectedShutdowns7D);
+        Assert.Equal(2u, h.Bugchecks7D);
+        Assert.True(h.CrashesBootMeasured);
+        Assert.Equal(1u, h.UnexpectedShutdownsBoot);
+        Assert.Equal(0u, h.BugchecksBoot);
+    }
+
+    [Fact]
+    public void Без_времени_работы_сбои_перед_загрузкой_не_измерены()
+    {
+        _probe.Uptime = 0;
+        var h = Collector().Collect(null, out _);
+        Assert.Single(_probe.CrashSince);
+        Assert.False(h.CrashesBootMeasured);
+        Assert.Equal(0u, h.UnexpectedShutdownsBoot);
+        Assert.Equal(2u, h.UnexpectedShutdowns7D);
     }
 
     // ------------------------------------------------------------------ фоновый сбор

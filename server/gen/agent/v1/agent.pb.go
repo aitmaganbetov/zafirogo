@@ -1058,12 +1058,21 @@ type ComputerHealth struct {
 	LinkSpeedMbps uint32 `protobuf:"varint,8,opt,name=link_speed_mbps,json=linkSpeedMbps,proto3" json:"link_speed_mbps,omitempty"`
 	// Сколько секунд Windows работает с последней загрузки.
 	UptimeSeconds uint64 `protobuf:"varint,9,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
-	// Внезапных выключений за 7 суток (журнал System: Kernel-Power 41, EventLog 6008).
+	// Внезапных выключений за 7 суток (журнал System: Kernel-Power 41, EventLog 6008). По ним — проблема unstable; в
+	// почасовую историю не идут (там — счётчики перед загрузкой).
 	UnexpectedShutdowns_7D uint32 `protobuf:"varint,10,opt,name=unexpected_shutdowns_7d,json=unexpectedShutdowns7d,proto3" json:"unexpected_shutdowns_7d,omitempty"`
-	// «Синих экранов» за 7 суток (журнал System: BugCheck 1001).
-	Bugchecks_7D  uint32 `protobuf:"varint,11,opt,name=bugchecks_7d,json=bugchecks7d,proto3" json:"bugchecks_7d,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// «Синих экранов» за 7 суток (журнал System: BugCheck 1001), как unexpected_shutdowns_7d.
+	Bugchecks_7D uint32 `protobuf:"varint,11,opt,name=bugchecks_7d,json=bugchecks7d,proto3" json:"bugchecks_7d,omitempty"`
+	// Внезапных выключений и «синих экранов» перед ТЕКУЩЕЙ загрузкой Windows: те же события журнала, записанные с начала
+	// этой загрузки (их пишет загрузка после сбоя; окно «время работы + 2 мин»). Из окна они не выпадают, пока Windows
+	// работает, поэтому сервер считает по ним точный прирост для почасовой истории (вместе с Hello.boot_id), а не по
+	// счётчикам за 7 суток (там выпавший из окна старый сбой и новый между двумя Status взаимно гасятся). Есть, только
+	// если crashes_boot_measured (иначе — время работы не измерено — сервер не добавляет сбои в почасовую историю).
+	UnexpectedShutdownsBoot uint32 `protobuf:"varint,12,opt,name=unexpected_shutdowns_boot,json=unexpectedShutdownsBoot,proto3" json:"unexpected_shutdowns_boot,omitempty"`
+	BugchecksBoot           uint32 `protobuf:"varint,13,opt,name=bugchecks_boot,json=bugchecksBoot,proto3" json:"bugchecks_boot,omitempty"`
+	CrashesBootMeasured     bool   `protobuf:"varint,14,opt,name=crashes_boot_measured,json=crashesBootMeasured,proto3" json:"crashes_boot_measured,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *ComputerHealth) Reset() {
@@ -1171,6 +1180,27 @@ func (x *ComputerHealth) GetBugchecks_7D() uint32 {
 		return x.Bugchecks_7D
 	}
 	return 0
+}
+
+func (x *ComputerHealth) GetUnexpectedShutdownsBoot() uint32 {
+	if x != nil {
+		return x.UnexpectedShutdownsBoot
+	}
+	return 0
+}
+
+func (x *ComputerHealth) GetBugchecksBoot() uint32 {
+	if x != nil {
+		return x.BugchecksBoot
+	}
+	return 0
+}
+
+func (x *ComputerHealth) GetCrashesBootMeasured() bool {
+	if x != nil {
+		return x.CrashesBootMeasured
+	}
+	return false
 }
 
 // Локальный диск.
@@ -4633,7 +4663,7 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x04load\x18\x04 \x01(\v2\x1d.zafiro.agent.v1.ComputerLoadR\x04load\x12;\n" +
 	"\vobserved_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"observedAt\x127\n" +
-	"\x06health\x18\x06 \x01(\v2\x1f.zafiro.agent.v1.ComputerHealthR\x06health\"\x9d\x04\n" +
+	"\x06health\x18\x06 \x01(\v2\x1f.zafiro.agent.v1.ComputerHealthR\x06health\"\xb4\x05\n" +
 	"\x0eComputerHealth\x120\n" +
 	"\x14cpu_temp_decicelsius\x18\x01 \x01(\x05R\x12cpuTempDecicelsius\x120\n" +
 	"\x14gpu_temp_decicelsius\x18\x02 \x01(\x05R\x12gpuTempDecicelsius\x121\n" +
@@ -4646,7 +4676,10 @@ const file_agent_v1_agent_proto_rawDesc = "" +
 	"\x0euptime_seconds\x18\t \x01(\x04R\ruptimeSeconds\x126\n" +
 	"\x17unexpected_shutdowns_7d\x18\n" +
 	" \x01(\rR\x15unexpectedShutdowns7d\x12!\n" +
-	"\fbugchecks_7d\x18\v \x01(\rR\vbugchecks7d\"\xa0\x01\n" +
+	"\fbugchecks_7d\x18\v \x01(\rR\vbugchecks7d\x12:\n" +
+	"\x19unexpected_shutdowns_boot\x18\f \x01(\rR\x17unexpectedShutdownsBoot\x12%\n" +
+	"\x0ebugchecks_boot\x18\r \x01(\rR\rbugchecksBoot\x122\n" +
+	"\x15crashes_boot_measured\x18\x0e \x01(\bR\x13crashesBootMeasured\"\xa0\x01\n" +
 	"\n" +
 	"DiskHealth\x12\x14\n" +
 	"\x05mount\x18\x01 \x01(\tR\x05mount\x12\x16\n" +

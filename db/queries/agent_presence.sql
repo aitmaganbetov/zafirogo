@@ -12,7 +12,9 @@ SELECT c.id, c.club_id, c.number, c.display_name, c.device_name, z.name AS zone_
        c.mac_address, c.cpu_model, c.cpu_cores, c.ram_total_mb, c.gpu_model, c.os_version,
        c.current_session_id, c.current_session_user_id, c.session_guest, c.session_ends_at,
        COALESCE((SELECT k.last_seq FROM agent_command_counters k
-                 WHERE k.club_id = c.club_id AND k.computer_id = c.id), 0)::bigint AS last_command_seq
+                 WHERE k.club_id = c.club_id AND k.computer_id = c.id), 0)::bigint AS last_command_seq,
+       -- Бездисковый ПК — общее правило стрима и панели ПК (0031 zafiro_computer_diskless).
+       zafiro_computer_diskless(c.club_id, c.id) AS diskless
 FROM club_computers c
 JOIN club_zones z ON z.club_id = c.club_id AND z.id = c.club_zone_id
 JOIN clubs cl ON cl.id = c.club_id

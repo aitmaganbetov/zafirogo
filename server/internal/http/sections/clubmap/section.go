@@ -4,6 +4,7 @@ package clubmap
 import (
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
 	clubmapapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/clubmap"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 )
@@ -27,12 +28,16 @@ var access = httpx.Access{
 		// Этап 7 (новое): состояние ПК и история проблем — то же право, что у состояния карты (club_map.view).
 		"GetComputerHealth":        "club-map.state",
 		"ListComputerHealthEvents": "club-map.state",
+		"GetComputerHealthWeekly":  "club-map.state",
+		"GetComputerHealthHourly":  "club-map.state",
 	},
 }
 
 // handlers реализует clubmapapi.StrictServerInterface.
 type handlers struct {
 	d *httpx.Deps
+	// verdict — пороги вердикта недели с умолчаниями (Deps.HealthVerdict, один раз при монтировании).
+	verdict health.VerdictRules
 }
 
 var _ clubmapapi.StrictServerInterface = (*handlers)(nil)
@@ -43,7 +48,7 @@ func Section() httpx.Section {
 }
 
 func mount(r chi.Router, d *httpx.Deps) {
-	si := clubmapapi.NewStrictHandlerWithOptions(&handlers{d: d},
+	si := clubmapapi.NewStrictHandlerWithOptions(&handlers{d: d, verdict: d.HealthVerdict.WithDefaults()},
 		httpx.Middlewares[clubmapapi.StrictMiddlewareFunc](access),
 		clubmapapi.StrictHTTPServerOptions{RequestErrorHandlerFunc: d.RequestError, ResponseErrorHandlerFunc: d.ResponseError(mapError)})
 	clubmapapi.HandlerWithOptions(si, clubmapapi.ChiServerOptions{BaseRouter: r, ErrorHandlerFunc: d.ParamError})

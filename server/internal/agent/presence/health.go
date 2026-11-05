@@ -38,6 +38,14 @@ type Health struct {
 	UptimeSeconds uint64       `json:"up,omitempty"`
 	Shutdowns7d   uint32       `json:"sd7,omitempty"`
 	Bugchecks7d   uint32       `json:"bc7,omitempty"`
+	// ShutdownsBoot, BugchecksBoot — сбои перед текущей загрузкой Windows (есть, только если CrashesBootMeasured: новый
+	// агент); почасовая история считает по ним прирост вместе с boot_id подключения (agent/health Hourly).
+	ShutdownsBoot       uint32 `json:"sdb,omitempty"`
+	BugchecksBoot       uint32 `json:"bcb,omitempty"`
+	CrashesBootMeasured bool   `json:"cbm,omitempty"`
+	// Diskless — бездисковый ПК (сертификат по ключу образа): дисков нет (Disks пуст), проблемы и история по дискам
+	// не считаются, скорость сети — строже (agent/health.Evaluate; docs/agent-protocol.md §16.9).
+	Diskless bool `json:"dl,omitempty"`
 	// ReportedAt — когда сервер получил это здоровье (аптайм — на этот момент).
 	ReportedAt time.Time `json:"at"`
 }
@@ -101,6 +109,9 @@ func HealthFrom(h *agentv1.ComputerHealth, at time.Time) *Health {
 		LinkMbps: h.GetLinkSpeedMbps(), UptimeSeconds: h.GetUptimeSeconds(),
 		Shutdowns7d: h.GetUnexpectedShutdowns_7D(), Bugchecks7d: h.GetBugchecks_7D(), ReportedAt: at.UTC(),
 	}
+	if h.GetCrashesBootMeasured() {
+		out.CrashesBootMeasured, out.ShutdownsBoot, out.BugchecksBoot = true, h.GetUnexpectedShutdownsBoot(), h.GetBugchecksBoot()
+	}
 	if out.GPUMeasured {
 		out.GPULoadBP, out.GPUMemoryBP = h.GetGpuLoadBasisPoints(), h.GetGpuMemoryBasisPoints()
 	}
@@ -114,6 +125,15 @@ func HealthFrom(h *agentv1.ComputerHealth, at time.Time) *Health {
 		}
 	}
 	return out
+}
+
+// MarkDiskless — здоровье бездискового ПК: диски (тома образа, присланные старым агентом или по ошибке настройки) не
+// хранятся и не оцениваются — их место и SMART ничего не говорят о ПК (S7-H-18). Единственная точка — приём Status
+// стримом (stream applyStatus): снимок, проблемы и почасовая история дальше видят здоровье уже без дисков.
+func (h *Health) MarkDiskless() {
+	if h != nil {
+		h.Disks, h.Diskless = nil, true
+	}
 }
 
 // HealthChanged — изменилось то, что агент сообщает сразу (agent.proto Status.health): набор периферии и её

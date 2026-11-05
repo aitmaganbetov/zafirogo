@@ -25,6 +25,9 @@ export type ControlResult = S['ControlResult'];
 export type HealthView = S['ComputerHealthView'];
 export type HealthEvent = S['HealthEvent'];
 export type HealthProblem = S['HealthProblem'];
+export type HealthWeek = S['HealthWeek'];
+export type HealthHour = S['HealthHour'];
+export type HealthVerdictReason = S['HealthVerdictReason'];
 
 export const clubMapKey = ['clubmap', 'page'] as const;
 
@@ -53,6 +56,22 @@ export const healthEventsQuery = (id: number) =>
       })),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.next_cursor ?? null,
+  });
+
+/** Здоровье ПК по неделям с вердиктом (8 недель). Не перечитывается живыми событиями (ключ не exact). */
+export const healthWeeklyQuery = (id: number) =>
+  queryOptions({
+    queryKey: [...computerHealthKey(id), 'weekly'] as const,
+    queryFn: () =>
+      unwrap(clubmapApi.GET('/api/club-computers/{computerId}/health/weekly', { params: { path: { computerId: id }, query: { weeks: 8 } } })),
+  });
+
+/** Здоровье ПК по часам за неделю [from, to) — график выбранной недели. */
+export const healthHourlyQuery = (id: number, from: string, to: string) =>
+  queryOptions({
+    queryKey: [...computerHealthKey(id), 'hourly', from, to] as const,
+    queryFn: () =>
+      unwrap(clubmapApi.GET('/api/club-computers/{computerId}/health/hourly', { params: { path: { computerId: id }, query: { from, to } } })),
   });
 
 /** Состояние нескольких ПК (досылка после события computer.state). */

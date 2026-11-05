@@ -37,6 +37,10 @@ const (
 var Kinds = []string{KindCPUHot, KindGPUHot, KindDiskLow, KindDiskSmart, KindMouse, KindKeyboard, KindMonitor,
 	KindNetworkSlow, KindUnstable}
 
+// DiskKinds — проблемы дисков: у бездискового ПК (S7-H-18) история и часы с проблемами их не учитывают (записаны до
+// перевода ПК на загрузку по сети или старым агентом) — список передаётся в SQL (computer_health*.sql hidden_kinds).
+var DiskKinds = []string{KindDiskLow, KindDiskSmart}
+
 // Thresholds — пороги проблем (agent.health.*). Нули — значения по умолчанию (Defaults).
 type Thresholds struct {
 	// CPUTempC, GPUTempC — перегрев, °C (≥).
@@ -86,6 +90,9 @@ func (p Problems) Sorted() []string {
 // Evaluate — проблемы по порогам. active — проблемы, уже подтверждённые (для гистерезиса температуры: перегрев
 // держится, пока температура не опустится ниже порога на TempHysteresisC). linkMax — наибольшая скорость сети,
 // замеченная на этом подключении (0 — неизвестна). Не измеренное (0, «не задано») проблемой не считается.
+// Бездисковый ПК (h.Diskless, S7-H-18): дисков в здоровье нет (их убирает stream при приёме Status —
+// presence.Health.MarkDiskless), а сеть — строже: система и игры грузятся с сервера образов по сети, поэтому скорость
+// ниже LinkFullMbps — проблема всегда, а не только после падения.
 func Evaluate(h *presence.Health, th Thresholds, active map[string]bool, linkMax uint32) Problems {
 	out := Problems{}
 	if h == nil {
@@ -148,10 +155,14 @@ func Evaluate(h *presence.Health, th Thresholds, active map[string]bool, linkMax
 		}
 	}
 
-	if l := h.LinkMbps; l > 0 && (l < th.LinkMinMbps || (linkMax >= th.LinkFullMbps && l < th.LinkFullMbps)) {
+	if l := h.LinkMbps; l > 0 && (l < th.LinkMinMbps || ((linkMax >= th.LinkFullMbps || h.Diskless) && l < th.LinkFullMbps)) {
 		d := map[string]any{"mbps": l}
 		if linkMax > l {
 			d["previous_mbps"] = linkMax
+		}
+		if h.Diskless {
+			d["diskless"] = true
+			d["threshold_mbps"] = th.LinkFullMbps
 		}
 		out[KindNetworkSlow] = d
 	}

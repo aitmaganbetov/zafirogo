@@ -70,6 +70,45 @@ func TestEvaluateThresholds(t *testing.T) {
 	}
 }
 
+// Бездисковый ПК (S7-H-18): «плохие» диски (тома образа от старого агента) проблем не дают, сеть — строже; тот же
+// снимок у обычного ПК — даёт проблемы дисков.
+func TestEvaluateDiskless(t *testing.T) {
+	// Бездисковый — как его видит Evaluate: диски убраны при приёме Status (stream applyStatus → MarkDiskless).
+	bad := func(diskless bool, link uint32) *presence.Health {
+		h := &presence.Health{LinkMbps: link, Disks: []presence.Disk{
+			{Mount: "C:", System: true, TotalMB: 100 * gb, FreeMB: 1 * gb, Smart: presence.SmartFailing},
+			{Mount: "D:", TotalMB: 1000 * gb, FreeMB: 1 * gb, Smart: presence.SmartWarning}}}
+		if diskless {
+			h.MarkDiskless()
+		}
+		return h
+	}
+	cases := []struct {
+		name string
+		h    *presence.Health
+		want []string
+	}{
+		{"обычный ПК: диски — проблемы", bad(false, 1000), []string{KindDiskLow, KindDiskSmart}},
+		{"бездисковый: дисков нет в проблемах", bad(true, 1000), []string{}},
+		{"обычный ПК: 100 Мбит/с без истории — норма", &presence.Health{LinkMbps: 100}, []string{}},
+		{"бездисковый: 100 Мбит/с — проблема сразу", &presence.Health{Diskless: true, LinkMbps: 100}, []string{KindNetworkSlow}},
+		{"бездисковый: 999 Мбит/с — проблема", &presence.Health{Diskless: true, LinkMbps: 999}, []string{KindNetworkSlow}},
+		{"бездисковый: 1000 Мбит/с — норма", &presence.Health{Diskless: true, LinkMbps: 1000}, []string{}},
+		{"бездисковый: скорость не измерена — не проблема", &presence.Health{Diskless: true}, []string{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := Evaluate(c.h, Defaults(), nil, 0).Sorted(); !slices.Equal(got, c.want) {
+				t.Errorf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+	p := Evaluate(&presence.Health{Diskless: true, LinkMbps: 100}, Defaults(), nil, 0)
+	if !reflect.DeepEqual(p[KindNetworkSlow], map[string]any{"mbps": uint32(100), "diskless": true, "threshold_mbps": uint32(1000)}) {
+		t.Errorf("network details: %v", p[KindNetworkSlow])
+	}
+}
+
 func TestEvaluateDetails(t *testing.T) {
 	p := Evaluate(&presence.Health{CPUTempDeci: 955, LinkMbps: 100,
 		Disks: []presence.Disk{{Mount: "C:", System: true, TotalMB: 100 * gb, FreeMB: 5 * gb}}}, Defaults(), nil, 1000)

@@ -111,6 +111,66 @@ test('карта: загрузка и проблемы ПК, раздел «Со
   await expect(page.locator('#computer-health-history dt')).toHaveText('Перегрев CPU');
 });
 
+test('карта: состояние ПК — вкладки «Сейчас» и «По неделям», вердикт недели и график по часам (Этап 7)', async ({ page }) => {
+  const hourly: URL[] = [];
+  let weekly = 0;
+  const view = (temp: number) => ({
+    computer_id: 1, connection: 'online', agent_version: '2.4.1', rtt_ms: 18, problems: [], load: { cpu_bp: 4250, ram_bp: 6100, idle_seconds: 0 },
+    health: { reported_at: '2026-10-15T08:00:00Z', cpu_temp_deci: temp, disks: [], peripherals: [], unexpected_shutdowns_7d: 0, bugchecks_7d: 0 },
+  });
+  await mockApi(page, {
+    'GET /api/club-map': (r) => json(r, MAP),
+    'GET /api/club-computers/1/health': (r) => json(r, view(655)),
+    'GET /api/club-computers/1/health/events': (r) => json(r, { items: [], next_cursor: null }),
+    'GET /api/club-computers/1/health/weekly': (r) => {
+      weekly++;
+      return json(r, { weeks: [
+        { start: '2026-10-11T19:00:00Z', end: '2026-10-18T19:00:00Z', online_minutes: 3000, session_minutes: 1200, cpu_temp_avg_deci: 724, cpu_temp_max_deci: 950,
+          cpu_load_avg_bp: 3000, ram_avg_bp: 5000, cpu_hot_hours: 3, gpu_hot_hours: 0, problem_hours: 4, unexpected_shutdowns: 0, bugchecks: 1,
+          peripheral_disconnects: 0, system_disk_free_bp: 4000, smart: 'ok',
+          verdict: { level: 'repair', reasons: [{ code: 'bugchecks', level: 'repair', value: 1, threshold: 1 }, { code: 'cpu_hot', level: 'watch', value: 3, threshold: 90 }] } },
+      ] });
+    },
+    'GET /api/club-computers/1/health/hourly': (r, url) => {
+      hourly.push(url);
+      return json(r, { items: [
+        { hour: '2026-10-12T08:00:00Z', online_minutes: 60, session_minutes: 0, cpu_temp_avg_deci: 700, cpu_load_avg_bp: 3000, ram_avg_bp: 5000 },
+        { hour: '2026-10-12T09:00:00Z', online_minutes: 60, session_minutes: 0, cpu_temp_avg_deci: 760, cpu_load_avg_bp: 4000, ram_avg_bp: 5200 },
+      ] });
+    },
+  });
+  await page.goto('/club-map');
+  await page.locator('.cm-computer[data-id="1"]').click();
+  const info = page.locator('#computer-health-info');
+  await expect(info.getByRole('tab', { name: 'Сейчас' })).toHaveAttribute('aria-selected', 'true');
+  await expect(info).toContainText('66 °C');
+  expect(weekly).toBe(0); // недели — только при открытии вкладки (S7-H-28)
+  await info.getByRole('tab', { name: 'По неделям' }).click();
+  await expect(info.locator('[data-week] dd.cm-info-warning')).toHaveText('Требует ремонта · «Синих экранов» за неделю: 1 · Перегрев CPU (от 90 °C): 3 ч');
+  await info.locator('[data-week] button').click();
+  await expect(page.locator('#computer-health-week-chart')).toBeVisible();
+  expect(hourly[0]?.searchParams.get('from')).toBe('2026-10-11T19:00:00Z');
+  expect(hourly[0]?.searchParams.get('to')).toBe('2026-10-18T19:00:00Z');
+  expect(weekly).toBe(1);
+});
+
+test('карта: состояние ПК без истории — вкладка «По неделям» с «Истории пока нет» (Этап 7)', async ({ page }) => {
+  await mockApi(page, {
+    'GET /api/club-map': (r) => json(r, MAP),
+    'GET /api/club-computers/1/health': (r) =>
+      json(r, { computer_id: 1, connection: 'online', agent_version: '2.4.1', rtt_ms: 18, problems: [], load: { cpu_bp: 4250, ram_bp: 6100, idle_seconds: 0 } }),
+    'GET /api/club-computers/1/health/events': (r) => json(r, { items: [], next_cursor: null }),
+    'GET /api/club-computers/1/health/weekly': (r) => json(r, { diskless: false, weeks: [] }),
+  });
+  await page.goto('/club-map');
+  await page.locator('.cm-computer[data-id="1"]').click();
+  const info = page.locator('#computer-health-info');
+  await info.getByRole('tab', { name: 'По неделям' }).click();
+  await expect(info.getByRole('tab', { name: 'По неделям' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#computer-health-weeks-empty')).toHaveText('Истории пока нет');
+  await expect(info.locator('[data-week]')).toHaveCount(0);
+});
+
 test('карта: зона — ошибка формы сверху, затем «Зона добавлена.»', async ({ page }) => {
   let calls = 0;
   await mockApi(page, {

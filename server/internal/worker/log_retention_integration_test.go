@@ -153,3 +153,45 @@ func TestLogRetentionHealthEvents(t *testing.T) {
 		t.Fatal("other journals must not be touched")
 	}
 }
+
+// Почасовая история здоровья ПК (Этап 7, 0031): партиции computer_health_hourly старше agent.health.hourly_retention
+// (180 дней) удаляются той же задачей, история проблем не трогается.
+func TestLogRetentionHealthHourly(t *testing.T) {
+	ctx := context.Background()
+	d := dbtest.New(t)
+	now := time.Now().UTC()
+	keep := 180 * 24 * time.Hour
+	count := func(parent string) int {
+		t.Helper()
+		var n int
+		if err := d.Owner.QueryRow(ctx, "SELECT count(*) FROM pg_inherits WHERE inhparent = $1::regclass", parent).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	// Партиции на год назад — чтобы было что удалять при сроке 180 дней.
+	if _, err := db.EnsurePartitions(ctx, d.Platform, now.AddDate(-1, 0, 0), 13); err != nil {
+		t.Fatal(err)
+	}
+	before, beforeEvents := count("computer_health_hourly"), count("computer_health_events")
+	w := &worker.LogRetention{Platform: d.Platform, Retention: map[string]time.Duration{"computer_health_hourly": keep},
+		Now: func() time.Time { return now }}
+	ran, dropped, err := w.Tick(ctx)
+	if err != nil || !ran || dropped < 5 {
+		t.Fatalf("tick: ran=%v dropped=%d err=%v", ran, dropped, err)
+	}
+	if got := count("computer_health_hourly"); got != before-dropped {
+		t.Fatalf("computer_health_hourly partitions = %d, want %d", got, before-dropped)
+	}
+	var oldest time.Time
+	if err := d.Owner.QueryRow(ctx, `SELECT min(to_date(right(c.relname, 7), 'YYYY_MM'))::timestamptz FROM pg_inherits i
+		JOIN pg_class c ON c.oid = i.inhrelid WHERE i.inhparent = 'computer_health_hourly'::regclass`).Scan(&oldest); err != nil {
+		t.Fatal(err)
+	}
+	if !oldest.AddDate(0, 1, 0).After(now.Add(-keep)) {
+		t.Fatalf("partition of %s kept although its month is older than %s", oldest, keep)
+	}
+	if count("computer_health_events") != beforeEvents {
+		t.Fatal("health events must not be touched")
+	}
+}

@@ -19,12 +19,15 @@ import (
 // LoadEvent — тип живого обновления загрузки и здоровья ПК (docs/realtime.md §4, право club_map.view).
 const LoadEvent = "computer.load"
 
-// LoadData — data события computer.load: то же, что поля load/problems/rtt_ms у ComputerState (api/clubmap.yaml).
+// LoadData — data события computer.load: то же, что поля load/problems/rtt_ms у ComputerState (api/clubmap.yaml), и
+// температуры CPU/GPU (десятые доли °C, нет — поля нет) для живого графика панели ПК (docs/realtime.md §4).
 type LoadData struct {
-	ComputerID int64     `json:"computer_id"`
-	Load       *LoadView `json:"load,omitempty"`
-	Problems   []string  `json:"problems"`
-	RTTMillis  uint32    `json:"rtt_ms,omitempty"`
+	ComputerID  int64     `json:"computer_id"`
+	Load        *LoadView `json:"load,omitempty"`
+	Problems    []string  `json:"problems"`
+	RTTMillis   uint32    `json:"rtt_ms,omitempty"`
+	CPUTempDeci int32     `json:"cpu_temp_deci,omitempty"`
+	GPUTempDeci int32     `json:"gpu_temp_deci,omitempty"`
 }
 
 // LoadView — загрузка ПК для карты (сотые доли процента, секунды бездействия).
@@ -39,6 +42,9 @@ func LoadDataOf(st presence.State) LoadData {
 	d := LoadData{ComputerID: st.ComputerID, Problems: st.Problems, RTTMillis: st.RTTMillis}
 	if d.Problems == nil {
 		d.Problems = []string{}
+	}
+	if st.Health != nil {
+		d.CPUTempDeci, d.GPUTempDeci = st.Health.CPUTempDeci, st.Health.GPUTempDeci
 	}
 	if st.HasLoad {
 		d.Load = &LoadView{CPUBasisPoints: st.Load.CPUBasisPoints, RAMBasisPoints: st.Load.RAMBasisPoints, IdleSeconds: st.Load.IdleSeconds}

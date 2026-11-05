@@ -37,6 +37,9 @@ public sealed class HealthCollector
     private IReadOnlyDictionary<string, DiskSmart>? _smart;
     private DateTimeOffset _smartAt;
     private CrashCounts? _crashes;
+    private CrashCounts? _bootCrashes;
+    // Сбои перед загрузкой больше не изменятся (загрузка давно прошла, см. BootCrashSettle) — журнал не перечитывается.
+    private bool _bootCrashesFinal;
     private DateTimeOffset? _crashesAt;
 
     public HealthCollector(IHealthProbe probe, TimeProvider? time = null, ILogger? log = null, HealthCollectorOptions? options = null)
@@ -70,21 +73,27 @@ public sealed class HealthCollector
             }
         }
 
-        var disks = Measure("disks", _probe.Disks, []);
-        if (disks.Count > _options.MaxDisks) disks = disks.Take(_options.MaxDisks).ToList();
-        var smartChanged = RefreshSmart(disks, now);
-        foreach (var d in disks)
+        // Бездисковый ПК (загрузка по сети с сервера образов): локальных дисков нет — тома образа виртуальные (iSCSI,
+        // RAM-диск кэша), их место и SMART ничего не говорят о ПК. Диски и SMART не читаются вовсе (S7-HA-13).
+        var smartChanged = false;
+        if (!_options.Diskless)
         {
-            var mount = Clean(d.Mount);
-            if (mount.Length == 0 || mount.Length > MaxMountLength) continue;
-            h.Disks.Add(new DiskHealth
+            var disks = Measure("disks", _probe.Disks, []);
+            if (disks.Count > _options.MaxDisks) disks = disks.Take(_options.MaxDisks).ToList();
+            smartChanged = RefreshSmart(disks, now);
+            foreach (var d in disks)
             {
-                Mount = mount,
-                System = d.System,
-                TotalMb = d.TotalMb,
-                FreeMb = Math.Min(d.FreeMb, d.TotalMb),
-                Smart = _smart is not null && _smart.TryGetValue(d.Mount, out var s) ? s : DiskSmart.Unspecified,
-            });
+                var mount = Clean(d.Mount);
+                if (mount.Length == 0 || mount.Length > MaxMountLength) continue;
+                h.Disks.Add(new DiskHealth
+                {
+                    Mount = mount,
+                    System = d.System,
+                    TotalMb = d.TotalMb,
+                    FreeMb = Math.Min(d.FreeMb, d.TotalMb),
+                    Smart = _smart is not null && _smart.TryGetValue(d.Mount, out var s) ? s : DiskSmart.Unspecified,
+                });
+            }
         }
 
         var peripheralsChanged = RefreshPeripherals();
@@ -96,6 +105,21 @@ public sealed class HealthCollector
         if (_crashesAt is null || now - _crashesAt.Value >= _options.CrashRefresh)
         {
             _crashes = Measure("crashes", () => _probe.Crashes(now - _options.CrashWindow), null);
+            // Сбои перед этой загрузкой: события пишет загрузка после сбоя, поэтому окно — с начала загрузки (время работы)
+            // с запасом на поправку часов при загрузке. Из такого окна события не выпадают — сервер считает по ним точный
+            // прирост вместе с boot_id (agent.proto ComputerHealth.unexpected_shutdowns_boot). Время работы не измерено —
+            // и это не измерено.
+            // События пишутся в первые минуты загрузки, поэтому после BootCrashMargin + BootCrashSettle времени работы
+            // ответ уже не изменится (окно начинается в одном и том же месте) — он запоминается до конца работы службы.
+            var uptime = h.UptimeSeconds;
+            if (!_bootCrashesFinal)
+            {
+                _bootCrashes = uptime > 0
+                    ? Measure("crashes_boot", () => _probe.Crashes(now - TimeSpan.FromSeconds(uptime) - _options.BootCrashMargin), null)
+                    : null;
+                _bootCrashesFinal = _bootCrashes is not null &&
+                    TimeSpan.FromSeconds(uptime) > _options.BootCrashMargin + _options.BootCrashSettle;
+            }
             _crashesAt = now;
         }
 
@@ -103,6 +127,13 @@ public sealed class HealthCollector
         {
             h.UnexpectedShutdowns7D = c.UnexpectedShutdowns;
             h.Bugchecks7D = c.BugChecks;
+        }
+
+        if (_bootCrashes is { } b)
+        {
+            h.CrashesBootMeasured = true;
+            h.UnexpectedShutdownsBoot = b.UnexpectedShutdowns;
+            h.BugchecksBoot = b.BugChecks;
         }
 
         urgent = peripheralsChanged || smartChanged;
@@ -258,7 +289,25 @@ public sealed class HealthCollectorOptions
     /// <summary>Окно подсчёта сбоев (agent.proto: «за 7 суток»).</summary>
     public TimeSpan CrashWindow { get; set; } = TimeSpan.FromDays(7);
 
+    /// <summary>
+    /// Запас окна «сбои перед этой загрузкой» раньше начала загрузки (поправка часов при загрузке). Больше нельзя: сбой
+    /// загрузки, прожившей меньше запаса, посчитался бы и в следующей.
+    /// </summary>
+    public TimeSpan BootCrashMargin { get; set; } = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Сколько после <see cref="BootCrashMargin"/> ждать, прежде чем считать «сбои перед этой загрузкой» окончательными
+    /// (Windows дописывает события сбоя в первые минуты загрузки): дальше журнал для них не перечитывается.
+    /// </summary>
+    public TimeSpan BootCrashSettle { get; set; } = TimeSpan.FromMinutes(5);
+
     public int MaxDisks { get; set; } = 26;
+
+    /// <summary>
+    /// Бездисковый ПК (AgentOptions.Diskless, DeviceInfo.diskless): диски и SMART не собираются, ComputerHealth.disks
+    /// пуст (docs/open-questions/stage7-health-agent.md S7-HA-13).
+    /// </summary>
+    public bool Diskless { get; set; }
 
     public int MaxPeripherals { get; set; } = 16;
 

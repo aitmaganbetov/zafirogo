@@ -42,6 +42,11 @@ func TestAppRoleLeastPrivilege(t *testing.T) {
 		// История здоровья ПК (Этап 7, 0030): пул клуба только добавляет и закрывает (cleared_at), не правит и не удаляет.
 		{"delete health history", "DELETE FROM computer_health_events WHERE computer_id = $1"},
 		{"rewrite health history", "UPDATE computer_health_events SET kind = 'mouse', raised_at = now() WHERE computer_id = $1"},
+		// Почасовая история здоровья (Этап 7, 0031): пул клуба пишет агрегаты (UPSERT), но не удаляет строки и не меняет
+		// их ключ (клуб, ПК, час).
+		{"delete hourly health", "DELETE FROM computer_health_hourly WHERE computer_id = $1"},
+		{"move hourly health", "UPDATE computer_health_hourly SET hour = hour + interval '1 hour' WHERE computer_id = $1"},
+		{"reassign hourly health", "UPDATE computer_health_hourly SET club_id = 0 WHERE computer_id = $1"},
 	}
 	for _, tc := range denied {
 		_, err := d.App.Exec(ctx, tc.sql, userID)
@@ -58,6 +63,8 @@ func TestAppRoleLeastPrivilege(t *testing.T) {
 		{"login failed log", "INSERT INTO platform_logs (event, description, ip_address, created_at) SELECT 'auth.test', 'd', '127.0.0.1', now() WHERE $1 > 0"},
 		{"close health problem", "UPDATE computer_health_events SET cleared_at = now() WHERE computer_id = $1"},
 		{"read health history", "SELECT count(*) FROM computer_health_events WHERE computer_id = $1"},
+		{"read hourly health", "SELECT count(*) FROM computer_health_hourly WHERE computer_id = $1"},
+		{"upsert hourly health", "UPDATE computer_health_hourly SET online_minutes = 60, cpu_temp_max_deci = 800, bugchecks = 1 WHERE computer_id = $1"},
 	}
 	for _, tc := range allowed {
 		if _, err := d.App.Exec(ctx, tc.sql, userID); err != nil {

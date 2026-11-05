@@ -124,6 +124,8 @@ type Service struct {
 	sender *commands.Sender
 	queue  *commands.Queue
 	health *health.Journal
+	// hourly — почасовая история здоровья (агрегат часа в Valkey, health.Hourly); nil — выключено.
+	hourly *health.Hourly
 	sub    *nats.Subscription
 
 	mu    sync.RWMutex
@@ -158,6 +160,10 @@ func New(o Options) (*Service, error) {
 		health: health.NewJournal(o.Pool),
 		conns:  map[int64]*conn{},
 		stop:   make(chan struct{}),
+	}
+	if !o.Health.Disabled {
+		// Минуты между двумя Status одного подключения — онлайн, если разрыв не больше двух интервалов Status (+30 с).
+		s.hourly = health.NewHourly(o.Valkey, st.Prefix(), 2*o.StatusInterval+30*time.Second)
 	}
 	s.queue = s.sender.Queue()
 	sub, err := o.NATS.Subscribe(commands.InstanceSubject(o.SubjectPrefix, o.Instance), s.onEnvelope)
@@ -196,6 +202,9 @@ func (s *Service) NewSweeper(platformPool db.Beginner) *presence.Sweeper {
 
 // HealthJournal — история проблем здоровья (метрика Writes()).
 func (s *Service) HealthJournal() *health.Journal { return s.health }
+
+// HealthHourly — почасовая история здоровья (метрика Writes(); nil — выключено).
+func (s *Service) HealthHourly() *health.Hourly { return s.hourly }
 
 // LivePublished — сколько живых обновлений загрузки/здоровья отправил этот инстанс (метрика, нагрузочный тест).
 func (s *Service) LivePublished() uint64 { return s.livePublished.Load() }

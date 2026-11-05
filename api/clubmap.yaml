@@ -419,6 +419,83 @@ paths:
           $ref: "common.yaml#/components/responses/Forbidden"
         "404":
           $ref: "common.yaml#/components/responses/NotFound"
+  /api/club-computers/{computerId}/health/weekly:
+    parameters:
+      - $ref: "#/components/parameters/ComputerId"
+    get:
+      operationId: getComputerHealthWeekly
+      tags: [clubmap]
+      summary: Здоровье ПК по неделям с вердиктом исправности
+      description: |
+        Новое (Этап 7, docs/agent-protocol.md §16.6–16.7). Агрегаты почасовой истории (computer_health_hourly) по неделям
+        (понедельник 00:00 в поясе клуба), новые сверху; только недели с данными. Вердикт — «Исправен» / «Наблюдать» /
+        «Требует ремонта» с причинами (правила и пороги agent.health.*, тренд — к предыдущей неделе). Нет измерения —
+        поле null. Право — club_map.view (club-map.state). Чужой ПК — 404; weeks вне 1..12 — 422.
+      parameters:
+        - name: weeks
+          in: query
+          required: false
+          description: Сколько недель, включая текущую (1..12, по умолчанию 8).
+          schema:
+            type: integer
+            format: int32
+      responses:
+        "200":
+          description: Недели.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthWeekPage"
+        "400":
+          $ref: "common.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/club-computers/{computerId}/health/hourly:
+    parameters:
+      - $ref: "#/components/parameters/ComputerId"
+    get:
+      operationId: getComputerHealthHourly
+      tags: [clubmap]
+      summary: Здоровье ПК по часам (график недели)
+      description: |
+        Новое (Этап 7). Почасовые агрегаты за период [from, to) — не длиннее 8 суток; часы без данных (ПК не в сети)
+        отсутствуют. Право — club_map.view. Чужой ПК — 404; to ≤ from или период длиннее 8 суток — 422.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Точки по часам.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthHourPage"
+        "400":
+          $ref: "common.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
 components:
   securitySchemes:
     bearerAuth:
@@ -869,11 +946,13 @@ components:
       enum: [cpu_hot, gpu_hot, disk_low, disk_smart, mouse, keyboard, monitor, network_slow, unstable]
     ComputerHealthView:
       type: object
-      required: [computer_id, connection, problems]
+      required: [computer_id, connection, diskless, problems]
       properties:
         computer_id:
           type: integer
           format: int64
+        diskless:
+          $ref: "#/components/schemas/HealthDiskless"
         connection:
           type: string
           enum: [online, offline]
@@ -896,6 +975,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/HealthProblem"
+    HealthDiskless:
+      type: boolean
+      description: |
+        Бездисковый ПК (загрузка по сети с сервера образов; последний сертификат ПК выпущен по ключу образа,
+        agent_certificates.diskless). Локальных дисков нет: агент их не собирает, сервер не считает по ним проблемы и
+        причины вердикта, disks пуст, поля системного диска и SMART недель — null (docs/agent-protocol.md §16.9).
     HealthSnapshot:
       type: object
       required: [reported_at, disks, peripherals, unexpected_shutdowns_7d, bugchecks_7d]
@@ -997,6 +1082,226 @@ components:
           type: object
           additionalProperties: true
           description: Подробности на момент появления (temp_deci, threshold_c, disks, mbps, previous_mbps, …).
+    HealthWeek:
+      type: object
+      required: [start, end, online_minutes, session_minutes, cpu_hot_hours, gpu_hot_hours, problem_hours,
+                 network_slow_hours, unexpected_shutdowns, bugchecks, peripheral_disconnects, verdict]
+      properties:
+        start:
+          type: string
+          format: date-time
+          description: Начало недели — понедельник 00:00 в поясе клуба.
+        end:
+          type: string
+          format: date-time
+          description: Конец недели (не включительно).
+        online_minutes:
+          type: integer
+          format: int64
+          description: Минут в сети.
+        session_minutes:
+          type: integer
+          format: int64
+          description: Минут в сессии.
+        cpu_load_avg_bp:
+          type: integer
+          format: int64
+          nullable: true
+          description: Средняя загрузка CPU за неделю (по минутам в сети), сотые доли процента.
+        cpu_load_max_bp:
+          type: integer
+          format: int64
+          nullable: true
+        ram_avg_bp:
+          type: integer
+          format: int64
+          nullable: true
+        ram_max_bp:
+          type: integer
+          format: int64
+          nullable: true
+        gpu_load_avg_bp:
+          type: integer
+          format: int64
+          nullable: true
+        gpu_load_max_bp:
+          type: integer
+          format: int64
+          nullable: true
+        cpu_temp_avg_deci:
+          type: integer
+          format: int64
+          nullable: true
+          description: Средняя температура CPU, десятые доли °C.
+        cpu_temp_max_deci:
+          type: integer
+          format: int64
+          nullable: true
+        gpu_temp_avg_deci:
+          type: integer
+          format: int64
+          nullable: true
+        gpu_temp_max_deci:
+          type: integer
+          format: int64
+          nullable: true
+        cpu_hot_hours:
+          type: integer
+          format: int64
+          description: Часов, когда максимум температуры CPU был не ниже порога перегрева (agent.health.cpu_temp_c).
+        gpu_hot_hours:
+          type: integer
+          format: int64
+        problem_hours:
+          type: integer
+          format: int64
+          description: Часов в сети, когда была открыта хоть одна проблема здоровья (computer_health_events).
+        network_slow_hours:
+          type: integer
+          format: int64
+          description: Часов в сети, когда была открыта проблема network_slow (скорость сети ниже порога).
+        unexpected_shutdowns:
+          type: integer
+          format: int64
+          description: Внезапных выключений за неделю.
+        bugchecks:
+          type: integer
+          format: int64
+          description: «Синих экранов» за неделю.
+        peripheral_disconnects:
+          type: integer
+          format: int64
+          description: Сколько раз отключались мышь, клавиатура или монитор.
+        system_disk_free_mb:
+          type: integer
+          format: int64
+          nullable: true
+          description: Минимум свободного места на системном диске, МБ.
+        system_disk_free_bp:
+          type: integer
+          format: int64
+          nullable: true
+          description: Минимум свободного места на системном диске, сотые доли процента.
+        smart:
+          type: string
+          nullable: true
+          description: Худшее состояние SMART за неделю (null — не измерено).
+          enum: [ok, warning, failing]
+          x-enum-varnames: [WeekSmartOk, WeekSmartWarning, WeekSmartFailing]
+        verdict:
+          $ref: "#/components/schemas/HealthVerdict"
+    HealthVerdict:
+      type: object
+      required: [level, reasons]
+      description: |
+        Вердикт исправности за неделю (docs/agent-protocol.md §16.7): ok — исправен, watch — наблюдать, repair — требует
+        ремонта; уровень — наихудший из причин.
+      properties:
+        level:
+          type: string
+          enum: [ok, watch, repair]
+          x-enum-varnames: [VerdictOk, VerdictWatch, VerdictRepair]
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/HealthVerdictReason"
+    HealthVerdictReason:
+      type: object
+      required: [code, level, value, threshold]
+      properties:
+        code:
+          type: string
+          description: |
+            smart_failing / smart_warning — SMART диска; bugchecks — «синие экраны» (value — сколько, threshold — порог);
+            cpu_hot / gpu_hot — часов перегрева (value — часы, threshold — °C); shutdowns — внезапные выключения;
+            disk_low — свободно на системном диске (value, threshold — %); cpu_temp_rise / gpu_temp_rise — рост средней
+            температуры к прошлой неделе (value, threshold — °C); network_slow — только у бездискового ПК: часов с медленной
+            сетью (value — часы, threshold — Мбит/с).
+          enum: [smart_failing, bugchecks, cpu_hot, gpu_hot, smart_warning, shutdowns, disk_low, cpu_temp_rise, gpu_temp_rise,
+                 network_slow]
+        level:
+          type: string
+          enum: [watch, repair]
+          x-enum-varnames: [ReasonWatch, ReasonRepair]
+        value:
+          type: integer
+          format: int64
+        threshold:
+          type: integer
+          format: int64
+    HealthWeekPage:
+      type: object
+      required: [diskless, weeks]
+      properties:
+        diskless:
+          $ref: "#/components/schemas/HealthDiskless"
+        weeks:
+          type: array
+          items:
+            $ref: "#/components/schemas/HealthWeek"
+    HealthHour:
+      type: object
+      required: [hour, online_minutes, session_minutes]
+      properties:
+        hour:
+          type: string
+          format: date-time
+        online_minutes:
+          type: integer
+          format: int64
+        session_minutes:
+          type: integer
+          format: int64
+        cpu_load_avg_bp:
+          type: integer
+          format: int64
+          nullable: true
+        cpu_load_max_bp:
+          type: integer
+          format: int64
+          nullable: true
+        ram_avg_bp:
+          type: integer
+          format: int64
+          nullable: true
+        ram_max_bp:
+          type: integer
+          format: int64
+          nullable: true
+        gpu_load_avg_bp:
+          type: integer
+          format: int64
+          nullable: true
+        gpu_load_max_bp:
+          type: integer
+          format: int64
+          nullable: true
+        cpu_temp_avg_deci:
+          type: integer
+          format: int64
+          nullable: true
+        cpu_temp_max_deci:
+          type: integer
+          format: int64
+          nullable: true
+        gpu_temp_avg_deci:
+          type: integer
+          format: int64
+          nullable: true
+        gpu_temp_max_deci:
+          type: integer
+          format: int64
+          nullable: true
+    HealthHourPage:
+      type: object
+      required: [diskless, items]
+      properties:
+        diskless:
+          $ref: "#/components/schemas/HealthDiskless"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/HealthHour"
     HealthEventPage:
       type: object
       required: [items]

@@ -557,3 +557,30 @@ Telegram в `platform_settings` — `Crypt::encryptString` (`app/Services/Telegr
   `TestAppRoleLeastPrivilege`, `TestHealthStatusToSnapshotAndHistory` (RLS чужого клуба).
 - **Запись**: только при подтверждённом переходе (дребезг `raise_after`/`clear_after`, `server/internal/agent/health`),
   не на каждый Status: на 5 000 ПК в установившемся режиме — 0 строк в минуту (`docs/load-test.md` §6.3).
+
+## 15. Почасовая история здоровья ПК (0031, Этап 7)
+
+Новая функция (решения — `docs/open-questions/stage7-health.md` S7-H-13, S7-H-14). В старом Laravel таблицы нет — при
+переносе из MySQL она пустая. Агрегат часа копится в Valkey (`docs/agent-protocol.md` §16.6); здесь — **одна строка на ПК
+и час** после конца часа.
+
+- **`computer_health_hourly`**: `club_id` → `clubs`, `computer_id` → `club_computers` (ON DELETE CASCADE), `hour` (начало
+  часа UTC, CHECK `date_trunc('hour', hour) = hour`), `online_minutes`, `session_minutes` (0..60), среднее и максимум
+  загрузки CPU, ОЗУ, GPU (сотые доли %) и температур CPU, GPU (десятые доли °C; NULL — не измерено; минимумов нет —
+  S7-H-26: для решения о ремонте нужны максимумы и средние), `system_disk_free_mb` (минимум за час) и
+  `system_disk_total_mb`, `smart_worst` (CHECK `ok`/`warning`/`failing`, NULL — не измерено), `peripheral_disconnects`,
+  `unexpected_shutdowns`, `bugchecks` (прирост за час по счётчикам агента «перед загрузкой», ≥ 0; не измерено — 0,
+  S7-H-27). Без float.
+- **PK** (`club_id`, `computer_id`, `hour`) — он же составной индекс выборок «ПК за период» и ключ UPSERT сброса.
+- **Партиции** по месяцам `hour` (UTC): белые списки `zafiro_create_monthly_partitions` и
+  `zafiro_drop_monthly_partitions` расширены, таблица в `db.PartitionedTables` и `db.RetentionTables`; срок —
+  `agent.health.hourly_retention` (180 дней), задача `logs:retention`.
+- **RLS** `tenant_isolation` + `platform_access` (FORCE). **Права**: `zafiro_app` — SELECT, INSERT, UPDATE только
+  измерений (повтор UPSERT); ключ строки (клуб, ПК, час) не изменить, строки не удалить; `zafiro_platform` — SELECT.
+  Проверки — `TestAppRoleLeastPrivilege`, `TestClubMapComputerHealthWeekly` (строка чужого клуба с id нашего ПК не видна).
+- **Запись**: задача `agent:health-hourly` (один исполнитель, Q-086) — `INSERT … SELECT FROM jsonb_to_recordset(…) JOIN
+  club_computers (ПК этого клуба) ON CONFLICT DO UPDATE`, одна транзакция на клуб за час; объём и время —
+  `docs/load-test.md` §6.4.
+- **`zafiro_computer_diskless(club_id, computer_id)`** — признак «бездисковый ПК» (S7-H-18, S7-H-22) одним правилом для
+  стрима и панели: действующий неотозванный сертификат ПК, иначе последний выпущенный, иначе false. `LANGUAGE sql STABLE`,
+  SECURITY INVOKER — `agent_certificates` читается с RLS вызывающего; права — как у `zafiro_current_club_id` (0004).

@@ -27,11 +27,18 @@ WHERE club_id = sqlc.arg(club_id) AND computer_id = sqlc.arg(computer_id) AND ki
 SELECT id, kind, raised_at, cleared_at, details
 FROM computer_health_events
 WHERE club_id = sqlc.arg(club_id) AND computer_id = sqlc.arg(computer_id)
+  -- Бездисковый ПК (S7-H-18): проблем дисков в истории не показываем (тома образа или запись до перевода ПК) — фильтр
+  -- до keyset-страницы, иначе страница могла бы оказаться пустой при следующей. hidden_kinds — health.DiskKinds у
+  -- бездискового ПК, пусто у обычного (http/sections/clubmap hiddenKinds).
+  AND kind <> ALL (sqlc.arg(hidden_kinds)::text[])
   AND (sqlc.narg(before_at)::timestamptz IS NULL
        OR (raised_at, id) < (sqlc.narg(before_at)::timestamptz, sqlc.narg(before_id)::bigint))
 ORDER BY raised_at DESC, id DESC
 LIMIT sqlc.arg(page_size);
 
--- name: ComputerHealthComputerExists :one
--- Карточка ПК клуба есть (404 для чужого или удалённого ПК).
-SELECT EXISTS (SELECT 1 FROM club_computers WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(computer_id))::boolean;
+-- name: ComputerHealthComputer :one
+-- Карточка ПК клуба (нет строки — 404 для чужого или удалённого ПК) и признак «бездисковый» — то же правило, что у
+-- стрима (0031 zafiro_computer_diskless, agent_presence.sql GetAgentComputer).
+SELECT zafiro_computer_diskless(c.club_id, c.id) AS diskless
+FROM club_computers c
+WHERE c.club_id = sqlc.arg(club_id) AND c.id = sqlc.arg(computer_id);

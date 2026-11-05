@@ -19,6 +19,7 @@ import (
 	"github.com/valkey-io/valkey-go"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/enroll"
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
 	"github.com/aitmaganbetov/zafirogo/server/internal/apikey"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/password"
@@ -77,6 +78,8 @@ type Options struct {
 	Cash *cashsvc.Service
 	// Presence — присутствие агентов (карта клуба). nil — все ПК офлайн.
 	Presence Presence
+	// HealthVerdict — пороги вердикта исправности ПК за неделю (agent.health.verdict_*); нули — по умолчанию.
+	HealthVerdict health.VerdictRules
 	// Now — часы (nil — time.Now).
 	Now func() time.Time
 	// APIKeyPrefix — публичный префикс API-ключа запроса для журнала (details.api_key); nil — нет.
@@ -268,7 +271,7 @@ func NewRouter(o Options) http.Handler {
 		Superadmin: o.Superadmin,
 		Secrets:    o.Secrets,
 		Logger:     o.Logger, Auth: o.Auth, Pool: o.Pool, PlatformPool: o.PlatformPool, Billing: o.Billing, Cash: o.Cash,
-		Presence: o.Presence, Checkers: o.Checkers, CheckTimeout: o.CheckTimeout, Now: o.Now, Passwords: o.Passwords,
+		Presence: o.Presence, HealthVerdict: o.HealthVerdict, Checkers: o.Checkers, CheckTimeout: o.CheckTimeout, Now: o.Now, Passwords: o.Passwords,
 		AgentCommands: o.AgentCommands, Enroll: o.Enroll,
 		SignOutGuest:      o.SignOutGuest,
 		ChatToGuest:       o.ChatToGuest,

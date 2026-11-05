@@ -121,6 +121,7 @@ public sealed class FakeHealthProbe : IHealthProbe
 
     public int CpuTemp = 650;
     public int SmartCalls;
+    public int DiskCalls;
     public int CrashCalls;
     public int PeripheralCalls;
     public DiskSmart Smart = DiskSmart.Ok;
@@ -143,7 +144,11 @@ public sealed class FakeHealthProbe : IHealthProbe
 
     public GpuReading? Gpu() => GpuFails is { } e ? throw e : new GpuReading(710, 4200, 3100, true);
 
-    public IReadOnlyList<DiskSpace> Disks() => [new DiskSpace("C:", true, 476_000, 120_000), new DiskSpace("D:", false, 953_000, 800_000)];
+    public IReadOnlyList<DiskSpace> Disks()
+    {
+        Interlocked.Increment(ref DiskCalls);
+        return [new DiskSpace("C:", true, 476_000, 120_000), new DiskSpace("D:", false, 953_000, 800_000)];
+    }
 
     public IReadOnlyDictionary<string, DiskSmart> SmartStatus(IReadOnlyList<DiskSpace> disks)
     {
@@ -161,12 +166,21 @@ public sealed class FakeHealthProbe : IHealthProbe
 
     public uint LinkSpeedMbps(string? serverHost) => 1000;
 
-    public ulong UptimeSeconds() => 3600;
+    public ulong Uptime = 3600;
+
+    public ulong UptimeSeconds() => Uptime;
+
+    /// <summary>Начала окон, с которыми запрашивался журнал сбоев.</summary>
+    public readonly List<DateTimeOffset> CrashSince = [];
+
+    /// <summary>Ответ журнала по началу окна (null — всегда 2 выключения и 1 «синий экран»).</summary>
+    public Func<DateTimeOffset, CrashCounts?>? CrashesBy;
 
     public CrashCounts? Crashes(DateTimeOffset since)
     {
         Interlocked.Increment(ref CrashCalls);
-        return new CrashCounts(2, 1);
+        lock (_gate) CrashSince.Add(since);
+        return CrashesBy is { } f ? f(since) : new CrashCounts(2, 1);
     }
 }
 

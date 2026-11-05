@@ -52,6 +52,12 @@ func (i Info) StartOfDay(t time.Time) time.Time {
 	return time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, i.Loc)
 }
 
+// StartOfWeek — понедельник 00:00 недели момента t в поясе клуба (Carbon startOfWeek(): неделя с понедельника).
+func (i Info) StartOfWeek(t time.Time) time.Time {
+	d := i.StartOfDay(t)
+	return d.AddDate(0, 0, -((int(d.Weekday()) + 6) % 7))
+}
+
 // ParseDay — день "Y-m-d" в поясе клуба (Carbon::createFromFormat('Y-m-d', $date, $tz)->startOfDay()).
 func (i Info) ParseDay(s string) (time.Time, bool) {
 	d, err := time.ParseInLocation("2006-01-02", s, i.Loc)

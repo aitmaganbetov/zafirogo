@@ -34,6 +34,7 @@ import (
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/enroll"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/guestapi"
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/stream"
 	"github.com/aitmaganbetov/zafirogo/server/internal/apikey"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
@@ -591,16 +592,25 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		{"agent-auto-billing", (&worker.AutoBilling{Platform: a.PlatformPool, Engine: guestSrv, Log: log}).Run}, // AG-12, Q-008
 		{"reencrypt-secrets", (&worker.ReencryptSecrets{Platform: a.PlatformPool, Box: box, Log: log}).Run},
 		{"ensure-partitions", partitions.Run},
+		// Этап 7: почасовая история здоровья ПК — агрегаты часа из Valkey в Postgres (один исполнитель, Q-086).
+		{"agent-health-hourly", (&health.HourlyFlusher{Valkey: a.Valkey, Prefix: a.Stream.Presence().Prefix(),
+			App: a.AppPool, Platform: a.PlatformPool, Now: ro.Now, Log: log}).Run},
 		{"log-retention", (&worker.LogRetention{
 			Platform: a.PlatformPool, Interval: cfg.Workers.LogRetention.Interval, Log: log,
 			// Сроки журналов — как в старом (PruneIntegrationData); ledger и audit_log — никогда.
 			Retention: map[string]time.Duration{"api_request_logs": cfg.Integrations.RequestLogRetention,
 				// Этап 7: история проблем здоровья ПК (новая, в старом не было).
-				"computer_health_events": cfg.Agent.Health.EventRetention},
+				"computer_health_events": cfg.Agent.Health.EventRetention,
+				"computer_health_hourly": cfg.Agent.Health.HourlyRetention},
 		}).Run},
 	}
 	if a.workers, err = withoutWorkers(a.workers, cfg.Dev.DisableWorkers); err != nil {
 		return err
+	}
+	if a.Stream.HealthHourly() == nil {
+		// Здоровье выключено (agent.health.enabled = false): агрегатов часа нет — задача сброса не нужна. Убирается после
+		// dev.disable_workers, чтобы её имя там оставалось допустимым.
+		a.workers = slices.DeleteFunc(a.workers, func(w namedWorker) bool { return w.name == "agent-health-hourly" })
 	}
 	for i := range a.workers {
 		a.workers[i].run = a.Obs.TrackWorker(a.workers[i].name, a.workers[i].run) // worker_up, worker_errors_total
@@ -631,6 +641,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	ro.Billing = a.Billing
 	ro.Cash = a.Cash
 	ro.Presence = a.Stream.Presence()
+	ro.HealthVerdict = verdictRules(cfg.Agent.Health)
 	ro.AgentCommands = a.Stream.Commands()
 	ro.Enroll = a.Enroll
 	ro.RequireSubscription = true

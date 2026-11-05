@@ -483,6 +483,33 @@ type ComputerHealthEvent struct {
 	Details json.RawMessage `json:"details"`
 }
 
+// Здоровье ПК за час (агрегат Status из Valkey, одна строка на ПК и час). Партиции по месяцам hour (UTC), 0031
+type ComputerHealthHourly struct {
+	ClubID         int64     `json:"club_id"`
+	ComputerID     int64     `json:"computer_id"`
+	Hour           time.Time `json:"hour"`
+	OnlineMinutes  int16     `json:"online_minutes"`
+	SessionMinutes int16     `json:"session_minutes"`
+	CpuLoadAvgBp   *int32    `json:"cpu_load_avg_bp"`
+	CpuLoadMaxBp   *int32    `json:"cpu_load_max_bp"`
+	RamAvgBp       *int32    `json:"ram_avg_bp"`
+	RamMaxBp       *int32    `json:"ram_max_bp"`
+	GpuLoadAvgBp   *int32    `json:"gpu_load_avg_bp"`
+	GpuLoadMaxBp   *int32    `json:"gpu_load_max_bp"`
+	CpuTempAvgDeci *int32    `json:"cpu_temp_avg_deci"`
+	CpuTempMaxDeci *int32    `json:"cpu_temp_max_deci"`
+	GpuTempAvgDeci *int32    `json:"gpu_temp_avg_deci"`
+	GpuTempMaxDeci *int32    `json:"gpu_temp_max_deci"`
+	// Минимум свободного места на системном диске за час (МБ) и объём диска в тот момент (system_disk_total_mb)
+	SystemDiskFreeMb      *int64  `json:"system_disk_free_mb"`
+	SystemDiskTotalMb     *int64  `json:"system_disk_total_mb"`
+	SmartWorst            *string `json:"smart_worst"`
+	PeripheralDisconnects int32   `json:"peripheral_disconnects"`
+	// Внезапных выключений за этот час (прирост счётчика агента «перед загрузкой» по boot_id; не измерено — 0); bugchecks — то же для «синих экранов»
+	UnexpectedShutdowns int32 `json:"unexpected_shutdowns"`
+	Bugchecks           int32 `json:"bugchecks"`
+}
+
 type ComputerReservation struct {
 	ID             int64      `json:"id"`
 	ClubID         int64      `json:"club_id"`

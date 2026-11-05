@@ -56,9 +56,9 @@ func ParsePoolConfig(dsn string) (*pgxpool.Config, error) {
 }
 
 // PartitionedTables — таблицы с месячными партициями (0002_ledger.sql, 0003_audit.sql, 0011_events.sql, 0022_api_v1.sql,
-// 0030_computer_health_events.sql).
+// 0030_computer_health_events.sql, 0031_computer_health_hourly.sql).
 var PartitionedTables = []string{"ledger_transactions", "ledger_entries", "ledger_minute_entries", "audit_log", "activity_logs",
-	"api_request_logs", "computer_health_events"}
+	"api_request_logs", "computer_health_events", "computer_health_hourly"}
 
 // EnsurePartitions создаёт месячные партиции (UTC) с месяца from на months месяцев вперёд для всех
 // PartitionedTables; возвращает число созданных. Вызывает фоновая задача раз в сутки (Q-081) пулом
@@ -88,8 +88,9 @@ func EnsurePartitions(ctx context.Context, pool Beginner, from time.Time, months
 // RetentionTables — журналы со сроком хранения: только их партиции удаляет DropPartitionsBefore
 // (белый список и в zafiro_drop_monthly_partitions, 0026_log_retention.sql). ledger_* и audit_log
 // не удаляются никогда; activity_logs старый код хранил вечно. computer_health_events — история проблем здоровья ПК
-// (Этап 7, agent.health.event_retention; 0030).
-var RetentionTables = []string{"api_request_logs", "computer_health_events"}
+// (Этап 7, agent.health.event_retention; 0030), computer_health_hourly — почасовая история здоровья ПК
+// (agent.health.hourly_retention; 0031).
+var RetentionTables = []string{"api_request_logs", "computer_health_events", "computer_health_hourly"}
 
 // DropPartitionsBefore отсоединяет и удаляет (DETACH + DROP) месячные партиции table, весь месяц которых
 // раньше before; возвращает число удалённых. Пул — zafiro_platform (EXECUTE на функцию есть только у неё).

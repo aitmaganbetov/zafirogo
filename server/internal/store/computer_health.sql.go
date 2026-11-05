@@ -39,39 +39,47 @@ func (q *Queries) ComputerHealthClear(ctx context.Context, arg ComputerHealthCle
 	return result.RowsAffected(), nil
 }
 
-const computerHealthComputerExists = `-- name: ComputerHealthComputerExists :one
-SELECT EXISTS (SELECT 1 FROM club_computers WHERE club_id = $1 AND id = $2)::boolean
+const computerHealthComputer = `-- name: ComputerHealthComputer :one
+SELECT zafiro_computer_diskless(c.club_id, c.id) AS diskless
+FROM club_computers c
+WHERE c.club_id = $1 AND c.id = $2
 `
 
-type ComputerHealthComputerExistsParams struct {
+type ComputerHealthComputerParams struct {
 	ClubID     int64 `json:"club_id"`
 	ComputerID int64 `json:"computer_id"`
 }
 
-// Карточка ПК клуба есть (404 для чужого или удалённого ПК).
-func (q *Queries) ComputerHealthComputerExists(ctx context.Context, arg ComputerHealthComputerExistsParams) (bool, error) {
-	row := q.db.QueryRow(ctx, computerHealthComputerExists, arg.ClubID, arg.ComputerID)
-	var column_1 bool
-	err := row.Scan(&column_1)
-	return column_1, err
+// Карточка ПК клуба (нет строки — 404 для чужого или удалённого ПК) и признак «бездисковый» — то же правило, что у
+// стрима (0031 zafiro_computer_diskless, agent_presence.sql GetAgentComputer).
+func (q *Queries) ComputerHealthComputer(ctx context.Context, arg ComputerHealthComputerParams) (bool, error) {
+	row := q.db.QueryRow(ctx, computerHealthComputer, arg.ClubID, arg.ComputerID)
+	var diskless bool
+	err := row.Scan(&diskless)
+	return diskless, err
 }
 
 const computerHealthHistory = `-- name: ComputerHealthHistory :many
 SELECT id, kind, raised_at, cleared_at, details
 FROM computer_health_events
 WHERE club_id = $1 AND computer_id = $2
-  AND ($3::timestamptz IS NULL
-       OR (raised_at, id) < ($3::timestamptz, $4::bigint))
+  -- Бездисковый ПК (S7-H-18): проблем дисков в истории не показываем (тома образа или запись до перевода ПК) — фильтр
+  -- до keyset-страницы, иначе страница могла бы оказаться пустой при следующей. hidden_kinds — health.DiskKinds у
+  -- бездискового ПК, пусто у обычного (http/sections/clubmap hiddenKinds).
+  AND kind <> ALL ($3::text[])
+  AND ($4::timestamptz IS NULL
+       OR (raised_at, id) < ($4::timestamptz, $5::bigint))
 ORDER BY raised_at DESC, id DESC
-LIMIT $5
+LIMIT $6
 `
 
 type ComputerHealthHistoryParams struct {
-	ClubID     int64      `json:"club_id"`
-	ComputerID int64      `json:"computer_id"`
-	BeforeAt   *time.Time `json:"before_at"`
-	BeforeID   *int64     `json:"before_id"`
-	PageSize   int32      `json:"page_size"`
+	ClubID      int64      `json:"club_id"`
+	ComputerID  int64      `json:"computer_id"`
+	HiddenKinds []string   `json:"hidden_kinds"`
+	BeforeAt    *time.Time `json:"before_at"`
+	BeforeID    *int64     `json:"before_id"`
+	PageSize    int32      `json:"page_size"`
 }
 
 type ComputerHealthHistoryRow struct {
@@ -87,6 +95,7 @@ func (q *Queries) ComputerHealthHistory(ctx context.Context, arg ComputerHealthH
 	rows, err := q.db.Query(ctx, computerHealthHistory,
 		arg.ClubID,
 		arg.ComputerID,
+		arg.HiddenKinds,
 		arg.BeforeAt,
 		arg.BeforeID,
 		arg.PageSize,

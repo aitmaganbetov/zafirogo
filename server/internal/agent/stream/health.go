@@ -10,6 +10,7 @@ import (
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/health"
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/identity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 )
 
@@ -178,4 +179,44 @@ func (c *conn) pingResult(res *agentv1.CommandResult, now time.Time) bool {
 	c.st.RTTMillis = uint32(min(ms, 1<<31)) // #nosec G115 -- ограничено
 	c.pingID = ""
 	return true
+}
+
+// lastHealth — здоровье из снимка присутствия до этого подключения (прошлое подключение или переезд с другого
+// инстанса): периферия, отключённая между подключениями, тоже считается отключением в почасовой истории. Читается,
+// только если Hello несёт health и история включена; сбой Valkey — nil (отключения не посчитаются, подключение идёт).
+func (s *Service) lastHealth(ctx context.Context, id identity.Identity, hs *agentv1.Status) *presence.Health {
+	if s.hourly == nil || hs.GetHealth() == nil {
+		return nil
+	}
+	h, err := s.store.LastHealth(ctx, id.ClubID, id.ComputerID)
+	if err != nil {
+		s.o.Log.Warn("agent health: last snapshot", "computer_id", id.ComputerID, "err", err)
+		return nil
+	}
+	return h
+}
+
+// recordHourly — принятый Status в почасовую историю (агрегат часа в Valkey, health.Hourly; горутина чтения стрима).
+// prevHealth — здоровье до этого Status (отключения периферии), st — снимок после него. Сбой Valkey не рвёт стрим:
+// измерение пропускается (история — сводка, а не учёт).
+func (c *conn) recordHourly(ctx context.Context, s *agentv1.Status, prevHealth *presence.Health, st presence.State, now time.Time) {
+	h := c.svc.hourly
+	if h == nil {
+		return
+	}
+	sm := health.Sample{ClubID: c.id.ClubID, ComputerID: c.id.ComputerID, At: now, Since: c.hourlyAt, BootID: c.bootID,
+		InSession: st.AgentState == presence.StateInSession || st.SessionID != ""}
+	if s.GetLoad() != nil {
+		l := st.Load
+		sm.Load = &l
+	}
+	if s.GetHealth() != nil {
+		sm.Health = st.Health
+		sm.PeripheralDisconnects = health.PeripheralDisconnects(prevHealth, st.Health)
+	}
+	if err := h.Record(ctx, sm); err != nil {
+		c.svc.o.Log.Warn("agent health: hourly", "computer_id", c.id.ComputerID, "err", err)
+		return
+	}
+	c.hourlyAt = now
 }

@@ -113,6 +113,108 @@ func (e HealthProblem) Valid() bool {
 	}
 }
 
+// Defines values for HealthVerdictLevel.
+const (
+	VerdictOk     HealthVerdictLevel = "ok"
+	VerdictRepair HealthVerdictLevel = "repair"
+	VerdictWatch  HealthVerdictLevel = "watch"
+)
+
+// Valid indicates whether the value is a known member of the HealthVerdictLevel enum.
+func (e HealthVerdictLevel) Valid() bool {
+	switch e {
+	case VerdictOk:
+		return true
+	case VerdictRepair:
+		return true
+	case VerdictWatch:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HealthVerdictReasonCode.
+const (
+	HealthVerdictReasonCodeBugchecks    HealthVerdictReasonCode = "bugchecks"
+	HealthVerdictReasonCodeCpuHot       HealthVerdictReasonCode = "cpu_hot"
+	HealthVerdictReasonCodeCpuTempRise  HealthVerdictReasonCode = "cpu_temp_rise"
+	HealthVerdictReasonCodeDiskLow      HealthVerdictReasonCode = "disk_low"
+	HealthVerdictReasonCodeGpuHot       HealthVerdictReasonCode = "gpu_hot"
+	HealthVerdictReasonCodeGpuTempRise  HealthVerdictReasonCode = "gpu_temp_rise"
+	HealthVerdictReasonCodeNetworkSlow  HealthVerdictReasonCode = "network_slow"
+	HealthVerdictReasonCodeShutdowns    HealthVerdictReasonCode = "shutdowns"
+	HealthVerdictReasonCodeSmartFailing HealthVerdictReasonCode = "smart_failing"
+	HealthVerdictReasonCodeSmartWarning HealthVerdictReasonCode = "smart_warning"
+)
+
+// Valid indicates whether the value is a known member of the HealthVerdictReasonCode enum.
+func (e HealthVerdictReasonCode) Valid() bool {
+	switch e {
+	case HealthVerdictReasonCodeBugchecks:
+		return true
+	case HealthVerdictReasonCodeCpuHot:
+		return true
+	case HealthVerdictReasonCodeCpuTempRise:
+		return true
+	case HealthVerdictReasonCodeDiskLow:
+		return true
+	case HealthVerdictReasonCodeGpuHot:
+		return true
+	case HealthVerdictReasonCodeGpuTempRise:
+		return true
+	case HealthVerdictReasonCodeNetworkSlow:
+		return true
+	case HealthVerdictReasonCodeShutdowns:
+		return true
+	case HealthVerdictReasonCodeSmartFailing:
+		return true
+	case HealthVerdictReasonCodeSmartWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HealthVerdictReasonLevel.
+const (
+	ReasonRepair HealthVerdictReasonLevel = "repair"
+	ReasonWatch  HealthVerdictReasonLevel = "watch"
+)
+
+// Valid indicates whether the value is a known member of the HealthVerdictReasonLevel enum.
+func (e HealthVerdictReasonLevel) Valid() bool {
+	switch e {
+	case ReasonRepair:
+		return true
+	case ReasonWatch:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HealthWeekSmart.
+const (
+	WeekSmartFailing HealthWeekSmart = "failing"
+	WeekSmartOk      HealthWeekSmart = "ok"
+	WeekSmartWarning HealthWeekSmart = "warning"
+)
+
+// Valid indicates whether the value is a known member of the HealthWeekSmart enum.
+func (e HealthWeekSmart) Valid() bool {
+	switch e {
+	case WeekSmartFailing:
+		return true
+	case WeekSmartOk:
+		return true
+	case WeekSmartWarning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PeripheralViewKind.
 const (
 	PeripheralViewKindHeadset  PeripheralViewKind = "headset"
@@ -188,10 +290,15 @@ type ComputerHealthView struct {
 	AgentVersion *string                      `json:"agent_version,omitempty"`
 	ComputerId   int64                        `json:"computer_id"`
 	Connection   ComputerHealthViewConnection `json:"connection"`
-	Health       *HealthSnapshot              `json:"health,omitempty"`
-	Load         *ComputerLoad                `json:"load,omitempty"`
-	Problems     []HealthProblem              `json:"problems"`
-	RttMs        *int64                       `json:"rtt_ms,omitempty"`
+
+	// Diskless Бездисковый ПК (загрузка по сети с сервера образов; последний сертификат ПК выпущен по ключу образа,
+	// agent_certificates.diskless). Локальных дисков нет: агент их не собирает, сервер не считает по ним проблемы и
+	// причины вердикта, disks пуст, поля системного диска и SMART недель — null (docs/agent-protocol.md §16.9).
+	Diskless HealthDiskless  `json:"diskless"`
+	Health   *HealthSnapshot `json:"health,omitempty"`
+	Load     *ComputerLoad   `json:"load,omitempty"`
+	Problems []HealthProblem `json:"problems"`
+	RttMs    *int64          `json:"rtt_ms,omitempty"`
 }
 
 // ComputerHealthViewConnection defines model for ComputerHealthView.Connection.
@@ -316,6 +423,11 @@ type EndSessionsResult struct {
 	Message string `json:"message"`
 }
 
+// HealthDiskless Бездисковый ПК (загрузка по сети с сервера образов; последний сертификат ПК выпущен по ключу образа,
+// agent_certificates.diskless). Локальных дисков нет: агент их не собирает, сервер не считает по ним проблемы и
+// причины вердикта, disks пуст, поля системного диска и SMART недель — null (docs/agent-protocol.md §16.9).
+type HealthDiskless = bool
+
 // HealthEvent defines model for HealthEvent.
 type HealthEvent struct {
 	// ClearedAt Когда проблема ушла (null — ещё есть).
@@ -336,6 +448,32 @@ type HealthEvent struct {
 type HealthEventPage struct {
 	Items      []HealthEvent `json:"items"`
 	NextCursor *string       `json:"next_cursor,omitempty"`
+}
+
+// HealthHour defines model for HealthHour.
+type HealthHour struct {
+	CpuLoadAvgBp   *int64    `json:"cpu_load_avg_bp,omitempty"`
+	CpuLoadMaxBp   *int64    `json:"cpu_load_max_bp,omitempty"`
+	CpuTempAvgDeci *int64    `json:"cpu_temp_avg_deci,omitempty"`
+	CpuTempMaxDeci *int64    `json:"cpu_temp_max_deci,omitempty"`
+	GpuLoadAvgBp   *int64    `json:"gpu_load_avg_bp,omitempty"`
+	GpuLoadMaxBp   *int64    `json:"gpu_load_max_bp,omitempty"`
+	GpuTempAvgDeci *int64    `json:"gpu_temp_avg_deci,omitempty"`
+	GpuTempMaxDeci *int64    `json:"gpu_temp_max_deci,omitempty"`
+	Hour           time.Time `json:"hour"`
+	OnlineMinutes  int64     `json:"online_minutes"`
+	RamAvgBp       *int64    `json:"ram_avg_bp,omitempty"`
+	RamMaxBp       *int64    `json:"ram_max_bp,omitempty"`
+	SessionMinutes int64     `json:"session_minutes"`
+}
+
+// HealthHourPage defines model for HealthHourPage.
+type HealthHourPage struct {
+	// Diskless Бездисковый ПК (загрузка по сети с сервера образов; последний сертификат ПК выпущен по ключу образа,
+	// agent_certificates.diskless). Локальных дисков нет: агент их не собирает, сервер не считает по ним проблемы и
+	// причины вердикта, disks пуст, поля системного диска и SMART недель — null (docs/agent-protocol.md §16.9).
+	Diskless HealthDiskless `json:"diskless"`
+	Items    []HealthHour   `json:"items"`
 }
 
 // HealthProblem Проблема здоровья ПК (agent.health.*): cpu_hot / gpu_hot — перегрев; disk_low — мало места; disk_smart —
@@ -364,6 +502,112 @@ type HealthSnapshot struct {
 	ReportedAt            time.Time `json:"reported_at"`
 	UnexpectedShutdowns7d int64     `json:"unexpected_shutdowns_7d"`
 	UptimeSeconds         *int64    `json:"uptime_seconds,omitempty"`
+}
+
+// HealthVerdict Вердикт исправности за неделю (docs/agent-protocol.md §16.7): ok — исправен, watch — наблюдать, repair — требует
+// ремонта; уровень — наихудший из причин.
+type HealthVerdict struct {
+	Level   HealthVerdictLevel    `json:"level"`
+	Reasons []HealthVerdictReason `json:"reasons"`
+}
+
+// HealthVerdictLevel defines model for HealthVerdict.Level.
+type HealthVerdictLevel string
+
+// HealthVerdictReason defines model for HealthVerdictReason.
+type HealthVerdictReason struct {
+	// Code smart_failing / smart_warning — SMART диска; bugchecks — «синие экраны» (value — сколько, threshold — порог);
+	// cpu_hot / gpu_hot — часов перегрева (value — часы, threshold — °C); shutdowns — внезапные выключения;
+	// disk_low — свободно на системном диске (value, threshold — %); cpu_temp_rise / gpu_temp_rise — рост средней
+	// температуры к прошлой неделе (value, threshold — °C); network_slow — только у бездискового ПК: часов с медленной
+	// сетью (value — часы, threshold — Мбит/с).
+	Code      HealthVerdictReasonCode  `json:"code"`
+	Level     HealthVerdictReasonLevel `json:"level"`
+	Threshold int64                    `json:"threshold"`
+	Value     int64                    `json:"value"`
+}
+
+// HealthVerdictReasonCode smart_failing / smart_warning — SMART диска; bugchecks — «синие экраны» (value — сколько, threshold — порог);
+// cpu_hot / gpu_hot — часов перегрева (value — часы, threshold — °C); shutdowns — внезапные выключения;
+// disk_low — свободно на системном диске (value, threshold — %); cpu_temp_rise / gpu_temp_rise — рост средней
+// температуры к прошлой неделе (value, threshold — °C); network_slow — только у бездискового ПК: часов с медленной
+// сетью (value — часы, threshold — Мбит/с).
+type HealthVerdictReasonCode string
+
+// HealthVerdictReasonLevel defines model for HealthVerdictReason.Level.
+type HealthVerdictReasonLevel string
+
+// HealthWeek defines model for HealthWeek.
+type HealthWeek struct {
+	// Bugchecks «Синих экранов» за неделю.
+	Bugchecks int64 `json:"bugchecks"`
+
+	// CpuHotHours Часов, когда максимум температуры CPU был не ниже порога перегрева (agent.health.cpu_temp_c).
+	CpuHotHours int64 `json:"cpu_hot_hours"`
+
+	// CpuLoadAvgBp Средняя загрузка CPU за неделю (по минутам в сети), сотые доли процента.
+	CpuLoadAvgBp *int64 `json:"cpu_load_avg_bp,omitempty"`
+	CpuLoadMaxBp *int64 `json:"cpu_load_max_bp,omitempty"`
+
+	// CpuTempAvgDeci Средняя температура CPU, десятые доли °C.
+	CpuTempAvgDeci *int64 `json:"cpu_temp_avg_deci,omitempty"`
+	CpuTempMaxDeci *int64 `json:"cpu_temp_max_deci,omitempty"`
+
+	// End Конец недели (не включительно).
+	End            time.Time `json:"end"`
+	GpuHotHours    int64     `json:"gpu_hot_hours"`
+	GpuLoadAvgBp   *int64    `json:"gpu_load_avg_bp,omitempty"`
+	GpuLoadMaxBp   *int64    `json:"gpu_load_max_bp,omitempty"`
+	GpuTempAvgDeci *int64    `json:"gpu_temp_avg_deci,omitempty"`
+	GpuTempMaxDeci *int64    `json:"gpu_temp_max_deci,omitempty"`
+
+	// NetworkSlowHours Часов в сети, когда была открыта проблема network_slow (скорость сети ниже порога).
+	NetworkSlowHours int64 `json:"network_slow_hours"`
+
+	// OnlineMinutes Минут в сети.
+	OnlineMinutes int64 `json:"online_minutes"`
+
+	// PeripheralDisconnects Сколько раз отключались мышь, клавиатура или монитор.
+	PeripheralDisconnects int64 `json:"peripheral_disconnects"`
+
+	// ProblemHours Часов в сети, когда была открыта хоть одна проблема здоровья (computer_health_events).
+	ProblemHours int64  `json:"problem_hours"`
+	RamAvgBp     *int64 `json:"ram_avg_bp,omitempty"`
+	RamMaxBp     *int64 `json:"ram_max_bp,omitempty"`
+
+	// SessionMinutes Минут в сессии.
+	SessionMinutes int64 `json:"session_minutes"`
+
+	// Smart Худшее состояние SMART за неделю (null — не измерено).
+	Smart *HealthWeekSmart `json:"smart,omitempty"`
+
+	// Start Начало недели — понедельник 00:00 в поясе клуба.
+	Start time.Time `json:"start"`
+
+	// SystemDiskFreeBp Минимум свободного места на системном диске, сотые доли процента.
+	SystemDiskFreeBp *int64 `json:"system_disk_free_bp,omitempty"`
+
+	// SystemDiskFreeMb Минимум свободного места на системном диске, МБ.
+	SystemDiskFreeMb *int64 `json:"system_disk_free_mb,omitempty"`
+
+	// UnexpectedShutdowns Внезапных выключений за неделю.
+	UnexpectedShutdowns int64 `json:"unexpected_shutdowns"`
+
+	// Verdict Вердикт исправности за неделю (docs/agent-protocol.md §16.7): ok — исправен, watch — наблюдать, repair — требует
+	// ремонта; уровень — наихудший из причин.
+	Verdict HealthVerdict `json:"verdict"`
+}
+
+// HealthWeekSmart Худшее состояние SMART за неделю (null — не измерено).
+type HealthWeekSmart string
+
+// HealthWeekPage defines model for HealthWeekPage.
+type HealthWeekPage struct {
+	// Diskless Бездисковый ПК (загрузка по сети с сервера образов; последний сертификат ПК выпущен по ключу образа,
+	// agent_certificates.diskless). Локальных дисков нет: агент их не собирает, сервер не считает по ним проблемы и
+	// причины вердикта, disks пуст, поля системного диска и SMART недель — null (docs/agent-protocol.md §16.9).
+	Diskless HealthDiskless `json:"diskless"`
+	Weeks    []HealthWeek   `json:"weeks"`
 }
 
 // MapTariff defines model for MapTariff.
@@ -476,6 +720,18 @@ type ListComputerHealthEventsParams struct {
 	Cursor *externalRef0.Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// GetComputerHealthHourlyParams defines parameters for GetComputerHealthHourly.
+type GetComputerHealthHourlyParams struct {
+	From time.Time `form:"from" json:"from"`
+	To   time.Time `form:"to" json:"to"`
+}
+
+// GetComputerHealthWeeklyParams defines parameters for GetComputerHealthWeekly.
+type GetComputerHealthWeeklyParams struct {
+	// Weeks Сколько недель, включая текущую (1..12, по умолчанию 8).
+	Weeks *int32 `form:"weeks,omitempty" json:"weeks,omitempty"`
+}
+
 // GetClubMapStateParams defines parameters for GetClubMapState.
 type GetClubMapStateParams struct {
 	// Ids id ПК через запятую (не больше 500).
@@ -529,6 +785,12 @@ type ServerInterface interface {
 	// ListComputerHealthEvents История проблем ПК
 	// (GET /api/club-computers/{computerId}/health/events)
 	ListComputerHealthEvents(w http.ResponseWriter, r *http.Request, computerId ComputerId, params ListComputerHealthEventsParams)
+	// GetComputerHealthHourly Здоровье ПК по часам (график недели)
+	// (GET /api/club-computers/{computerId}/health/hourly)
+	GetComputerHealthHourly(w http.ResponseWriter, r *http.Request, computerId ComputerId, params GetComputerHealthHourlyParams)
+	// GetComputerHealthWeekly Здоровье ПК по неделям с вердиктом исправности
+	// (GET /api/club-computers/{computerId}/health/weekly)
+	GetComputerHealthWeekly(w http.ResponseWriter, r *http.Request, computerId ComputerId, params GetComputerHealthWeeklyParams)
 	// UpdateComputerLayout Место ПК в зоне
 	// (PATCH /api/club-computers/{computerId}/layout)
 	UpdateComputerLayout(w http.ResponseWriter, r *http.Request, computerId ComputerId)
@@ -598,6 +860,18 @@ func (_ Unimplemented) GetComputerHealth(w http.ResponseWriter, r *http.Request,
 // ListComputerHealthEvents История проблем ПК
 // (GET /api/club-computers/{computerId}/health/events)
 func (_ Unimplemented) ListComputerHealthEvents(w http.ResponseWriter, r *http.Request, computerId ComputerId, params ListComputerHealthEventsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetComputerHealthHourly Здоровье ПК по часам (график недели)
+// (GET /api/club-computers/{computerId}/health/hourly)
+func (_ Unimplemented) GetComputerHealthHourly(w http.ResponseWriter, r *http.Request, computerId ComputerId, params GetComputerHealthHourlyParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetComputerHealthWeekly Здоровье ПК по неделям с вердиктом исправности
+// (GET /api/club-computers/{computerId}/health/weekly)
+func (_ Unimplemented) GetComputerHealthWeekly(w http.ResponseWriter, r *http.Request, computerId ComputerId, params GetComputerHealthWeeklyParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -824,6 +1098,103 @@ func (siw *ServerInterfaceWrapper) ListComputerHealthEvents(w http.ResponseWrite
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListComputerHealthEvents(w, r, computerId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetComputerHealthHourly operation middleware
+func (siw *ServerInterfaceWrapper) GetComputerHealthHourly(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "computerId" -------------
+	var computerId ComputerId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "computerId", chi.URLParam(r, "computerId"), &computerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "computerId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetComputerHealthHourlyParams
+
+	// ------------- Required query parameter "from" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "from", r.URL.Query(), &params.From, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "to", r.URL.Query(), &params.To, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetComputerHealthHourly(w, r, computerId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetComputerHealthWeekly operation middleware
+func (siw *ServerInterfaceWrapper) GetComputerHealthWeekly(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "computerId" -------------
+	var computerId ComputerId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "computerId", chi.URLParam(r, "computerId"), &computerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "computerId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetComputerHealthWeeklyParams
+
+	// ------------- Optional query parameter "weeks" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "weeks", r.URL.Query(), &params.Weeks, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "weeks"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "weeks", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetComputerHealthWeekly(w, r, computerId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1181,6 +1552,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/club-computers/{computerId}/health/events", wrapper.ListComputerHealthEvents)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/club-computers/{computerId}/health/weekly", wrapper.GetComputerHealthWeekly)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/club-computers/{computerId}/health/hourly", wrapper.GetComputerHealthHourly)
 	})
 
 	return r
@@ -1722,6 +2099,212 @@ func (response ListComputerHealthEvents404JSONResponse) VisitListComputerHealthE
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetComputerHealthHourlyRequestObject struct {
+	ComputerId ComputerId `json:"computerId"`
+	Params     GetComputerHealthHourlyParams
+}
+
+type GetComputerHealthHourlyResponseObject interface {
+	VisitGetComputerHealthHourlyResponse(w http.ResponseWriter) error
+}
+
+type GetComputerHealthHourly200JSONResponse HealthHourPage
+
+func (response GetComputerHealthHourly200JSONResponse) VisitGetComputerHealthHourlyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetComputerHealthHourly400JSONResponse struct {
+	externalRef0.BadRequestJSONResponse
+}
+
+func (response GetComputerHealthHourly400JSONResponse) VisitGetComputerHealthHourlyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetComputerHealthHourly401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response GetComputerHealthHourly401JSONResponse) VisitGetComputerHealthHourlyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetComputerHealthHourly403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response GetComputerHealthHourly403JSONResponse) VisitGetComputerHealthHourlyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetComputerHealthHourly404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response GetComputerHealthHourly404JSONResponse) VisitGetComputerHealthHourlyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetComputerHealthHourly422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response GetComputerHealthHourly422JSONResponse) VisitGetComputerHealthHourlyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetComputerHealthWeeklyRequestObject struct {
+	ComputerId ComputerId `json:"computerId"`
+	Params     GetComputerHealthWeeklyParams
+}
+
+type GetComputerHealthWeeklyResponseObject interface {
+	VisitGetComputerHealthWeeklyResponse(w http.ResponseWriter) error
+}
+
+type GetComputerHealthWeekly200JSONResponse HealthWeekPage
+
+func (response GetComputerHealthWeekly200JSONResponse) VisitGetComputerHealthWeeklyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetComputerHealthWeekly400JSONResponse struct {
+	externalRef0.BadRequestJSONResponse
+}
+
+func (response GetComputerHealthWeekly400JSONResponse) VisitGetComputerHealthWeeklyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetComputerHealthWeekly401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response GetComputerHealthWeekly401JSONResponse) VisitGetComputerHealthWeeklyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetComputerHealthWeekly403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response GetComputerHealthWeekly403JSONResponse) VisitGetComputerHealthWeeklyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetComputerHealthWeekly404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response GetComputerHealthWeekly404JSONResponse) VisitGetComputerHealthWeeklyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetComputerHealthWeekly422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response GetComputerHealthWeekly422JSONResponse) VisitGetComputerHealthWeeklyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -2375,6 +2958,12 @@ type StrictServerInterface interface {
 	// ListComputerHealthEvents История проблем ПК
 	// (GET /api/club-computers/{computerId}/health/events)
 	ListComputerHealthEvents(ctx context.Context, request ListComputerHealthEventsRequestObject) (ListComputerHealthEventsResponseObject, error)
+	// GetComputerHealthHourly Здоровье ПК по часам (график недели)
+	// (GET /api/club-computers/{computerId}/health/hourly)
+	GetComputerHealthHourly(ctx context.Context, request GetComputerHealthHourlyRequestObject) (GetComputerHealthHourlyResponseObject, error)
+	// GetComputerHealthWeekly Здоровье ПК по неделям с вердиктом исправности
+	// (GET /api/club-computers/{computerId}/health/weekly)
+	GetComputerHealthWeekly(ctx context.Context, request GetComputerHealthWeeklyRequestObject) (GetComputerHealthWeeklyResponseObject, error)
 	// UpdateComputerLayout Место ПК в зоне
 	// (PATCH /api/club-computers/{computerId}/layout)
 	UpdateComputerLayout(ctx context.Context, request UpdateComputerLayoutRequestObject) (UpdateComputerLayoutResponseObject, error)
@@ -2638,6 +3227,60 @@ func (sh *strictHandler) ListComputerHealthEvents(w http.ResponseWriter, r *http
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListComputerHealthEventsResponseObject); ok {
 		if err := validResponse.VisitListComputerHealthEventsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetComputerHealthHourly operation middleware
+func (sh *strictHandler) GetComputerHealthHourly(w http.ResponseWriter, r *http.Request, computerId ComputerId, params GetComputerHealthHourlyParams) {
+	var request GetComputerHealthHourlyRequestObject
+
+	request.ComputerId = computerId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetComputerHealthHourly(ctx, request.(GetComputerHealthHourlyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetComputerHealthHourly")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetComputerHealthHourlyResponseObject); ok {
+		if err := validResponse.VisitGetComputerHealthHourlyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetComputerHealthWeekly operation middleware
+func (sh *strictHandler) GetComputerHealthWeekly(w http.ResponseWriter, r *http.Request, computerId ComputerId, params GetComputerHealthWeeklyParams) {
+	var request GetComputerHealthWeeklyRequestObject
+
+	request.ComputerId = computerId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetComputerHealthWeekly(ctx, request.(GetComputerHealthWeeklyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetComputerHealthWeekly")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetComputerHealthWeeklyResponseObject); ok {
+		if err := validResponse.VisitGetComputerHealthWeeklyResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

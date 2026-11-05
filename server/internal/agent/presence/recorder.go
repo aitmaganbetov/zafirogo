@@ -49,7 +49,8 @@ func NewRecorder(pool db.Beginner, debounce time.Duration, now func() time.Time,
 // Writes — сколько UPDATE club_computers выполнил этот Recorder (метрика и тесты «нет записей без изменений»).
 func (r *Recorder) Writes() int64 { return r.writes.Load() }
 
-// Load читает карточку ПК клуба (для Hello и Welcome).
+// Load читает карточку ПК клуба (для Hello и Welcome); Diskless — бездисковый ПК (0031 zafiro_computer_diskless —
+// то же правило, что у панели ПК, S7-H-18).
 func (r *Recorder) Load(ctx context.Context, clubID, computerID int64) (store.GetAgentComputerRow, error) {
 	var row store.GetAgentComputerRow
 	err := db.InTenantTx(ctx, r.pool, clubID, func(q *store.Queries) error {

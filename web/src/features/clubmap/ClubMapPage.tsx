@@ -430,7 +430,7 @@ export function ClubMapPage({ computer }: { readonly computer?: number } = {}) {
             </dl>
           </section>
           <section id="computer-reservation-info" className="cm-info-section" hidden={!infoState?.is_reserved}><h4>{t('Информация о брони')}</h4><p>{t('Бронь активна')}</p></section>
-          {info && <HealthSections key={info.id} computerId={info.id} fmt={fmt} />}
+          {info && <HealthSections key={info.id} computerId={info.id} fmt={fmt} locale={locale} tz={tz} />}
         </aside>
       </div>
       <div id="layout-status" className={`cm-saving${notice.show ? ' show' : ''}`}>{notice.text}</div>
