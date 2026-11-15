@@ -237,6 +237,13 @@ func (h *handlers) SaDashboard(ctx context.Context, req superadminapi.SaDashboar
 			out.ClubLoad = append(out.ClubLoad, row)
 		}
 
+		// Сверка балансов с журналом операций (аудит AC-3): открытые расхождения и давность последней успешной.
+		rec, err := q.SuperadminReconcileState(ctx)
+		if err != nil {
+			return err
+		}
+		out.LedgerReconcile = ledgerReconcileOf(rec, h.d.Superadmin.LedgerReconcileInterval, time.Now(), h.d.Locale(ctx))
+
 		// Планировщик: последний снимок сервера.
 		if latest, err := q.SuperadminLatestServerMetric(ctx); err == nil {
 			ago := nowMin - latest
@@ -368,6 +375,25 @@ func liveOf(s monitoring.Snapshot) superadminapi.Live {
 		l.QueueOldestMinutes = &m
 	}
 	return l
+}
+
+// ledgerReconcileStalePeriods — сколько периодов без успешной сверки считается остановкой (как алерт
+// ZafiroLedgerReconcileStale: три часа при периоде в час).
+const ledgerReconcileStalePeriods = 3
+
+// ledgerReconcileOf — строка «Сверка балансов с журналом» экрана «Сервер» (новая, аудит AC-3). Время сверки пишет
+// воркер по настоящим часам, поэтому и давность считается от них (now), а не от dev.fixed_now.
+func ledgerReconcileOf(r store.SuperadminReconcileStateRow, interval time.Duration, now time.Time, locale string) superadminapi.LedgerReconcile {
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	out := superadminapi.LedgerReconcile{OpenFindings: r.OpenFindings}
+	if r.LastSuccessAt != nil {
+		human := diffForHumans(*r.LastSuccessAt, now, locale)
+		out.AtHuman = &human
+		out.Stale = now.Sub(*r.LastSuccessAt) > ledgerReconcileStalePeriods*interval
+	}
+	return out
 }
 
 // backupOf — DashboardController::lastBackup(): время самого нового файла каталога бэкапов.

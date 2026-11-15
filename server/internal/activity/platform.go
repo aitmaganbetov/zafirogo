@@ -76,6 +76,9 @@ var PlatformEventLabels = []struct{ Event, Label string }{
 	{"superadmin.totp_failed", "Неверный код двухфакторной аутентификации"},
 	{"superadmin.totp_recovery_used", "Вход по коду восстановления"},
 	{"superadmin.totp_reset", "Сброс двухфакторной аутентификации"},
+	// Фоновая сверка балансов с журналом операций (аудит AC-3, новая функция; события пишет worker.LedgerReconcile).
+	{"ledger.drift_found", "Расхождение с журналом операций"},
+	{"ledger.drift_resolved", "Расхождение с журналом операций устранено"},
 }
 
 // PlatformLabel — подпись события журнала платформы (ключ перевода); ok = false — событие без подписи.

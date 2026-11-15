@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import { totpNow } from './visual/support';
 
 /*
  * Кабинет суперадмина (Этап 3, группа 6) — с моком API (page.route), против vite preview: тарифы платформы, блокировка
@@ -144,33 +145,93 @@ test('вход суперадмина: пароль → настройка TOTP 
   await expect(page).toHaveURL(/\/superadmin$/);
 });
 
-test('пользователи: сброс 2FA другого суперадмина с подтверждением (Этап 7)', async ({ page }) => {
+test('пользователи: сброс 2FA и выдача прав — окно подтверждения с кодом TOTP (Этап 7, аудит A-10)', async ({ page }) => {
   let reset = false;
+  let granted = false;
+  const bodies: { url: string; type: string | undefined; body: unknown }[] = [];
+  const seen = (r: Route) => bodies.push({ url: new URL(r.request().url()).pathname, type: r.request().headers()['content-type'], body: r.request().postDataJSON() });
   const list = () => ({
     items: [
       { id: 1, name: 'Супер Админ', phone: '+77010000001', is_superadmin: true, second_factor: true, blocked_since: null, self: true, memberships: [] },
       { id: 7, name: 'Второй', phone: '+77010000007', is_superadmin: true, second_factor: !reset, blocked_since: null, self: false, memberships: [] },
+      { id: 8, name: 'Кандидат', phone: '+77010000008', is_superadmin: granted, second_factor: false, blocked_since: null, self: false, memberships: [] },
     ],
-    page: 1, per_page: 30, total: 2,
+    page: 1, per_page: 30, total: 3,
   });
+  const good = totpNow();
+  const wrong = good === '000000' ? '000001' : '000000';
   await mockApi(page, ME, {
     'GET /api/superadmin/accounts': (r) => json(r, list()),
     'DELETE /api/superadmin/accounts/7/second-factor': (r) => {
+      seen(r);
       reset = true;
       return json(r, { message: 'Двухфакторная аутентификация сброшена.' });
     },
+    'POST /api/superadmin/accounts/8/superadmin': (r) => {
+      seen(r);
+      // Сервер: неверный или уже использованный код — 422 по полю code.
+      if ((r.request().postDataJSON() as { code?: string }).code !== good) {
+        return json(r, { error: 'validation_failed', message: 'Неверный код.', errors: { code: ['Неверный код.'] } }, 422);
+      }
+      granted = true;
+      return json(r, { message: 'Права суперадмина выданы.' });
+    },
   });
   await page.goto('/superadmin/accounts');
-  let question = '';
-  page.once('dialog', (d) => {
-    question = d.message();
-    void d.accept();
+  // Браузерного confirm больше нет: вопрос — в окне с полем кода.
+  let nativeDialogs = 0;
+  page.on('dialog', (d) => {
+    nativeDialogs++;
+    void d.dismiss();
   });
+  const dialog = page.getByRole('dialog');
+  const code = dialog.getByLabel('Код из приложения');
+
   await page.getByRole('button', { name: 'Сбросить 2FA' }).click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Сбросить двухфакторную аутентификацию Второй?');
+  await expect(code).toBeFocused();
+  // Без кода форма не уходит (required).
+  await dialog.getByRole('button', { name: 'Подтвердить' }).click();
+  expect(bodies).toHaveLength(0);
+  await code.fill(good);
+  await dialog.getByRole('button', { name: 'Подтвердить' }).click();
   await expect(page.getByRole('status')).toHaveText('Двухфакторная аутентификация сброшена.');
-  expect(question).toContain('Второй');
-  await expect(page.getByText('2FA не настроена')).toBeVisible();
+  await expect(dialog).toBeHidden();
+  expect(bodies[0]).toEqual({ url: '/api/superadmin/accounts/7/second-factor', type: 'application/json', body: { code: good } });
+  await expect(page.getByText('2FA не настроена').first()).toBeVisible();
   await expect(page.getByRole('button', { name: 'Сбросить 2FA' })).toHaveCount(0);
+
+  // Выдача прав: неверный код — ошибка под полем, окно открыто; верный — права выданы.
+  await page.getByRole('button', { name: 'Сделать суперадмином' }).click();
+  await expect(dialog).toContainText('Выдать Кандидат права суперадмина?');
+  await expect(code).toHaveValue('');
+  await code.fill(wrong);
+  await code.press('Enter');
+  await expect(dialog.getByRole('alert')).toHaveText('Неверный код.');
+  await expect(dialog).toBeVisible();
+  expect(granted).toBe(false);
+  await code.fill(good);
+  await code.press('Enter');
+  await expect(page.getByRole('status')).toHaveText('Права суперадмина выданы.');
+  await expect(dialog).toBeHidden();
+  expect(bodies.slice(1).map((b) => b.body)).toEqual([{ code: wrong }, { code: good }]);
+
+  // Escape закрывает окно без запроса.
+  await page.getByRole('button', { name: 'Снять права суперадмина' }).first().click();
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  expect(bodies).toHaveLength(3);
+  expect(nativeDialogs).toBe(0);
+
+  // Телефон (390 px): окно в пределах экрана, «Подтвердить» достижима.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Снять права суперадмина' }).first().click();
+  await expect(dialog).toBeVisible();
+  const box = await dialog.boundingBox();
+  expect(box && box.x >= 0 && box.x + box.width <= 390 && box.y >= 0 && box.y + box.height <= 844).toBe(true);
+  await expect(dialog.getByRole('button', { name: 'Подтвердить' })).toBeInViewport();
 });
 
 test('не суперадмину кабинет не открывается (403)', async ({ page }) => {

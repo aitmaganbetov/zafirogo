@@ -219,12 +219,12 @@ export interface paths {
         put?: never;
         /**
          * Выдать права суперадмина
-         * @description Laravel: UserController::grant().
+         * @description Laravel: UserController::grant(). Требует свежего кода TOTP действующего суперадмина в теле (аудит A-10): без кода или с неверным/уже использованным — 422 (поле code), лимит superadmin-totp — 429; не в режиме просмотра клуба (403 read_only).
          */
         post: operations["saGrantSuperadmin"];
         /**
          * Снять права суперадмина
-         * @description Laravel: UserController::revoke().
+         * @description Laravel: UserController::revoke(). Требует свежего кода TOTP действующего суперадмина в теле (аудит A-10): без кода или с неверным/уже использованным — 422 (поле code), лимит superadmin-totp — 429; не в режиме просмотра клуба (403 read_only).
          */
         delete: operations["saRevokeSuperadmin"];
         options?: never;
@@ -244,7 +244,7 @@ export interface paths {
         post?: never;
         /**
          * Сбросить второй фактор суперадмина
-         * @description Этап 7 (новая функция): ключ TOTP и коды восстановления удаляются, сеансы пользователя отзываются; при следующем входе — принудительная настройка. Не для своего аккаунта и не в режиме просмотра клуба (403 read_only). Журнал платформы superadmin.totp_reset и audit_log.
+         * @description Этап 7 (новая функция): ключ TOTP и коды восстановления удаляются, сеансы пользователя отзываются; при следующем входе — принудительная настройка. Не для своего аккаунта и не в режиме просмотра клуба (403 read_only). Журнал платформы superadmin.totp_reset и audit_log. Требует свежего кода TOTP действующего суперадмина в теле (аудит A-10): без кода или с неверным/уже использованным — 422 (поле code), лимит superadmin-totp — 429.
          */
         delete: operations["saResetSecondFactor"];
         options?: never;
@@ -552,6 +552,10 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Свежее подтверждение вторым фактором действующего суперадмина (аудит A-10) — код TOTP из приложения (6 цифр). Код восстановления не принимается. Один код — одно действие (повтор шага отклоняется, как при входе). */
+        SecondFactorConfirm: {
+            code: string;
+        };
         Message: {
             message: string;
         };
@@ -653,6 +657,18 @@ export interface components {
             at_human: string | null;
             stale: boolean;
         };
+        /** @description Фоновая сверка балансов клиентов и кассы с журналом операций (аудит AC-3, новая функция). Экран показывает строку, только когда есть открытые расхождения или сверка давно не проходила. */
+        LedgerReconcile: {
+            /**
+             * Format: int64
+             * @description Открытые расхождения по всем клубам (подробности — журнал платформы, событие ledger.drift_found).
+             */
+            open_findings: number;
+            /** @description Последняя успешная сверка старше трёх периодов (workers.ledger_reconcile.interval). */
+            stale: boolean;
+            /** @description Когда сверка в последний раз прошла успешно («2 часа назад»); null — ещё не проходила. */
+            at_human: string | null;
+        };
         AgentVersion: {
             version: string;
             /** Format: int64 */
@@ -696,6 +712,7 @@ export interface components {
             log_errors: components["schemas"]["LogError"][];
             certificate_hosts: components["schemas"]["CertificateHost"][];
             backup: components["schemas"]["Backup"];
+            ledger_reconcile: components["schemas"]["LedgerReconcile"];
             agent_versions: components["schemas"]["AgentVersion"][];
             latest_agent: string | null;
             agent_download_url: string | null;
@@ -1382,7 +1399,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecondFactorConfirm"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -1397,6 +1418,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     saRevokeSuperadmin: {
@@ -1408,7 +1430,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecondFactorConfirm"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -1423,6 +1449,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     saResetSecondFactor: {
@@ -1434,7 +1461,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecondFactorConfirm"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -1449,6 +1480,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     saListPlans: {

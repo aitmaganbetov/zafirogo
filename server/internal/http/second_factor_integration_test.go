@@ -37,13 +37,17 @@ import (
 // ---------------------------------------------------------------------------
 
 // testSecondFactor — второй фактор суперадмина для тестового сервера (ключ данных тестовый).
-func testSecondFactor(t *testing.T, platform db.Beginner, vk valkey.Client, lim *ratelimit.Limiter) *mfa.Manager {
+func testSecondFactor(t *testing.T, platform db.Beginner, vk valkey.Client, lim *ratelimit.Limiter, now ...func() time.Time) *mfa.Manager {
 	t.Helper()
 	box, err := secretbox.NewKeyring([]secretbox.Key{{ID: "t", Secret: strings.Repeat("k", 32)}}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := mfa.New(mfa.Options{Platform: platform, Valkey: vk, Box: box, Limiter: lim})
+	o := mfa.Options{Platform: platform, Valkey: vk, Box: box, Limiter: lim}
+	if len(now) > 0 {
+		o.Now = now[0]
+	}
+	m, err := mfa.New(o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,11 +116,77 @@ type sfEnv struct {
 	*adminEnv
 	svc *auth.Service
 	sm  *session.Manager
+	lim *ratelimit.Limiter
+}
+
+// resetTotpLimit — чистый счётчик superadmin-totp пользователя (окно лимита — настоящая минута).
+func (e *sfEnv) resetTotpLimit(userID int64) {
+	e.t.Helper()
+	for _, ip := range []string{"127.0.0.1", "::1"} {
+		if err := e.lim.Reset(context.Background(), ratelimit.SuperadminTOTP, ratelimit.Subject{IP: ip, UserID: userID}); err != nil {
+			e.t.Fatal(err)
+		}
+	}
 }
 
 // newSFEnv — сервер со вторым фактором; disable — выключенные лимиты (сценарии с многими попытками подряд).
 func newSFEnv(t *testing.T, disable ...string) *sfEnv {
 	t.Helper()
+	return newSFEnvAt(t, nil, disable...)
+}
+
+// sfClock — часы второго фактора в сценариях, где кодов нужно много: шаг TOTP (30 с) переводится вручную, а не
+// ожиданием настоящего времени.
+type sfClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *sfClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+// Next — следующий шаг TOTP.
+func (c *sfClock) Next() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(totp.Period * time.Second)
+}
+
+// signInAt — вход суперадмина по часам clock: пароль → настройка (первый вход) → код текущего шага. Возвращает
+// access-токен и ключ TOTP. После входа шаг часов использован — следующий код нужен на следующем шаге (clock.Next).
+func (e *sfEnv) signInAt(clock *sfClock, phone string) (access, secret string) {
+	e.t.Helper()
+	r := e.password(phone)
+	ch, _ := r.body["challenge"].(string)
+	if r.status != http.StatusAccepted || ch == "" {
+		e.t.Fatalf("login: %d %v", r.status, r.body)
+	}
+	if r.body["setup_required"] == true {
+		s := e.setup(ch)
+		if s.status != http.StatusOK {
+			e.t.Fatalf("setup: %d %v", s.status, s.body)
+		}
+		sfSecrets.Store(phone, s.body["secret"].(string))
+	}
+	v, _ := sfSecrets.Load(phone)
+	secret = v.(string)
+	res := e.verify(ch, codeFor(e.t, secret, totp.Step(clock.Now())))
+	if res.status != http.StatusOK {
+		e.t.Fatalf("verify: %d %v", res.status, res.body)
+	}
+	return res.body["session"].(map[string]any)["access_token"].(string), secret
+}
+
+// newSFEnvAt — как newSFEnv, с часами второго фактора clock (nil — настоящее время).
+func newSFEnvAt(t *testing.T, clock *sfClock, disable ...string) *sfEnv {
+	t.Helper()
+	var now []func() time.Time
+	if clock != nil {
+		now = append(now, clock.Now)
+	}
 	d, vk := sharedAdmin(t)
 	h, _ := password.New(password.Options{})
 	sm, err := session.New(session.Options{Client: vk, Keys: []session.Key{{ID: "t", Secret: bytes.Repeat([]byte{7}, 32)}}})
@@ -127,7 +197,7 @@ func newSFEnv(t *testing.T, disable ...string) *sfEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc, err := auth.NewService(auth.Options{Pool: d.App, Hasher: h, Sessions: sm, SecondFactor: testSecondFactor(t, d.Platform, vk, lim)})
+	svc, err := auth.NewService(auth.Options{Pool: d.App, Hasher: h, Sessions: sm, SecondFactor: testSecondFactor(t, d.Platform, vk, lim, now...)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +207,7 @@ func newSFEnv(t *testing.T, disable ...string) *sfEnv {
 	}))
 	t.Cleanup(srv.Close)
 	e := &adminEnv{t: t, db: d, srv: srv, club: d.Club(t, fmt.Sprintf("sf%d", adminSeq.Add(1)))}
-	return &sfEnv{adminEnv: e, svc: svc, sm: sm}
+	return &sfEnv{adminEnv: e, svc: svc, sm: sm, lim: lim}
 }
 
 func (e *sfEnv) password(phone string) resp {
@@ -309,11 +379,17 @@ func TestSecondFactorLegacySessionRejected(t *testing.T) {
 // Сброс другим суперадмином: с подтверждением на фронте, в журнал и аудит, сеансы отозваны, следующий вход —
 // настройка заново. Свой — нельзя; режим просмотра клуба — нельзя; не суперадмин — 403.
 func TestSecondFactorResetBySuperadmin(t *testing.T) {
-	e := newSFEnv(t)
+	clock := &sfClock{t: time.Now()}
+	e := newSFEnvAt(t, clock)
 	adminID, adminPhone := e.member("Главный", "", "", true)
 	victimID, victimPhone := e.member("Второй", "", "", true)
-	admin := passSecondFactor(t, e.srv.URL, adminPhone, e.password(adminPhone)).body["access_token"].(string)
-	victim := passSecondFactor(t, e.srv.URL, victimPhone, e.password(victimPhone)).body["access_token"].(string)
+	admin, adminSecret := e.signInAt(clock, adminPhone)
+	victim, _ := e.signInAt(clock, victimPhone)
+	// code — свежий код действующего суперадмина (аудит A-10): каждый раз новый шаг.
+	code := func() map[string]any {
+		clock.Next()
+		return map[string]any{"code": codeFor(t, adminSecret, totp.Step(clock.Now()))}
+	}
 
 	list := e.send6("GET", admin, "/api/superadmin/accounts?filter=superadmin", nil)
 	found := false
@@ -328,22 +404,22 @@ func TestSecondFactorResetBySuperadmin(t *testing.T) {
 	}
 
 	// Свой — нельзя.
-	if r := e.send6("DELETE", admin, fmt.Sprintf("/api/superadmin/accounts/%d/second-factor", adminID), nil); r.status != http.StatusUnprocessableEntity {
+	if r := e.send6("DELETE", admin, fmt.Sprintf("/api/superadmin/accounts/%d/second-factor", adminID), code()); r.status != http.StatusUnprocessableEntity {
 		t.Fatalf("self reset: %d %v", r.status, r.body)
 	}
 	// Режим просмотра клуба — нельзя.
 	expect(t, e.post(admin, fmt.Sprintf("/api/superadmin/clubs/%d/view", e.club), nil), 200, "view")
-	if r := e.send6("DELETE", admin, fmt.Sprintf("/api/superadmin/accounts/%d/second-factor", victimID), nil); r.status != http.StatusForbidden || r.body["error"] != permissions.CodeReadOnly {
+	if r := e.send6("DELETE", admin, fmt.Sprintf("/api/superadmin/accounts/%d/second-factor", victimID), code()); r.status != http.StatusForbidden || r.body["error"] != permissions.CodeReadOnly {
 		t.Fatalf("reset in view mode: %d %v", r.status, r.body)
 	}
 	expect(t, e.post(admin, "/api/superadmin/leave-club", nil), 200, "leave")
 	// Сотрудник клуба — 403.
 	_, owner := e.staff("Владелец", "owner")
-	if r := e.send6("DELETE", owner, fmt.Sprintf("/api/superadmin/accounts/%d/second-factor", victimID), nil); r.status != http.StatusForbidden {
+	if r := e.send6("DELETE", owner, fmt.Sprintf("/api/superadmin/accounts/%d/second-factor", victimID), map[string]any{"code": "000000"}); r.status != http.StatusForbidden {
 		t.Fatalf("staff reset: %d", r.status)
 	}
 
-	if r := e.send6("DELETE", admin, fmt.Sprintf("/api/superadmin/accounts/%d/second-factor", victimID), nil); r.status != http.StatusOK ||
+	if r := e.send6("DELETE", admin, fmt.Sprintf("/api/superadmin/accounts/%d/second-factor", victimID), code()); r.status != http.StatusOK ||
 		r.body["message"] != "Двухфакторная аутентификация сброшена." {
 		t.Fatalf("reset: %d %v", r.status, r.body)
 	}
@@ -361,7 +437,7 @@ func TestSecondFactorResetBySuperadmin(t *testing.T) {
 		t.Fatalf("login after reset: %d %v", r.status, r.body)
 	}
 	// Повтор сброса — нечего сбрасывать (настройка не начата).
-	if r := e.send6("DELETE", admin, fmt.Sprintf("/api/superadmin/accounts/%d/second-factor", victimID), nil); r.status != http.StatusUnprocessableEntity {
+	if r := e.send6("DELETE", admin, fmt.Sprintf("/api/superadmin/accounts/%d/second-factor", victimID), code()); r.status != http.StatusUnprocessableEntity {
 		t.Fatalf("second reset: %d %v", r.status, r.body)
 	}
 }
@@ -417,4 +493,125 @@ func mustSecret(t *testing.T, phone string) string {
 		t.Fatal("no secret")
 	}
 	return v.(string)
+}
+
+// Аудит A-10: выдача и снятие прав суперадмина и сброс чужого второго фактора — только со свежим кодом TOTP
+// действующего суперадмина. Без кода, с неверным, с кодом восстановления и с уже использованным (повтор шага) —
+// отказ 422 по полю code и запись superadmin.totp_failed; с верным — успех. Режим просмотра клуба — 403.
+func TestSuperadminActionsRequireFreshCode(t *testing.T) {
+	clock := &sfClock{t: time.Now()}
+	e := newSFEnvAt(t, clock)
+	adminID, adminPhone := e.member("Главный", "", "", true)
+	otherID, otherPhone := e.member("Второй", "", "", true)
+	targetID, _ := e.member("Кандидат", "", "", false)
+	admin, secret := e.signInAt(clock, adminPhone)
+	e.signInAt(clock, otherPhone) // у второго суперадмина настроен TOTP — есть что сбрасывать
+	loginStep := totp.Step(clock.Now())
+
+	isSuper := func(id int64) bool {
+		return e.scalar("SELECT count(*) FROM users WHERE id = $1 AND is_superadmin", id) == 1
+	}
+	hasTotp := func(id int64) bool {
+		return e.scalar("SELECT count(*) FROM superadmin_totp WHERE user_id = $1", id) == 1
+	}
+	codeErr := func(r resp, what string) {
+		t.Helper()
+		errs, _ := r.body["errors"].(map[string]any)
+		if r.status != http.StatusUnprocessableEntity || errs["code"] == nil {
+			t.Fatalf("%s: %d %v", what, r.status, r.body)
+		}
+	}
+	grant := fmt.Sprintf("/api/superadmin/accounts/%d/superadmin", targetID)
+	reset := fmt.Sprintf("/api/superadmin/accounts/%d/second-factor", otherID)
+	// Код восстановления (формат как у выданных при настройке) не принимается: только приложение.
+	recovery := "ABCDE-FGHJK"
+
+	actions := []struct {
+		name, method, path string
+		done               func() bool
+	}{
+		{"выдача прав", "POST", grant, func() bool { return isSuper(targetID) }},
+		{"снятие прав", "DELETE", grant, func() bool { return !isSuper(targetID) }},
+		{"сброс второго фактора", "DELETE", reset, func() bool { return !hasTotp(otherID) }},
+	}
+	failed := e.logCount(mfa.EventFailed, adminID)
+	for _, a := range actions {
+		e.resetTotpLimit(adminID)
+		// Без тела, с пустым кодом — «Введите код.»; в журнал неудач это не идёт (кода не было).
+		if r := e.send6(a.method, admin, a.path, nil); r.status != http.StatusBadRequest && r.status != http.StatusUnprocessableEntity {
+			t.Fatalf("%s без тела: %d %v", a.name, r.status, r.body)
+		}
+		codeErr(e.send6(a.method, admin, a.path, map[string]any{"code": ""}), a.name+" с пустым кодом")
+		codeErr(e.send6(a.method, admin, a.path, map[string]any{"code": "  "}), a.name+" с пробелами")
+		// Повтор шага: код, которым только что вошли (или подтвердили предыдущее действие).
+		codeErr(e.send6(a.method, admin, a.path, map[string]any{"code": codeFor(t, secret, totp.Step(clock.Now()))}), a.name+" с использованным кодом")
+		failed++
+		clock.Next()
+		good := codeFor(t, secret, totp.Step(clock.Now()))
+		wrong := "000000"
+		if wrong == good {
+			wrong = "000001"
+		}
+		codeErr(e.send6(a.method, admin, a.path, map[string]any{"code": wrong}), a.name+" с неверным кодом")
+		failed++
+		codeErr(e.send6(a.method, admin, a.path, map[string]any{"code": recovery}), a.name+" с кодом восстановления")
+		failed++
+		// Код входа давно в прошлом окне.
+		codeErr(e.send6(a.method, admin, a.path, map[string]any{"code": codeFor(t, secret, loginStep-5)}), a.name+" со старым кодом")
+		failed++
+		if a.done() {
+			t.Fatalf("%s выполнено без верного кода", a.name)
+		}
+		if got := e.logCount(mfa.EventFailed, adminID); got != failed {
+			t.Fatalf("%s: superadmin.totp_failed = %d, want %d", a.name, got, failed)
+		}
+		if r := e.send6(a.method, admin, a.path, map[string]any{"code": good}); r.status != http.StatusOK {
+			t.Fatalf("%s с верным кодом: %d %v", a.name, r.status, r.body)
+		}
+		if !a.done() {
+			t.Fatalf("%s: не выполнено", a.name)
+		}
+		// Тот же код второй раз — отказ (счётчик лимита — заново: окно лимита — минута настоящего времени).
+		e.resetTotpLimit(adminID)
+		codeErr(e.send6(a.method, admin, a.path, map[string]any{"code": good}), a.name+": повтор верного кода")
+		failed++
+	}
+	if e.logCount("superadmin.granted", targetID) != 1 || e.logCount("superadmin.revoked", targetID) != 1 || e.logCount(mfa.EventReset, otherID) != 1 {
+		t.Fatal("actions not logged")
+	}
+
+	// Лимит: шестой код за минуту — 429 с Retry-After, даже верный.
+	e.resetTotpLimit(adminID)
+	for i := 0; i < 5; i++ {
+		codeErr(e.send6("POST", admin, grant, map[string]any{"code": "000000"}), "неверный код перед лимитом")
+	}
+	clock.Next()
+	r := e.send6("POST", admin, grant, map[string]any{"code": codeFor(t, secret, totp.Step(clock.Now()))})
+	if r.status != http.StatusTooManyRequests || r.header.Get("Retry-After") == "" {
+		t.Fatalf("limit: %d %v", r.status, r.body)
+	}
+	if isSuper(targetID) {
+		t.Fatal("granted over the limit")
+	}
+	e.resetTotpLimit(adminID)
+
+	// Режим просмотра клуба: выдать и снять права нельзя даже с верным кодом.
+	expect(t, e.post(admin, fmt.Sprintf("/api/superadmin/clubs/%d/view", e.club), nil), 200, "view")
+	clock.Next()
+	body := map[string]any{"code": codeFor(t, secret, totp.Step(clock.Now()))}
+	for _, m := range []string{"POST", "DELETE"} {
+		if r := e.send6(m, admin, grant, body); r.status != http.StatusForbidden || r.body["error"] != permissions.CodeReadOnly {
+			t.Fatalf("%s in view mode: %d %v", m, r.status, r.body)
+		}
+	}
+	expect(t, e.post(admin, "/api/superadmin/leave-club", nil), 200, "leave")
+	// Код в режиме просмотра не проверялся и не израсходован.
+	if r := e.send6("POST", admin, grant, body); r.status != http.StatusOK || !isSuper(targetID) {
+		t.Fatalf("grant after view mode: %d %v", r.status, r.body)
+	}
+	// Сотрудник клуба — 403 до всякой проверки кода.
+	_, owner := e.staff("Владелец", "owner")
+	if r := e.send6("DELETE", owner, grant, body); r.status != http.StatusForbidden {
+		t.Fatalf("staff revoke: %d", r.status)
+	}
 }

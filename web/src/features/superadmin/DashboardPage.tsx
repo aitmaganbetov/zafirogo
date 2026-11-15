@@ -294,6 +294,17 @@ export function DashboardPage({ search }: { readonly search: DashboardSearch }) 
                 {!data.backup.configured ? t('Не настроен (BACKUP_PATH)') : !data.backup.at_human ? t('Файлов нет') : data.backup.at_human}
               </dd>
             </div>
+            {/* Аудит AC-3 (новое): строка появляется, только когда есть расхождения или сверка остановилась — в норме вид как в Blade. */}
+            {(data.ledger_reconcile.open_findings > 0 || data.ledger_reconcile.stale) && (
+              <div className="flex justify-between gap-3">
+                <dt className="text-gray-500">{t('Сверка балансов с журналом')}</dt>
+                <dd className="text-red-600">
+                  {data.ledger_reconcile.open_findings > 0
+                    ? t('Расхождений: {{n}}', { n: data.ledger_reconcile.open_findings })
+                    : t('Не выполняется, последняя — {{when}}', { when: data.ledger_reconcile.at_human ?? '—' })}
+                </dd>
+              </div>
+            )}
             {data.certificate_hosts.length > 0 ? (
               data.certificate_hosts.map((c) => (
                 <div key={c.host} className="flex justify-between gap-3">

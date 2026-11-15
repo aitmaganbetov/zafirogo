@@ -131,7 +131,7 @@ groups:
           (time() - zafiro:worker_last_run_timestamp_seconds{job=~"agent:auto-billing"}) > 180
           or (time() - zafiro:worker_last_run_timestamp_seconds{job=~"club-computers:expire-sessions|monitoring:collect"}) > 3 * 60
           or (time() - zafiro:worker_last_run_timestamp_seconds{job=~"subscriptions:expire|monitoring:clubs"}) > 3 * 300
-          or (time() - zafiro:worker_last_run_timestamp_seconds{job=~"logs:retention|secrets:reencrypt"}) > 3 * 3600
+          or (time() - zafiro:worker_last_run_timestamp_seconds{job=~"logs:retention|secrets:reencrypt|ledger:reconcile"}) > 3 * 3600
           or (time() - zafiro:worker_last_run_timestamp_seconds{job=~"time-packages:burn-expired|monitoring:prune|db:ensure-partitions"}) > 3 * 86400
         for: 5m
         labels: {severity: warning}
@@ -207,6 +207,29 @@ groups:
         annotations:
           summary: "{{ $value | humanizePercentage }} операций ledger откатываются"
           runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-ledger-errors
+
+      - alert: ZafiroLedgerDrift
+        # Фоновая сверка (воркер ledger:reconcile, аудит AC-3) нашла баланс клиента, операцию или снимок кассы, которые
+        # не сходятся с журналом операций. В норме 0; сверка ничего не исправляет. Значение одно на кластер (из базы).
+        expr: max(zafiro_ledger_reconcile_open_findings) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "Балансы не сходятся с журналом операций: расхождений — {{ $value | printf \"%.0f\" }}"
+          description: "Сверка ничего не исправляет. Список — журнал платформы суперадминки (событие ledger.drift_found) и таблица ledger_reconcile_findings."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-ledger-drift
+
+      - alert: ZafiroLedgerReconcileStale
+        # Сверка идёт раз в час (workers.ledger_reconcile.interval); три часа без успешной — она падает или не запускается.
+        # Ещё ни разу не прошла — метрика 0, условие тоже выполняется.
+        expr: |
+          (time() - max(zafiro_ledger_reconcile_last_success_timestamp_seconds)) > 3 * 3600
+          and on() count(up{job="zafiro"} == 1) > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Сверка балансов с журналом операций не проходила {{ $value | humanizeDuration }}"
+          description: "Расхождения балансов сейчас никто не ищет."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-ledger-drift
 
   - name: zafiro.security
     rules:

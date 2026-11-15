@@ -584,3 +584,28 @@ Telegram в `platform_settings` — `Crypt::encryptString` (`app/Services/Telegr
 - **`zafiro_computer_diskless(club_id, computer_id)`** — признак «бездисковый ПК» (S7-H-18, S7-H-22) одним правилом для
   стрима и панели: действующий неотозванный сертификат ПК, иначе последний выпущенный, иначе false. `LANGUAGE sql STABLE`,
   SECURITY INVOKER — `agent_certificates` читается с RLS вызывающего; права — как у `zafiro_current_club_id` (0004).
+
+## 16. Фоновая сверка с журналом операций (0033, аудит AC-3)
+
+Новая функция (в старом Laravel нет ни журнала, ни сверки) — при переносе из MySQL таблицы пустые. Воркер
+`ledger:reconcile` (`server/internal/worker/ledger_reconcile.go`, `docs/open-questions/audit-code.md` AC-3) только
+находит расхождения и оповещает; данные денег не меняет.
+
+- **`ledger_reconcile_findings`** — расхождения: `club_id` → `clubs` (ON DELETE CASCADE), `kind` (CHECK
+  `member_balance` / `unbalanced_transaction` / `cash_drawer_snapshot`), `subject_id` (клиент, операция или смена),
+  `fingerprint` (значения расхождения строкой — по нему запись журнала платформы не повторяется, пока расхождение не
+  изменилось), `details` (jsonb, целые тиыны), `first_seen_at`, `last_seen_at`, `resolved_at`. Частичный уникальный
+  индекс `(club_id, kind, subject_id) WHERE resolved_at IS NULL` — одно открытое расхождение на предмет; закрытые
+  остаются как история. Объём в норме — ноль строк.
+- **`ledger_reconcile_state`** — одна строка (PK `id boolean` с CHECK): `last_started_at`, `last_success_at`,
+  `last_full_at`, `last_duration_ms`, `last_clubs`, `last_error`. По ней инстансы решают, пора ли сверять, и строятся
+  метрика и алерт «сверка не проходит».
+- **RLS и права**: у `ledger_reconcile_findings` есть `club_id` → RLS включён и принудителен, политика одна —
+  `platform_access`. Пулу клуба `zafiro_app` обе таблицы недоступны (права отозваны): сверку клуба он выполняет
+  запросами к своим таблицам, а находки пишет `zafiro_platform` (SELECT, INSERT, UPDATE; строки не удаляются).
+- **Запросы** — `db/queries/reconcile.sql`: сверка клуба (`ReconcileMemberBalancesTouched`,
+  `ReconcileUnbalancedTransactions`, `ReconcileCashDrawerSnapshot`, плюс `ListMemberBalanceDrift` из `balances.sql`) —
+  с `club_id` в транзакции клуба; `ReconcileClubs` и состояние — платформенные исключения правила tenant-filter
+  (`sqlc.yaml`). Имена без слова `Ledger`, чтобы сбой сверки не считался ошибкой запроса журнала денег
+  (`ledger_errors_total`).
+

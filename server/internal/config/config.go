@@ -523,6 +523,16 @@ type Workers struct {
 	ExpireSessions ExpireSessions `koanf:"expire_sessions"`
 	Partitions     Partitions     `koanf:"partitions"`
 	LogRetention   LogRetention   `koanf:"log_retention"`
+	// LedgerReconcile — фоновая сверка балансов и кассы с журналом операций (worker.LedgerReconcile, аудит AC-3).
+	LedgerReconcile LedgerReconcile `koanf:"ledger_reconcile"`
+}
+
+// LedgerReconcile — периоды фоновой сверки проекций денег с ledger. Сверка только находит и оповещает.
+type LedgerReconcile struct {
+	// Interval — частая сверка: клиенты и операции, изменившиеся с прошлой (по умолчанию час).
+	Interval time.Duration `koanf:"interval"`
+	// FullInterval — полная сверка: все проводки каждого клуба (по умолчанию сутки); не меньше Interval.
+	FullInterval time.Duration `koanf:"full_interval"`
 }
 
 // LogRetention — удаление месячных партиций журналов старше срока хранения (worker.LogRetention).
@@ -687,10 +697,12 @@ func Defaults() map[string]any {
 		"realtime.max_lifetime":       "0s",
 		"realtime.origin_patterns":    []string{},
 
-		"workers.expire_sessions.interval": "1m",
-		"workers.partitions.interval":      "24h",
-		"workers.partitions.months":        3,
-		"workers.log_retention.interval":   "1h",
+		"workers.expire_sessions.interval":       "1m",
+		"workers.partitions.interval":            "24h",
+		"workers.partitions.months":              3,
+		"workers.log_retention.interval":         "1h",
+		"workers.ledger_reconcile.interval":      "1h",
+		"workers.ledger_reconcile.full_interval": "24h",
 
 		"security.data_keys": []any{},
 
@@ -964,45 +976,47 @@ func (c *Config) Validate() error {
 		add("http.addr: %w", err)
 	}
 	positive := map[string]time.Duration{
-		"http.read_header_timeout":            c.HTTP.ReadHeaderTimeout,
-		"http.read_timeout":                   c.HTTP.ReadTimeout,
-		"http.write_timeout":                  c.HTTP.WriteTimeout,
-		"http.idle_timeout":                   c.HTTP.IdleTimeout,
-		"http.request_timeout":                c.HTTP.RequestTimeout,
-		"auth.access_ttl":                     c.Auth.AccessTTL,
-		"auth.idle_ttl":                       c.Auth.IdleTTL,
-		"auth.remember_ttl":                   c.Auth.RememberTTL,
-		"auth.max_lifetime":                   c.Auth.MaxLifetime,
-		"auth.refresh_reuse_grace":            c.Auth.RefreshReuseGrace,
-		"auth.touch_every":                    c.Auth.TouchEvery,
-		"agent.enroll.code_ttl":               c.Agent.Enroll.CodeTTL,
-		"agent.grpc.proxy_header_timeout":     c.Agent.GRPC.ProxyHeaderTimeout,
-		"agent.enroll.diskless_cert_lifetime": c.Agent.Enroll.DisklessCertLifetime,
-		"agent.cert.lifetime":                 c.Agent.Cert.Lifetime,
-		"agent.cert_cache.refresh":            c.Agent.CertCache.Refresh,
-		"agent.cert_cache.full_reload":        c.Agent.CertCache.FullReload,
-		"agent.stream.presence_ttl":           c.Agent.Stream.PresenceTTL,
-		"agent.stream.offline_grace":          c.Agent.Stream.OfflineGrace,
-		"agent.stream.hello_timeout":          c.Agent.Stream.HelloTimeout,
-		"agent.stream.status_interval":        c.Agent.Stream.StatusInterval,
-		"agent.stream.state_debounce":         c.Agent.Stream.StateDebounce,
-		"agent.stream.ack_timeout":            c.Agent.Stream.AckTimeout,
-		"agent.sweeper.interval":              c.Agent.Sweeper.Interval,
-		"agent.sweeper.reconcile_every":       c.Agent.Sweeper.ReconcileEvery,
-		"agent.sweeper.command_retention":     c.Agent.Sweeper.CommandRetention,
-		"events.stream.max_age":               c.Events.Stream.MaxAge,
-		"events.stream.duplicates":            c.Events.Stream.Duplicates,
-		"outbox.interval":                     c.Outbox.Interval,
-		"outbox.retention":                    c.Outbox.Retention,
-		"webhooks.timeout":                    c.Webhooks.Timeout,
-		"webhooks.connect_timeout":            c.Webhooks.ConnectTimeout,
-		"webhooks.poll_interval":              c.Webhooks.PollInterval,
-		"realtime.ping_interval":              c.Realtime.PingInterval,
-		"realtime.ping_timeout":               c.Realtime.PingTimeout,
-		"workers.expire_sessions.interval":    c.Workers.ExpireSessions.Interval,
-		"workers.partitions.interval":         c.Workers.Partitions.Interval,
-		"workers.log_retention.interval":      c.Workers.LogRetention.Interval,
-		"integrations.request_log_retention":  c.Integrations.RequestLogRetention,
+		"http.read_header_timeout":               c.HTTP.ReadHeaderTimeout,
+		"http.read_timeout":                      c.HTTP.ReadTimeout,
+		"http.write_timeout":                     c.HTTP.WriteTimeout,
+		"http.idle_timeout":                      c.HTTP.IdleTimeout,
+		"http.request_timeout":                   c.HTTP.RequestTimeout,
+		"auth.access_ttl":                        c.Auth.AccessTTL,
+		"auth.idle_ttl":                          c.Auth.IdleTTL,
+		"auth.remember_ttl":                      c.Auth.RememberTTL,
+		"auth.max_lifetime":                      c.Auth.MaxLifetime,
+		"auth.refresh_reuse_grace":               c.Auth.RefreshReuseGrace,
+		"auth.touch_every":                       c.Auth.TouchEvery,
+		"agent.enroll.code_ttl":                  c.Agent.Enroll.CodeTTL,
+		"agent.grpc.proxy_header_timeout":        c.Agent.GRPC.ProxyHeaderTimeout,
+		"agent.enroll.diskless_cert_lifetime":    c.Agent.Enroll.DisklessCertLifetime,
+		"agent.cert.lifetime":                    c.Agent.Cert.Lifetime,
+		"agent.cert_cache.refresh":               c.Agent.CertCache.Refresh,
+		"agent.cert_cache.full_reload":           c.Agent.CertCache.FullReload,
+		"agent.stream.presence_ttl":              c.Agent.Stream.PresenceTTL,
+		"agent.stream.offline_grace":             c.Agent.Stream.OfflineGrace,
+		"agent.stream.hello_timeout":             c.Agent.Stream.HelloTimeout,
+		"agent.stream.status_interval":           c.Agent.Stream.StatusInterval,
+		"agent.stream.state_debounce":            c.Agent.Stream.StateDebounce,
+		"agent.stream.ack_timeout":               c.Agent.Stream.AckTimeout,
+		"agent.sweeper.interval":                 c.Agent.Sweeper.Interval,
+		"agent.sweeper.reconcile_every":          c.Agent.Sweeper.ReconcileEvery,
+		"agent.sweeper.command_retention":        c.Agent.Sweeper.CommandRetention,
+		"events.stream.max_age":                  c.Events.Stream.MaxAge,
+		"events.stream.duplicates":               c.Events.Stream.Duplicates,
+		"outbox.interval":                        c.Outbox.Interval,
+		"outbox.retention":                       c.Outbox.Retention,
+		"webhooks.timeout":                       c.Webhooks.Timeout,
+		"webhooks.connect_timeout":               c.Webhooks.ConnectTimeout,
+		"webhooks.poll_interval":                 c.Webhooks.PollInterval,
+		"realtime.ping_interval":                 c.Realtime.PingInterval,
+		"realtime.ping_timeout":                  c.Realtime.PingTimeout,
+		"workers.expire_sessions.interval":       c.Workers.ExpireSessions.Interval,
+		"workers.partitions.interval":            c.Workers.Partitions.Interval,
+		"workers.log_retention.interval":         c.Workers.LogRetention.Interval,
+		"workers.ledger_reconcile.interval":      c.Workers.LedgerReconcile.Interval,
+		"workers.ledger_reconcile.full_interval": c.Workers.LedgerReconcile.FullInterval,
+		"integrations.request_log_retention":     c.Integrations.RequestLogRetention,
 	}
 	for name, d := range positive {
 		if d <= 0 {
@@ -1228,6 +1242,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Workers.Partitions.Months < 1 || c.Workers.Partitions.Months > 24 {
 		add("workers.partitions.months: ожидается 1..24")
+	}
+	if lr := c.Workers.LedgerReconcile; lr.Interval > 0 && lr.FullInterval < lr.Interval {
+		add("workers.ledger_reconcile.full_interval: не меньше workers.ledger_reconcile.interval")
 	}
 	if ob := c.Observability; ob.MetricsListen != "" {
 		if _, port, err := net.SplitHostPort(ob.MetricsListen); err != nil {

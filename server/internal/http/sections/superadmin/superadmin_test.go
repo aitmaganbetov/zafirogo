@@ -8,6 +8,7 @@ import (
 	"time"
 
 	superadminapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/superadmin"
+	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
 // Все операции кабинета — за RequireSuperadmin (в Access — как «публичные» для прав клуба).
@@ -115,5 +116,65 @@ func TestCSV(t *testing.T) {
 	}
 	if !placeholdersMatch("Привет, :name и :Count", ":count :NAME") || placeholdersMatch(":name", "без подстановки") {
 		t.Error("placeholdersMatch")
+	}
+}
+
+// A-13: единственная выгрузка CSV в системе — переводы (LanguageController::export); она читается обратно импортом,
+// поэтому защита от формул симметрична (Laravel: TranslationTransfer::protectCell() / unprotectCell()): значение,
+// которое таблица посчитала бы формулой (= + - @ таб CR), выгружается с апострофом, импорт снимает ровно один.
+func TestCSVFormulaProtectionRoundTrip(t *testing.T) {
+	for _, v := range []string{
+		"=1+1", "=HYPERLINK(\"http://evil\";\"x\")", "+7 701 000 00 00", "- Нет", "-500", "@SUM(A1)", "\tтекст", "\rтекст",
+		"=cmd|' /C calc'!A0", "Обычный текст", "", "5 = пять", "'цитата'", "a-b", "100%", ":count минут",
+	} {
+		cell := protectCell(v)
+		formula := v != "" && strings.ContainsRune("=+-@\t\r", rune(v[0]))
+		if formula && cell != "'"+v {
+			t.Errorf("protectCell(%q) = %q, want apostrophe prefix", v, cell)
+		}
+		if !formula && cell != v {
+			t.Errorf("protectCell(%q) = %q, want unchanged", v, cell)
+		}
+		if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
+			t.Errorf("exported cell %q still starts with a formula character", cell)
+		}
+		// Через файл: fputcsv → разбор импорта → снятие защиты.
+		var b bytes.Buffer
+		putCSV(&b, []string{"hash", "*", "ru", "en", cell})
+		rows, err := parseCSV(b.Bytes())
+		if err != nil || len(rows) != 1 || len(rows[0]) != 5 {
+			t.Fatalf("parse %q: %v %q", v, err, rows)
+		}
+		if got := unprotectCell(rows[0][4]); got != v {
+			t.Errorf("round trip %q → %q → %q", v, cell, got)
+		}
+	}
+}
+
+// Строка «Сверка балансов с журналом» (аудит AC-3): давность — три периода; сверки ещё не было — не «давно».
+func TestLedgerReconcileOf(t *testing.T) {
+	now := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) *time.Time { v := now.Add(-d); return &v }
+	for _, tc := range []struct {
+		name     string
+		row      store.SuperadminReconcileStateRow
+		interval time.Duration
+		open     int64
+		stale    bool
+		human    bool
+	}{
+		{"ещё не проходила", store.SuperadminReconcileStateRow{}, 0, 0, false, false},
+		{"час назад", store.SuperadminReconcileStateRow{LastSuccessAt: at(time.Hour)}, 0, 0, false, true},
+		{"ровно три периода", store.SuperadminReconcileStateRow{LastSuccessAt: at(3 * time.Hour)}, time.Hour, 0, false, true},
+		{"больше трёх периодов", store.SuperadminReconcileStateRow{LastSuccessAt: at(3*time.Hour + time.Second)}, time.Hour, 0, true, true},
+		{"свой период", store.SuperadminReconcileStateRow{LastSuccessAt: at(40 * time.Minute)}, 10 * time.Minute, 0, true, true},
+		{"расхождения", store.SuperadminReconcileStateRow{LastSuccessAt: at(time.Minute), OpenFindings: 3}, time.Hour, 3, false, true},
+		// Стенд визуального сравнения: «сейчас» страницы в прошлом относительно настоящих часов воркера.
+		{"сверка «из будущего»", store.SuperadminReconcileStateRow{LastSuccessAt: at(-30 * 24 * time.Hour)}, time.Hour, 0, false, true},
+	} {
+		got := ledgerReconcileOf(tc.row, tc.interval, now, "ru")
+		if got.OpenFindings != tc.open || got.Stale != tc.stale || (got.AtHuman != nil) != tc.human {
+			t.Errorf("%s: %+v", tc.name, got)
+		}
 	}
 }

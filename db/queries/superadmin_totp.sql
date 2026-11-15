@@ -51,6 +51,10 @@ WHERE user_id = sqlc.arg(user_id) AND code_hash = sqlc.arg(code_hash) AND used_a
 -- name: SuperadminRecoveryLeft :one
 SELECT count(*)::bigint FROM superadmin_recovery_codes WHERE user_id = sqlc.arg(user_id) AND used_at IS NULL;
 
+-- name: SuperadminUserName :one
+-- Имя суперадмина для записи журнала о неверном коде подтверждения действия (mfa.Confirm, аудит A-10).
+SELECT name::text AS name FROM users WHERE id = sqlc.arg(id);
+
 -- name: SuperadminUserByPhone :one
 -- Аварийный сброс из командной строки: пользователь по нормализованному телефону.
 SELECT id, name::text AS name, is_superadmin FROM users WHERE phone = sqlc.arg(phone);

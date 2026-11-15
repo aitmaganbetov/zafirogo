@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"net/http"
+	"time"
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
@@ -17,6 +18,9 @@ type SuperadminDeps struct {
 	// BackupPath, SSLHosts — экран «Сервер» (BACKUP_PATH, MONITORING_SSL_HOSTS).
 	BackupPath string
 	SSLHosts   []string
+	// LedgerReconcileInterval — период фоновой сверки с журналом операций (workers.ledger_reconcile.interval): экран
+	// «Сервер» считает сверку остановившейся, если успешной не было три периода. 0 — час.
+	LedgerReconcileInterval time.Duration
 	// Secrets — шифрование токенов Telegram в platform_settings. nil — сохранить токен нельзя (503).
 	Secrets *secretbox.Box
 	// UpdateKeys — открытые ключи подписи обновлений агента (agent.update.public_keys): объявление версии с

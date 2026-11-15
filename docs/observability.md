@@ -51,6 +51,7 @@ Telegram Q-060) не меняется и работает параллельно
 | Запросы Postgres | `db_queries_total`, `db_query_errors_total`, `db_query_duration_seconds` | `pool`, `query` (имя sqlc, `begin`/`commit`/`rollback`, `raw`), `sqlstate` | трассировщик pgx |
 | Деньги | `ledger_operations_total` | `kind` (вид операции ledger, неизвестный — other), `result` = committed / rolled_back | `InsertLedgerTransaction` в транзакции + исход COMMIT/ROLLBACK этого соединения |
 | | `ledger_errors_total` | `query`, `reason` (имя ограничения или sqlstate) | ошибки запросов `*Ledger*`. Нехватку средств ledger проверяет до записи (`checkBalances`) — здесь в норме 0 |
+| | `ledger_reconcile_open_findings`, `ledger_reconcile_last_success_timestamp_seconds` (при сборе) | — | таблицы `ledger_reconcile_findings` (открытые расхождения, все клубы) и `ledger_reconcile_state` (0033); пишет воркер `ledger:reconcile` (аудит AC-3). Значение общее для кластера — в правилах `max()` |
 | Лимиты | `rate_limited_total` | `channel` = http / grpc, `route` | HTTP 429, gRPC RESOURCE_EXHAUSTED |
 | Вход | `auth_logins_total` | `result` = succeeded / failed, `reason` (`auth.Reason*`) | обёртка `auth.Events` (вход в панель) |
 | Valkey / NATS | `valkey_commands_total`, `valkey_errors_total{kind=server|timeout|network}`, `nats_errors_total{kind=async|disconnect|publish}`, `nats_connected`, `nats_reconnects_total`, `nats_messages_consumed_total{consumer}` | | обёртки клиента Valkey и JetStream, обработчики соединения NATS |
@@ -175,7 +176,29 @@ p95 денежных эндпоинтов > 1 с или в 3 раза выше �
 1. `zafiro:ledger_errors:increase5m` по `query`/`reason`: `ledger_entries_balanced` — несбалансированная операция (ошибка кода, срочно в разработку);
    `ledger_member_balance_non_negative` — гонка обошла проверку в Go; `40001`/`40P01` — конфликты сериализации/взаимоблокировки.
 2. Журнал по времени алерта (`ledger:`), трасса `db.tx ledger`. Ключи идемпотентности защищают от двойного списания при повторе клиента.
-3. Сверка балансов (инструмент переноса, отчёт сверки) — если подозрение на расхождение.
+3. Сверка балансов — если подозрение на расхождение: фоновая сверка идёт раз в час ([rb-ledger-drift](#rb-ledger-drift)); при переносе клуба — отчёт сверки инструмента переноса.
+
+<a id="rb-ledger-drift"></a>
+### ZafiroLedgerDrift (critical), ZafiroLedgerReconcileStale (warning)
+Фоновая сверка (`ledger:reconcile`, раз в час; полная — раз в сутки) нашла расхождение проекции денег с журналом
+операций или сама не проходит. Сверка **ничего не исправляет**; деньги клиента при расхождении считаются по
+`member_balances`, поэтому разбираться нужно сразу.
+1. Что именно: кабинет суперадмина → «Журнал», событие «Расхождение с журналом операций» (клуб, клиент/операция/смена,
+   разница в тиынах «проекция − журнал»). Или в базе:
+   `SELECT club_id, kind, subject_id, details, first_seen_at FROM ledger_reconcile_findings WHERE resolved_at IS NULL ORDER BY id;`
+2. `member_balance` — сравнить баланс и проводки клиента: `SELECT balance, bonus_balance, updated_at FROM member_balances
+   WHERE club_id = … AND user_id = …;` и последние проводки (`ledger_entries` по счетам клиента из `ledger_accounts`,
+   поле `balance_after`). Частые причины: восстановление из бэкапа/перенос данных мимо журнала, ручная правка базы
+   суперпользователем, выключенные триггеры (`session_replication_role`). Ошибка кода — срочно в разработку.
+3. `unbalanced_transaction` — операция с суммой проводок не ноль: в бою её не пропускает триггер
+   `ledger_entries_balanced`, значит запись шла в обход (перенос, ручная вставка). `cash_drawer_snapshot` — снимок
+   остатка кассы закрытой смены не равен журналу: остаток следующих смен считается от снимка.
+4. Исправление — только осознанной операцией журнала (корректировка владельцем `owner_top_up` / `owner_write_off`
+   с записью в аудит) после выяснения причины; прямой UPDATE баланса запрещён триггером. После исправления следующий
+   проход закроет находку записью «больше не наблюдается», алерт уйдёт.
+5. `ZafiroLedgerReconcileStale`: журнал сервера по `job=ledger:reconcile` (ошибка клуба, таймаут 2 мин на запрос),
+   `SELECT * FROM ledger_reconcile_state;` (`last_error`), `ZafiroWorkerNotRunning` для `ledger:reconcile`. Один
+   сбойный клуб не останавливает сверку остальных, но проход успешным не считается.
 
 <a id="rb-login-failures"></a>
 ### ZafiroLoginFailuresSpike, ZafiroRateLimitSpike (warning)

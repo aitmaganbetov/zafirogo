@@ -259,3 +259,15 @@ func (q *Queries) SuperadminUserByPhone(ctx context.Context, phone string) (Supe
 	err := row.Scan(&i.ID, &i.Name, &i.IsSuperadmin)
 	return i, err
 }
+
+const superadminUserName = `-- name: SuperadminUserName :one
+SELECT name::text AS name FROM users WHERE id = $1
+`
+
+// Имя суперадмина для записи журнала о неверном коде подтверждения действия (mfa.Confirm, аудит A-10).
+func (q *Queries) SuperadminUserName(ctx context.Context, id int64) (string, error) {
+	row := q.db.QueryRow(ctx, superadminUserName, id)
+	var name string
+	err := row.Scan(&name)
+	return name, err
+}

@@ -4,7 +4,8 @@
 //
 //   node tools/visual/compare.mjs [--page id[,id]] [--report dir]
 //
-// Код выхода: 1 — есть ошибка снимка или перенесённая страница (status: ported) сверх порога; иначе 0.
+// Код выхода: 1 — есть ошибка снимка, перенесённая страница (status: ported) сверх порога или подтверждённое
+// отличие (status: accepted), у которого новый снимок шире окна; иначе 0.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,7 +79,15 @@ function compareShot(spec, variant) {
   row.diffPixels = pixels;
   row.diffPercent = Math.round((pixels / (width * height)) * 1e4) / 100;
   if (row.errors.length > 0) row.verdict = 'error';
-  else if (row.diffPercent <= maxDiffPercent) row.verdict = 'pass';
+  else if (status === 'accepted') {
+    // Подтверждённое владельцем отличие от старого (docs/open-questions/audit-ui.md): со старым не сверяется, но
+    // новый снимок обязан быть шириной в окно — страница шире экрана телефона и есть тот дефект, от которого ушли.
+    const viewport = pagesFile.viewports[variant.split('-')[0]];
+    if (viewport && neu.width !== viewport.width) {
+      row.verdict = 'fail';
+      row.errors.push(`new: снимок шириной ${neu.width} px при окне ${viewport.width} px — страница шире экрана`);
+    } else row.verdict = 'accepted';
+  } else if (row.diffPercent <= maxDiffPercent) row.verdict = 'pass';
   else row.verdict = status === 'ported' ? 'fail' : 'pending';
   return row;
 }
@@ -92,7 +101,7 @@ for (const spec of pagesFile.pages) {
   for (const variant of readdirSync(dir).sort()) rows.push(compareShot(spec, variant));
 }
 
-const counts = { pass: 0, fail: 0, pending: 0, error: 0 };
+const counts = { pass: 0, fail: 0, pending: 0, accepted: 0, error: 0 };
 for (const r of rows) counts[r.verdict] += 1;
 const summary = {
   generatedAt: new Date().toISOString(),
@@ -105,7 +114,7 @@ writeFileSync(path.join(REPORT, 'summary.json'), JSON.stringify(summary, null, 2
 writeFileSync(path.join(REPORT, 'index.html'), renderHtml(summary));
 
 // Вывод в терминал.
-const mark = { pass: 'OK  ', fail: 'FAIL', pending: 'WAIT', error: 'ERR ' };
+const mark = { pass: 'OK  ', fail: 'FAIL', pending: 'WAIT', accepted: 'ACPT', error: 'ERR ' };
 for (const r of rows) {
   const pct = r.diffPercent === null ? '   —   ' : `${r.diffPercent.toFixed(2).padStart(6)}%`;
   const sizes = r.old.size && r.new.size ? `  ${r.old.size.join('×')} | ${r.new.size.join('×')}` : '';
@@ -114,7 +123,7 @@ for (const r of rows) {
 }
 if (rows.length === 0) console.log('нет снимков: сначала playwright test -c e2e/visual/playwright.config.ts');
 console.log(
-  `\nИтог: ${counts.pass} совпало, ${counts.fail} расходится (перенесённые), ${counts.pending} расходится (не перенесены), ${counts.error} ошибок`,
+  `\nИтог: ${counts.pass} совпало, ${counts.fail} расходится (перенесённые), ${counts.pending} расходится (не перенесены), ${counts.accepted} подтверждённых отличий, ${counts.error} ошибок`,
 );
 console.log(`Отчёт: ${path.join(REPORT, 'index.html')}`);
 process.exit(summary.ok ? 0 : 1);
@@ -141,7 +150,7 @@ function metaBlock(m) {
 }
 
 function renderHtml(s) {
-  const label = { pass: 'совпадает', fail: 'расходится', pending: 'не перенесено', error: 'ошибка' };
+  const label = { pass: 'совпадает', fail: 'расходится', pending: 'не перенесено', accepted: 'подтверждённое отличие', error: 'ошибка' };
   const cards = s.results
     .map(
       (r) => `<section class="card" data-verdict="${r.verdict}">
@@ -174,7 +183,7 @@ h1{font-size:20px;margin:0 0 4px}.muted{color:var(--muted)}
 .summary button[aria-pressed=true]{outline:2px solid currentColor}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:12px 0}
 .card header{display:flex;flex-wrap:wrap;align-items:center;gap:12px}.card h2{font-size:16px;margin:0}
-.badge{border-radius:999px;padding:2px 10px;color:#fff;font-size:12px}.pass{background:var(--ok)}.fail{background:var(--bad)}.pending{background:var(--wait)}.error{background:var(--err)}
+.badge{border-radius:999px;padding:2px 10px;color:#fff;font-size:12px}.pass{background:var(--ok)}.fail{background:var(--bad)}.pending{background:var(--wait)}.accepted{background:var(--muted)}.error{background:var(--err)}
 .pct{font-variant-numeric:tabular-nums;font-weight:600}.pct small{font-weight:400;color:var(--muted)}
 .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:8px}
 @media (max-width:900px){.grid{grid-template-columns:1fr}}
@@ -192,6 +201,7 @@ details{font-size:12px}ul{margin:4px 0;padding-left:18px;overflow-wrap:anywhere}
 <button data-filter="all" aria-pressed="true">Все (${s.results.length})</button>
 <button data-filter="fail">Расходится (${s.counts.fail})</button>
 <button data-filter="pending">Не перенесено (${s.counts.pending})</button>
+<button data-filter="accepted">Подтверждённые отличия (${s.counts.accepted})</button>
 <button data-filter="error">Ошибки (${s.counts.error})</button>
 <button data-filter="pass">Совпадает (${s.counts.pass})</button>
 </div>

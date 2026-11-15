@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import type { FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pagination } from '../../components/Pagination';
 import { useSession } from '../../auth/session';
 import { useAdminPageTitle } from '../../layouts/adminSession';
-import { accountAction, accountsQuery, firstError, qs, type AccountAction, type AccountsSearch } from './api';
+import { isApiError } from '../../api/http';
+import { accountAction, accountsQuery, CODE_ACTIONS, firstError, qs, type AccountAction, type AccountsSearch } from './api';
 import { saHref } from './host';
 import { roleLabel } from './roles';
 import { useSuperadminFlash } from './flash';
@@ -14,7 +15,16 @@ import { useSuperadminFlash } from './flash';
  * Пользователи — перенос resources/views/superadmin/users/index.blade.php (Superadmin\UserController).
  * Этап 7 (новое): метка «2FA не настроена» у суперадмина и сброс второго фактора другого суперадмина (не в режиме
  * просмотра клуба — сервер ответит 403 read_only).
+ * Аудит A-10 (новое, осознанное отличие — docs/open-questions/audit-ui.md AU-14): выдача и снятие прав суперадмина
+ * и сброс 2FA подтверждаются не window.confirm, а окном с тем же вопросом и полем свежего кода TOTP; сервер без
+ * кода действие не выполнит. Окно — <dialog> на тех же классах, что карточки и кнопки кабинета (своего CSS нет).
  */
+
+interface PendingAction {
+  readonly id: number;
+  readonly action: AccountAction;
+  readonly question: string;
+}
 
 export function AccountsPage({ search }: { readonly search: AccountsSearch }) {
   const { t } = useTranslation();
@@ -24,14 +34,33 @@ export function AccountsPage({ search }: { readonly search: AccountsSearch }) {
   const queryClient = useQueryClient();
   const { data } = useQuery(accountsQuery(search));
   const readOnly = useSession().me?.read_only === true;
+  const [pending, setPending] = useState<PendingAction | null>(null);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const act = useMutation({
-    mutationFn: ({ id, action }: { id: number; action: AccountAction }) => accountAction(id, action),
+    mutationFn: ({ id, action, code }: { id: number; action: AccountAction; code?: string }) => accountAction(id, action, code),
     onSuccess: (r) => {
+      setPending(null);
       flash.status(r.message);
       return queryClient.invalidateQueries({ queryKey: ['superadmin'] });
     },
-    onError: (e) => flash.error(firstError(e)),
+    onError: (e, vars) => {
+      // Ошибка кода (неверный, уже использованный, не введён) — под полем, окно остаётся открытым.
+      const code = vars.code !== undefined && isApiError(e) ? e.field('code') : undefined;
+      if (code) {
+        setCodeError(code);
+        return;
+      }
+      setPending(null);
+      flash.error(firstError(e));
+    },
   });
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (pending && !dialog.open) dialog.showModal();
+    if (!pending && dialog.open) dialog.close();
+  }, [pending]);
   if (!data) return null;
 
   const submitFilter = (e: FormEvent<HTMLFormElement>) => {
@@ -41,7 +70,19 @@ export function AccountsPage({ search }: { readonly search: AccountsSearch }) {
   };
   const confirmed = (id: number, action: AccountAction, question?: string) => (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (CODE_ACTIONS.includes(action)) {
+      setCodeError(null);
+      setPending({ id, action, question: question ?? '' });
+      return;
+    }
     if (question === undefined || window.confirm(question)) act.mutate({ id, action });
+  };
+  const submitCode = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!pending) return;
+    const code = String(new FormData(e.currentTarget).get('code') ?? '').trim();
+    setCodeError(null);
+    act.mutate({ id: pending.id, action: pending.action, code });
   };
 
   return (
@@ -173,6 +214,56 @@ export function AccountsPage({ search }: { readonly search: AccountsSearch }) {
           </tbody>
         </table>
       </div>
+      <dialog
+        ref={dialogRef}
+        aria-labelledby="second-factor-confirm-title"
+        className="m-auto w-[calc(100%-2rem)] max-w-md rounded-xl border border-gray-200 bg-white p-5 text-gray-900 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+        onClose={() => setPending(null)}
+        onClick={(e) => {
+          if (e.target === dialogRef.current) setPending(null);
+        }}
+      >
+        {pending && (
+          <form method="POST" key={`${pending.action}-${pending.id}`} onSubmit={submitCode}>
+            <h3 id="second-factor-confirm-title" className="font-semibold text-gray-900 dark:text-white">
+              {t('Подтверждение кодом')}
+            </h3>
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{pending.question}</p>
+            <label className="mt-4 block">
+              <span className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">{t('Код из приложения')}</span>
+              <input
+                type="text"
+                name="code"
+                required
+                autoFocus
+                maxLength={7}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="123456"
+                aria-invalid={codeError != null}
+                aria-describedby="second-factor-confirm-hint"
+                className="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+              />
+            </label>
+            {codeError && (
+              <p role="alert" className="mt-1 text-sm text-red-600">
+                {codeError}
+              </p>
+            )}
+            <p id="second-factor-confirm-hint" className="mt-2 text-sm text-gray-500">
+              {t('Введите новый код из приложения-аутентификатора. Код, с которым вы вошли или уже подтвердили действие, не подойдёт.')}
+            </p>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button type="button" className="rounded-lg border border-gray-300 px-4 py-2 text-sm" onClick={() => setPending(null)}>
+                {t('Отмена')}
+              </button>
+              <button type="submit" disabled={act.isPending} className="rounded-lg border border-violet-200 px-4 py-2 text-sm text-violet-700">
+                {t('Подтвердить')}
+              </button>
+            </div>
+          </form>
+        )}
+      </dialog>
       <div className="mt-4">
         <Pagination
           page={data.page}

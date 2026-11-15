@@ -375,17 +375,20 @@ type Dashboard struct {
 		Online int64 `json:"online"`
 		Total  int64 `json:"total"`
 	} `json:"computers"`
-	LatestAgent            *string     `json:"latest_agent"`
-	Live                   Live        `json:"live"`
-	LogErrors              []LogError  `json:"log_errors"`
-	Period                 string      `json:"period"`
-	PeriodMinutes          int64       `json:"period_minutes"`
-	RecentLogs             []LogRow    `json:"recent_logs"`
-	SchedulerMinutesAgo    *int64      `json:"scheduler_minutes_ago"`
-	SchedulerSilentMinutes int         `json:"scheduler_silent_minutes"`
-	SelectedClubs          []int64     `json:"selected_clubs"`
-	Tables                 []TableSize `json:"tables"`
-	Today                  string      `json:"today"`
+	LatestAgent *string `json:"latest_agent"`
+
+	// LedgerReconcile Фоновая сверка балансов клиентов и кассы с журналом операций (аудит AC-3, новая функция). Экран показывает строку, только когда есть открытые расхождения или сверка давно не проходила.
+	LedgerReconcile        LedgerReconcile `json:"ledger_reconcile"`
+	Live                   Live            `json:"live"`
+	LogErrors              []LogError      `json:"log_errors"`
+	Period                 string          `json:"period"`
+	PeriodMinutes          int64           `json:"period_minutes"`
+	RecentLogs             []LogRow        `json:"recent_logs"`
+	SchedulerMinutesAgo    *int64          `json:"scheduler_minutes_ago"`
+	SchedulerSilentMinutes int             `json:"scheduler_silent_minutes"`
+	SelectedClubs          []int64         `json:"selected_clubs"`
+	Tables                 []TableSize     `json:"tables"`
+	Today                  string          `json:"today"`
 }
 
 // EventOption defines model for EventOption.
@@ -465,6 +468,18 @@ type LanguageList struct {
 type LanguageUpdate struct {
 	IsEnabled *bool   `json:"is_enabled,omitempty"`
 	Name      *string `json:"name,omitempty"`
+}
+
+// LedgerReconcile Фоновая сверка балансов клиентов и кассы с журналом операций (аудит AC-3, новая функция). Экран показывает строку, только когда есть открытые расхождения или сверка давно не проходила.
+type LedgerReconcile struct {
+	// AtHuman Когда сверка в последний раз прошла успешно («2 часа назад»); null — ещё не проходила.
+	AtHuman *string `json:"at_human"`
+
+	// OpenFindings Открытые расхождения по всем клубам (подробности — журнал платформы, событие ledger.drift_found).
+	OpenFindings int64 `json:"open_findings"`
+
+	// Stale Последняя успешная сверка старше трёх периодов (workers.ledger_reconcile.interval).
+	Stale bool `json:"stale"`
 }
 
 // Live defines model for Live.
@@ -605,6 +620,11 @@ type PlatformNewsPage struct {
 	Total   int64              `json:"total"`
 }
 
+// SecondFactorConfirm Свежее подтверждение вторым фактором действующего суперадмина (аудит A-10) — код TOTP из приложения (6 цифр). Код восстановления не принимается. Один код — одно действие (повтор шага отклоняется, как при входе).
+type SecondFactorConfirm struct {
+	Code string `json:"code"`
+}
+
 // SubscriptionBadge defines model for SubscriptionBadge.
 type SubscriptionBadge struct {
 	Active bool   `json:"active"`
@@ -738,6 +758,15 @@ type SaListLogsParamsTab string
 type SaListPlatformNewsParams struct {
 	Page *int `form:"page,omitempty" json:"page,omitempty"`
 }
+
+// SaResetSecondFactorJSONRequestBody defines body for SaResetSecondFactor for application/json ContentType.
+type SaResetSecondFactorJSONRequestBody = SecondFactorConfirm
+
+// SaRevokeSuperadminJSONRequestBody defines body for SaRevokeSuperadmin for application/json ContentType.
+type SaRevokeSuperadminJSONRequestBody = SecondFactorConfirm
+
+// SaGrantSuperadminJSONRequestBody defines body for SaGrantSuperadmin for application/json ContentType.
+type SaGrantSuperadminJSONRequestBody = SecondFactorConfirm
 
 // SaSetAgentReleaseJSONRequestBody defines body for SaSetAgentRelease for application/json ContentType.
 type SaSetAgentReleaseJSONRequestBody = AgentReleaseForm
@@ -2513,6 +2542,7 @@ func (response SaBlockAccount422JSONResponse) VisitSaBlockAccountResponse(w http
 
 type SaResetSecondFactorRequestObject struct {
 	UserId UserId `json:"userId"`
+	Body   *SaResetSecondFactorJSONRequestBody
 }
 
 type SaResetSecondFactorResponseObject interface {
@@ -2597,8 +2627,28 @@ func (response SaResetSecondFactor422JSONResponse) VisitSaResetSecondFactorRespo
 	return err
 }
 
+type SaResetSecondFactor429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response SaResetSecondFactor429JSONResponse) VisitSaResetSecondFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SaRevokeSuperadminRequestObject struct {
 	UserId UserId `json:"userId"`
+	Body   *SaRevokeSuperadminJSONRequestBody
 }
 
 type SaRevokeSuperadminResponseObject interface {
@@ -2683,8 +2733,28 @@ func (response SaRevokeSuperadmin422JSONResponse) VisitSaRevokeSuperadminRespons
 	return err
 }
 
+type SaRevokeSuperadmin429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response SaRevokeSuperadmin429JSONResponse) VisitSaRevokeSuperadminResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SaGrantSuperadminRequestObject struct {
 	UserId UserId `json:"userId"`
+	Body   *SaGrantSuperadminJSONRequestBody
 }
 
 type SaGrantSuperadminResponseObject interface {
@@ -2765,6 +2835,25 @@ func (response SaGrantSuperadmin422JSONResponse) VisitSaGrantSuperadminResponse(
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaGrantSuperadmin429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response SaGrantSuperadmin429JSONResponse) VisitSaGrantSuperadminResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -5201,6 +5290,13 @@ func (sh *strictHandler) SaResetSecondFactor(w http.ResponseWriter, r *http.Requ
 
 	request.UserId = userId
 
+	var body SaResetSecondFactorJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.SaResetSecondFactor(ctx, request.(SaResetSecondFactorRequestObject))
 	}
@@ -5227,6 +5323,13 @@ func (sh *strictHandler) SaRevokeSuperadmin(w http.ResponseWriter, r *http.Reque
 
 	request.UserId = userId
 
+	var body SaRevokeSuperadminJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.SaRevokeSuperadmin(ctx, request.(SaRevokeSuperadminRequestObject))
 	}
@@ -5252,6 +5355,13 @@ func (sh *strictHandler) SaGrantSuperadmin(w http.ResponseWriter, r *http.Reques
 	var request SaGrantSuperadminRequestObject
 
 	request.UserId = userId
+
+	var body SaGrantSuperadminJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.SaGrantSuperadmin(ctx, request.(SaGrantSuperadminRequestObject))

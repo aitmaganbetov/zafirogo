@@ -54,9 +54,10 @@ type ListMemberBalanceDriftRow struct {
 	LedgerBonus  int64 `json:"ledger_bonus"`
 }
 
-// Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
-// Сверка проекции с журналом (ночная проверка): клиенты клуба, у которых balance/bonus_balance
-// не равны сумме проводок по их счетам. Агрегаты — в SQL.
+// Полная сверка проекции с журналом: клиенты клуба, у которых balance/bonus_balance не равны сумме проводок по их
+// счетам. Агрегаты — в SQL. Вызывают фоновая сверка (воркер ledger:reconcile, раз в сутки — полный проход, аудит
+// AC-3; между полными — ReconcileMemberBalancesTouched, reconcile.sql) и интеграционные тесты. Читает все проводки
+// клуба: замер на 1 млн проводок — docs/open-questions/audit-code.md AC-3.
 func (q *Queries) ListMemberBalanceDrift(ctx context.Context, clubID int64) ([]ListMemberBalanceDriftRow, error) {
 	rows, err := q.db.Query(ctx, listMemberBalanceDrift, clubID)
 	if err != nil {

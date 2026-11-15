@@ -148,19 +148,23 @@ export const accountsQuery = (s: AccountsSearch) =>
 
 export type AccountAction = 'block' | 'unblock' | 'grant' | 'revoke' | 'reset-second-factor';
 
-export function accountAction(userId: number, action: AccountAction) {
+/** Действия, которым сервер требует свежий код TOTP действующего суперадмина (аудит A-10). */
+export const CODE_ACTIONS: readonly AccountAction[] = ['grant', 'revoke', 'reset-second-factor'];
+
+export function accountAction(userId: number, action: AccountAction, code = '') {
   const path = { params: { path: { userId } } };
+  const confirmed = { ...path, body: { code } };
   switch (action) {
     case 'block':
       return unwrap(saApi.POST('/api/superadmin/accounts/{userId}/block', path));
     case 'unblock':
       return unwrap(saApi.POST('/api/superadmin/accounts/{userId}/unblock', path));
     case 'grant':
-      return unwrap(saApi.POST('/api/superadmin/accounts/{userId}/superadmin', path));
+      return unwrap(saApi.POST('/api/superadmin/accounts/{userId}/superadmin', confirmed));
     case 'revoke':
-      return unwrap(saApi.DELETE('/api/superadmin/accounts/{userId}/superadmin', path));
+      return unwrap(saApi.DELETE('/api/superadmin/accounts/{userId}/superadmin', confirmed));
     case 'reset-second-factor': // Этап 7: сброс TOTP другого суперадмина
-      return unwrap(saApi.DELETE('/api/superadmin/accounts/{userId}/second-factor', path));
+      return unwrap(saApi.DELETE('/api/superadmin/accounts/{userId}/second-factor', confirmed));
   }
 }
 

@@ -353,9 +353,15 @@ paths:
       tags:
       - superadmin
       summary: Выдать права суперадмина
-      description: 'Laravel: UserController::grant().'
+      description: 'Laravel: UserController::grant(). Требует свежего кода TOTP действующего суперадмина в теле (аудит A-10): без кода или с неверным/уже использованным — 422 (поле code), лимит superadmin-totp — 429; не в режиме просмотра клуба (403 read_only).'
       parameters:
       - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecondFactorConfirm'
       responses:
         '200':
           description: OK
@@ -371,14 +377,22 @@ paths:
           $ref: common.yaml#/components/responses/NotFound
         '422':
           $ref: common.yaml#/components/responses/ValidationFailed
+        '429':
+          $ref: common.yaml#/components/responses/TooManyRequests
     delete:
       operationId: saRevokeSuperadmin
       tags:
       - superadmin
       summary: Снять права суперадмина
-      description: 'Laravel: UserController::revoke().'
+      description: 'Laravel: UserController::revoke(). Требует свежего кода TOTP действующего суперадмина в теле (аудит A-10): без кода или с неверным/уже использованным — 422 (поле code), лимит superadmin-totp — 429; не в режиме просмотра клуба (403 read_only).'
       parameters:
       - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecondFactorConfirm'
       responses:
         '200':
           description: OK
@@ -394,6 +408,8 @@ paths:
           $ref: common.yaml#/components/responses/NotFound
         '422':
           $ref: common.yaml#/components/responses/ValidationFailed
+        '429':
+          $ref: common.yaml#/components/responses/TooManyRequests
   /api/superadmin/accounts/{userId}/second-factor:
     delete:
       operationId: saResetSecondFactor
@@ -402,9 +418,17 @@ paths:
       summary: Сбросить второй фактор суперадмина
       description: 'Этап 7 (новая функция): ключ TOTP и коды восстановления удаляются, сеансы пользователя отзываются;
         при следующем входе — принудительная настройка. Не для своего аккаунта и не в режиме просмотра клуба (403
-        read_only). Журнал платформы superadmin.totp_reset и audit_log.'
+        read_only). Журнал платформы superadmin.totp_reset и audit_log. Требует свежего кода TOTP действующего
+        суперадмина в теле (аудит A-10): без кода или с неверным/уже использованным — 422 (поле code), лимит
+        superadmin-totp — 429.'
       parameters:
       - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecondFactorConfirm'
       responses:
         '200':
           description: OK
@@ -420,6 +444,8 @@ paths:
           $ref: common.yaml#/components/responses/NotFound
         '422':
           $ref: common.yaml#/components/responses/ValidationFailed
+        '429':
+          $ref: common.yaml#/components/responses/TooManyRequests
   /api/superadmin/plans:
     get:
       operationId: saListPlans
@@ -1018,6 +1044,16 @@ components:
       required: true
       schema: *id002
   schemas:
+    SecondFactorConfirm:
+      type: object
+      description: Свежее подтверждение вторым фактором действующего суперадмина (аудит A-10) — код TOTP из приложения
+        (6 цифр). Код восстановления не принимается. Один код — одно действие (повтор шага отклоняется, как при входе).
+      required:
+      - code
+      properties:
+        code:
+          type: string
+          maxLength: 16
     Message:
       type: object
       required:
@@ -1215,6 +1251,26 @@ components:
         configured: *id005
         at_human: *id004
         stale: *id005
+    LedgerReconcile:
+      type: object
+      description: Фоновая сверка балансов клиентов и кассы с журналом операций (аудит AC-3, новая функция). Экран
+        показывает строку, только когда есть открытые расхождения или сверка давно не проходила.
+      required:
+      - open_findings
+      - stale
+      - at_human
+      properties:
+        open_findings:
+          type: integer
+          format: int64
+          description: Открытые расхождения по всем клубам (подробности — журнал платформы, событие ledger.drift_found).
+        stale:
+          type: boolean
+          description: Последняя успешная сверка старше трёх периодов (workers.ledger_reconcile.interval).
+        at_human:
+          type: string
+          nullable: true
+          description: Когда сверка в последний раз прошла успешно («2 часа назад»); null — ещё не проходила.
     AgentVersion:
       type: object
       required:
@@ -1255,6 +1311,7 @@ components:
       - log_errors
       - certificate_hosts
       - backup
+      - ledger_reconcile
       - agent_versions
       - latest_agent
       - agent_download_url
@@ -1322,6 +1379,8 @@ components:
             $ref: '#/components/schemas/CertificateHost'
         backup:
           $ref: '#/components/schemas/Backup'
+        ledger_reconcile:
+          $ref: '#/components/schemas/LedgerReconcile'
         agent_versions:
           type: array
           items:

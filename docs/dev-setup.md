@@ -100,6 +100,7 @@ NATS и gRPC. Нужен для смоук-теста собранного би�
 | `ZAFIRO_WORKERS_EXPIRE_SESSIONS_INTERVAL` | `1m` | снятие истёкших сессий ПК |
 | `ZAFIRO_WORKERS_PARTITIONS_INTERVAL`, `_MONTHS` | `24h`, `3` | месячные партиции журналов (Q-081) |
 | `ZAFIRO_WORKERS_LOG_RETENTION_INTERVAL` | `1h` | удаление месячных партиций журналов старше срока (`logs:retention`; ledger и `audit_log` — никогда) |
+| `ZAFIRO_WORKERS_LEDGER_RECONCILE_INTERVAL`, `_FULL_INTERVAL` | `1h`, `24h` | фоновая сверка балансов и кассы с журналом операций (`ledger:reconcile`, аудит AC-3): частая — изменившиеся клиенты и операции, полная — все проводки клуба; только находит и оповещает |
 | `ZAFIRO_INTEGRATIONS_REQUEST_LOG_RETENTION` | `2160h` | срок журнала запросов API `api_request_logs` (90 дней, `request_log_retention_days`) |
 
 \* — секрет: тип `config.Secret`, в логах и `fmt` печатается `***` (у DSN виден только хост и база).

@@ -48,6 +48,8 @@ var (
 	ErrInvalidCode = errors.New("mfa: invalid code")
 	// ErrConfigured — настройка не нужна: TOTP уже включён.
 	ErrConfigured = errors.New("mfa: second factor is already configured")
+	// ErrNotConfigured — у пользователя нет настроенного TOTP (подтверждать действие нечем).
+	ErrNotConfigured = errors.New("mfa: second factor is not configured")
 	// ErrSecretUnreadable — ключ TOTP не расшифровывается ни одним ключом связки (ключ данных потерян): нужен сброс.
 	ErrSecretUnreadable = errors.New("mfa: totp secret cannot be decrypted")
 )
@@ -491,6 +493,80 @@ func (m *Manager) check(ctx context.Context, q *store.Queries, ch challenge, row
 	}
 	res.RecoveryUsed, res.RecoveryLeft = true, left
 	return nil
+}
+
+// Confirm — свежее подтверждение вторым фактором уже вошедшего суперадмина перед опасным действием (выдача и
+// снятие прав суперадмина, сброс чужого второго фактора; аудит A-10). Те же механизмы, что при входе: лимит
+// superadmin-totp (на аккаунт и IP), окно ±1 шаг, защита от повтора шага (код, которым только что вошли или
+// подтвердили другое действие, не годится — нужен следующий), неудача — в журнал платформы superadmin.totp_failed.
+// Принимается только код приложения: код восстановления — для входа при потере устройства, а не для подтверждений.
+// Ошибки: ErrInvalidCode, ErrNotConfigured, ErrSecretUnreadable, *LimitError.
+func (m *Manager) Confirm(ctx context.Context, userID int64, code string) error {
+	if userID <= 0 {
+		return errors.New("mfa: user id is required")
+	}
+	ip := ""
+	if meta, ok := activity.RequestMetaFromContext(ctx); ok {
+		ip = meta.IP
+	}
+	lim, err := m.o.Limiter.Allow(ctx, ratelimit.SuperadminTOTP, ratelimit.Subject{IP: ip, UserID: userID})
+	if err != nil {
+		return err
+	}
+	if !lim.Allowed {
+		return &LimitError{RetryAfter: lim.RetryAfter}
+	}
+	now := m.o.Now()
+	code = totp.NormalizeCode(code)
+	var verr error // итог проверки кода; ошибка транзакции — отдельно (запись о неудаче должна сохраниться)
+	err = db.InPlatformTx(ctx, m.o.Platform, func(q *store.Queries) error {
+		verr = nil
+		row, err := q.SuperadminTotpLock(ctx, userID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			verr = ErrNotConfigured
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if row.ConfirmedAt == nil {
+			verr = ErrNotConfigured
+			return nil
+		}
+		ok := false
+		if totp.IsCode(code) {
+			key, err := m.open(row)
+			if err != nil {
+				return err
+			}
+			last := row.LastStep
+			if m.o.AllowReplay {
+				last = -1
+			}
+			var step int64
+			step, ok = totp.Verify(key, code, now, last)
+			if ok && step > row.LastStep {
+				n, err := q.SuperadminTotpAccept(ctx, store.SuperadminTotpAcceptParams{UserID: userID, Step: step, Now: now})
+				if err != nil {
+					return err
+				}
+				ok = n == 1
+			}
+		}
+		if ok {
+			return nil
+		}
+		verr = ErrInvalidCode
+		name, err := q.SuperadminUserName(ctx, userID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return m.logFailed(ctx, q, challenge{Pending: Pending{UserID: userID, Name: name}}, now)
+	})
+	if err != nil {
+		return err
+	}
+	return verr
 }
 
 func (m *Manager) logFailed(ctx context.Context, q *store.Queries, ch challenge, now time.Time) error {

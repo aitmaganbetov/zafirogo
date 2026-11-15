@@ -34,7 +34,9 @@ func readOnlyAllowed(method, path string) bool {
 	}
 	// Сброс второго фактора другого суперадмина (Этап 7) — не из режима просмотра клуба, хотя это кабинет: действие
 	// с доступом к платформе, а режим просмотра — «только смотреть» (docs/open-questions/stage7-totp.md).
-	if strings.HasPrefix(path, "/api/superadmin/accounts/") && strings.HasSuffix(path, "/second-factor") {
+	// Так же — выдача и снятие прав суперадмина (аудит A-10).
+	if strings.HasPrefix(path, "/api/superadmin/accounts/") &&
+		(strings.HasSuffix(path, "/second-factor") || strings.HasSuffix(path, "/superadmin")) {
 		return false
 	}
 	// Действия своей учётной записи вне клуба (в Laravel — не под current-club): подтверждение входа на ПК по QR,

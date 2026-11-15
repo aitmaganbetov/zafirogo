@@ -68,8 +68,10 @@ func TestReadOnlyCannotWriteAnywhere(t *testing.T) {
 		method, route := mr[0], mr[1]
 		key := method + " " + route
 		path := walkParam.ReplaceAllString(route, "1")
-		// Сброс второго фактора суперадмина (Этап 7) — кабинет, но в режиме просмотра запрещён.
-		resetSecondFactor := strings.HasPrefix(path, "/api/superadmin/accounts/") && strings.HasSuffix(path, "/second-factor")
+		// Сброс второго фактора суперадмина (Этап 7), выдача и снятие прав суперадмина (аудит A-10) — кабинет, но в
+		// режиме просмотра запрещены.
+		resetSecondFactor := strings.HasPrefix(path, "/api/superadmin/accounts/") &&
+			(strings.HasSuffix(path, "/second-factor") || strings.HasSuffix(path, "/superadmin"))
 		if !resetSecondFactor && (strings.HasPrefix(path, "/api/v1") || strings.HasPrefix(path, "/api/superadmin/") || !strings.HasPrefix(path, "/api/")) {
 			// /api/v1 — API-ключ, не сессия; кабинет суперадмина — RequireSuperadmin (не клуб).
 			continue

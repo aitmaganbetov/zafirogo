@@ -590,6 +590,34 @@ type LedgerMinuteEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Расхождения проекций денег с журналом операций, найденные фоновой сверкой (аудит AC-3). Только запись и оповещение, без исправления
+type LedgerReconcileFinding struct {
+	ID     int64 `json:"id"`
+	ClubID int64 `json:"club_id"`
+	// member_balance: баланс клиента ≠ Σ проводок; unbalanced_transaction: Σ проводок операции ≠ 0; cash_drawer_snapshot: снимок остатка кассы ≠ журналу
+	Kind string `json:"kind"`
+	// member_balance — users.id; unbalanced_transaction — ledger_transactions.id; cash_drawer_snapshot — cash_shifts.id смены со снимком
+	SubjectID int64 `json:"subject_id"`
+	// Значения расхождения одной строкой: пока не изменилась — в журнал платформы повторно не пишется
+	Fingerprint string `json:"fingerprint"`
+	// Числа расхождения в тиынах (целые)
+	Details     json.RawMessage `json:"details"`
+	FirstSeenAt time.Time       `json:"first_seen_at"`
+	LastSeenAt  time.Time       `json:"last_seen_at"`
+	ResolvedAt  *time.Time      `json:"resolved_at"`
+}
+
+// Одна строка: последний запуск фоновой сверки ledger (успех, полный проход, длительность, ошибка) — аудит AC-3
+type LedgerReconcileState struct {
+	ID             bool       `json:"id"`
+	LastStartedAt  *time.Time `json:"last_started_at"`
+	LastSuccessAt  *time.Time `json:"last_success_at"`
+	LastFullAt     *time.Time `json:"last_full_at"`
+	LastDurationMs int64      `json:"last_duration_ms"`
+	LastClubs      int32      `json:"last_clubs"`
+	LastError      string     `json:"last_error"`
+}
+
 // Денежная операция (только добавление). Ссылки на документы — без FK: документы чистятся (session_purchases, transfer_codes)
 type LedgerTransaction struct {
 	ID     int64  `json:"id"`

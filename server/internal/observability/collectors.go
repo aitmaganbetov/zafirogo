@@ -71,6 +71,8 @@ type dbValues struct {
 	autoBillingOK                                  bool
 	autoBillingDue, autoBillingOldest              float64
 	leaders                                        map[string]float64
+	reconcileOK                                    bool
+	reconcileOpen, reconcileLastSuccess            float64
 }
 
 var (
@@ -93,6 +95,10 @@ var (
 	descABDue         = desc("agent_auto_billing_due_computers", "ПК, чей срок пересмотра автобиллинга пришёл (zset ab:due, весь кластер).")
 	descABOldest      = desc("agent_auto_billing_oldest_due_age_seconds", "На сколько просрочен самый старый срок пересмотра автобиллинга (0 — нет просроченных).")
 	descLeader        = desc("worker_leader", "Этот инстанс держит advisory lock задачи (лидер постоянного воркера).", "job")
+	descReconcileOpen = desc("ledger_reconcile_open_findings",
+		"Открытые расхождения проекций денег с журналом операций (балансы клиентов, операции, снимок кассы; все клубы).")
+	descReconcileLast = desc("ledger_reconcile_last_success_timestamp_seconds",
+		"Время последней успешной фоновой сверки с журналом операций (Unix; 0 — ещё не было).")
 	descNATSConnected = desc("nats_connected", "Соединение NATS установлено (1) или нет (0).")
 	descNATSReconn    = desc("nats_reconnects_total", "Переподключения NATS с запуска.")
 	descCertExpiry    = desc("tls_certificate_expiry_timestamp_seconds",
@@ -109,7 +115,8 @@ type sourceCollector struct{ o *Observer }
 func (c *sourceCollector) Describe(ch chan<- *prometheus.Desc) {
 	for _, d := range []*prometheus.Desc{descPoolAcquired, descPoolIdle, descPoolTotal, descPoolMax, descPoolWaits,
 		descPoolWaitTime, descPoolCanceled, descStreams, descOnline, descOutboxPending, descOutboxOldest, descWebhookPend,
-		descWebhookRetry, descWebhookOldest, descABDue, descABOldest, descLeader, descNATSConnected, descNATSReconn, descCertExpiry} {
+		descWebhookRetry, descWebhookOldest, descABDue, descABOldest, descLeader, descNATSConnected, descNATSReconn, descCertExpiry,
+		descReconcileOpen, descReconcileLast} {
 		ch <- d
 	}
 	ch <- descRebalance
@@ -167,6 +174,10 @@ func (c *sourceCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(descWebhookRetry, prometheus.GaugeValue, v.webhookRetrying)
 		ch <- prometheus.MustNewConstMetric(descWebhookOldest, prometheus.GaugeValue, v.webhookOldest)
 	}
+	if v.reconcileOK {
+		ch <- prometheus.MustNewConstMetric(descReconcileOpen, prometheus.GaugeValue, v.reconcileOpen)
+		ch <- prometheus.MustNewConstMetric(descReconcileLast, prometheus.GaugeValue, v.reconcileLastSuccess)
+	}
 	for job, held := range v.leaders {
 		ch <- prometheus.MustNewConstMetric(descLeader, prometheus.GaugeValue, held, job)
 	}
@@ -180,6 +191,11 @@ FROM outbox_events WHERE published_at IS NULL`
 	sqlWebhookQueue = `SELECT count(*)::float8, (count(*) FILTER (WHERE attempts > 0))::float8,
        COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0)::float8
 FROM webhook_deliveries WHERE status = 'pending'`
+	// Фоновая сверка с журналом операций (воркер ledger:reconcile, аудит AC-3; таблицы 0033): одна строка состояния и
+	// счёт открытых находок (частичный индекс ledger_reconcile_findings_open_unique — открытых в норме ноль).
+	sqlLedgerReconcile = `SELECT (SELECT count(*) FROM ledger_reconcile_findings WHERE resolved_at IS NULL)::float8,
+       COALESCE(EXTRACT(EPOCH FROM last_success_at), 0)::float8
+FROM ledger_reconcile_state`
 	// Лок задачи: pg_try_advisory_lock(hashtext('job:'||имя)) — ключ bigint из int4 (знаковое расширение):
 	// classid — старшие 32 бита, objid — младшие, objsubid = 1.
 	sqlLeaders = `SELECT DISTINCT t.job
@@ -224,6 +240,11 @@ func (o *Observer) cached(s Sources) dbValues {
 			v.webhookOK = true
 		} else {
 			o.m.collectErr.WithLabelValues("webhooks").Inc()
+		}
+		if err := s.Platform.QueryRow(ctx, sqlLedgerReconcile).Scan(&v.reconcileOpen, &v.reconcileLastSuccess); err == nil {
+			v.reconcileOK = true
+		} else {
+			o.m.collectErr.WithLabelValues("ledger_reconcile").Inc()
 		}
 		v.leaders = o.collectLeaders(ctx, s.Platform)
 	}

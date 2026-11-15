@@ -320,6 +320,16 @@ func (s *Service) SecondFactorSetup(ctx context.Context, challenge string) (mfa.
 	return s.mfa.Setup(ctx, challenge)
 }
 
+// ConfirmSecondFactor — свежий код TOTP вошедшего суперадмина перед опасным действием кабинета (mfa.Confirm,
+// аудит A-10). Ошибки: mfa.ErrInvalidCode, mfa.ErrNotConfigured, mfa.ErrSecretUnreadable, *mfa.LimitError,
+// ErrSecondFactorUnavailable (второй фактор на сервере не настроен — действие закрыто).
+func (s *Service) ConfirmSecondFactor(ctx context.Context, userID int64, code string) error {
+	if s.mfa == nil {
+		return ErrSecondFactorUnavailable
+	}
+	return s.mfa.Confirm(ctx, userID, code)
+}
+
 // SecondFactorResult — вход после второго фактора.
 type SecondFactorResult struct {
 	LoginResult

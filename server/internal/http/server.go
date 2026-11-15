@@ -323,6 +323,8 @@ func NewRouter(o Options) http.Handler {
 		// Мобильные приложения на старом REST: свои токены и формат ответов — до аутентификации панели.
 		r.Use(o.Legacy(deps, r))
 	}
+	// После legacy (старый REST мобильных — как был) и до аутентификации: тело REST панели — только JSON/multipart.
+	r.Use(requireJSONBody)
 	if o.Auth != nil {
 		// Principal из Authorization: Bearer — до лимитов (ключ «пользователь») и обработчиков.
 		r.Use(skipIntegrationAPI(o.Auth.Middleware))

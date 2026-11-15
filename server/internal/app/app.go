@@ -595,6 +595,10 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		// Этап 7: почасовая история здоровья ПК — агрегаты часа из Valkey в Postgres (один исполнитель, Q-086).
 		{"agent-health-hourly", (&health.HourlyFlusher{Valkey: a.Valkey, Prefix: a.Stream.Presence().Prefix(),
 			App: a.AppPool, Platform: a.PlatformPool, Now: ro.Now, Log: log}).Run},
+		// Аудит AC-3: сверка балансов клиентов и кассы с журналом операций (только находит и оповещает; один
+		// исполнитель, Q-086).
+		{"ledger-reconcile", (&worker.LedgerReconcile{Platform: a.PlatformPool, App: a.AppPool, Log: log,
+			Interval: cfg.Workers.LedgerReconcile.Interval, FullInterval: cfg.Workers.LedgerReconcile.FullInterval}).Run},
 		{"log-retention", (&worker.LogRetention{
 			Platform: a.PlatformPool, Interval: cfg.Workers.LogRetention.Interval, Log: log,
 			// Сроки журналов — как в старом (PruneIntegrationData); ledger и audit_log — никогда.
@@ -687,7 +691,8 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	ro.Metrics = metrics
 	ro.Superadmin = httpx.SuperadminDeps{
 		Domain: cfg.Superadmin.Domain, BackupPath: cfg.Superadmin.BackupPath, SSLHosts: cfg.Superadmin.SSLHosts,
-		Secrets: box, UpdateKeys: updateKeys, TelegramGateway: tg.gateway, TelegramAlerts: tg.alerts,
+		LedgerReconcileInterval: cfg.Workers.LedgerReconcile.Interval,
+		Secrets:                 box, UpdateKeys: updateKeys, TelegramGateway: tg.gateway, TelegramAlerts: tg.alerts,
 		BroadcastOnline: broadcastOnline(a.bg, a.Stream.Commands(), a.Stream.Presence(), log),
 	}
 	ro.Checkers = append(ro.Checkers,

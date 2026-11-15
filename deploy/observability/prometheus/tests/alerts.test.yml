@@ -74,6 +74,61 @@ tests:
               description: "Гости ждут покупки времени после паузы или конца тарифа дольше обычного. Деньги не теряются (покупка идемпотентна), но время гостя не начинается."
               runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-auto-billing-lag
 
+  # Сверка с журналом операций нашла расхождение — сразу critical (оба инстанса отдают одно число из базы — без
+  # удвоения); расхождение устранили — алерт уходит.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_ledger_reconcile_open_findings{job="zafiro", instance="app1:9090"}'
+        values: '0 0 2 2 0 0'
+      - series: 'zafiro_ledger_reconcile_open_findings{job="zafiro", instance="app2:9090"}'
+        values: '0 0 2 2 0 0'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ZafiroLedgerDrift
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: ZafiroLedgerDrift
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Балансы не сходятся с журналом операций: расхождений — 2"
+              description: "Сверка ничего не исправляет. Список — журнал платформы суперадминки (событие ledger.drift_found) и таблица ledger_reconcile_findings."
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-ledger-drift
+      - eval_time: 5m
+        alertname: ZafiroLedgerDrift
+        exp_alerts: []
+
+  # Сверка не проходит: последняя успешная была в момент 0 (метрика — время Unix); через 3 ч + 15 мин — warning;
+  # пока сверка идёт каждый час — тихо.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="zafiro", instance="app1:9090"}'
+        values: '1x300'
+      - series: 'zafiro_ledger_reconcile_last_success_timestamp_seconds{job="zafiro", instance="app1:9090"}'
+        values: '0x300'
+    alert_rule_test:
+      - eval_time: 3h10m
+        alertname: ZafiroLedgerReconcileStale
+        exp_alerts: []
+      - eval_time: 3h20m
+        alertname: ZafiroLedgerReconcileStale
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Сверка балансов с журналом операций не проходила 3h 20m 0s"
+              description: "Расхождения балансов сейчас никто не ищет."
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-ledger-drift
+  - interval: 1m
+    input_series:
+      - series: 'up{job="zafiro", instance="app1:9090"}'
+        values: '1x300'
+      - series: 'zafiro_ledger_reconcile_last_success_timestamp_seconds{job="zafiro", instance="app1:9090"}'
+        values: '0x59 3600x59 7200x59 10800x59 14400x59'
+    alert_rule_test:
+      - eval_time: 4h50m
+        alertname: ZafiroLedgerReconcileStale
+        exp_alerts: []
+
   # Ошибка запроса ledger — сразу critical.
   - interval: 1m
     input_series:

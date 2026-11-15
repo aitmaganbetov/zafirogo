@@ -39,7 +39,8 @@ export interface PageSpec {
   media?: 'print';
   maxDiffPercent?: number;
   pixelThreshold?: number;
-  status?: 'ported' | 'pending';
+  /** accepted — подтверждённое владельцем отличие от старого: со старым не сверяется, новый снимок — шириной в окно. */
+  status?: 'ported' | 'pending' | 'accepted';
   note?: string;
   /** Хост вместо localhost в адресах обоих приложений (домен кабинета суперадмина, SUPERADMIN_DOMAIN — Q-069). */
   host?: string;

@@ -9,8 +9,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/mfa"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/ratelimit"
 	apicommon "github.com/aitmaganbetov/zafirogo/server/internal/http/api/common"
 	superadminapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/superadmin"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
@@ -103,6 +105,54 @@ func guardOther(ctx context.Context, id int64) error {
 	return nil
 }
 
+// readOnly — режим просмотра клуба: опасные действия кабинета закрыты (readOnlyGuard кабинет пропускает).
+func readOnly(ctx context.Context) *apicommon.ForbiddenJSONResponse {
+	if !httpx.Principal(ctx).ReadOnly {
+		return nil
+	}
+	r := apicommon.ForbiddenJSONResponse(httpx.ErrorBody(permissions.CodeReadOnly, permissions.MsgReadOnly))
+	return &r
+}
+
+// Тексты проверки свежего кода — те же, что на экране второго фактора при входе (sections/auth).
+const (
+	msgCodeRequired = "Введите код."
+	msgCodeInvalid  = "Неверный код."
+)
+
+// confirmSecondFactor — свежее подтверждение вторым фактором действующего суперадмина (аудит A-10): выдача и снятие
+// прав суперадмина и сброс чужого второго фактора выполняются только с кодом TOTP из тела запроса. Украденной
+// сессии (токена) для этих действий недостаточно. Проверка — mfa.Confirm: лимит superadmin-totp, защита от повтора
+// шага, неудача — в журнал платформы. limited != nil — ответ 429; err — 422 по полю code.
+func (h *handlers) confirmSecondFactor(ctx context.Context, body *superadminapi.SecondFactorConfirm) (limited *apicommon.TooManyRequestsJSONResponse, err error) {
+	if h.d.Auth == nil {
+		return nil, httpx.ErrNotConfigured
+	}
+	if body == nil || strings.TrimSpace(body.Code) == "" {
+		return nil, httpx.ValidationMsg("code", msgCodeRequired, nil)
+	}
+	err = h.d.Auth.ConfirmSecondFactor(ctx, httpx.Principal(ctx).UserID, body.Code)
+	var lim *mfa.LimitError
+	switch {
+	case err == nil:
+		return nil, nil
+	case errors.As(err, &lim):
+		sec := int(ratelimit.RetryAfterSeconds(lim.RetryAfter))
+		return &apicommon.TooManyRequestsJSONResponse{
+			Body:    httpx.ErrorBody("too_many_requests", ratelimit.TooManyAttemptsMessage),
+			Headers: apicommon.TooManyRequestsResponseHeaders{RetryAfter: &sec},
+		}, nil
+	case errors.Is(err, mfa.ErrInvalidCode), errors.Is(err, mfa.ErrNotConfigured):
+		return nil, httpx.ValidationMsg("code", msgCodeInvalid, nil)
+	case errors.Is(err, mfa.ErrSecretUnreadable):
+		h.d.Log().ErrorContext(ctx, "superadmin totp secret cannot be decrypted with any data key")
+		return nil, httpx.ValidationMsg("code", msgCodeInvalid, nil)
+	case errors.Is(err, auth.ErrSecondFactorUnavailable):
+		return nil, httpx.ErrNotConfigured
+	}
+	return nil, err
+}
+
 // SaBlockAccount — UserController::block(): вход закрыт, сеансы панели и токены гостя на ПК отзываются сразу.
 func (h *handlers) SaBlockAccount(ctx context.Context, req superadminapi.SaBlockAccountRequestObject) (superadminapi.SaBlockAccountResponseObject, error) {
 	if err := guardOther(ctx, req.UserId); err != nil {
@@ -172,8 +222,17 @@ func (h *handlers) SaUnblockAccount(ctx context.Context, req superadminapi.SaUnb
 	return superadminapi.SaUnblockAccount200JSONResponse(msg(h.d.T(ctx, "Пользователь разблокирован.", nil))), nil
 }
 
-// SaGrantSuperadmin — UserController::grant().
+// SaGrantSuperadmin — UserController::grant(). Отличие от Laravel (аудит A-10, подтверждено владельцем): нужен
+// свежий код TOTP действующего суперадмина; в режиме просмотра клуба — нельзя.
 func (h *handlers) SaGrantSuperadmin(ctx context.Context, req superadminapi.SaGrantSuperadminRequestObject) (superadminapi.SaGrantSuperadminResponseObject, error) {
+	if ro := readOnly(ctx); ro != nil {
+		return superadminapi.SaGrantSuperadmin403JSONResponse{ForbiddenJSONResponse: *ro}, nil
+	}
+	if limited, err := h.confirmSecondFactor(ctx, req.Body); err != nil {
+		return nil, err
+	} else if limited != nil {
+		return superadminapi.SaGrantSuperadmin429JSONResponse{TooManyRequestsJSONResponse: *limited}, nil
+	}
 	now := h.d.NowFunc()
 	err := h.tx(ctx, func(q *store.Queries) error {
 		u, err := lockUser(ctx, q, req.UserId)
@@ -198,11 +257,19 @@ func (h *handlers) SaGrantSuperadmin(ctx context.Context, req superadminapi.SaGr
 	return superadminapi.SaGrantSuperadmin200JSONResponse(msg(h.d.T(ctx, "Права суперадмина выданы.", nil))), nil
 }
 
-// SaRevokeSuperadmin — UserController::revoke(). Флаг суперадмина читается при каждом запросе (Principal), поэтому
+// SaRevokeSuperadmin — UserController::revoke() + свежий код TOTP (аудит A-10), не в режиме просмотра. Флаг суперадмина читается при каждом запросе (Principal), поэтому
 // права пропадают со следующего запроса.
 func (h *handlers) SaRevokeSuperadmin(ctx context.Context, req superadminapi.SaRevokeSuperadminRequestObject) (superadminapi.SaRevokeSuperadminResponseObject, error) {
+	if ro := readOnly(ctx); ro != nil {
+		return superadminapi.SaRevokeSuperadmin403JSONResponse{ForbiddenJSONResponse: *ro}, nil
+	}
 	if err := guardOther(ctx, req.UserId); err != nil {
 		return nil, err
+	}
+	if limited, err := h.confirmSecondFactor(ctx, req.Body); err != nil {
+		return nil, err
+	} else if limited != nil {
+		return superadminapi.SaRevokeSuperadmin429JSONResponse{TooManyRequestsJSONResponse: *limited}, nil
 	}
 	now := h.d.NowFunc()
 	err := h.tx(ctx, func(q *store.Queries) error {
@@ -228,14 +295,18 @@ func (h *handlers) SaRevokeSuperadmin(ctx context.Context, req superadminapi.SaR
 // SaResetSecondFactor — сброс второго фактора суперадмина другим суперадмином (Этап 7, новая функция;
 // docs/open-questions/stage7-totp.md): ключ TOTP и коды восстановления удаляются, сеансы отзываются; следующий вход —
 // принудительная настройка. Не в режиме просмотра клуба (readOnlyGuard кабинет пропускает — запрет здесь и в
-// readOnlyAllowed) и не для своего аккаунта.
+// readOnlyAllowed) и не для своего аккаунта; со свежим кодом TOTP действующего суперадмина (аудит A-10).
 func (h *handlers) SaResetSecondFactor(ctx context.Context, req superadminapi.SaResetSecondFactorRequestObject) (superadminapi.SaResetSecondFactorResponseObject, error) {
-	if httpx.Principal(ctx).ReadOnly {
-		return superadminapi.SaResetSecondFactor403JSONResponse{ForbiddenJSONResponse: apicommon.ForbiddenJSONResponse(
-			httpx.ErrorBody(permissions.CodeReadOnly, permissions.MsgReadOnly))}, nil
+	if ro := readOnly(ctx); ro != nil {
+		return superadminapi.SaResetSecondFactor403JSONResponse{ForbiddenJSONResponse: *ro}, nil
 	}
 	if err := guardOther(ctx, req.UserId); err != nil {
 		return nil, err
+	}
+	if limited, err := h.confirmSecondFactor(ctx, req.Body); err != nil {
+		return nil, err
+	} else if limited != nil {
+		return superadminapi.SaResetSecondFactor429JSONResponse{TooManyRequestsJSONResponse: *limited}, nil
 	}
 	err := h.tx(ctx, func(q *store.Queries) error {
 		u, err := lockUser(ctx, q, req.UserId)
