@@ -65,6 +65,23 @@ func (c *Catalog) ClubLocale(ctx context.Context, clubID int64) string {
 	return SourceLocale
 }
 
+// EnabledCodes — коды включённых языков из снимка в памяти (без сверки с базой, в отличие от Enabled): для
+// заголовков страниц сайта в index.html (webui.SiteTexts). Нет снимка — пусто.
+func (c *Catalog) EnabledCodes(ctx context.Context) []string {
+	if c == nil || c.pool == nil {
+		return nil
+	}
+	s := c.current(ctx)
+	if s == nil {
+		return nil
+	}
+	codes := make([]string, len(s.enabled))
+	for i, l := range s.enabled {
+		codes[i] = l.Code
+	}
+	return codes
+}
+
 // Lookup — перевод строки key (формат Laravel) на язык locale: язык → запасной en → нет (как Translator::get()
 // для JSON-фраз). Группы — ключом «группа.ключ» (validation.required). Язык не включён — нет перевода.
 // Только память: см. Catalog.

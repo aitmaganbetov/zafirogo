@@ -25,10 +25,11 @@ type MenuLink = readonly [string, string, string, string, LandingRoute | null];
 
 function useMeta(name: string, content: string, attr: 'name' | 'property' = 'name') {
   useEffect(() => {
-    const el = document.createElement('meta');
+    // Тег из index.html (сервер подставляет его для страниц сайта, решение L-1) переиспользуется — без дублей.
+    const el = document.head.querySelector<HTMLMetaElement>(`meta[${attr}="${name}"]`) ?? document.createElement('meta');
     el.setAttribute(attr, name);
     el.content = content;
-    document.head.appendChild(el);
+    if (!el.isConnected) document.head.appendChild(el);
     return () => el.remove();
   }, [attr, name, content]);
 }
@@ -127,7 +128,8 @@ export function LandingLayout({ current, title, description, children }: Landing
     <>
       <header className="sticky top-0 z-30 border-b border-gray-100 bg-white/80 shadow-[0_2px_12px_rgba(17,24,39,0.06)] backdrop-blur">
         <nav className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <a href="/" className="flex shrink-0 items-center gap-2 font-bold tracking-wide">
+          {/* aria-label — осознанное отличие от Blade (L-2, AU-16): на телефоне «ZAFIRO» скрыто и у ссылки не было имени. */}
+          <a href="/" aria-label={`ZAFIRO — ${t('Главная')}`} className="flex shrink-0 items-center gap-2 font-bold tracking-wide">
             <img src="/images/logo-dark.svg" alt="" className="h-9 w-auto" />
             <span className="hidden text-lg sm:inline">ZAFIRO</span>
           </a>

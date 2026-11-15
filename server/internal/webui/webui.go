@@ -13,7 +13,8 @@
 //   - ETag — хеш содержимого (одинаков у всех инстансов и между перезапусками, PB-23), Last-Modified нет;
 //   - /api/* сюда не доходит (роутер отвечает JSON 404), но на всякий случай — 404;
 //   - путь с расширением, которого нет, — 404 (не прячем битые ссылки на ассеты);
-//   - всё остальное — index.html (SPA fallback для клиентского роутера).
+//   - всё остальное — index.html (SPA fallback для клиентского роутера); для страниц публичного сайта — с
+//     заголовком, описанием и Open Graph страницы (WithSiteMeta, site.go, решение L-1).
 package webui
 
 import (
@@ -55,7 +56,11 @@ const placeholder = `<!doctype html>
 // Option — настройка отдачи SPA.
 type Option func(*options)
 
-type options struct{ cabinetDomain, resellerDomain string }
+type options struct {
+	cabinetDomain, resellerDomain string
+	site                          bool
+	siteTexts                     SiteTexts
+}
 
 // WithSuperadminDomain — на хосте кабинета суперадмина (SUPERADMIN_DOMAIN, Q-069) index.html отдаётся с атрибутом
 // <html data-superadmin-host>: SPA показывает кабинет с корня хоста (как Route::domain() старого кода).
@@ -175,6 +180,10 @@ func Handler(fsys fs.FS, opts ...Option) http.Handler {
 	resellerIndex := bytes.Replace(index, []byte("<html"), []byte("<html data-reseller-host"), 1)
 	resellerVariant := newVariant("index.html", resellerIndex)
 	fileServer := http.FileServerFS(fsys)
+	var site *siteIndex
+	if o.site {
+		site = newSiteIndex(index, o.siteTexts)
+	}
 
 	// variants — файлы сборки по имени: набор конечен (вшитая ФС), сжатие — один раз на файл.
 	var (
@@ -202,18 +211,30 @@ func Handler(fsys fs.FS, opts ...Option) http.Handler {
 		return v
 	}
 
-	serveIndex := func(w http.ResponseWriter, r *http.Request) {
+	// serveIndex — index.html для пути p ("" — общий, без заголовков сайта).
+	serveIndex := func(w http.ResponseWriter, r *http.Request, p string) {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Add("Vary", "Accept-Encoding")
 		body, v := index, indexVariant
+		siteHost := true // на хостах кабинетов суперадмина и реселлера сайт не показывается (L-1)
 		if o.cabinetDomain != "" || o.resellerDomain != "" {
 			w.Header().Add("Vary", "Host")
 			switch {
 			case o.cabinetDomain != "" && sameHost(r.Host, o.cabinetDomain):
-				body, v = cabinetIndex, cabinetVariant
+				body, v, siteHost = cabinetIndex, cabinetVariant, false
 			case o.resellerDomain != "" && sameHost(r.Host, o.resellerDomain):
-				body, v = resellerIndex, resellerVariant
+				body, v, siteHost = resellerIndex, resellerVariant, false
+			}
+		}
+		if site != nil && siteHost {
+			if b, sv, ok := site.page(r, p); ok {
+				// Заголовки страницы зависят от языка гостя и адреса сайта (og:image).
+				w.Header().Add("Vary", "Accept-Language")
+				if o.cabinetDomain == "" && o.resellerDomain == "" {
+					w.Header().Add("Vary", "Host")
+				}
+				body, v = b, sv
 			}
 		}
 		if v.gz != nil && acceptsGzip(r) {
@@ -236,7 +257,7 @@ func Handler(fsys fs.FS, opts ...Option) http.Handler {
 			return
 		}
 		if p == "/" || p == "/index.html" {
-			serveIndex(w, r)
+			serveIndex(w, r, "/")
 			return
 		}
 		name := strings.TrimPrefix(p, "/")
@@ -271,7 +292,7 @@ func Handler(fsys fs.FS, opts ...Option) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		serveIndex(w, r)
+		serveIndex(w, r, p)
 	})
 }
 

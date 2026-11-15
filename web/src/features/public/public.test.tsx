@@ -29,6 +29,8 @@ describe('публичный сайт', () => {
 
   it('главная: новый первый экран, регистрация гостю, панель вошедшему', async () => {
     mockApi({ 'GET /api/landing': { ...LANDING, trial_days: 30 } });
+    // Тег, подставленный сервером в index.html (L-1): клиент обновляет его, а не добавляет второй.
+    document.head.insertAdjacentHTML('beforeend', '<meta name="description" content="с сервера">');
     const { unmount } = renderPage(<LandingPage />);
     expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('Весь клуб - в одном окне');
     expect(document.title).toBe('Zafiro — система управления компьютерным клубом');
@@ -67,6 +69,14 @@ describe('публичный сайт', () => {
     }
     expect(header.querySelector('a[href="/wiki"]')).toHaveAttribute('data-reload');
     expect(header.querySelector('img')).toHaveAttribute('src', '/images/logo-dark.svg');
+    // L-2 / AU-16: у ссылки-логотипа есть доступное имя и там, где «ZAFIRO» скрыто (телефон); классы — как в Blade.
+    const logo = within(header).getByRole('link', { name: 'ZAFIRO — Главная' });
+    expect(logo).toHaveAttribute('href', '/');
+    expect(logo).toHaveClass('flex', 'shrink-0', 'items-center', 'gap-2', 'font-bold', 'tracking-wide');
+    // L-1: заголовки страницы — по одному тегу (тег из index.html сервера переиспользуется, не дублируется).
+    for (const sel of ['meta[name="description"]', 'meta[property="og:title"]', 'meta[property="og:description"]', 'meta[property="og:image"]', 'meta[property="og:type"]']) {
+      expect(document.head.querySelectorAll(sel)).toHaveLength(1);
+    }
     expect(header.querySelectorAll('[aria-current="page"]')).toHaveLength(0);
     unmount();
     expect(document.body).not.toHaveClass('bg-white');

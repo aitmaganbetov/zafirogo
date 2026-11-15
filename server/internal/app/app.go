@@ -201,7 +201,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (_ *App, e
 		Logger:         log,
 		RequestTimeout: cfg.HTTP.RequestTimeout,
 		TrustedProxies: trusted,
-		Frontend:       webui.Handler(webui.FS(), webui.WithSuperadminDomain(cfg.Superadmin.Domain), webui.WithResellerDomain(cfg.Reseller.Domain)),
+		Frontend:       webui.Handler(webui.FS(), webui.WithSuperadminDomain(cfg.Superadmin.Domain), webui.WithResellerDomain(cfg.Reseller.Domain), webui.WithSiteMeta(siteTexts{a})),
 		Checkers:       []httpserver.Checker{httpserver.CheckFunc{CheckName: "shutdown", Fn: a.checkNotDraining}},
 		Observe:        a.Obs.HTTPMiddleware,
 	}
@@ -748,4 +748,14 @@ func firstNonEmpty(v ...string) string {
 		}
 	}
 	return ""
+}
+
+// siteTexts — переводы заголовков страниц сайта для index.html (webui.WithSiteMeta, L-1). Каталог создаётся позже
+// обработчика фронта (buildCore) и отсутствует в режиме без зависимостей — тогда тексты русские.
+type siteTexts struct{ a *App }
+
+func (s siteTexts) EnabledCodes(ctx context.Context) []string { return s.a.I18n.EnabledCodes(ctx) }
+
+func (s siteTexts) Lookup(ctx context.Context, locale, key string) (string, bool) {
+	return s.a.I18n.Lookup(ctx, locale, key)
 }

@@ -124,6 +124,9 @@ func Plan(ctx context.Context, my *sql.DB, pg *pgxpool.Pool, o Options) (*Report
 	if err := r.preflight(ctx); err != nil {
 		return r.rep, err
 	}
+	if err := r.reservationOverlaps(ctx); err != nil {
+		return r.rep, err
+	}
 	if err := r.copyAll(ctx); err != nil {
 		return r.rep, err
 	}
@@ -193,6 +196,13 @@ func Apply(ctx context.Context, my *sql.DB, pg *pgxpool.Pool, o Options) (*Repor
 		}
 		if r.rep.Has(Blocker, CodeAlreadyMigrated) {
 			return ErrAlreadyMigrated
+		}
+		// До записи: пересекающиеся брони остановили бы вставку ошибкой ограничения базы, а не понятной находкой.
+		if err := r.reservationOverlaps(ctx); err != nil {
+			return err
+		}
+		if r.rep.Has(Blocker, CodeBookingOverlap) {
+			return ErrBlocked
 		}
 		if err := r.copyAll(ctx); err != nil {
 			return err
@@ -396,6 +406,41 @@ func (r *run) slugConflicts(ctx context.Context) error {
 			"slug клуба совпадает (без учёта регистра) со slug другого клуба zafirogo")
 	}
 	return nil
+}
+
+// reservationOverlapSamples — сколько пар пересекающихся броней показывает отчёт (остальные — после исправления).
+const reservationOverlapSamples = 20
+
+// reservationOverlaps — две ожидающие (не отменённые, клиент не пришёл) брони одного ПК на пересекающееся время:
+// блокер (решение UB-2 тем броней, docs/open-questions/upstream-bookings.md §4.3). Старый код такого не допускал
+// (ComputerReservations::create(): блокировка строки ПК), но ограничения в MySQL нет; в Postgres его держит
+// computer_reservations_pending_no_overlap (0040) — без этой проверки перенос остановился бы на вставке.
+// Условие — как у ограничения: диапазоны [starts_at, ends_at), пустой (ends_at ≤ starts_at) ни с чем не пересекается.
+func (r *run) reservationOverlaps(ctx context.Context) error {
+	if r.rep.Has(Blocker, CodeBookingOverlap) {
+		return nil // apply после plan в том же запуске не дублирует находки
+	}
+	rows, err := r.src.conn.QueryContext(ctx, `SELECT a.id, b.id, a.club_computer_id
+		FROM computer_reservations a
+		JOIN computer_reservations b ON b.club_id = a.club_id AND b.club_computer_id = a.club_computer_id AND b.id > a.id
+		WHERE a.club_id = ?
+		  AND a.cancelled_at IS NULL AND a.arrived_at IS NULL AND b.cancelled_at IS NULL AND b.arrived_at IS NULL
+		  AND a.ends_at > a.starts_at AND b.ends_at > b.starts_at
+		  AND a.starts_at < b.ends_at AND b.starts_at < a.ends_at
+		ORDER BY a.id, b.id LIMIT ?`, r.club.ID, reservationOverlapSamples)
+	if err != nil {
+		return fmt.Errorf("mysql: reservation overlaps: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var a, b, pc int64
+		if err := rows.Scan(&a, &b, &pc); err != nil {
+			return fmt.Errorf("mysql: reservation overlaps: %w", err)
+		}
+		r.rep.add(Blocker, CodeBookingOverlap, "computer_reservations", "starts_at", "", strconv.FormatInt(a, 10),
+			fmt.Sprintf("ожидающие брони №%d и №%d одного ПК (id %d) пересекаются по времени: отмените или исправьте одну из них в старой панели", a, b, pc))
+	}
+	return rows.Err()
 }
 
 // copyAll проходит все таблицы ядра; в apply — пишет, в plan — только проверяет.

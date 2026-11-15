@@ -46,7 +46,8 @@ const (
 	CodeMinutesNotMember  = "minutes"
 	CodeVerifyMismatch    = "verify"
 	CodeExtension         = "extension"
-	CodeFreeze            = "freeze" // заморозка клуба (подписка приостановлена в старом Laravel)
+	CodeFreeze            = "freeze"          // заморозка клуба (подписка приостановлена в старом Laravel)
+	CodeBookingOverlap    = "booking_overlap" // ожидающие брони одного ПК пересекаются по времени (ограничение 0040)
 	maxSamples            = 5
 	maxHistoryLines       = 30
 	maxDurationLines      = 12
