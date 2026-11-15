@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { productSearchQuery, type Product } from './api';
+import { productSearchQuery, productsPageQuery, type Product } from './api';
 
 /*
  * Выбор товара поиском — решение Q-070 (вместо <select> со всеми товарами WarehouseController): поле с классами
@@ -25,12 +25,15 @@ export function ProductPicker({
   const [text, setText] = useState<string | null>(null);
   const [debounced, setDebounced] = useState('');
   const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const h = setTimeout(() => setDebounced((text ?? '').trim()), 250);
     return () => clearTimeout(h);
   }, [text]);
-  const first = useQuery(productSearchQuery(''));
+  // «Первый товар» — из первой страницы каталога, которую экран склада уже загрузил (тот же маршрут и порядок,
+  // общий ключ кэша) — без отдельного запроса при открытии (FE-14).
+  const first = useQuery(productsPageQuery(1));
   const results = useQuery({ ...productSearchQuery(debounced), enabled: open });
   // <select> без выбора показывает первый вариант.
   const firstItem = first.data?.items[0];
@@ -46,6 +49,12 @@ export function ProductPicker({
   }, []);
   const items = results.data?.items ?? [];
   const shown = text ?? (value ? label(value) : '');
+  const pick = (p: Product) => {
+    onChange(p);
+    setText(null);
+    setOpen(false);
+    setActive(-1);
+  };
   return (
     <div className="pos-user-picker" ref={box}>
       <input
@@ -59,11 +68,38 @@ export function ProductPicker({
         required
         value={shown}
         className={className}
+        aria-activedescendant={open && active >= 0 && items[active] ? `${id}-option-${items[active].id}` : undefined}
+        title={shown}
         onFocus={() => setOpen(true)}
         onChange={(e) => {
           setText(e.target.value);
           onChange(null);
           setOpen(true);
+          setActive(-1);
+        }}
+        onKeyDown={(e) => {
+          // Как у <select> и combobox брони: Esc закрывает список, стрелки и Enter выбирают (UI-10).
+          if (e.key === 'Escape') {
+            if (!open) return;
+            e.preventDefault();
+            e.stopPropagation();
+            setOpen(false);
+            setActive(-1);
+          } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (!open) {
+              setOpen(true);
+              return;
+            }
+            if (items.length === 0) return;
+            const step = e.key === 'ArrowDown' ? 1 : -1;
+            setActive((i) => (i + step + items.length) % items.length);
+          } else if (e.key === 'Enter' && open && active >= 0) {
+            const p = items[active];
+            if (!p) return;
+            e.preventDefault();
+            pick(p);
+          }
         }}
       />
       <div id={`${id}-options`} className="pos-user-options" role="listbox" hidden={!open}>
@@ -73,12 +109,9 @@ export function ProductPicker({
             type="button"
             className="pos-user-option"
             role="option"
-            aria-selected={value?.id === p.id}
-            onClick={() => {
-              onChange(p);
-              setText(null);
-              setOpen(false);
-            }}
+            id={`${id}-option-${p.id}`}
+            aria-selected={active >= 0 ? items[active]?.id === p.id : value?.id === p.id}
+            onClick={() => pick(p)}
           >
             <span>
               <strong>{label(p)}</strong>

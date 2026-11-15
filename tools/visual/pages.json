@@ -189,7 +189,27 @@
         "@badges"
       ],
       "status": "ported",
-      "note": "Заказы из агента (shop-orders/index.blade.php), новые. Опрос /shop-orders/state → WebSocket (Q-062)."
+      "note": "Заказы из агента (shop-orders/index.blade.php), новые. Опрос /shop-orders/state → WebSocket (Q-062).",
+      "viewports": [
+        "desktop"
+      ]
+    },
+    {
+      "id": "shop-orders-mobile",
+      "old": "/shop-orders",
+      "new": "/shop-orders",
+      "role": "cashier",
+      "waitFor": "[data-orders]",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Телефон (390): осознанное отличие — docs/open-questions/audit-ui.md AU-2 (аудит UI-02). В старом карточка заказа шире экрана (404 px): суммы и кнопка «Отменить» обрезаны справа. В новом — grid-cols-1: карточка по ширине экрана. Порог 2 % только для телефона (замер 1,41–1,52 %); настольный вид — запись «shop-orders», порог общий.",
+      "viewports": [
+        "mobile"
+      ],
+      "maxDiffPercent": 2.0
     },
     {
       "id": "shop-orders-all",
@@ -202,7 +222,27 @@
         "@badges"
       ],
       "status": "ported",
-      "note": "Заказы из агента — все статусы (выданный, отменённый, новый)."
+      "note": "Заказы из агента — все статусы (выданный, отменённый, новый).",
+      "viewports": [
+        "desktop"
+      ]
+    },
+    {
+      "id": "shop-orders-all-mobile",
+      "old": "/shop-orders?status=all",
+      "new": "/shop-orders?status=all",
+      "role": "cashier",
+      "waitFor": "[data-orders]",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Телефон (390): то же осознанное отличие, что у «shop-orders-mobile» (docs/open-questions/audit-ui.md AU-2, аудит UI-02): карточки заказов по ширине экрана вместо обрезанных справа. Порог 3 % только для телефона (замер 1,79–2,53 %); настольный вид — запись «shop-orders-all», порог общий.",
+      "viewports": [
+        "mobile"
+      ],
+      "maxDiffPercent": 3.0
     },
     {
       "id": "services",
@@ -211,7 +251,22 @@
       "role": "owner",
       "waitFor": "table",
       "status": "ported",
-      "note": "Услуги (services/index.blade.php): форма добавления и правка строкой (владелец)."
+      "note": "Услуги (services/index.blade.php): форма добавления и правка строкой (владелец).",
+      "viewports": [
+        "desktop"
+      ]
+    },
+    {
+      "id": "services-mobile",
+      "old": "/services",
+      "new": "/services",
+      "role": "owner",
+      "waitFor": "table",
+      "status": "pending",
+      "note": "Телефон (390): осознанное отличие от старого — docs/open-questions/audit-ui.md AU-1 (аудит UI-01). В старом span.sr-only в заголовке таблицы растягивает страницу шире экрана (461 px при окне 390): браузер телефона раздвигает окно раскладки, снимок старого — 461 px шириной (страница уменьшена, окна «Добавить/Изменить» открываются за экраном). В новом th с sr-only — relative: страница 390 px, таблица прокручивается в своём блоке. Снимки разного размера попиксельно не сравниваются — поэтому status pending (расхождение только в отчёте); настольный вид сравнивается как раньше (запись «services»).",
+      "viewports": [
+        "mobile"
+      ]
     },
     {
       "id": "users",
@@ -220,7 +275,22 @@
       "role": "owner",
       "waitFor": "[data-customer-row], table",
       "status": "ported",
-      "note": "Пользователи (users.blade.php, UserController::index): клиенты с балансами и лояльностью; пагинация keyset (simple-tailwind) — в демо-данных одна страница."
+      "note": "Пользователи (users.blade.php, UserController::index): клиенты с балансами и лояльностью; пагинация keyset (simple-tailwind) — в демо-данных одна страница.",
+      "viewports": [
+        "desktop"
+      ]
+    },
+    {
+      "id": "users-mobile",
+      "old": "/users",
+      "new": "/users",
+      "role": "owner",
+      "waitFor": "[data-customer-row], table",
+      "status": "pending",
+      "note": "Телефон (390): осознанное отличие от старого — docs/open-questions/audit-ui.md AU-1 (аудит UI-01). В старом span.sr-only в заголовке таблицы растягивает страницу шире экрана (828 px при окне 390): браузер телефона раздвигает окно раскладки, снимок старого — 828 px шириной (страница уменьшена, окна «Добавить/Изменить» открываются за экраном). В новом th с sr-only — relative: страница 390 px, таблица прокручивается в своём блоке. Снимки разного размера попиксельно не сравниваются — поэтому status pending (расхождение только в отчёте); настольный вид сравнивается как раньше (запись «users»).",
+      "viewports": [
+        "mobile"
+      ]
     },
     {
       "id": "workers",
@@ -229,7 +299,22 @@
       "role": "owner",
       "waitFor": "table",
       "status": "ported",
-      "note": "Работники (workers/index.blade.php, WorkerController::index): формы добавления и приглашения, смены, роли."
+      "note": "Работники (workers/index.blade.php, WorkerController::index): формы добавления и приглашения, смены, роли.",
+      "viewports": [
+        "desktop"
+      ]
+    },
+    {
+      "id": "workers-mobile",
+      "old": "/workers",
+      "new": "/workers",
+      "role": "owner",
+      "waitFor": "table",
+      "status": "pending",
+      "note": "Телефон (390): осознанное отличие от старого — docs/open-questions/audit-ui.md AU-1 (аудит UI-01). В старом span.sr-only в заголовке таблицы растягивает страницу шире экрана (611 px при окне 390): браузер телефона раздвигает окно раскладки, снимок старого — 611 px шириной (страница уменьшена, окна «Добавить/Изменить» открываются за экраном). В новом th с sr-only — relative: страница 390 px, таблица прокручивается в своём блоке. Снимки разного размера попиксельно не сравниваются — поэтому status pending (расхождение только в отчёте); настольный вид сравнивается как раньше (запись «workers»).",
+      "viewports": [
+        "mobile"
+      ]
     },
     {
       "id": "settings-permissions",
@@ -313,7 +398,26 @@
         "@badges"
       ],
       "status": "ported",
-      "note": "Зоны и тарифы (tariffs/index.blade.php + tariffs/periods.blade.php)"
+      "note": "Зоны и тарифы (tariffs/index.blade.php + tariffs/periods.blade.php)",
+      "viewports": [
+        "desktop"
+      ]
+    },
+    {
+      "id": "tariffs-mobile",
+      "old": "/tariffs",
+      "new": "/tariffs",
+      "role": "owner",
+      "waitFor": "#tariff-zone-filter",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "pending",
+      "note": "Телефон (390): осознанное отличие от старого — docs/open-questions/audit-ui.md AU-1 (аудит UI-01). В старом span.sr-only в заголовке таблицы растягивает страницу шире экрана (605 px при окне 390): браузер телефона раздвигает окно раскладки, снимок старого — 605 px шириной (страница уменьшена, окна «Добавить/Изменить» открываются за экраном). В новом th с sr-only — relative: страница 390 px, таблица прокручивается в своём блоке. Снимки разного размера попиксельно не сравниваются — поэтому status pending (расхождение только в отчёте); настольный вид сравнивается как раньше (запись «tariffs»).",
+      "viewports": [
+        "mobile"
+      ]
     },
     {
       "id": "tariffs-zone",
@@ -343,7 +447,27 @@
         "@badges"
       ],
       "status": "ported",
-      "note": "Тот же экран с открытой формой изменения тарифа (<dialog>, showModal)"
+      "note": "Тот же экран с открытой формой изменения тарифа (<dialog>, showModal)",
+      "viewports": [
+        "desktop"
+      ]
+    },
+    {
+      "id": "tariffs-edit-mobile",
+      "old": "/tariffs/2/edit",
+      "new": "/tariffs/2/edit",
+      "role": "owner",
+      "fullPage": false,
+      "waitFor": "#tariff-dialog[open]",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "pending",
+      "note": "Телефон (390): осознанное отличие от старого — docs/open-questions/audit-ui.md AU-1 (аудит UI-01). В старом span.sr-only в заголовке таблицы растягивает страницу шире экрана (605 px при окне 390): браузер телефона раздвигает окно раскладки, снимок старого — 605 px шириной (страница уменьшена, окна «Добавить/Изменить» открываются за экраном). В новом th с sr-only — relative: страница 390 px, таблица прокручивается в своём блоке. Снимки разного размера попиксельно не сравниваются — поэтому status pending (расхождение только в отчёте); настольный вид сравнивается как раньше (запись «tariffs-edit»).",
+      "viewports": [
+        "mobile"
+      ]
     },
     {
       "id": "reservations",
@@ -356,7 +480,26 @@
         "@badges"
       ],
       "status": "ported",
-      "note": "Брони (reservations/index.blade.php), день демо-данных"
+      "note": "Брони (reservations/index.blade.php), день демо-данных",
+      "viewports": [
+        "desktop"
+      ]
+    },
+    {
+      "id": "reservations-mobile",
+      "old": "/reservations",
+      "new": "/reservations",
+      "role": "admin",
+      "waitFor": "#reservation-day",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "pending",
+      "note": "Телефон (390): осознанное отличие от старого — docs/open-questions/audit-ui.md AU-1 (аудит UI-01). В старом span.sr-only в заголовке таблицы растягивает страницу шире экрана (603 px при окне 390): браузер телефона раздвигает окно раскладки, снимок старого — 603 px шириной (страница уменьшена, окна «Добавить/Изменить» открываются за экраном). В новом th с sr-only — relative: страница 390 px, таблица прокручивается в своём блоке. Снимки разного размера попиксельно не сравниваются — поэтому status pending (расхождение только в отчёте); настольный вид сравнивается как раньше (запись «reservations»).",
+      "viewports": [
+        "mobile"
+      ]
     },
     {
       "id": "news",
@@ -369,7 +512,27 @@
         "@badges"
       ],
       "status": "ported",
-      "note": "Новости клуба (news/index.blade.php в режиме клуба)"
+      "note": "Новости клуба (news/index.blade.php в режиме клуба)",
+      "viewports": [
+        "desktop"
+      ]
+    },
+    {
+      "id": "news-mobile",
+      "old": "/news",
+      "new": "/news",
+      "role": "owner",
+      "waitFor": "#news-title",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Телефон (390): осознанное отличие — docs/open-questions/audit-ui.md AU-2 (аудит UI-02). В старом форма «Новая новость» без grid-cols-1 шире карточки: поля «Заголовок» и «Текст» выходят за правый край. В новом поля по ширине карточки. Порог 1 % только для телефона (замер 0,16 % светлая / 0,85 % тёмная — в тёмной теме виден сдвиг правой рамки полей); настольный вид — запись «news», порог общий.",
+      "viewports": [
+        "mobile"
+      ],
+      "maxDiffPercent": 1.0
     },
     {
       "id": "todos",
@@ -395,7 +558,27 @@
         "@badges"
       ],
       "status": "ported",
-      "note": "Чат с клиентами (chat/index.blade.php), отвечающий (кассир): открытие диалога помечает прочитанным"
+      "note": "Чат с клиентами (chat/index.blade.php), отвечающий (кассир): открытие диалога помечает прочитанным",
+      "viewports": [
+        "desktop"
+      ]
+    },
+    {
+      "id": "chat-mobile",
+      "old": "/chat",
+      "new": "/chat",
+      "role": "cashier",
+      "waitFor": "[aria-label='Переписка'], section",
+      "mask": [
+        "@clock",
+        "@badges"
+      ],
+      "status": "ported",
+      "note": "Телефон (390): осознанное отличие — docs/open-questions/audit-ui.md AU-2 (аудит UI-02). В старом сетка без grid-cols-1 растягивается по тексту диалога (433 px при окне 390): список диалогов и переписка обрезаны справа. В новом — grid-cols-1: блоки по ширине экрана. Порог 2,5 % только для телефона (замер 2,06–2,10 %); настольный вид — запись «chat», порог общий.",
+      "viewports": [
+        "mobile"
+      ],
+      "maxDiffPercent": 2.5
     },
     {
       "id": "chat-readonly",

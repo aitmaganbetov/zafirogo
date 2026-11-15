@@ -15,7 +15,7 @@ const recoveryApi = createApiClient<paths>();
 export const recoveryQuery = () =>
   queryOptions({
     queryKey: ['recovery'],
-    queryFn: () => unwrap(recoveryApi.GET('/api/forgot-password')),
+    queryFn: ({ signal }) => unwrap(recoveryApi.GET('/api/forgot-password', { signal })),
     staleTime: 0,
   });
 

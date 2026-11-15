@@ -327,7 +327,7 @@ export function ReservationsPage({ search }: { search: ReservationsSearch }) {
               <th className="px-4 py-3 font-semibold">{t('ПК')}</th>
               <th className="px-4 py-3 font-semibold">{t('Клиент')}</th>
               <th className="px-4 py-3 font-semibold">{t('Статус')}</th>
-              <th className="px-4 py-3 font-semibold">
+              <th className="relative px-4 py-3 font-semibold">
                 <span className="sr-only">{t('Действия')}</span>
               </th>
             </tr>

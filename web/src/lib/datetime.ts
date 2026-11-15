@@ -104,3 +104,23 @@ export function addDays(date: string, n: number): string {
 export function serverNow(serverTimeMs: number, receivedAtMs: number, nowMs: number = Date.now()): number {
   return nowMs + (serverTimeMs - receivedAtMs);
 }
+
+/**
+ * Значение поля `datetime-local` («2026-11-20T18:30», время на часах клуба) → момент в RFC 3339 (UTC).
+ * Пояс браузера не участвует: администратор в другом поясе вводит и видит время клуба (как Carbon::parse($v, $tz)).
+ * Несуществующее время (переход на летнее) сдвигается вперёд, как в PHP; пустая или некорректная строка — null.
+ */
+export function clubLocalToISO(local: string, timeZone: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(local.trim());
+  if (!m) return null;
+  const wall = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] ?? 0));
+  if (Number.isNaN(wall)) return null;
+  // Смещение пояса в момент t: «время на часах клуба как UTC» минус t.
+  const offsetAt = (t: number) => {
+    const p = partsIn(new Date(t), timeZone);
+    return Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second)) - t;
+  };
+  let utc = wall - offsetAt(wall);
+  utc = wall - offsetAt(utc); // уточнение у границы перевода часов
+  return new Date(utc).toISOString();
+}

@@ -15,7 +15,7 @@ import {
   createSale,
   createTopUp,
   customersQuery,
-  fetchProducts,
+  productsQuery,
   openShift,
   shiftQuery,
   type CashCustomer,
@@ -120,13 +120,7 @@ function Pos({ shift, balanceTiyn, onStatus, onError }: { shift: CashShift; bala
   const { data: catalog } = useQuery(catalogQuery());
   const [category, setCategory] = useState('all');
   const productsCategory = category === 'all' || category === '__services' ? '' : category;
-  const products = useInfiniteQuery({
-    queryKey: ['cash', 'products', productsCategory],
-    queryFn: ({ pageParam }) => fetchProducts(productsCategory, pageParam),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => last.next_cursor ?? null,
-    enabled: category !== '__services',
-  });
+  const products = useInfiniteQuery({ ...productsQuery(productsCategory), enabled: category !== '__services' });
   useInvalidateOn(['stock.*', 'product.*'], ['cash', 'products']);
   useInvalidateOn(['stock.*', 'product.*'], ['cash', 'catalog']);
   const items: readonly CashProduct[] = category === '__services' ? [] : (products.data?.pages.flatMap((p) => p.items) ?? []);
@@ -209,7 +203,8 @@ function Pos({ shift, balanceTiyn, onStatus, onError }: { shift: CashShift; bala
         </div>
       </div>
       <div className="pos-layout">
-        <main className="pos-main">
+        {/* div, не <main>: страница уже внутри <main class="admin-main"> (два main — нарушение доступности, FE-16) */}
+        <div className="pos-main">
           <div className="pos-categories">
             <button className={'pos-category' + (category === 'all' ? ' active' : '')} data-category="all" title={plural(productsTotal)} onClick={() => setCategory('all')}>
               <i className="fas fa-border-all pos-category-icon" aria-hidden="true"></i>
@@ -285,7 +280,7 @@ function Pos({ shift, balanceTiyn, onStatus, onError }: { shift: CashShift; bala
             })}
           </div>
           <div ref={sentinel} aria-hidden="true" />
-        </main>
+        </div>
         <aside className="pos-order">
           <div className="pos-view-tabs" role="tablist" aria-label={t('Раздел кассы')}>
             <button type="button" className={'pos-view-tab ' + (view === 'sale' ? 'active' : '')} data-pos-view="sale" role="tab" aria-selected={view === 'sale'} onClick={() => setView('sale')}>

@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import { PARSE_MONEY_MESSAGES, parseMoney } from '../../lib/money';
 import { phoneDigits } from '../../lib/phone';
 import type { CustomerCreateRequest, CustomerUpdateRequest } from './api';
@@ -37,48 +36,29 @@ function moneyError(field: string, input: string): string | null {
   return PARSE_MONEY_MESSAGES[r.error].replace('{{attribute}}', field.replace(/_/g, ' '));
 }
 
-/** Сумма поля «необязательно»: пусто — 0 (old('balance', 0)). */
-const optionalTiyn = (field: string) =>
-  z.string().transform((s, ctx) => {
-    if (s.trim() === '') return 0;
-    const r = parseMoney(s);
-    if (!r.ok) {
-      ctx.addIssue({ code: 'custom', message: moneyError(field, s) ?? '' });
-      return z.NEVER;
-    }
-    return r.tiyn;
-  });
-
-const emptyToNull = z.string().transform((s) => (s.trim() === '' ? null : s.trim()));
-
-const createSchema = (canSetMoney: boolean) =>
-  z.object({
-    name: z.string(),
-    phone: z.string().transform((s) => phoneDigits(s)),
-    email: emptyToNull,
-    password: z.string(),
-    password_confirmation: z.string(),
-    discount: canSetMoney ? emptyToNull : z.string().transform(() => null),
-    balance: canSetMoney ? optionalTiyn('balance') : z.string().transform(() => 0),
-    bonus_balance: canSetMoney ? optionalTiyn('bonus_balance') : z.string().transform(() => 0),
-  });
-
-function firstIssue(e: z.ZodError): string {
-  return e.issues[0]?.message ?? '';
+/** Сумма поля «необязательно»: пусто — 0 (old('balance', 0)); ошибка — текст для формы. */
+function optionalTiyn(field: string, input: string): { readonly tiyn: number } | { readonly error: string } {
+  if (input.trim() === '') return { tiyn: 0 };
+  const r = parseMoney(input);
+  return r.ok ? { tiyn: r.tiyn } : { error: moneyError(field, input) ?? '' };
 }
+
+const emptyToNull = (s: string) => (s.trim() === '' ? null : s.trim());
 
 /** «Новый клиент» → POST /api/customers. Скидка и балансы — только с правом customer_money.update (поля формы). */
 export function buildCreateBody(v: CreateForm, canSetMoney: boolean): Built<CustomerCreateRequest> {
-  const r = createSchema(canSetMoney).safeParse(v);
-  if (!r.success) return { ok: false, error: firstIssue(r.error) };
-  const d = r.data;
   const body: CustomerCreateRequest = {
-    name: d.name, phone: d.phone, email: d.email, password: d.password, password_confirmation: d.password_confirmation,
+    name: v.name, phone: phoneDigits(v.phone), email: emptyToNull(v.email), password: v.password, password_confirmation: v.password_confirmation,
   };
   if (canSetMoney) {
-    body.discount = d.discount;
-    body.balance_tiyn = d.balance;
-    body.bonus_balance_tiyn = d.bonus_balance;
+    // Порядок проверки — как порядок полей формы: первой показывается ошибка баланса, затем бонусов.
+    const balance = optionalTiyn('balance', v.balance);
+    if ('error' in balance) return { ok: false, error: balance.error };
+    const bonus = optionalTiyn('bonus_balance', v.bonus_balance);
+    if ('error' in bonus) return { ok: false, error: bonus.error };
+    body.discount = emptyToNull(v.discount);
+    body.balance_tiyn = balance.tiyn;
+    body.bonus_balance_tiyn = bonus.tiyn;
   }
   return { ok: true, body };
 }

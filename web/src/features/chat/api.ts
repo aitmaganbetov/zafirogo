@@ -25,7 +25,7 @@ export function parseChatSearch(s: Record<string, unknown>): ChatSearch {
 export const chatQuery = (customer?: number) =>
   queryOptions({
     queryKey: ['chat', customer ?? 0],
-    queryFn: () => unwrap(chatApi.GET('/api/chat', { params: { query: { customer } } })),
+    queryFn: ({ signal }) => unwrap(chatApi.GET('/api/chat', { params: { query: { customer } }, signal })),
   });
 
 export const replyChat = (customerId: number, body: string) =>

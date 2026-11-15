@@ -913,6 +913,9 @@ body {
 
 .receipt-actions {
     display: flex;
+    /* На 320 px три действия («В кассу», «Распечатать чек», «Возврат») не помещаются в строку — перенос вместо
+       выхода за экран (UI-02); на 360 px и шире строка одна, как раньше */
+    flex-wrap: wrap;
     gap: 8px;
     margin-bottom: 12px
 }
@@ -1183,6 +1186,14 @@ body {
 
 .report-section {
     margin-top: 20px
+}
+
+/* Телефон: таблица отчёта шире листа (418 px при листе 378) прокручивается в своём разделе, а не обрезается краем
+   листа — колонка «Расход» таблицы «Сотрудники» была недоступна (UI-08). Только экран: печать не меняется. */
+@media screen {
+    .report-section {
+        overflow-x: auto
+    }
 }
 
 .report-section h2 {
@@ -2456,6 +2467,15 @@ body {
     }
 }
 
+/* Телефон и масштаб 200 %: панель управления ПК не выше 40 % экрана (кнопки прокручиваются внутри неё) — карта
+   остаётся видна и второй ПК можно выбрать (UI-07; в старом панель закрывала до 75 % экрана 320×568) */
+@media(max-width:767px) {
+    .cm-control-panel {
+        max-height: 40vh;
+        overflow-y: auto
+    }
+}
+
 .cm-zone.blocked {
     border-color: #ef4444;
     box-shadow: 0 0 0 5px rgba(239, 68, 68, .14)
@@ -2866,6 +2886,13 @@ body {
     --muted: #738078
 }
 
+/* Ночная тема до запуска приложения: класс .dark на <html> ставит скрипт index.html, а класс admin-body на <body> —
+   только React, поэтому при полной загрузке панели холст оставался белым до старта JS (UI-06). Пока #root пуст,
+   фон — как у .dark .admin-body; с первым содержимым правило перестаёт действовать (итоговый вид не меняется). */
+html.dark:has(#root:empty) {
+    background-color: #0c110e
+}
+
 .admin-body {
     margin: 0;
     background: var(--canvas);
@@ -3091,6 +3118,13 @@ body {
     }
 }
 
+/* Узкий телефон (≤ 360 px): часы уступают место заголовку страницы — иначе от него остаётся «Ад…» (UI-12) */
+@media(max-width:360px) {
+    .admin-clock {
+        display: none
+    }
+}
+
 .admin-icon-button .dot {
     position: absolute;
     right: 8px;
@@ -3100,10 +3134,6 @@ body {
     border: 2px solid #fff;
     border-radius: 50%;
     background: #ef4444
-}
-
-.admin-user {
-    position: relative
 }
 
 .admin-content {
@@ -3989,6 +4019,50 @@ body {
 }
 
 
+/* Области нажатия на сенсорном экране (UI-14): невидимый псевдоэлемент расширяет область до ≥ 40 px, вид и
+   раскладка не меняются (в старом — те же 14–38 px). Текстовые кнопки и ссылки строк («Изменить», «Удалить»,
+   «← Вернуться в кассу» — 17–23 px высотой) — по вертикали; значки шапки и меню (32–38 px) — со всех сторон. */
+@media(pointer:coarse) {
+    :where(.admin-content, .auth-card) :where(a, button).hover\:underline,
+    .admin-content th a,
+    .auth-row a,
+    .report-back,
+    .brand-link,
+    .auth-link-button,
+    .admin-mobile-toggle,
+    .sidebar-close,
+    .sidebar-footer form button {
+        position: relative
+    }
+
+    :where(.admin-content, .auth-card) :where(a, button).hover\:underline::after,
+    .admin-content th a::after,
+    .auth-row a::after,
+    .report-back::after,
+    .brand-link::after,
+    .auth-link-button::after {
+        position: absolute;
+        inset: -12px 0;
+        content: ''
+    }
+
+    .admin-mobile-toggle::after,
+    .admin-icon-button::after,
+    .sidebar-close::after,
+    .sidebar-footer form button::after {
+        position: absolute;
+        inset: -4px;
+        content: ''
+    }
+
+    /* Переключатель настроек 44×24: кружок — ::after, область нажатия — ::before */
+    .settings-switch::before {
+        position: absolute;
+        inset: -8px 0;
+        content: ''
+    }
+}
+
 /* Extracted from resources/views/tariffs/index.blade.php */
 .tariff-dialog {
     width: min(960px, calc(100% - 32px));
@@ -4102,7 +4176,6 @@ body {
 
 .user-create-dialog{width:min(720px,calc(100% - 32px));max-height:90vh;overflow:hidden;margin:auto;border:1px solid #d1d5db;border-radius:12px;padding:0;background:#fff;color:#111827;box-shadow:0 25px 80px rgba(0,0,0,.3)}.user-create-dialog::backdrop{background:rgba(10,15,12,.68);backdrop-filter:blur(3px)}.user-create-dialog-shell{display:flex;max-height:90vh;flex-direction:column}.user-create-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid #e5e7eb;padding:16px 24px}.user-create-dialog-body{overflow-y:auto;padding:24px}.dark .user-create-dialog{border-color:#374151;background:#111827;color:#f9fafb}.dark .user-create-dialog-head{border-color:#374151}
 .brand-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid #b0004a;border-radius:8px;background:#d90058;padding:8px 16px;color:#fff;font-weight:700;cursor:pointer;transition:background .15s,transform .15s}.brand-button:hover{background:#b0004a;transform:translateY(-1px)}.brand-tab{background:#d90058!important;color:#fff!important;box-shadow:0 6px 16px rgba(255,1,105,.2)!important}.brand-focus:focus{border-color:#ff0169!important;outline:2px solid rgba(255,1,105,.18)!important;outline-offset:1px}.brand-check{accent-color:#ff0169}.brand-link{color:#d90058}.brand-link:hover{color:#b0004a}.brand-period-add{color:#d90058!important}.brand-period-add:hover{background:#fff0f6!important}
-.brand-note{border-color:#ffc2db;background:#fff0f6}.dark .brand-note{border-color:#7a123e;background:rgba(255,1,105,.12)}
 
 .animation-delay-100 {
     animation-delay: .1s
@@ -4416,6 +4489,19 @@ select[multiple] option {
     .admin-app.sidebar-collapsed .sidebar-footer {
         flex-direction: column;
         padding: 12px 8px
+    }
+
+    /* Свёрнутое меню: счётчик чата/заказов — красная точка у значка; число — в подсказке ссылки и для программ
+       чтения с экрана (в старом счётчик в свёрнутом меню не был виден вовсе, UI-16) */
+    .admin-app.sidebar-collapsed .sidebar-link > span[data-menu-count] {
+        top: 6px;
+        right: 6px;
+        width: 8px;
+        height: 8px;
+        margin: 0;
+        padding: 0;
+        clip-path: none;
+        color: transparent
     }
 }
 

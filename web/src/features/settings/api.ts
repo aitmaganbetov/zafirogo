@@ -21,13 +21,13 @@ export type DeliveryPage = IC['schemas']['DeliveryPage'];
 export type SettingsSection = 'club' | 'finances' | 'guests';
 
 export const clubSettingsQuery = () =>
-  queryOptions({ queryKey: ['settings', 'club'], queryFn: () => unwrap(settingsApi.GET('/api/settings')) });
+  queryOptions({ queryKey: ['settings', 'club'], queryFn: ({ signal }) => unwrap(settingsApi.GET('/api/settings', { signal })) });
 
 export const languagesQuery = () =>
-  queryOptions({ queryKey: ['settings', 'languages'], queryFn: () => unwrap(settingsApi.GET('/api/settings/languages')) });
+  queryOptions({ queryKey: ['settings', 'languages'], queryFn: ({ signal }) => unwrap(settingsApi.GET('/api/settings/languages', { signal })) });
 
 export const integrationsQuery = () =>
-  queryOptions({ queryKey: ['integrations'], queryFn: () => unwrap(integrationsApi.GET('/api/settings/integrations')) });
+  queryOptions({ queryKey: ['integrations'], queryFn: ({ signal }) => unwrap(integrationsApi.GET('/api/settings/integrations', { signal })) });
 
 export const deliveriesPage = (cursor: string) =>
   unwrap(integrationsApi.GET('/api/settings/integrations/deliveries', { params: { query: { cursor } } }));

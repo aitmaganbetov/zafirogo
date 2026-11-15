@@ -22,7 +22,7 @@ const LABEL = 'mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400';
  */
 export interface NewsMode {
   readonly key: readonly string[];
-  readonly list: (page?: number) => Promise<NewsPageData>;
+  readonly list: (page?: number, signal?: AbortSignal) => Promise<NewsPageData>;
   readonly create: (form: FormData) => Promise<{ message: string }>;
   readonly update: (id: number, form: FormData) => Promise<{ message: string }>;
   readonly remove: (id: number) => Promise<{ message: string }>;
@@ -38,7 +38,7 @@ export function NewsPage({ page, mode }: { page?: number; mode?: NewsMode }) {
   const { me } = useSession();
   const queryClient = useQueryClient();
   useAdminPageTitle(t('Новости'));
-  const { data } = useQuery(mode ? { queryKey: [...mode.key, page ?? 1] as (string | number)[], queryFn: () => mode.list(page) } : newsQuery(page));
+  const { data } = useQuery(mode ? { queryKey: [...mode.key, page ?? 1] as (string | number)[], queryFn: ({ signal }: { signal: AbortSignal }) => mode.list(page, signal) } : newsQuery(page));
   const [status, setStatus] = useState<string | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const readOnly = mode ? false : me?.read_only === true;
@@ -103,7 +103,7 @@ export function NewsPage({ page, mode }: { page?: number; mode?: NewsMode }) {
       )}
 
       {may('create') && (
-        <form method="POST" action="/news" encType="multipart/form-data" className="mb-8 grid gap-3 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900" onSubmit={submitCreate}>
+        <form method="POST" action="/news" encType="multipart/form-data" className="mb-8 grid grid-cols-1 gap-3 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900" onSubmit={submitCreate}>
           <h4 className="font-semibold text-gray-900 dark:text-white">{t('Новая новость')}</h4>
           <div>
             <label htmlFor="news-title" className={LABEL}>
@@ -118,11 +118,12 @@ export function NewsPage({ page, mode }: { page?: number; mode?: NewsMode }) {
             <textarea id="news-body" name="body" rows={5} maxLength={5000} required className={FIELD}></textarea>
           </div>
           <div className="flex flex-wrap items-end gap-4">
-            <div>
+            <div className="min-w-0 max-w-full">
               <label htmlFor="news-image" className={LABEL}>
                 {t('Картинка (PNG или JPG, до 2 МБ)')}
               </label>
-              <input id="news-image" type="file" name="image" accept="image/png,image/jpeg" className="text-sm text-gray-700 dark:text-gray-300" />
+              {/* max-w-full: поле выбора файла (≈ 344 px) не шире карточки на телефоне (UI-02) */}
+              <input id="news-image" type="file" name="image" accept="image/png,image/jpeg" className="max-w-full text-sm text-gray-700 dark:text-gray-300" />
             </div>
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
               <input type="hidden" name="is_published" value="0" />
@@ -144,7 +145,7 @@ export function NewsPage({ page, mode }: { page?: number; mode?: NewsMode }) {
             <summary className="flex cursor-pointer items-center gap-4 p-4">
               {item.image_url && <img src={item.image_url} alt="" className="h-14 w-24 flex-none rounded-lg object-cover" />}
               <span className="min-w-0 flex-1">
-                <strong className="block truncate text-gray-900 dark:text-white">{item.title}</strong>
+                <strong className="block truncate text-gray-900 dark:text-white" title={item.title}>{item.title}</strong>
                 <small className="text-gray-500 dark:text-gray-400">{item.created_at ? formatDate(item.created_at, tz, 'd.m.Y H:i') : ''}</small>
               </span>
               <span
@@ -153,9 +154,9 @@ export function NewsPage({ page, mode }: { page?: number; mode?: NewsMode }) {
                 {item.is_published ? t('Опубликована') : t('Черновик')}
               </span>
             </summary>
-            <div className="grid gap-3 border-t border-gray-100 p-4 dark:border-gray-800">
+            <div className="grid grid-cols-1 gap-3 border-t border-gray-100 p-4 dark:border-gray-800">
               {may('update') && (
-                <form method="POST" encType="multipart/form-data" className="grid gap-3" onSubmit={submitUpdate(item.id)}>
+                <form method="POST" encType="multipart/form-data" className="grid grid-cols-1 gap-3" onSubmit={submitUpdate(item.id)}>
                   <div>
                     <label htmlFor={`news-title-${item.id}`} className={LABEL}>
                       {t('Заголовок')}
@@ -169,11 +170,11 @@ export function NewsPage({ page, mode }: { page?: number; mode?: NewsMode }) {
                     <textarea id={`news-body-${item.id}`} name="body" rows={5} maxLength={5000} required defaultValue={item.body} className={FIELD}></textarea>
                   </div>
                   <div className="flex flex-wrap items-end gap-4">
-                    <div>
+                    <div className="min-w-0 max-w-full">
                       <label htmlFor={`news-image-${item.id}`} className={LABEL}>
                         {t('Новая картинка')}
                       </label>
-                      <input id={`news-image-${item.id}`} type="file" name="image" accept="image/png,image/jpeg" className="text-sm text-gray-700 dark:text-gray-300" />
+                      <input id={`news-image-${item.id}`} type="file" name="image" accept="image/png,image/jpeg" className="max-w-full text-sm text-gray-700 dark:text-gray-300" />
                     </div>
                     {item.has_image && (
                       <label className="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">

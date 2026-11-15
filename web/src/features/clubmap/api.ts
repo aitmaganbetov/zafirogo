@@ -34,7 +34,7 @@ export const clubMapKey = ['clubmap', 'page'] as const;
 export const clubMapQuery = () =>
   queryOptions({
     queryKey: clubMapKey,
-    queryFn: () => unwrap(clubmapApi.GET('/api/club-map')),
+    queryFn: ({ signal }) => unwrap(clubmapApi.GET('/api/club-map', { signal })),
   });
 
 /** Состояние ПК (Этап 7): загрузка, здоровье, проблемы. Ключ — ['clubmap', 'health', id]. */
@@ -43,16 +43,17 @@ export const computerHealthKey = (id: number) => ['clubmap', 'health', id] as co
 export const computerHealthQuery = (id: number) =>
   queryOptions({
     queryKey: computerHealthKey(id),
-    queryFn: () => unwrap(clubmapApi.GET('/api/club-computers/{computerId}/health', { params: { path: { computerId: id } } })),
+    queryFn: ({ signal }) => unwrap(clubmapApi.GET('/api/club-computers/{computerId}/health', { params: { path: { computerId: id } }, signal })),
   });
 
 /** История проблем ПК (keyset, next_cursor). */
 export const healthEventsQuery = (id: number) =>
   infiniteQueryOptions({
     queryKey: [...computerHealthKey(id), 'events'] as const,
-    queryFn: ({ pageParam }) =>
+    queryFn: ({ pageParam, signal }) =>
       unwrap(clubmapApi.GET('/api/club-computers/{computerId}/health/events', {
         params: { path: { computerId: id }, query: { limit: 10, ...(pageParam ? { cursor: pageParam } : {}) } },
+        signal,
       })),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.next_cursor ?? null,
@@ -62,16 +63,16 @@ export const healthEventsQuery = (id: number) =>
 export const healthWeeklyQuery = (id: number) =>
   queryOptions({
     queryKey: [...computerHealthKey(id), 'weekly'] as const,
-    queryFn: () =>
-      unwrap(clubmapApi.GET('/api/club-computers/{computerId}/health/weekly', { params: { path: { computerId: id }, query: { weeks: 8 } } })),
+    queryFn: ({ signal }) =>
+      unwrap(clubmapApi.GET('/api/club-computers/{computerId}/health/weekly', { params: { path: { computerId: id }, query: { weeks: 8 } }, signal })),
   });
 
 /** Здоровье ПК по часам за неделю [from, to) — график выбранной недели. */
 export const healthHourlyQuery = (id: number, from: string, to: string) =>
   queryOptions({
     queryKey: [...computerHealthKey(id), 'hourly', from, to] as const,
-    queryFn: () =>
-      unwrap(clubmapApi.GET('/api/club-computers/{computerId}/health/hourly', { params: { path: { computerId: id }, query: { from, to } } })),
+    queryFn: ({ signal }) =>
+      unwrap(clubmapApi.GET('/api/club-computers/{computerId}/health/hourly', { params: { path: { computerId: id }, query: { from, to } }, signal })),
   });
 
 /** Состояние нескольких ПК (досылка после события computer.state). */

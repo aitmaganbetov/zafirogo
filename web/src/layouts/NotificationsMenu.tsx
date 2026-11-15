@@ -161,7 +161,10 @@ export function NotificationsMenu({ source }: { readonly source: NotificationsSo
       if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key !== 'Escape') return;
+      setOpen(false);
+      // Фокус — обратно на колокольчик, если он был в панели (иначе после Esc он «пропадал», UI-20).
+      if (rootRef.current?.contains(document.activeElement)) rootRef.current.querySelector<HTMLElement>('#notifications-button')?.focus();
     };
     document.addEventListener('click', onClick);
     document.addEventListener('keydown', onKey);
@@ -224,7 +227,8 @@ export function NotificationsMenu({ source }: { readonly source: NotificationsSo
                 <i className={`fas ${item.icon}`} aria-hidden="true"></i>
                 <span>
                   <strong>{item.title}</strong>
-                  <span>{item.body}</span>
+                  {/* line-clamp-3: длинное перечисление («Проблемы с ПК») не растягивает пункт на 7 строк; целиком — в подсказке */}
+                  <span className="line-clamp-3!" title={item.body}>{item.body}</span>
                   <small>{item.at_human}</small>
                 </span>
               </a>

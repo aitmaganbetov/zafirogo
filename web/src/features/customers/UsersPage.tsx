@@ -327,7 +327,7 @@ export function UsersPage({ search }: { search: CustomersSearch }) {
                 <th scope="col" className="px-5 py-3 text-right font-semibold">{t('Потрачено')}</th>
                 <th scope="col" className="px-5 py-3 text-right font-semibold">{t('Баланс')}</th>
                 <th scope="col" className="px-5 py-3 text-right font-semibold">{t('Бонусный баланс')}</th>
-                <th scope="col" className="px-5 py-3">
+                <th scope="col" className="relative px-5 py-3">
                   <span className="sr-only">{t('Действия')}</span>
                 </th>
               </tr>
@@ -335,7 +335,8 @@ export function UsersPage({ search }: { search: CustomersSearch }) {
             <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
               {items.map((c) => (
                 <tr key={c.user_id} className="text-gray-700 dark:text-gray-300" data-customer-row>
-                  <td className="px-5 py-4 font-medium text-gray-900 dark:text-white">{c.name}</td>
+                  {/* max-w + truncate: длинное имя не выталкивает баланс и действия за экран (UI-15); полное имя — в подсказке */}
+                  <td className="max-w-[16rem] truncate px-5 py-4 font-medium text-gray-900 dark:text-white" title={c.name}>{c.name}</td>
                   <td className="px-5 py-4 whitespace-nowrap">{c.phone}</td>
                   <td className="px-5 py-4 text-right tabular-nums">
                     {c.discount_effective}%

@@ -187,7 +187,7 @@ export function WorkersPage({ search }: { search: WorkersSearch }) {
               <th className="px-5 py-3 font-semibold">{t('Номер')}</th>
               <th className="px-5 py-3 font-semibold">{t('Роль')}</th>
               <th className="px-5 py-3 font-semibold">{t('Смена')}</th>
-              <th className="px-5 py-3">
+              <th className="relative px-5 py-3">
                 <span className="sr-only">{t('Действия')}</span>
               </th>
             </tr>

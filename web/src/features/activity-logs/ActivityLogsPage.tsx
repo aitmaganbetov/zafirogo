@@ -119,7 +119,7 @@ export function ActivityLogsPage({ search }: { search: ActivityLogsSearch }) {
           </button>
         </div>
         <div className="xl:col-span-5">
-          <a href="/activity-logs" className="text-xs font-medium text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white">
+          <a href="/activity-logs" className="relative text-xs font-medium text-gray-500 after:absolute after:inset-x-0 after:-inset-y-3 after:content-[''] hover:text-gray-800 dark:text-gray-400 dark:hover:text-white">
             {t('Сбросить фильтры')}
           </a>
         </div>

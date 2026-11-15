@@ -69,7 +69,7 @@ export function parseDashboardSearch(s: Record<string, unknown>): DashboardSearc
 export const dashboardQuery = (s: DashboardSearch) =>
   queryOptions({
     queryKey: ['superadmin', 'dashboard', s.period ?? '', s.clubs ?? []],
-    queryFn: () => unwrap(saApi.GET('/api/superadmin/dashboard', { params: { query: { period: s.period, clubs: s.clubs ? [...s.clubs] : undefined } } })),
+    queryFn: ({ signal }) => unwrap(saApi.GET('/api/superadmin/dashboard', { params: { query: { period: s.period, clubs: s.clubs ? [...s.clubs] : undefined } }, signal })),
   });
 
 export const setAgentRelease = (body: S['AgentReleaseForm']) => unwrap(saApi.PUT('/api/superadmin/agent-release', { body }));
@@ -100,10 +100,11 @@ export function parseClubsSearch(s: Record<string, unknown>): ClubsSearch {
 export const clubsQuery = (s: ClubsSearch) =>
   queryOptions({
     queryKey: ['superadmin', 'clubs', s],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       unwrap(
         saApi.GET('/api/superadmin/clubs', {
           params: { query: { search: s.search, subscription: s.subscription, sort: s.sort as never, direction: s.direction, page: s.page } },
+          signal,
         }),
       ),
   });
@@ -111,7 +112,7 @@ export const clubsQuery = (s: ClubsSearch) =>
 export const clubQuery = (id: number, page?: number) =>
   queryOptions({
     queryKey: ['superadmin', 'club', id, page ?? 1],
-    queryFn: () => unwrap(saApi.GET('/api/superadmin/clubs/{clubId}', { params: { path: { clubId: id }, query: { page } } })),
+    queryFn: ({ signal }) => unwrap(saApi.GET('/api/superadmin/clubs/{clubId}', { params: { path: { clubId: id }, query: { page } }, signal })),
   });
 
 export const extendSubscription = (clubId: number, body: S['ExtendForm']) =>
@@ -142,7 +143,7 @@ export function parseAccountsSearch(s: Record<string, unknown>): AccountsSearch 
 export const accountsQuery = (s: AccountsSearch) =>
   queryOptions({
     queryKey: ['superadmin', 'accounts', s],
-    queryFn: () => unwrap(saApi.GET('/api/superadmin/accounts', { params: { query: { search: s.search, filter: s.filter, page: s.page } } })),
+    queryFn: ({ signal }) => unwrap(saApi.GET('/api/superadmin/accounts', { params: { query: { search: s.search, filter: s.filter, page: s.page } }, signal })),
   });
 
 export type AccountAction = 'block' | 'unblock' | 'grant' | 'revoke' | 'reset-second-factor';
@@ -164,7 +165,7 @@ export function accountAction(userId: number, action: AccountAction) {
 }
 
 export const plansQuery = () =>
-  queryOptions({ queryKey: ['superadmin', 'plans'], queryFn: () => unwrap(saApi.GET('/api/superadmin/plans')) });
+  queryOptions({ queryKey: ['superadmin', 'plans'], queryFn: ({ signal }) => unwrap(saApi.GET('/api/superadmin/plans', { signal })) });
 export const createPlan = (body: PlanForm) => unwrap(saApi.POST('/api/superadmin/plans', { body }));
 export const updatePlan = (planId: number, body: PlanForm) =>
   unwrap(saApi.PATCH('/api/superadmin/plans/{planId}', { params: { path: { planId } }, body }));
@@ -183,18 +184,19 @@ export function parseLogsSearch(s: Record<string, unknown>): LogsSearch {
 export const logsQuery = (s: LogsSearch) =>
   queryOptions({
     queryKey: ['superadmin', 'logs', s],
-    queryFn: () =>
-      unwrap(saApi.GET('/api/superadmin/logs', { params: { query: { tab: s.tab ?? 'platform', club: s.club, event: s.event, page: s.page } } })),
+    queryFn: ({ signal }) =>
+      unwrap(saApi.GET('/api/superadmin/logs', { params: { query: { tab: s.tab ?? 'platform', club: s.club, event: s.event, page: s.page } }, signal })),
   });
 
 // ---------------------------------------------------------------------------
 // Новости платформы (формы — multipart, как в разделе новостей клуба)
 // ---------------------------------------------------------------------------
 
-export const listPlatformNews = (page?: number) => unwrap(saApi.GET('/api/superadmin/platform-news', { params: { query: { page } } }));
+export const listPlatformNews = (page?: number, signal?: AbortSignal) =>
+  unwrap(saApi.GET('/api/superadmin/platform-news', { params: { query: { page } }, signal }));
 
 export const platformNewsQuery = (page?: number) =>
-  queryOptions({ queryKey: ['superadmin', 'news', page ?? 1], queryFn: () => listPlatformNews(page) });
+  queryOptions({ queryKey: ['superadmin', 'news', page ?? 1], queryFn: ({ signal }) => listPlatformNews(page, signal) });
 
 async function sendForm<T>(method: 'POST' | 'PATCH', url: string, form: FormData): Promise<T> {
   const res = await apiFetch(new Request(new URL(url, location.origin), { method, body: form, credentials: 'same-origin' }));
@@ -212,7 +214,7 @@ export const deletePlatformNews = (id: number) =>
 // ---------------------------------------------------------------------------
 
 export const languagesQuery = () =>
-  queryOptions({ queryKey: ['superadmin', 'languages'], queryFn: () => unwrap(saApi.GET('/api/superadmin/languages')) });
+  queryOptions({ queryKey: ['superadmin', 'languages'], queryFn: ({ signal }) => unwrap(saApi.GET('/api/superadmin/languages', { signal })) });
 export const createLanguage = (code: string, name: string) => unwrap(saApi.POST('/api/superadmin/languages', { body: { code, name } }));
 export const updateLanguage = (id: number, body: S['LanguageUpdate']) =>
   unwrap(saApi.PATCH('/api/superadmin/languages/{languageId}', { params: { path: { languageId: id } }, body }));
@@ -248,10 +250,11 @@ export function parseTranslationsSearch(s: Record<string, unknown>): Translation
 export const translationsQuery = (languageId: number, s: TranslationsSearch) =>
   queryOptions({
     queryKey: ['superadmin', 'translations', languageId, s],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       unwrap(
         saApi.GET('/api/superadmin/languages/{languageId}/translations', {
           params: { path: { languageId }, query: { search: s.search, missing: s.missing, page: s.page } },
+          signal,
         }),
       ),
   });
@@ -264,7 +267,7 @@ export const saveTranslations = (languageId: number, translations: Record<string
 // ---------------------------------------------------------------------------
 
 export const telegramQuery = () =>
-  queryOptions({ queryKey: ['superadmin', 'telegram'], queryFn: () => unwrap(saApi.GET('/api/superadmin/telegram')) });
+  queryOptions({ queryKey: ['superadmin', 'telegram'], queryFn: ({ signal }) => unwrap(saApi.GET('/api/superadmin/telegram', { signal })) });
 export const setGateway = (token: string) => unwrap(saApi.POST('/api/superadmin/telegram', { body: { token } }));
 export const clearGateway = () => unwrap(saApi.DELETE('/api/superadmin/telegram'));
 export const setAlerts = (botToken: string, chatId: string) =>

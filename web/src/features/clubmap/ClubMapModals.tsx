@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useModalFocus } from '../../lib/useModalFocus';
 import { useTranslation } from 'react-i18next';
 import { idempotencyKey, isApiError } from '../../api/http';
 import { durationLabel, firstError } from './errors';
@@ -47,6 +48,8 @@ export function ZoneModal({ state, tariffs, onClose, onSubmit, onInvalid }: {
 }) {
   const { t } = useTranslation();
   const form = useRef<HTMLFormElement>(null);
+  const modal = useRef<HTMLDivElement>(null);
+  useModalFocus(modal, state !== null, onClose);
   const zone = state?.zone ?? null;
   // Поля заполняются при открытии (как JS шаблона: form.reset() / значения data-* кнопки).
   useEffect(() => {
@@ -99,7 +102,7 @@ export function ZoneModal({ state, tariffs, onClose, onSubmit, onInvalid }: {
   };
 
   return (
-    <div id="zone-modal" className={`cm-modal${state ? ' open' : ''}`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div id="zone-modal" ref={modal} role="dialog" aria-modal="true" aria-labelledby="modal-title" className={`cm-modal${state ? ' open' : ''}`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="cm-dialog">
         <div className="cm-dialog-head"><h3 id="modal-title">{zone ? t('Редактировать зону') : t('Добавить зону')}</h3><button type="button" className="cm-close" onClick={onClose}>×</button></div>
         <form id="zone-form" ref={form} method="POST" onSubmit={submit}>
@@ -133,6 +136,8 @@ export function ComputerModal({ computer, zones, errors, onClose, onSave, onDele
   onDelete: (pc: ComputerCard) => void;
 }) {
   const { t } = useTranslation();
+  const modal = useRef<HTMLDivElement>(null);
+  useModalFocus(modal, computer !== null, onClose);
   const form = useRef<HTMLFormElement>(null);
   useEffect(() => {
     const f = form.current;
@@ -156,7 +161,7 @@ export function ComputerModal({ computer, zones, errors, onClose, onSave, onDele
     if (window.confirm(t('Удалить ПК {{computer}} с карты клуба? Брони этого ПК тоже удалятся.', { computer: name }))) onDelete(computer);
   };
   return (
-    <div id="computer-modal" className={`cm-modal${computer ? ' open' : ''}`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div id="computer-modal" ref={modal} role="dialog" aria-modal="true" aria-label={t('Редактировать компьютер')} className={`cm-modal${computer ? ' open' : ''}`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="cm-dialog">
         <div className="cm-dialog-head"><h3>{t('Редактировать компьютер')}</h3><button type="button" className="cm-close" onClick={onClose}>×</button></div>
         {errors.length > 0 && <div id="computer-form-errors" className="cm-form-errors" role="alert">{errors.map((er, i) => <p key={i}>{er}</p>)}</div>}
@@ -189,6 +194,8 @@ export function BookingModal({ open, selected, reservedSelected, defaultStart, o
   onBooked: () => void;
 }) {
   const { t } = useTranslation();
+  const modal = useRef<HTMLDivElement>(null);
+  useModalFocus(modal, open, onClose);
   const [query, setQuery] = useState('');
   const [userId, setUserId] = useState<number | null>(null);
   const [options, setOptions] = useState<{ id: number; name: string; phone?: string | null }[] | null>(null);
@@ -264,7 +271,7 @@ export function BookingModal({ open, selected, reservedSelected, defaultStart, o
   };
 
   return (
-    <div id="booking-modal" className={`cm-modal${open ? ' open' : ''}`}>
+    <div id="booking-modal" ref={modal} role="dialog" aria-modal="true" aria-label={t('Забронировать ПК')} className={`cm-modal${open ? ' open' : ''}`}>
       <div className="cm-dialog">
         <div className="cm-dialog-head"><h3>{t('Забронировать ПК')}</h3><button type="button" className="cm-close" aria-label={t('Закрыть')} onClick={onClose}>×</button></div>
         <form id="booking-form" className="cm-guest-form" autoComplete="off" onSubmit={(e) => void submit(e)}>
@@ -300,6 +307,8 @@ export function BookingModal({ open, selected, reservedSelected, defaultStart, o
 
 export function NotifyModal({ open, ids, onClose, onNotice }: { open: boolean; ids: readonly number[]; onClose: () => void; onNotice: (text: string, ms: number) => void }) {
   const { t } = useTranslation();
+  const modal = useRef<HTMLDivElement>(null);
+  useModalFocus(modal, open, onClose);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const text = useRef<HTMLTextAreaElement>(null);
@@ -324,7 +333,7 @@ export function NotifyModal({ open, ids, onClose, onNotice }: { open: boolean; i
     }
   };
   return (
-    <div id="notify-modal" className={`cm-modal${open ? ' open' : ''}`}>
+    <div id="notify-modal" ref={modal} role="dialog" aria-modal="true" aria-label={t('Уведомление на ПК')} className={`cm-modal${open ? ' open' : ''}`}>
       <div className="cm-dialog">
         <div className="cm-dialog-head"><h3>{t('Уведомление на ПК')}</h3><button type="button" className="cm-close" aria-label={t('Закрыть')} onClick={onClose}>×</button></div>
         <form id="notify-form" className="cm-guest-form" onSubmit={(e) => void submit(e)}>
@@ -352,6 +361,8 @@ export function GuestSessionModal({ open, selected, zones, tariffs, locale, onCl
   onNotice: (text: string, ms: number) => void;
 }) {
   const { t } = useTranslation();
+  const modal = useRef<HTMLDivElement>(null);
+  useModalFocus(modal, open, onClose);
   const sellable = useMemo(() => tariffs.filter((tf) => tf.guest_sellable), [tariffs]);
   // Тарифы зон выбранных ПК (тариф без зон — во всех зонах).
   const zoneIds = [...new Set(selected.map((c) => c.zoneId))];
@@ -398,7 +409,7 @@ export function GuestSessionModal({ open, selected, zones, tariffs, locale, onCl
   };
 
   return (
-    <div id="guest-session-modal" className={`cm-modal${open ? ' open' : ''}`}>
+    <div id="guest-session-modal" ref={modal} role="dialog" aria-modal="true" aria-label={t('Подключить тариф')} className={`cm-modal${open ? ' open' : ''}`}>
       <div className="cm-dialog">
         <div className="cm-dialog-head"><h3>{t('Подключить тариф')}</h3><button type="button" className="cm-close" aria-label={t('Закрыть')} onClick={onClose}>×</button></div>
         <form id="guest-session-form" className="cm-guest-form" onSubmit={(e) => void submit(e)}>

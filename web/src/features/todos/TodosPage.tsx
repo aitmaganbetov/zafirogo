@@ -142,7 +142,7 @@ export function TodosPage({ date }: { date?: string }) {
               >
                 <button
                   type="submit"
-                  className={`grid h-6 w-6 flex-none place-items-center rounded-md border ${task.done ? 'border-green-600 bg-green-600 text-white' : 'border-gray-300 dark:border-gray-600'}`}
+                  className={`relative grid h-6 w-6 flex-none place-items-center rounded-md border after:absolute after:-inset-2 after:content-[''] ${task.done ? 'border-green-600 bg-green-600 text-white' : 'border-gray-300 dark:border-gray-600'}`}
                   aria-pressed={task.done ? 'true' : 'false'}
                   aria-label={task.done ? t('Отметить как невыполненную') : t('Отметить как выполненную')}
                   data-toggle
@@ -163,7 +163,7 @@ export function TodosPage({ date }: { date?: string }) {
               </form>
               {canDelete && (
                 <ConfirmForm message={t('Удалить задачу?')} onConfirm={() => remove.mutate(task)}>
-                  <button type="submit" className="text-gray-400 hover:text-red-600" aria-label={t('Удалить задачу')} disabled={readOnly}>
+                  <button type="submit" className="relative text-gray-400 hover:text-red-600 after:absolute after:-inset-x-3 after:-inset-y-2 after:content-['']" aria-label={t('Удалить задачу')} disabled={readOnly}>
                     <i className="fas fa-trash"></i>
                   </button>
                 </ConfirmForm>

@@ -10,5 +10,5 @@ export type BillingSubscription = components['schemas']['BillingSubscription'];
 export const billingQuery = () =>
   queryOptions({
     queryKey: ['billing'],
-    queryFn: () => unwrap(billingApi.GET('/api/billing')),
+    queryFn: ({ signal }) => unwrap(billingApi.GET('/api/billing', { signal })),
   });

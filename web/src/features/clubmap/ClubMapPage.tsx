@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { can, useSession } from '../../auth/session';
 import { useAdminPageTitle } from '../../layouts/adminSession';
@@ -21,12 +21,16 @@ import {
   type ComputerState,
   type Zone,
 } from './api';
-import { HealthSections, PcLoad } from './ComputerHealth';
+import { PcLoad } from './PcLoad';
 import { loadTitle } from './healthText';
 import { BookingModal, ComputerModal, GuestSessionModal, NotifyModal, ZoneModal, type ZoneModalState } from './ClubMapModals';
 import { allErrors, firstError } from './errors';
 import { canvasHeight, collides, computerClasses, PC_GRID_X, PC_GRID_Y, snapComputer, snapSize, snapZone, zoneMinSize, type Rect } from './logic';
 import { useMapLive } from './useMapLive';
+import { useStableHandlers } from '../../lib/useStableHandlers';
+
+// Раздел «Состояние» с графиком (Chart.js) — только когда открыта панель ПК (FE-08).
+const HealthSections = lazy(() => import('./ComputerHealth').then((m) => ({ default: m.HealthSections })));
 
 /*
  * Карта клуба — перенос resources/views/club-map/index.blade.php (ClubZoneController::index()) один-в-один:
@@ -53,14 +57,68 @@ const STATE_LABELS: Record<string, string> = {
 const STAFF_KINDS: Record<string, string> = { pin: 'Выход из агента по PIN-коду', signin: 'Сотрудник вошёл на ПК', panel: 'Техрежим из панели' };
 const ZONE_STATUS: Record<string, string> = { available: 'Свободно', busy: 'Занято', service: 'Сервис' };
 
+const NO_IDS: readonly number[] = [];
+
+interface PcHandlers {
+  readonly click: (e: ReactMouseEvent, c: ComputerCard) => void;
+  readonly pointerDown: (e: ReactPointerEvent<HTMLSpanElement>, c: ComputerCard) => void;
+  readonly pointerMove: (e: ReactPointerEvent<HTMLSpanElement>) => void;
+  readonly pointerUp: (c: ComputerCard) => void;
+  readonly edit: (c: ComputerCard) => void;
+}
+
+/**
+ * Плитка ПК. memo: событие computer.load об одном ПК меняет только его `st` (mergeLoad сохраняет ссылки
+ * остальных состояний), обработчики стабильны — перерисовывается одна плитка, а не все (FE-03).
+ */
+const PcTile = memo(function PcTile({ c, st, x, y, selected, moving, blocked, on }: {
+  readonly c: ComputerCard;
+  readonly st: ComputerState | undefined;
+  readonly x: number;
+  readonly y: number;
+  readonly selected: boolean;
+  readonly moving: boolean;
+  readonly blocked: boolean;
+  readonly on: PcHandlers;
+}) {
+  const { t } = useTranslation();
+  let classes = computerClasses(st?.status ?? 'offline', st?.light ?? '', selected);
+  if (moving) classes += ' moving';
+  if (blocked) classes += ' blocked';
+  return (
+    <span className={classes} data-id={c.id} style={{ left: `${x}px`, top: `${y}px` }}
+      title={[c.name, st?.status, c.details, loadTitle(t, st)].filter(Boolean).join(' · ')}
+      onClick={(e) => on.click(e, c)} onPointerDown={(e) => on.pointerDown(e, c)} onPointerMove={on.pointerMove} onPointerUp={() => on.pointerUp(c)}>
+      <span>{c.number}</span>
+      <PcLoad state={st} />
+      <button type="button" className="cm-computer-edit" title={t('Редактировать компьютер')} aria-label={t('Редактировать компьютер')}
+        onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.preventDefault(); e.stopPropagation(); on.edit(c); }}><i className="fas fa-pen"></i></button>
+    </span>
+  );
+});
+
+// Окна карты: memo + стабильные пропсы — живые события не перерисовывают закрытые окна (у каждого <input> React
+// иначе заново выставляет name/type на каждое событие).
+const ZoneModalMemo = memo(ZoneModal);
+const ComputerModalMemo = memo(ComputerModal);
+const BookingModalMemo = memo(BookingModal);
+const NotifyModalMemo = memo(NotifyModal);
+const GuestSessionModalMemo = memo(GuestSessionModal);
+
 /** computer — открыть карточку этого ПК (?computer=7: переход из колокольчика «Проблемы с ПК»). */
 export function ClubMapPage({ computer }: { readonly computer?: number } = {}) {
-  const { t, i18n } = useTranslation();
-  const { me } = useSession();
-  const qc = useQueryClient();
+  const { t } = useTranslation();
   useAdminPageTitle(t('Карта клуба'));
   useMapLive();
   const { data } = useQuery(clubMapQuery());
+  if (!data) return null;
+  return <ClubMapView data={data} computer={computer} />;
+}
+
+function ClubMapView({ data, computer }: { readonly data: Page; readonly computer?: number }) {
+  const { t, i18n } = useTranslation();
+  const { me } = useSession();
+  const qc = useQueryClient();
 
   const readOnly = me?.read_only === true;
   const may = (right: string) => !readOnly && can(me, right);
@@ -96,15 +154,35 @@ export function ClubMapPage({ computer }: { readonly computer?: number } = {}) {
     if (computer != null) setInfoId(computer);
   }
 
-  // Свежие данные с сервера заменяют локальные правки расположения.
+  // Свежее расположение с сервера заменяет локальные правки. Зависимости — zones/computers: живые события
+  // (computer.load, computer.state) меняют только states и расположение не сбрасывают; пустое состояние не
+  // заменяется новым объектом (без второго рендера всего дерева).
+  const { zones, computers } = data;
   useEffect(() => {
     if (drag.current) return;
-    setZoneLayout({});
-    setPcLayout({});
-  }, [data]);
+    setZoneLayout((s) => (Object.keys(s).length > 0 ? {} : s));
+    setPcLayout((s) => (Object.keys(s).length > 0 ? {} : s));
+  }, [zones, computers]);
 
-  const states = useMemo(() => new Map((data?.states ?? []).map((s) => [s.id, s])), [data]);
-  if (!data) return null;
+  const states = useMemo(() => new Map(data.states.map((s) => [s.id, s])), [data.states]);
+  const pcsByZone = useMemo(() => {
+    const m = new Map<number, ComputerCard[]>();
+    for (const c of computers) {
+      const list = m.get(c.zone_id);
+      if (list) list.push(c);
+      else m.set(c.zone_id, [c]);
+    }
+    return m;
+  }, [computers]);
+  const selectedCards = useMemo(() => computers.filter((c) => selected.has(c.id)), [computers, selected]);
+  const selectedBrief = useMemo(() => selectedCards.map((c) => ({ id: c.id, name: c.name })), [selectedCards]);
+  const selectedZones = useMemo(() => selectedCards.map((c) => ({ id: c.id, zoneId: c.zone_id })), [selectedCards]);
+  const selectedIds = useMemo(() => [...selected], [selected]);
+  // Забронированные среди выбранных нужны только открытому окну брони (иначе пропс менялся бы на каждое событие).
+  const reservedSelected = useMemo(
+    () => (booking ? selectedCards.filter((c) => states.get(c.id)?.status === 'reserved').map((c) => c.id) : NO_IDS),
+    [booking, selectedCards, states],
+  );
 
   // Уведомление внизу (#layout-status): текст, показ ms, затем — «Сохраняем расположение…».
   const showNotice = (text: string, ms: number, reset = false) => {
@@ -126,7 +204,6 @@ export function ClubMapPage({ computer }: { readonly computer?: number } = {}) {
   const layoutOf = (z: Zone): Layout => zoneLayout[z.id] ?? { x: z.position_x, y: z.position_y, width: z.width, height: z.height, rotation: z.rotation };
   const pcPos = (c: ComputerCard) => pcLayout[c.id] ?? { x: c.position_x, y: c.position_y };
   const height = canvasHeight(data.zones.map(layoutOf));
-  const selectedCards = data.computers.filter((c) => selected.has(c.id));
   const stateOf = (id: number): ComputerState | undefined => states.get(id);
 
   // ---- перетаскивание и размер зон, место ПК (pointer-события, как JS шаблона) ----
@@ -325,6 +402,25 @@ export function ClubMapPage({ computer }: { readonly computer?: number } = {}) {
     }
   };
 
+  const on = useStableHandlers({
+    click: onPcClick,
+    pointerDown: onPcPointerDown,
+    pointerMove: onPcPointerMove,
+    pointerUp: onPcPointerUp,
+    edit: (c: ComputerCard) => { setPcErrors([]); setPcModal(c); },
+    closeZone: () => setZoneModal(null),
+    submitZone,
+    invalidZone: (m: string) => { setStatus(null); setError(m); },
+    closePc: () => setPcModal(null),
+    savePc,
+    removePc,
+    closeBooking: () => setBooking(false),
+    closeNotify: () => setNotify(false),
+    closeGuest: () => setGuest(false),
+    notice: showNotice,
+    booked: () => void reload(),
+  });
+
   const info = infoId != null ? data.computers.find((c) => c.id === infoId) : undefined;
   const infoState = info ? stateOf(info.id) : undefined;
   const fmt = (v?: string | null) => {
@@ -357,7 +453,7 @@ export function ClubMapPage({ computer }: { readonly computer?: number } = {}) {
             {data.zones.length === 0 && <div className="cm-empty">{t('На карте пока нет зон. Нажмите «Добавить зону».')}</div>}
             {data.zones.map((z) => {
               const l = layoutOf(z);
-              const pcs = data.computers.filter((c) => c.zone_id === z.id);
+              const pcs = pcsByZone.get(z.id) ?? [];
               const sofa = z.icon === 'couch';
               const cls = ['cm-zone', z.theme, z.status + (sofa ? ' sofa' : '') + (sofa && l.rotation === 90 ? ' rotated-90' : '')];
               if (active?.kind === 'zone' && active.id === z.id) cls.push(active.mode);
@@ -377,20 +473,10 @@ export function ClubMapPage({ computer }: { readonly computer?: number } = {}) {
                   {pcs.length > 0 && (
                     <div className="cm-computers" aria-label={t('Компьютеры в зоне {{name}}', { name: z.name })}>
                       {pcs.map((c) => {
-                        const st = stateOf(c.id);
                         const p = pcPos(c);
-                        let classes = computerClasses(st?.status ?? 'offline', st?.light ?? '', selected.has(c.id));
-                        if (active?.kind === 'pc' && active.id === c.id) classes += ' moving';
-                        if (blocked?.kind === 'pc' && blocked.id === c.id) classes += ' blocked';
                         return (
-                          <span key={c.id} className={classes} data-id={c.id} style={{ left: `${p.x}px`, top: `${p.y}px` }}
-                            title={[c.name, st?.status, c.details, loadTitle(t, st)].filter(Boolean).join(' · ')}
-                            onClick={(e) => onPcClick(e, c)} onPointerDown={(e) => onPcPointerDown(e, c)} onPointerMove={onPcPointerMove} onPointerUp={() => onPcPointerUp(c)}>
-                            <span>{c.number}</span>
-                            <PcLoad state={st} />
-                            <button type="button" className="cm-computer-edit" title={t('Редактировать компьютер')} aria-label={t('Редактировать компьютер')}
-                              onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPcErrors([]); setPcModal(c); }}><i className="fas fa-pen"></i></button>
-                          </span>
+                          <PcTile key={c.id} c={c} st={stateOf(c.id)} x={p.x} y={p.y} selected={selected.has(c.id)}
+                            moving={active?.kind === 'pc' && active.id === c.id} blocked={blocked?.kind === 'pc' && blocked.id === c.id} on={on} />
                         );
                       })}
                     </div>
@@ -430,7 +516,7 @@ export function ClubMapPage({ computer }: { readonly computer?: number } = {}) {
             </dl>
           </section>
           <section id="computer-reservation-info" className="cm-info-section" hidden={!infoState?.is_reserved}><h4>{t('Информация о брони')}</h4><p>{t('Бронь активна')}</p></section>
-          {info && <HealthSections key={info.id} computerId={info.id} fmt={fmt} locale={locale} tz={tz} />}
+          {info && <Suspense fallback={null}><HealthSections key={info.id} computerId={info.id} fmt={fmt} locale={locale} tz={tz} /></Suspense>}
         </aside>
       </div>
       <div id="layout-status" className={`cm-saving${notice.show ? ' show' : ''}`}>{notice.text}</div>
@@ -451,15 +537,14 @@ export function ClubMapPage({ computer }: { readonly computer?: number } = {}) {
         {may('cash.create') && data.guest_mode && <> <button type="button" id="guest-session-open" className="cm-control-button tariff" onClick={() => { if (selected.size > 0) setGuest(true); }}><i className="fas fa-play"></i> {t('Подключить тариф')}</button></>}
       </div>
 
-      <ZoneModal state={zoneModal} tariffs={data.tariffs} onClose={() => setZoneModal(null)} onSubmit={submitZone} onInvalid={(m) => { setStatus(null); setError(m); }} />
-      <ComputerModal computer={pcModal} zones={data.zones} errors={pcErrors} onClose={() => setPcModal(null)} onSave={savePc} onDelete={removePc} />
-      <BookingModal key={booking ? 'open' : 'closed'} open={booking} selected={selectedCards.map((c) => ({ id: c.id, name: c.name }))}
-        reservedSelected={selectedCards.filter((c) => stateOf(c.id)?.status === 'reserved').map((c) => c.id)}
-        defaultStart={data.booking_start} onClose={() => setBooking(false)} onNotice={showNotice} onBooked={() => void reload()} />
-      {may('pc_control.update') && <NotifyModal key={notify ? 'open' : 'closed'} open={notify} ids={[...selected]} onClose={() => setNotify(false)} onNotice={showNotice} />}
+      <ZoneModalMemo state={zoneModal} tariffs={data.tariffs} onClose={on.closeZone} onSubmit={on.submitZone} onInvalid={on.invalidZone} />
+      <ComputerModalMemo computer={pcModal} zones={data.zones} errors={pcErrors} onClose={on.closePc} onSave={on.savePc} onDelete={on.removePc} />
+      <BookingModalMemo key={booking ? 'open' : 'closed'} open={booking} selected={selectedBrief} reservedSelected={reservedSelected}
+        defaultStart={data.booking_start} onClose={on.closeBooking} onNotice={on.notice} onBooked={on.booked} />
+      {may('pc_control.update') && <NotifyModalMemo key={notify ? 'open' : 'closed'} open={notify} ids={selectedIds} onClose={on.closeNotify} onNotice={on.notice} />}
       {may('cash.create') && (
-        <GuestSessionModal key={guest ? 'open' : 'closed'} open={guest} selected={selectedCards.map((c) => ({ id: c.id, zoneId: c.zone_id }))} zones={data.zones} tariffs={data.tariffs}
-          locale={locale} onClose={() => setGuest(false)} onNotice={showNotice} />
+        <GuestSessionModalMemo key={guest ? 'open' : 'closed'} open={guest} selected={selectedZones} zones={data.zones} tariffs={data.tariffs}
+          locale={locale} onClose={on.closeGuest} onNotice={on.notice} />
       )}
     </div>
   );

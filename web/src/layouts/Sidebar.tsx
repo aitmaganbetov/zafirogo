@@ -15,6 +15,8 @@ export interface SidebarProps {
   readonly open: boolean;
   /** Меню свёрнуто в узкую полосу (desktop): у ссылок появляется title с текстом. */
   readonly rail: boolean;
+  /** Мобильная шторка закрыта и сдвинута за экран: меню исключается из порядка Tab и дерева доступности (UI-11). */
+  readonly hidden?: boolean;
   /** Кнопка «Закрыть меню» в шторке. */
   readonly onClose: () => void;
 }
@@ -23,7 +25,7 @@ function isClubRole(role: MembershipRole): role is ClubRole {
   return role !== 'client';
 }
 
-export function Sidebar({ open, rail, onClose }: SidebarProps) {
+export function Sidebar({ open, rail, hidden = false, onClose }: SidebarProps) {
   const { t } = useTranslation();
   const session = useAdminSession();
   const { membership, user, badges } = session;
@@ -47,9 +49,11 @@ export function Sidebar({ open, rail, onClose }: SidebarProps) {
   };
 
   return (
-    <aside id="adminSidebar" className={open ? 'sidebar active' : 'sidebar'}>
+    <aside id="adminSidebar" className={open ? 'sidebar active' : 'sidebar'} inert={hidden}>
       <div className="sidebar-brand">
-        <img className="sidebar-brand-mark" src="/images/logo.svg" alt="" />
+        {/* width/height — только пропорции logo.svg (179×135): место под логотип занято до его загрузки, шапка меню не
+            прыгает (UI-17). w-auto отменяет ширину из атрибута: размер по-прежнему задаёт высота из CSS. */}
+        <img className="sidebar-brand-mark w-auto" src="/images/logo.svg" alt="" width={179} height={135} />
         <div>
           <strong>Zafiro</strong>
           <small>{t('Управление клубом')}</small>
@@ -66,10 +70,10 @@ export function Sidebar({ open, rail, onClose }: SidebarProps) {
               const label = t(item.label);
               const count = item.badge === undefined ? 0 : badges[item.badge];
               return (
-                <a key={item.key} href={to} className={isActive(item, path) ? 'sidebar-link active' : 'sidebar-link'} title={rail ? label : undefined}>
+                <a key={item.key} href={to} className={isActive(item, path) ? 'sidebar-link active' : 'sidebar-link'} title={rail ? (count > 0 ? `${label} (${count})` : label) : undefined}>
                   <i className={item.icon}></i>
                   <span>{label}</span>
-                  {count > 0 && <span className="ml-auto rounded-full bg-red-600 px-2 text-xs font-bold text-white">{count}</span>}
+                  {count > 0 && <span data-menu-count className="ml-auto rounded-full bg-red-600 px-2 text-xs font-bold text-white">{count}</span>}
                 </a>
               );
             })}

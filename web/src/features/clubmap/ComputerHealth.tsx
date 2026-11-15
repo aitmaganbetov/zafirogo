@@ -7,7 +7,6 @@ import {
   healthEventsQuery,
   healthHourlyQuery,
   healthWeeklyQuery,
-  type ComputerState,
   type HealthEvent,
   type HealthHour,
   type HealthView,
@@ -24,28 +23,6 @@ import { pruneLiveSeries, pushSample, sample, samplesOf, subscribeSamples, type 
  * «Информация о ПК» — раздел «Состояние» и история проблем. Нет данных (ПК офлайн, старый агент) — ничего не
  * показывается, разметка карты как в старом шаблоне.
  */
-
-/** Загрузка и проблемы на карточке ПК: две полоски (CPU, ОЗУ) и значок с подсказкой. Нет данных — ничего. */
-export function PcLoad({ state }: { readonly state: ComputerState | undefined }) {
-  const { t } = useTranslation();
-  if (!state || state.connection !== 'online') return null;
-  const problems = state.problems ?? [];
-  return (
-    <>
-      {state.load && (
-        <span className="cm-pc-load" aria-hidden="true">
-          <i style={{ width: `${percent(state.load.cpu_bp)}%` }}></i>
-          <i style={{ width: `${percent(state.load.ram_bp)}%` }}></i>
-        </span>
-      )}
-      {problems.length > 0 && (
-        <span className="cm-pc-alert" title={problems.map((p) => problemLabel(t, p)).join(', ')} aria-label={problems.map((p) => problemLabel(t, p)).join(', ')}>
-          <i className="fas fa-triangle-exclamation"></i>
-        </span>
-      )}
-    </>
-  );
-}
 
 const gb = (mb: number) => Math.round(mb / 1024);
 
@@ -115,6 +92,9 @@ function HealthList({ view, t }: { readonly view: HealthView; readonly t: TFunct
 const LIVE_ORDER: readonly HealthSeriesKey[] = ['cpu', 'ram', 'cpuTemp', 'gpuTemp'];
 const WEEK_ORDER: readonly HealthSeriesKey[] = ['cpuTemp', 'gpuTemp', 'cpu', 'ram'];
 
+/** Описание графика для aria-label: вкладка и названия линий (уже переведённые). */
+const chartLabel = (tab: string, series: readonly { readonly label: string }[]) => `${tab}: ${series.map((s) => s.label).join(', ')}`;
+
 const liveValue = (s: LiveSample, key: HealthSeriesKey) => s[key];
 
 /** Живой график «Сейчас»: последние 15 минут из живых событий (liveSeries). Меньше двух точек — графика нет. */
@@ -129,7 +109,7 @@ function LiveChart({ computerId, timeLabel }: { readonly computerId: number; rea
   const labels = useMemo(() => samples.map((s) => timeLabel(s.at)), [samples, timeLabel]);
   const series = useMemo(() => healthSeries(t, LIVE_ORDER, samples, liveValue), [t, samples]);
   if (samples.length < 2) return null;
-  return <HealthChart id="computer-health-live-chart" labels={labels} series={series} />;
+  return <HealthChart id="computer-health-live-chart" label={chartLabel(t('Сейчас'), series)} labels={labels} series={series} />;
 }
 
 /** Сводка недели: онлайн, температуры, загрузка, сбои, диск (у бездискового — сеть вместо диска). */
@@ -176,7 +156,7 @@ function WeekChart({ computerId, week, hourLabel }: { readonly computerId: numbe
   const labels = useMemo(() => hours.map((h) => hourLabel(h.at)), [hours, hourLabel]);
   const series = useMemo(() => healthSeries(t, WEEK_ORDER, hours, (h, key) => hourValue(h.row, key)), [t, hours]);
   if (rows.length === 0) return null;
-  return <HealthChart id="computer-health-week-chart" labels={labels} series={series} />;
+  return <HealthChart id="computer-health-week-chart" label={chartLabel(t('По неделям'), series)} labels={labels} series={series} />;
 }
 
 /** «По неделям»: недели (новые сверху) с вердиктом и причинами; выбор недели — график по часам; недель нет — «Истории пока нет». */

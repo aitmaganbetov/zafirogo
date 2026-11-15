@@ -25,7 +25,13 @@ export function useAdminSession(): AdminSession {
 }
 
 /** Заголовок страницы в верхней панели (@section('page-title') в Blade). */
-export const PageTitleContext = createContext<(title: string | null) => void>(() => undefined);
+const NO_PAGE_TITLE = (_title: string | null): void => undefined;
+export const PageTitleContext = createContext<(title: string | null) => void>(NO_PAGE_TITLE);
+
+/** Рисуется ли компонент внутри оболочки админки (AdminLayout), а не отдельной страницей. */
+export function useInsideAdminLayout(): boolean {
+  return useContext(PageTitleContext) !== NO_PAGE_TITLE;
+}
 
 /**
  * Страница задаёт свой заголовок: он показывается в верхней панели и в <title>

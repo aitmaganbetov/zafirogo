@@ -51,10 +51,11 @@ export function customersHref(p: CustomersSearch): string {
 export const customersQuery = (p: CustomersSearch) =>
   queryOptions({
     queryKey: ['customers', 'list', p.q ?? '', p.after ?? 0, p.before ?? 0],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       unwrap(
         customersApi.GET('/api/customers', {
           params: { query: { q: p.q, after_id: p.after, before_id: p.before, limit: CUSTOMERS_PER_PAGE } },
+          signal,
         }),
       ),
   });

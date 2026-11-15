@@ -25,13 +25,13 @@ export function parseComputersSearch(s: Record<string, unknown>): ComputersSearc
 export const computersQuery = (page?: number) =>
   queryOptions({
     queryKey: ['computers', 'list', page ?? 1],
-    queryFn: () => unwrap(computersApi.GET('/api/club-computers', { params: { query: { page } } })),
+    queryFn: ({ signal }) => unwrap(computersApi.GET('/api/club-computers', { params: { query: { page } }, signal })),
   });
 
 export const enrollmentQuery = () =>
   queryOptions({
     queryKey: ['computers', 'enrollment'],
-    queryFn: () => unwrap(computersApi.GET('/api/agent-enrollment')),
+    queryFn: ({ signal }) => unwrap(computersApi.GET('/api/agent-enrollment', { signal })),
   });
 
 export const createCode = (zoneId: number | null) => unwrap(computersApi.POST('/api/agent-enrollment/codes', { body: { zone_id: zoneId } }));

@@ -129,7 +129,7 @@ export function ServicesPage({ page }: { page: number }) {
               <th className="px-4 py-3">{t('Цена')}</th>
               <th className="px-4 py-3">{t('Единица')}</th>
               <th className="px-4 py-3">{t('Статус')}</th>
-              <th className="px-4 py-3">
+              <th className="relative px-4 py-3">
                 <span className="sr-only">{t('Действия')}</span>
               </th>
             </tr>

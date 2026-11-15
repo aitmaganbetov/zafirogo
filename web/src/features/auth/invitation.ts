@@ -6,7 +6,7 @@ import { authApi } from '../../auth/session';
 export function invitationQuery(token: string) {
   return queryOptions({
     queryKey: ['invitation', token],
-    queryFn: () => unwrap(authApi.GET('/api/invitations/{token}', { params: { path: { token } } })),
+    queryFn: ({ signal }) => unwrap(authApi.GET('/api/invitations/{token}', { params: { path: { token } }, signal })),
     staleTime: 0,
   });
 }

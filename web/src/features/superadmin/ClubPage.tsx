@@ -212,7 +212,7 @@ export function ClubPage({ clubId, page }: { readonly clubId: number; readonly p
                       return (
                         <td
                           key={h}
-                          className={`h-6 w-7 rounded ${cell === undefined ? 'bg-gray-50 dark:bg-gray-800' : ''}`}
+                          className={`relative h-6 w-7 rounded ${cell === undefined ? 'bg-gray-50 dark:bg-gray-800' : ''}`}
                           style={cell ? { backgroundColor: `rgb(124 58 237 / ${Math.max(0.06, cell.busy / 100)})` } : undefined}
                           title={
                             cell

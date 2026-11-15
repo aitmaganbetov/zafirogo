@@ -10,6 +10,7 @@ import { useInvalidateOn } from '../../realtime/hooks';
 import { createCategory, createMovement, createProduct, deleteProduct, overviewQuery, productsPageQuery, type Product } from './api';
 import { allErrors } from './errors';
 import { ProductPicker } from './ProductPicker';
+import { useModalFocus } from '../../lib/useModalFocus';
 
 /*
  * Склад (каталог) — перенос resources/views/warehouse.blade.php (WarehouseController): категории, новый товар,
@@ -47,13 +48,9 @@ export function WarehousePage({ page }: { page: number }) {
   };
 
   useEffect(() => {
+    // Escape, ловушка фокуса и возврат фокуса — в Modal (useModalFocus).
     document.body.style.overflow = modal ? 'hidden' : '';
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setModal(null);
-    };
-    document.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener('keydown', onKey);
       document.body.style.overflow = '';
     };
   }, [modal]);
@@ -203,6 +200,7 @@ interface FormProps {
 /** Модалка склада: открытие — класс flex вместо hidden, закрытие — по кнопке, фону и Escape; фокус на первое поле. */
 function Modal({ id, open, onClose, children }: { id: string; open: boolean; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  useModalFocus(ref, open, onClose);
   useEffect(() => {
     if (!open) return;
     const h = setTimeout(() => ref.current?.querySelector<HTMLElement>('input:not([type="hidden"]), select')?.focus(), 50);

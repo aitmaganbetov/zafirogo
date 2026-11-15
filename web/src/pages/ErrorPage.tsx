@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDocumentTitle } from '../lib/title';
 import { isApiError } from '../api/http';
+import { useAdminPageTitle, useInsideAdminLayout } from '../layouts/adminSession';
 import { isForbidden } from './errors';
 
 /*
@@ -11,19 +12,32 @@ import { isForbidden } from './errors';
  * 500.blade.php. Разметка и классы — как в minimal.blade.php.
  */
 
-function Minimal({ code, message }: { code: string; message: string }) {
+function Minimal({ code, title, message }: { code: string; title: string; message: string }) {
+  // Внутри оболочки админки (нет права на раздел, ошибка загрузки экрана) шаблон отдельной страницы Laravel не
+  // подходит как есть (UI-04): белый блок в тёмной теме, min-h-screen под шапкой даёт лишнюю прокрутку, заголовок
+  // шапки остаётся от прошлого экрана. В старом 403 — отдельная страница без оболочки, там разметка прежняя.
+  const embedded = useInsideAdminLayout();
+  useAdminPageTitle(title);
   // <body class="antialiased bg-white text-black">
   useEffect(() => {
+    if (embedded) return;
     const classes = ['antialiased', 'bg-white', 'text-black'];
     document.body.classList.add(...classes);
     return () => document.body.classList.remove(...classes);
-  }, []);
+  }, [embedded]);
+  const text = embedded ? 'text-black dark:text-gray-100' : 'text-black';
   return (
-    <div className="relative flex items-top justify-center min-h-screen bg-white text-black sm:items-center sm:pt-0" role="main">
+    <div
+      className={embedded
+        ? 'relative flex items-top justify-center min-h-[calc(100vh-68px)] px-4 text-black sm:items-center sm:pt-0 dark:text-gray-100'
+        : 'relative flex items-top justify-center min-h-screen bg-white text-black sm:items-center sm:pt-0'}
+      role={embedded ? undefined : 'main'}
+    >
       <div className="max-w-xl mx-auto sm:px-6 lg:px-8">
         <div className="flex items-center pt-8 sm:justify-start sm:pt-0">
-          <h1 className="px-4 text-lg text-black border-r border-gray-400">{code}</h1>
-          <div className="ml-4 text-lg text-black">{message}</div>
+          {/* shrink-0 whitespace-nowrap: рядом с длинным сообщением код не ломается в столбик «4/0/3» */}
+          <h1 className={`shrink-0 whitespace-nowrap px-4 text-lg ${text} border-r border-gray-400`}>{code}</h1>
+          <div className={`ml-4 text-lg ${text}`}>{message}</div>
         </div>
       </div>
     </div>
@@ -34,21 +48,21 @@ function Minimal({ code, message }: { code: string; message: string }) {
 export function ForbiddenPage({ message }: { message?: string }) {
   const { t } = useTranslation();
   useDocumentTitle(t('Forbidden'));
-  return <Minimal code="403" message={t(message || 'Forbidden')} />;
+  return <Minimal code="403" title={t('Forbidden')} message={t(message || 'Forbidden')} />;
 }
 
 /** 404.blade.php: title и message __('Not Found'). */
 export function NotFoundPage() {
   const { t } = useTranslation();
   useDocumentTitle(t('Not Found'));
-  return <Minimal code="404" message={t('Not Found')} />;
+  return <Minimal code="404" title={t('Not Found')} message={t('Not Found')} />;
 }
 
 /** 500.blade.php: __('Server Error'). */
 export function ServerErrorPage() {
   const { t } = useTranslation();
   useDocumentTitle(t('Server Error'));
-  return <Minimal code="500" message={t('Server Error')} />;
+  return <Minimal code="500" title={t('Server Error')} message={t('Server Error')} />;
 }
 
 /**

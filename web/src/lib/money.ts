@@ -3,9 +3,6 @@
  * в API уходят тиыны. Никаких float: форматирование и разбор — строками и целыми.
  */
 
-/** Наибольшая сумма, которую JSON number передаёт точно (9 007 199 254 740 991 тиын ≈ 90 трлн ₸). */
-export const MAX_SAFE_TIYN = Number.MAX_SAFE_INTEGER;
-
 function assertTiyn(t: number): void {
   if (!Number.isSafeInteger(t)) throw new RangeError(`money: not an integer tiyn amount: ${t}`);
 }

@@ -72,7 +72,8 @@ export function ShopOrdersPage({ status, page }: { status: OrderStatusFilter; pa
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {/* grid-cols-1: карточка заказа не шире экрана телефона (UI-02) */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {data.items.length === 0 ? (
           <p className="rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500 md:col-span-2 xl:col-span-3 dark:border-gray-700">
             {status === 'new' ? t('Новых заказов нет.') : t('Заказов нет.')}
@@ -117,7 +118,7 @@ function OrderCard({ order: o, onStatus, onError }: { order: ShopOrder; onStatus
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-lg font-bold text-gray-900 dark:text-white">{t('ПК {{computer}}', { computer: o.computer_name ?? '—' })}</p>
-          <p className="truncate text-sm text-gray-600 dark:text-gray-400">
+          <p className="truncate text-sm text-gray-600 dark:text-gray-400" title={`${t('Заказ №{{id}}', { id: o.id })} · ${o.created_at ? formatDate(o.created_at, tz, 'd.m H:i') : ''} · ${o.customer_name ?? '—'}`}>
             {t('Заказ №{{id}}', { id: o.id })} · {o.created_at ? formatDate(o.created_at, tz, 'd.m H:i') : ''} · {o.customer_name ?? '—'}
           </p>
         </div>

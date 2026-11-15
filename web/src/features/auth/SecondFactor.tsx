@@ -27,6 +27,8 @@ export function SecondFactorStep({ challenge, onDone, onRestart }: Props) {
   const [setup, setSetup] = useState<TotpSetup | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Код приложения — цифры (цифровая клавиатура телефона); код восстановления — буквы и цифры (UI-18).
+  const [recovery, setRecovery] = useState(false);
   const [codes, setCodes] = useState<{ readonly session: AuthSession; readonly list: readonly string[] } | null>(null);
 
   // Принудительная настройка: ключ запрашивается сразу (каждый запрос выдаёт новый, пока TOTP не включён).
@@ -141,12 +143,19 @@ export function SecondFactorStep({ challenge, onDone, onRestart }: Props) {
               required
               autoFocus
               maxLength={setupRequired ? 7 : 24}
-              inputMode={setupRequired ? 'numeric' : 'text'}
+              inputMode={setupRequired || !recovery ? 'numeric' : 'text'}
               autoComplete="one-time-code"
-              placeholder="123456"
+              placeholder={recovery ? '' : '123456'}
             />
           </div>
         </div>
+        {!setupRequired && (
+          <div className="auth-row">
+            <button type="button" className="auth-link-button text-sm" aria-pressed={recovery} onClick={() => setRecovery((v) => !v)}>
+              {recovery ? t('Ввести код из приложения') : t('Ввести код восстановления')}
+            </button>
+          </div>
+        )}
         <button className="auth-submit" disabled={busy || (setupRequired && setup === null)}>
           {setupRequired ? t('Включить и войти') : t('Подтвердить')}
         </button>

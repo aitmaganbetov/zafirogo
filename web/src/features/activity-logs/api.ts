@@ -50,10 +50,11 @@ export function activityLogsHref(p: ActivityLogsSearch): string {
 export const activityLogsQuery = (p: ActivityLogsSearch) =>
   queryOptions({
     queryKey: ['activity-logs', p.from ?? '', p.to ?? '', p.event ?? '', p.user_id ?? '', p.search ?? '', p.cursor ?? ''],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       unwrap(
         activityLogsApi.GET('/api/activity-logs', {
           params: { query: { from: p.from, to: p.to, event: p.event, user_id: p.user_id, search: p.search, cursor: p.cursor } },
+          signal,
         }),
       ),
   });

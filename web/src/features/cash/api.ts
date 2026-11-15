@@ -1,4 +1,4 @@
-import { queryOptions } from '@tanstack/react-query';
+import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query';
 import { createApiClient, idempotencyKey, unwrap } from '../../api/http';
 import type { components, paths } from '../../api/gen/cash';
 
@@ -25,18 +25,28 @@ export type CashOperationPage = S['CashOperationPage'];
 export const POS_PAGE_SIZE = 60;
 
 export const shiftQuery = () =>
-  queryOptions({ queryKey: ['cash', 'shift'], queryFn: () => unwrap(cashApi.GET('/api/cash/shift')) });
+  queryOptions({ queryKey: ['cash', 'shift'], queryFn: ({ signal }) => unwrap(cashApi.GET('/api/cash/shift', { signal })) });
 
 export const catalogQuery = () =>
-  queryOptions({ queryKey: ['cash', 'catalog'], queryFn: () => unwrap(cashApi.GET('/api/cash/catalog')) });
+  queryOptions({ queryKey: ['cash', 'catalog'], queryFn: ({ signal }) => unwrap(cashApi.GET('/api/cash/catalog', { signal })) });
 
-export function fetchProducts(category: string, cursor: string | null) {
+export function fetchProducts(category: string, cursor: string | null, signal?: AbortSignal) {
   return unwrap(
     cashApi.GET('/api/cash/products', {
       params: { query: { category: category || undefined, cursor: cursor ?? undefined, limit: POS_PAGE_SIZE } },
+      signal,
     }),
   );
 }
+
+/** Витрина POS страницами (keyset). category '' — все товары. */
+export const productsQuery = (category: string) =>
+  infiniteQueryOptions({
+    queryKey: ['cash', 'products', category],
+    queryFn: ({ pageParam, signal }) => fetchProducts(category, pageParam, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor ?? null,
+  });
 
 export const customersQuery = (q: string) =>
   queryOptions({
@@ -48,22 +58,22 @@ export const customersQuery = (q: string) =>
 export const operationsQuery = (page: number) =>
   queryOptions({
     queryKey: ['cash', 'operations', page],
-    queryFn: () => unwrap(cashApi.GET('/api/cash/operations', { params: { query: { page } } })),
+    queryFn: ({ signal }) => unwrap(cashApi.GET('/api/cash/operations', { params: { query: { page } }, signal })),
   });
 
 export const receiptQuery = (id: number) =>
   queryOptions({
     queryKey: ['cash', 'receipt', id],
-    queryFn: () => unwrap(cashApi.GET('/api/cash/receipts/{transactionId}', { params: { path: { transactionId: id } } })),
+    queryFn: ({ signal }) => unwrap(cashApi.GET('/api/cash/receipts/{transactionId}', { params: { path: { transactionId: id } }, signal })),
   });
 
 export const xReportQuery = () =>
-  queryOptions({ queryKey: ['cash', 'report', 'x'], queryFn: () => unwrap(cashApi.GET('/api/cash/reports/x')) });
+  queryOptions({ queryKey: ['cash', 'report', 'x'], queryFn: ({ signal }) => unwrap(cashApi.GET('/api/cash/reports/x', { signal })) });
 
 export const zReportQuery = (shiftId: number) =>
   queryOptions({
     queryKey: ['cash', 'report', 'z', shiftId],
-    queryFn: () => unwrap(cashApi.GET('/api/cash/shifts/{shiftId}/z-report', { params: { path: { shiftId } } })),
+    queryFn: ({ signal }) => unwrap(cashApi.GET('/api/cash/shifts/{shiftId}/z-report', { params: { path: { shiftId } }, signal })),
   });
 
 const key = (k?: string) => ({ header: { 'Idempotency-Key': k ?? idempotencyKey() } });

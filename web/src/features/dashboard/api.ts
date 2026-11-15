@@ -10,7 +10,7 @@ export type Dashboard = components['schemas']['Dashboard'];
 export const dashboardQuery = () =>
   queryOptions({
     queryKey: ['dashboard'],
-    queryFn: () => unwrap(dashboardApi.GET('/api/dashboard')),
+    queryFn: ({ signal }) => unwrap(dashboardApi.GET('/api/dashboard', { signal })),
   });
 
 /** Куда уводит DashboardController: кассир — на кассу, оператор — на список ПК; остальным — админпанель. */

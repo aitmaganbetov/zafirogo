@@ -5,13 +5,15 @@ import type { Dashboard } from './api';
 
 /*
  * График «Доходы и расходы за 7 дней» — Chart.js 4.5.1 (в старом — с CDN jsdelivr, здесь — из npm, Q-064),
- * настройки — дословно из @push('scripts') dashboard.blade.php. Значения — тенге из тиынов (только показ:
- * высота столбца, не деньги расчёта).
+ * настройки — дословно из @push('scripts') dashboard.blade.php. В график идут целые тиыны; в тенге они
+ * переводятся только при выводе (подписи оси и подсказка) — вид тот же, что у старого графика в тенге
+ * (шаг оси в тиынах = шаг в тенге × 100).
  */
 
 Chart.register(BarController, BarElement, CategoryScale, LinearScale, Legend, Tooltip);
 
-const tenge = (tiyn: number) => tiyn / 100;
+/** Тиыны → тенге только для подписи (число делений оси может быть дробным в тиынах — это не сумма). */
+const tengeLabel = (tiyn: number, f: Intl.NumberFormat) => f.format(tiyn / 100);
 
 export function DashboardChart({ days }: { days: Dashboard['days'] }) {
   const { t } = useTranslation();
@@ -29,7 +31,7 @@ export function DashboardChart({ days }: { days: Dashboard['days'] }) {
         datasets: [
           {
             label: income,
-            data: days.map((d) => tenge(d.income_tiyn)),
+            data: days.map((d) => d.income_tiyn),
             backgroundColor: 'rgba(34, 197, 94, 0.75)',
             borderColor: 'rgba(22, 163, 74, 1)',
             borderWidth: 1,
@@ -37,7 +39,7 @@ export function DashboardChart({ days }: { days: Dashboard['days'] }) {
           },
           {
             label: expense,
-            data: days.map((d) => tenge(d.expenses_tiyn)),
+            data: days.map((d) => d.expenses_tiyn),
             backgroundColor: 'rgba(244, 63, 94, 0.7)',
             borderColor: 'rgba(225, 29, 72, 1)',
             borderWidth: 1,
@@ -53,13 +55,15 @@ export function DashboardChart({ days }: { days: Dashboard['days'] }) {
             position: 'bottom',
             labels: { padding: 20, usePointStyle: true, color: '#6b7280', font: { size: 12, weight: 'bold' } },
           },
+          // Как подсказка Chart.js по умолчанию («Доход: 12 345,5»), но из тиынов.
+          tooltip: { callbacks: { label: (c) => `${c.dataset.label ?? ''}: ${tengeLabel(Number(c.parsed.y), new Intl.NumberFormat(c.chart.options.locale))}` } },
         },
         scales: {
           y: {
             beginAtZero: true,
             ticks: {
               color: '#9ca3af',
-              callback: (value) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Number(value)),
+              callback: (value) => tengeLabel(Number(value), new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 })),
               font: { size: 11 },
             },
             grid: { color: 'rgba(209, 213, 219, 0.1)' },

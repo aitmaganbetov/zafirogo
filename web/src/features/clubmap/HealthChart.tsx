@@ -26,13 +26,15 @@ function createChart(ctx: CanvasRenderingContext2D, showLoad: boolean, showTemp:
     data: { labels: [], datasets: [] },
     options: {
       responsive: true,
-      maintainAspectRatio: true,
+      // Высоту задаёт обёртка (h-56): при соотношении сторон по умолчанию в панели 256 px легенда и подписи оси
+      // оставляли графику 0–50 px (UI-03).
+      maintainAspectRatio: false,
       animation: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: {
           position: 'bottom',
-          labels: { padding: 12, usePointStyle: true, color: '#6b7280', font: { size: 11, weight: 'bold' } },
+          labels: { padding: 12, boxWidth: 8, usePointStyle: true, color: '#6b7280', font: { size: 11, weight: 'bold' } },
         },
       },
       scales: {
@@ -50,13 +52,19 @@ function createChart(ctx: CanvasRenderingContext2D, showLoad: boolean, showTemp:
           ticks: { color: '#9ca3af', font: { size: 11 }, callback: (v) => `${String(v)} °C` },
           grid: { display: false },
         },
-        x: { ticks: { color: '#9ca3af', font: { size: 11 }, maxTicksLimit: 6 }, grid: { display: false } },
+        x: { ticks: { color: '#9ca3af', font: { size: 11 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 4 }, grid: { display: false } },
       },
     },
   });
 }
 
-export function HealthChart({ id, labels, series }: { readonly id: string; readonly labels: readonly string[]; readonly series: readonly ChartSeries[] }) {
+export function HealthChart({ id, label, labels, series }: {
+  readonly id: string;
+  /** Текстовое описание графика для программ чтения с экрана. */
+  readonly label: string;
+  readonly labels: readonly string[];
+  readonly series: readonly ChartSeries[];
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
   const chart = useRef<Chart<'line', (number | null)[], string> | null>(null);
   // Серии без единого значения не показываются (и их ось тоже).
@@ -97,5 +105,9 @@ export function HealthChart({ id, labels, series }: { readonly id: string; reado
     c.update('none');
   }, [data, showLoad, showTemp]);
 
-  return <canvas id={id} ref={ref}></canvas>;
+  return (
+    <div className="relative h-56">
+      <canvas id={id} ref={ref} role="img" aria-label={label}></canvas>
+    </div>
+  );
 }

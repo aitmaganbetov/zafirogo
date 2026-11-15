@@ -109,7 +109,8 @@ export function PermissionsEditPage({ membershipId }: { membershipId: number }) 
                           return (
                             <td key={a.action} className="px-3 py-3 text-center">
                               {cell ? (
-                                <>
+                                // label: флажок 20×20 нажимается вместе с подписью под ним (область ≥ 40 px, UI-14); вид прежний
+                                <label className="block">
                                   <input
                                     type="checkbox"
                                     name={`rights[${s.section}][${a.action}]`}
@@ -124,7 +125,7 @@ export function PermissionsEditPage({ membershipId }: { membershipId: number }) 
                                     className={cell.given ? 'brand-check h-5 w-5 rounded border-gray-300 ring-2 ring-amber-400 ring-offset-2 dark:ring-offset-gray-900' : 'brand-check h-5 w-5 rounded border-gray-300'}
                                   />
                                   <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">{t(cell.description)}</span>
-                                </>
+                                </label>
                               ) : (
                                 <span className="text-gray-400" aria-hidden="true">
                                   —

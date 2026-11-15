@@ -31,7 +31,7 @@ export function parseReservationsSearch(s: Record<string, unknown>): Reservation
 export const reservationsQuery = (p: ReservationsSearch) =>
   queryOptions({
     queryKey: ['reservations', p.date ?? '', p.page ?? 1],
-    queryFn: () => unwrap(reservationsApi.GET('/api/reservations', { params: { query: { date: p.date, page: p.page } } })),
+    queryFn: ({ signal }) => unwrap(reservationsApi.GET('/api/reservations', { params: { query: { date: p.date, page: p.page } }, signal })),
   });
 
 export const createReservation = (body: ReservationInput) => unwrap(reservationsApi.POST('/api/reservations', { body }));

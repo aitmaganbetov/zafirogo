@@ -20,7 +20,7 @@ import { gzipSync } from "node:zlib";
 const BUDGET = {
   main: 92_000,
   initial: 160_000,
-  css: 51_000,
+  css: 35_000, // после поднабора иконок: 31 125 (аудит, FE-05)
   chunk: 416_000,
 };
 

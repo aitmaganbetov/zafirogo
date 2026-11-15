@@ -17,7 +17,7 @@ export function useSidebarBadges(): SidebarBadges {
   const queryClient = useQueryClient();
   const { data } = useQuery({
     queryKey: BADGES_KEY,
-    queryFn: () => unwrap(layoutApi.GET('/api/layout/badges')),
+    queryFn: ({ signal }) => unwrap(layoutApi.GET('/api/layout/badges', { signal })),
     staleTime: Infinity,
   });
   useRealtimeEvent<{ unread?: number }>('chat.unread', (m) => {

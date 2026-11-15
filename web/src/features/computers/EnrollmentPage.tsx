@@ -5,7 +5,7 @@ import { isApiError } from '../../api/http';
 import { useSession } from '../../auth/session';
 import { SettingsCard } from '../../components/SettingsCard';
 import { useAdminPageTitle } from '../../layouts/adminSession';
-import { formatDate } from '../../lib/datetime';
+import { formatDate, clubLocalToISO } from '../../lib/datetime';
 import { approvePending, cancelCode, createCode, createImageKey, enrollmentQuery, rejectPending, reregisterComputer, revokeComputer, revokeImageKey } from './api';
 
 /*
@@ -82,7 +82,8 @@ export function EnrollmentPage() {
     makeKey.mutate({
       name: String(f.get('name') ?? ''),
       subnets: String(f.get('subnets') ?? '').split(/[\s,]+/).filter(Boolean),
-      expires_at: expires === '' ? null : new Date(expires).toISOString(),
+      // Срок вводится и показывается в поясе клуба (FE-13), а не в поясе браузера.
+      expires_at: expires === '' ? null : clubLocalToISO(expires, tz),
     });
   };
   const zoneSelect = (value: string, onChange: (v: string) => void, id?: string) => (

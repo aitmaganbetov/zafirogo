@@ -12,7 +12,7 @@ export type PcLogin = components['schemas']['PcLogin'];
 export const pcLoginQuery = (code: string) =>
   queryOptions({
     queryKey: ['pclogin', code],
-    queryFn: () => unwrap(pcLoginApi.GET('/api/pc-login/{code}', { params: { path: { code } } })),
+    queryFn: ({ signal }) => unwrap(pcLoginApi.GET('/api/pc-login/{code}', { params: { path: { code } }, signal })),
     staleTime: 0,
   });
 

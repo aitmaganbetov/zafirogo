@@ -24,7 +24,7 @@ export function parseTodosSearch(s: Record<string, unknown>): TodosSearch {
 export const todosQuery = (date?: string) =>
   queryOptions({
     queryKey: ['todos', date ?? ''],
-    queryFn: () => unwrap(todosApi.GET('/api/todos', { params: { query: { date } } })),
+    queryFn: ({ signal }) => unwrap(todosApi.GET('/api/todos', { params: { query: { date } }, signal })),
   });
 
 export function createTodo(title: string, dueOn: string) {

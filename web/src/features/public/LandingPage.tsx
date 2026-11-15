@@ -120,13 +120,14 @@ export function LandingPage() {
             <a href="/wiki" data-reload className="hover:text-white">{t('Wiki')}</a>
           </div>
           <div className="flex items-center gap-2">
-            <a href="/wiki" data-reload className="rounded-lg px-3 py-2 text-sm text-white/80 hover:text-white md:hidden">{t('Wiki')}</a>
+            {/* max-[389px]:hidden — на 320–360 px кнопки наезжали на логотип, «Попробовать» обрезалась (UI-13); Wiki есть в подвале */}
+            <a href="/wiki" data-reload className="rounded-lg px-3 py-2 text-sm text-white/80 hover:text-white max-[389px]:hidden md:hidden">{t('Wiki')}</a>
             {authed ? (
               <a href="/dashboard" className="rounded-lg bg-[#ff0169] px-4 py-2 text-sm font-semibold shadow-lg shadow-[#ff0169]/30 hover:bg-[#e6005e]">{t('Открыть панель')}</a>
             ) : (
               <>
                 <a href="/login" className="rounded-lg px-3 py-2 text-sm text-white/80 hover:text-white">{t('Войти')}</a>
-                <a href="/register" className="rounded-lg bg-[#ff0169] px-4 py-2 text-sm font-semibold shadow-lg shadow-[#ff0169]/30 hover:bg-[#e6005e]">{t('Попробовать')}</a>
+                <a href="/register" className="rounded-lg bg-[#ff0169] px-4 py-2 text-sm font-semibold shadow-lg shadow-[#ff0169]/30 hover:bg-[#e6005e] max-[389px]:px-3">{t('Попробовать')}</a>
               </>
             )}
           </div>

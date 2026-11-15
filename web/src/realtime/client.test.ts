@@ -3,6 +3,7 @@ import { RealtimeClient, matchType } from './client';
 
 class FakeSocket {
   static last: FakeSocket | null = null;
+  static all: FakeSocket[] = [];
   onmessage: ((ev: MessageEvent) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
   closed = false;
@@ -10,6 +11,7 @@ class FakeSocket {
   constructor(url: string) {
     this.url = url;
     FakeSocket.last = this;
+    FakeSocket.all.push(this);
   }
   send(): void {}
   close(): void {
@@ -24,7 +26,10 @@ class FakeSocket {
 }
 
 describe('WebSocket-клиент', () => {
-  beforeEach(() => vi.useFakeTimers());
+  beforeEach(() => {
+    vi.useFakeTimers();
+    FakeSocket.all = [];
+  });
   afterEach(() => vi.useRealTimers());
 
   function client(tickets: string[] = ['t1', 't2', 't3', 't4']) {
@@ -103,5 +108,40 @@ describe('WebSocket-клиент', () => {
     s?.drop();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(FakeSocket.last).toBe(s);
+  });
+
+  // FE-09: StrictMode / быстрый уход и возврат — start → stop → start, пока ждём билет.
+  it('start → stop → start во время ожидания билета: один сокет, без ложного onReconnect', async () => {
+    const c = client();
+    const reconnected = vi.fn();
+    c.onReconnect(reconnected);
+    c.start();
+    c.stop();
+    c.start();
+    await vi.runOnlyPendingTimersAsync();
+    expect(FakeSocket.all).toHaveLength(1);
+    FakeSocket.last?.emit({ type: 'hello', at: '', data: {} });
+    expect(reconnected).not.toHaveBeenCalled();
+    expect(c.getState()).toBe('open');
+    c.stop();
+    expect(FakeSocket.all.every((s) => s.closed)).toBe(true);
+  });
+
+  it('onReconnect сообщает, был ли разрыв с кодом 4001', async () => {
+    const c = client();
+    const reconnected = vi.fn();
+    c.onReconnect(reconnected);
+    c.start();
+    await vi.runOnlyPendingTimersAsync();
+    FakeSocket.last?.emit({ type: 'hello', at: '', data: {} });
+    FakeSocket.last?.drop(4001);
+    await vi.advanceTimersByTimeAsync(0);
+    FakeSocket.last?.emit({ type: 'hello', at: '', data: {} });
+    expect(reconnected).toHaveBeenLastCalledWith(true);
+    FakeSocket.last?.drop();
+    await vi.advanceTimersByTimeAsync(1100);
+    FakeSocket.last?.emit({ type: 'hello', at: '', data: {} });
+    expect(reconnected).toHaveBeenLastCalledWith(false);
+    c.stop();
   });
 });

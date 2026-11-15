@@ -142,9 +142,9 @@ export function SuperadminLayout({ userName, hasClub, path, onLogout, children }
       <FlashContext.Provider value={flash}>
         <div className={drawerOpen ? 'overlay active' : 'overlay'} id="overlay" onClick={() => setDrawerOpen(false)}></div>
         <div className={rail ? 'admin-app sidebar-collapsed' : 'admin-app'}>
-          <aside id="adminSidebar" className={drawerOpen ? 'sidebar active' : 'sidebar'}>
+          <aside id="adminSidebar" className={drawerOpen ? 'sidebar active' : 'sidebar'} inert={mobile && !drawerOpen}>
             <div className="sidebar-brand">
-              <img className="sidebar-brand-mark" src="/images/logo.svg" alt="" />
+              <img className="sidebar-brand-mark w-auto" src="/images/logo.svg" alt="" width={179} height={135} />
               <div>
                 <strong>Zafiro</strong>
                 <small>{t('Кабинет суперадмина')}</small>
@@ -196,7 +196,7 @@ export function SuperadminLayout({ userName, hasClub, path, onLogout, children }
                   >
                     <i className="fas fa-bars"></i>
                   </button>
-                  <h2 className="admin-title">{title}</h2>
+                  <h2 className="admin-title" title={title}>{title}</h2>
                 </div>
                 <div className="admin-topbar-actions">
                   <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800 dark:bg-violet-900/40 dark:text-violet-200">

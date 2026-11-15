@@ -446,7 +446,7 @@ export function TariffsPage({ zone, editId }: { zone?: number; editId?: number }
                 <th className="px-3 py-3 font-semibold">{t('Длительность')}</th>
                 <th className="px-3 py-3 font-semibold">{t('Цена')}</th>
                 <th className="px-3 py-3 font-semibold">{t('Статус')}</th>
-                <th className="px-3 py-3">
+                <th className="relative px-3 py-3">
                   <span className="sr-only">{t('Действия')}</span>
                 </th>
               </tr>

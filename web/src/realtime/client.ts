@@ -42,13 +42,16 @@ export interface RealtimeOptions {
 export class RealtimeClient {
   private socket: WebSocket | null = null;
   private readonly handlers = new Set<{ pattern: string; fn: RealtimeHandler }>();
-  private readonly reconnectHandlers = new Set<() => void>();
+  private readonly reconnectHandlers = new Set<(reauth: boolean) => void>();
   private readonly stateHandlers = new Set<(s: ConnectionState) => void>();
   private readonly seen: string[] = [];
   private attempt = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private connectedOnce = false;
+  /** Поколение start/stop: connect(), переживший stop() во время ожидания билета, не открывает сокет. */
+  private gen = 0;
+  private reauth = false;
   private state: ConnectionState = 'idle';
   private readonly o: Required<RealtimeOptions>;
 
@@ -70,8 +73,8 @@ export class RealtimeClient {
     return () => this.handlers.delete(h);
   }
 
-  /** После переподключения (не первого подключения): перечитать данные экрана. */
-  onReconnect(fn: () => void): () => void {
+  /** После переподключения (не первого подключения): перечитать данные экрана. reauth — разрыв был с кодом 4001. */
+  onReconnect(fn: (reauth: boolean) => void): () => void {
     this.reconnectHandlers.add(fn);
     return () => this.reconnectHandlers.delete(fn);
   }
@@ -88,11 +91,14 @@ export class RealtimeClient {
   start(): void {
     if (this.running) return;
     this.running = true;
+    this.gen++;
     void this.connect();
   }
 
   stop(): void {
     this.running = false;
+    this.gen++;
+    this.reauth = false;
     this.connectedOnce = false;
     this.attempt = 0;
     if (this.timer) clearTimeout(this.timer);
@@ -140,16 +146,19 @@ export class RealtimeClient {
 
   private async connect(): Promise<void> {
     if (!this.running) return;
+    const gen = this.gen;
     this.setState('connecting');
     let ticket: string;
     try {
       ticket = await this.o.ticket();
     } catch {
+      if (gen !== this.gen) return;
       this.setState('closed');
       this.schedule();
       return;
     }
-    if (!this.running) return;
+    // stop() (и, возможно, новый start()) во время ожидания билета: этот connect устарел.
+    if (gen !== this.gen) return;
     const ws = this.o.createSocket(this.o.url(ticket));
     this.socket = ws;
     ws.onmessage = (ev: MessageEvent) => {
@@ -162,7 +171,9 @@ export class RealtimeClient {
       if (msg.type === 'hello') {
         this.attempt = 0;
         this.setState('open');
-        if (this.connectedOnce) for (const fn of this.reconnectHandlers) fn();
+        const reauth = this.reauth;
+        this.reauth = false;
+        if (this.connectedOnce) for (const fn of this.reconnectHandlers) fn(reauth);
         this.connectedOnce = true;
         return;
       }
@@ -172,6 +183,7 @@ export class RealtimeClient {
       if (this.socket !== ws) return;
       this.socket = null;
       this.setState('closed');
+      if (ev.code === CLOSE_REAUTH) this.reauth = true;
       this.schedule(ev.code === CLOSE_REAUTH);
     };
   }

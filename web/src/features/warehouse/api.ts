@@ -15,12 +15,12 @@ export type WarehouseOverview = S['WarehouseOverview'];
 export type StockPage = S['StockPage'];
 
 export const overviewQuery = () =>
-  queryOptions({ queryKey: ['warehouse', 'overview'], queryFn: () => unwrap(warehouseApi.GET('/api/warehouse/overview')) });
+  queryOptions({ queryKey: ['warehouse', 'overview'], queryFn: ({ signal }) => unwrap(warehouseApi.GET('/api/warehouse/overview', { signal })) });
 
 export const productsPageQuery = (page: number) =>
   queryOptions({
     queryKey: ['warehouse', 'products', 'page', page],
-    queryFn: () => unwrap(warehouseApi.GET('/api/warehouse/products', { params: { query: { page, limit: 50 } } })),
+    queryFn: ({ signal }) => unwrap(warehouseApi.GET('/api/warehouse/products', { params: { query: { page, limit: 50 } }, signal })),
   });
 
 /** Поиск товара для формы движения и удаления (решение Q-070: вместо выпадающего списка всех товаров). */
@@ -34,7 +34,7 @@ export const productSearchQuery = (q: string) =>
 export const stockQuery = (search: string, page: number) =>
   queryOptions({
     queryKey: ['warehouse', 'stock', search, page],
-    queryFn: () => unwrap(warehouseApi.GET('/api/stock', { params: { query: { q: search || undefined, page } } })),
+    queryFn: ({ signal }) => unwrap(warehouseApi.GET('/api/stock', { params: { query: { q: search || undefined, page } }, signal })),
   });
 
 export const createCategory = (name: string) => unwrap(warehouseApi.POST('/api/warehouse/categories', { body: { name } }));

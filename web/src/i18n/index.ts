@@ -25,7 +25,8 @@ void i18n.use(initReactI18next).init({
   nsSeparator: false,
   returnEmptyString: false,
   interpolation: { escapeValue: false },
-  react: { useSuspense: false },
+  // bindI18nStore: пакет, обновлённый в фоне (кэш прошлого захода → свежая версия), перерисовывает экран.
+  react: { useSuspense: false, bindI18nStore: 'added removed' },
   // Нет перевода: форма trans_choice по числу (а не все формы через «|») и подстановки в ключ (CM-11, missing.ts).
   parseMissingKeyHandler: makeMissingKeyHandler((text, params) =>
     i18n.services.interpolator.interpolate(text, params, i18n.language, {}),

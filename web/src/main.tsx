@@ -3,16 +3,21 @@ import { RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 // Шрифты и иконки — из npm, версии закреплены (решение Q-064; в старом — Google Fonts и cdnjs):
-// Inter 400/500/600/700 как partials/fonts.blade.php, Font Awesome 6.4.0 all.min.css как layouts/*.blade.php.
+// Inter 400/500/600/700 как partials/fonts.blade.php, Font Awesome 6.4.0 как layouts/*.blade.php — поднабор
+// используемых иконок из того же пакета (scripts/gen-icons.mjs, FE-05): те же классы и глифы, без 2 350 лишних.
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
 import '@fontsource/inter/600.css';
 import '@fontsource/inter/700.css';
-import '@fortawesome/fontawesome-free/css/all.min.css';
+import './styles/icons/fa-subset.css';
 import './i18n';
+import { warmI18n } from './i18n/load';
 import './styles/app.css';
 import { createAppRouter, createQueryClient } from './router';
 import { registerServiceWorker } from './pwa/register';
+
+// Переводы — параллельно с сессией и данными страницы (FE-04).
+warmI18n();
 
 const queryClient = createQueryClient();
 const router = createAppRouter(queryClient);

@@ -11,7 +11,7 @@ export type OrderStatusFilter = 'new' | 'done' | 'cancelled' | 'all';
 export const shopOrdersQuery = (status: OrderStatusFilter, page: number) =>
   queryOptions({
     queryKey: ['shop-orders', status, page],
-    queryFn: () => unwrap(shopOrdersApi.GET('/api/shop-orders', { params: { query: { status, page } } })),
+    queryFn: ({ signal }) => unwrap(shopOrdersApi.GET('/api/shop-orders', { params: { query: { status, page } }, signal })),
   });
 
 export const markDone = (orderId: number) =>

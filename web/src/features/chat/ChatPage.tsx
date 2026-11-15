@@ -73,7 +73,8 @@ export function ChatPage({ customer }: { customer?: number }) {
         </p>
       </header>
 
-      <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+      {/* grid-cols-1: без явной колонки она растягивается по truncate-тексту шире экрана телефона (UI-02) */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
         <nav className="max-h-[70vh] overflow-y-auto rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900" aria-label={t('Диалоги')}>
           {data.conversations.length === 0 && <p className="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">{t('Сообщений от клиентов пока нет.')}</p>}
           {data.conversations.map((c) => (
@@ -83,8 +84,8 @@ export function ChatPage({ customer }: { customer?: number }) {
               className={`flex items-center gap-3 border-b border-gray-100 px-4 py-3 dark:border-gray-800 ${data.customer?.id === c.customer_id ? 'bg-green-50 dark:bg-green-900/20' : 'hover:bg-gray-50 dark:hover:bg-gray-800'}`}
             >
               <span className="min-w-0 flex-1">
-                <strong className="block truncate text-sm text-gray-900 dark:text-white">{c.customer_name ?? '—'}</strong>
-                <small className="block truncate text-xs text-gray-500 dark:text-gray-400">
+                <strong className="block truncate text-sm text-gray-900 dark:text-white" title={c.customer_name ?? undefined}>{c.customer_name ?? '—'}</strong>
+                <small className="block truncate text-xs text-gray-500 dark:text-gray-400" title={c.last_body ?? undefined}>
                   {c.last_from_staff ? `${t('Вы')}: ` : ''}
                   {c.last_body}
                 </small>

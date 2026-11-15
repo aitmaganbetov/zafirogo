@@ -9,7 +9,7 @@ export type ClubService = components['schemas']['ClubService'];
 export type ServiceRequest = components['schemas']['ServiceRequest'];
 
 export const servicesQuery = (page: number) =>
-  queryOptions({ queryKey: ['services', page], queryFn: () => unwrap(servicesApi.GET('/api/services', { params: { query: { page } } })) });
+  queryOptions({ queryKey: ['services', page], queryFn: ({ signal }) => unwrap(servicesApi.GET('/api/services', { params: { query: { page } }, signal })) });
 
 export const createService = (body: ServiceRequest) => unwrap(servicesApi.POST('/api/services', { body }));
 

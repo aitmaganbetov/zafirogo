@@ -111,7 +111,7 @@ export function AdminLayout({ children }: { children: ReactNode }) {
     <PageTitleContext.Provider value={setPageTitle}>
       <div className={drawerOpen ? 'overlay active' : 'overlay'} id="overlay" onClick={closeDrawer}></div>
       <div className={rail ? 'admin-app sidebar-collapsed' : 'admin-app'}>
-        <Sidebar open={drawerOpen} rail={rail} onClose={closeDrawerAndFocus} />
+        <Sidebar open={drawerOpen} rail={rail} hidden={mobile && !drawerOpen} onClose={closeDrawerAndFocus} />
         <main className="admin-main">
           <header className="admin-topbar">
             <div className="admin-topbar-inner">
@@ -128,7 +128,8 @@ export function AdminLayout({ children }: { children: ReactNode }) {
                 >
                   <i className="fas fa-bars"></i>
                 </button>
-                <h2 className="admin-title">{title}</h2>
+                {/* title: на телефоне заголовок обрезается многоточием (UI-12) */}
+                <h2 className="admin-title" title={title}>{title}</h2>
               </div>
               <div className="admin-topbar-actions">
                 {session.availableClubs.length > 1 && (

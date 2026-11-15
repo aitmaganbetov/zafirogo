@@ -10,5 +10,5 @@ export type Landing = components['schemas']['Landing'];
 export const landingQuery = () =>
   queryOptions({
     queryKey: ['public', 'landing'],
-    queryFn: () => unwrap(publicApi.GET('/api/landing')),
+    queryFn: ({ signal }) => unwrap(publicApi.GET('/api/landing', { signal })),
   });

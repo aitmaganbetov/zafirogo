@@ -85,7 +85,7 @@ export function DashboardPage({ search }: { readonly search: DashboardSearch }) 
         </h3>
         {silent ? (
           <p className="mt-1 text-sm text-red-800 dark:text-red-300">
-            {t('Вебхуки, окончание сессий и подписок не обрабатываются. Проверьте строку schedule:run в crontab пользователя сервера.')}
+            {t('Вебхуки, окончание сессий и подписок не обрабатываются. Проверьте, что служба сервера Zafiro запущена, и посмотрите её журнал.')}
           </p>
         ) : (
           <p className="mt-1 text-sm text-green-800 dark:text-green-300">
@@ -184,7 +184,7 @@ export function DashboardPage({ search }: { readonly search: DashboardSearch }) 
                 <table className="w-full min-w-[860px] text-sm">
                   <thead>
                     <tr className="text-left text-gray-500">
-                      <th className="py-2">
+                      <th className="relative py-2">
                         <span className="sr-only">{t('На графике')}</span>
                       </th>
                       <th className="py-2">{t('Клуб')}</th>

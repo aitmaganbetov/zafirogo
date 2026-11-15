@@ -26,7 +26,7 @@ export function parseNewsSearch(s: Record<string, unknown>): NewsSearch {
 export const newsQuery = (page?: number) =>
   queryOptions({
     queryKey: ['news', page ?? 1],
-    queryFn: () => unwrap(newsApi.GET('/api/news', { params: { query: { page } } })),
+    queryFn: ({ signal }) => unwrap(newsApi.GET('/api/news', { params: { query: { page } }, signal })),
   });
 
 /** Отправка формы новости как multipart (поля формы и файл — как браузер отправлял форму Blade). */

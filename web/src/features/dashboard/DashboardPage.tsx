@@ -4,25 +4,26 @@ import { useSession } from '../../auth/session';
 import { useAdminPageTitle } from '../../layouts/adminSession';
 import { formatDate } from '../../lib/datetime';
 import { formatMoney } from '../../lib/money';
-import { useInvalidateOn } from '../../realtime/hooks';
+import { COMPUTER_TELEMETRY, useInvalidateOn } from '../../realtime/hooks';
 import { dashboardQuery, formatInt } from './api';
 import { DashboardChart } from './DashboardChart';
 
 /*
  * Админпанель — перенос resources/views/dashboard.blade.php (DashboardController). Разметка и классы — из шаблона.
- * ПК онлайн/забронировано и касса обновляются по WebSocket (computer.*, cash.*) — в старом только при загрузке.
+ * ПК онлайн/забронировано и касса обновляются по WebSocket (computer.* без телеметрии computer.load, cash.*) — в старом только при загрузке.
  */
 export function DashboardPage() {
   const { t } = useTranslation();
   const { me } = useSession();
   useAdminPageTitle(t('Админпанель'));
-  useInvalidateOn(['computer.*', 'cash.*'], ['dashboard']);
+  useInvalidateOn(['computer.*', 'cash.*'], ['dashboard'], COMPUTER_TELEMETRY);
   const { data } = useQuery(dashboardQuery());
   const tz = me?.club?.timezone ?? 'UTC';
   if (!data) return null;
   const currency = data.currency;
   const money = (tiyn: number) => formatMoney(tiyn, 0, ',', ' ');
-  const link = 'flex items-center justify-between gap-3 text-sm text-gray-700 dark:text-gray-300';
+  // relative + after:… — невидимая область нажатия строки 20 px → 40 px (UI-14), вид прежний.
+  const link = "relative flex items-center justify-between gap-3 text-sm text-gray-700 after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] dark:text-gray-300";
   return (
     <div className="p-6 lg:p-8" data-testid="dashboard">
       {/* Welcome Section */}

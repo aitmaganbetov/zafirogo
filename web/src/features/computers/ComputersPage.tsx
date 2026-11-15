@@ -4,12 +4,12 @@ import { useSession } from '../../auth/session';
 import { Pagination } from '../../components/Pagination';
 import { useAdminPageTitle } from '../../layouts/adminSession';
 import { formatDate } from '../../lib/datetime';
-import { useInvalidateOn } from '../../realtime/hooks';
+import { COMPUTER_TELEMETRY, useInvalidateOn } from '../../realtime/hooks';
 import { computersQuery, formatRam, REGISTER_ROLES } from './api';
 
 /*
  * Список ПК — перенос resources/views/club-computers/index.blade.php (ClubComputerListController). Только чтение,
- * как в старом; соединение — из присутствия агента и обновляется по WebSocket (computer.*), в старом — только
+ * как в старом; соединение — из присутствия агента и обновляется по WebSocket (computer.*, кроме телеметрии computer.load), в старом — только
  * при перезагрузке. Новое: ссылка «Подключение ПК» (коды регистрации, ключи образа — Q-037) для ролей,
  * которые подключают ПК.
  */
@@ -17,7 +17,7 @@ export function ComputersPage({ page = 1 }: { page?: number }) {
   const { t } = useTranslation();
   const { me } = useSession();
   useAdminPageTitle(t('Список ПК'));
-  useInvalidateOn(['computer.*'], ['computers', 'list']);
+  useInvalidateOn(['computer.*'], ['computers', 'list'], COMPUTER_TELEMETRY);
   const { data } = useQuery(computersQuery(page));
   const tz = me?.club?.timezone ?? 'UTC';
   if (!data) return null;

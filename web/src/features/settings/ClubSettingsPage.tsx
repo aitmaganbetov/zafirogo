@@ -128,8 +128,8 @@ export function ClubSettingsPage() {
             </div>
             {minuteFields.map(([field, label]) => (
               <div key={field}>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{label}</label>
-                <input type="number" step="0.01" min="0" max="10080" name={field} defaultValue={minutesToInput(club[field] as number)} required className={INPUT} />
+                <label htmlFor={field} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{label}</label>
+                <input id={field} type="number" step="0.01" min="0" max="10080" name={field} defaultValue={minutesToInput(club[field] as number)} required className={INPUT} />
               </div>
             ))}
           </div>

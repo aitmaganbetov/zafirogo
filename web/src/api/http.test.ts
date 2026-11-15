@@ -103,3 +103,32 @@ describe('ошибки API в типизированном виде', () => {
     if (status === 429) expect(e.retryAfter).toBe(30);
   });
 });
+
+describe('apiFetch: отмена запроса (signal из queryFn, FE-10)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('отменённый запрос — не «сетевая ошибка» ApiError, а AbortError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (req: Request) =>
+          new Promise<Response>((_, reject) => req.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))),
+      ),
+    );
+    const ac = new AbortController();
+    const p = apiFetch(new Request(`${location.origin}/api/dashboard`, { signal: ac.signal }));
+    ac.abort();
+    await expect(p).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('сигнал из параметров клиента доходит до fetch', async () => {
+    const fetchMock = vi.fn(async (_req: Request) => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const ac = new AbortController();
+    await createApiClient<paths>().GET('/api/auth/me', { signal: ac.signal });
+    const sent = fetchMock.mock.calls[0]?.[0];
+    expect(sent?.signal.aborted).toBe(false);
+    ac.abort();
+    expect(sent?.signal.aborted).toBe(true);
+  });
+});

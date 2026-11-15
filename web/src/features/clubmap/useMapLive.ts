@@ -37,6 +37,25 @@ export function mergeLoad(page: ClubMapPage, ev: LoadEvent): ClubMapPage {
   };
 }
 
+/**
+ * Подставить пачку computer.load (последнее событие каждого ПК) одним проходом. Ссылки состояний остальных ПК,
+ * zones и computers сохраняются — перерисовываются только плитки ПК из пачки.
+ */
+export function mergeLoads(page: ClubMapPage, events: ReadonlyMap<number, LoadEvent>): ClubMapPage {
+  if (events.size === 0) return page;
+  let changed = false;
+  const states = page.states.map((s) => {
+    const ev = events.get(s.id);
+    if (!ev) return s;
+    changed = true;
+    return { ...s, load: ev.load ?? null, problems: ev.problems ?? [], rtt_ms: ev.rtt_ms ?? s.rtt_ms };
+  });
+  return changed ? { ...page, states } : page;
+}
+
+/** Окно склейки computer.load, мс: при 300 ПК это до 20 событий/с — в кэш они попадают одним обновлением. */
+export const LOAD_BATCH_MS = 250;
+
 /** Подставить свежие состояния ПК в данные экрана. */
 export function mergeStates(page: ClubMapPage, fresh: readonly ComputerState[]): ClubMapPage {
   if (fresh.length === 0) return page;
@@ -49,9 +68,13 @@ export function useMapLive(): void {
   const pending = useRef(new Set<number>());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const loads = useRef(new Map<number, LoadEvent>());
+  const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
+      if (loadTimer.current) clearTimeout(loadTimer.current);
     },
     [],
   );
@@ -62,8 +85,15 @@ export function useMapLive(): void {
     const id = m.data?.computer_id;
     if (!id) return;
     pushSample(id, sample(Date.now(), m.data.load, m.data.cpu_temp_deci, m.data.gpu_temp_deci));
-    qc.setQueryData<ClubMapPage>(clubMapKey, (old) => (old ? mergeLoad(old, m.data) : old));
-    void qc.invalidateQueries({ queryKey: computerHealthKey(id), exact: true });
+    loads.current.set(id, m.data);
+    if (loadTimer.current) return;
+    loadTimer.current = setTimeout(() => {
+      loadTimer.current = null;
+      const batch = loads.current;
+      loads.current = new Map();
+      qc.setQueryData<ClubMapPage>(clubMapKey, (old) => (old ? mergeLoads(old, batch) : old));
+      for (const pc of batch.keys()) void qc.invalidateQueries({ queryKey: computerHealthKey(pc), exact: true });
+    }, LOAD_BATCH_MS);
   });
 
   useRealtimeEvent<StateEvent>('computer.state', (m) => {

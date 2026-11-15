@@ -39,16 +39,16 @@ export function workersHref(p: WorkersSearch): string {
 export const workersQuery = (p: WorkersSearch) =>
   queryOptions({
     queryKey: ['staff', 'workers', p.cursor ?? '', p.before ?? ''],
-    queryFn: () => unwrap(staffApi.GET('/api/workers', { params: { query: { cursor: p.cursor, before: p.before } } })),
+    queryFn: ({ signal }) => unwrap(staffApi.GET('/api/workers', { params: { query: { cursor: p.cursor, before: p.before } }, signal })),
   });
 
 export const permissionStaffQuery = () =>
-  queryOptions({ queryKey: ['staff', 'permissions'], queryFn: () => unwrap(staffApi.GET('/api/settings/permissions')) });
+  queryOptions({ queryKey: ['staff', 'permissions'], queryFn: ({ signal }) => unwrap(staffApi.GET('/api/settings/permissions', { signal })) });
 
 export const staffPermissionsQuery = (membershipId: number) =>
   queryOptions({
     queryKey: ['staff', 'permissions', membershipId],
-    queryFn: () => unwrap(staffApi.GET('/api/settings/permissions/{membershipId}', { params: { path: { membershipId } } })),
+    queryFn: ({ signal }) => unwrap(staffApi.GET('/api/settings/permissions/{membershipId}', { params: { path: { membershipId } }, signal })),
   });
 
 export const addWorker = (phone: string, role: string) => unwrap(staffApi.POST('/api/workers', { body: { phone, role } }));

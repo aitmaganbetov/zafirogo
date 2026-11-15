@@ -208,7 +208,9 @@ export async function apiFetch(input: Request): Promise<Response> {
   let res: Response;
   try {
     res = await fetch(withAuth(input));
-  } catch {
+  } catch (e) {
+    // Отмена запроса (signal из queryFn: уход со страницы, смена фильтра) — не сетевая ошибка.
+    if (input.signal.aborted) throw e;
     throw new ApiError(0, null);
   }
   if (res.status !== 401 || new URL(input.url, location.origin).pathname.startsWith('/api/auth/refresh')) {
@@ -223,7 +225,8 @@ export async function apiFetch(input: Request): Promise<Response> {
   headers.set('Authorization', `Bearer ${grant.access_token}`);
   try {
     return await fetch(new Request(retry, { headers }));
-  } catch {
+  } catch (e) {
+    if (input.signal.aborted) throw e;
     throw new ApiError(0, null);
   }
 }

@@ -26,7 +26,7 @@ export function parseTariffsSearch(s: Record<string, unknown>): TariffsSearch {
 export const tariffsPageQuery = (zone?: number) =>
   queryOptions({
     queryKey: ['tariffs', 'page', zone ?? 0],
-    queryFn: () => unwrap(tariffsApi.GET('/api/tariffs/page', { params: { query: { zone } } })),
+    queryFn: ({ signal }) => unwrap(tariffsApi.GET('/api/tariffs/page', { params: { query: { zone } }, signal })),
   });
 
 export const createTariff = (body: TariffInput) => unwrap(tariffsApi.POST('/api/tariffs', { body }));
