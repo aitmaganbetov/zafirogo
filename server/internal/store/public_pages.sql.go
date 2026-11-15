@@ -30,3 +30,47 @@ func (q *Queries) PublicLanding(ctx context.Context) (PublicLandingRow, error) {
 	err := row.Scan(&i.TrialDays, &i.Release)
 	return i, err
 }
+
+const publicPricingPlans = `-- name: PublicPricingPlans :many
+SELECT p.id, p.name::text AS name, p.price_monthly, p.trial_days, p.features
+FROM saas_plans p
+WHERE p.is_active
+ORDER BY (p.price_monthly IS NOT NULL), p.price_monthly, p.id
+`
+
+type PublicPricingPlansRow struct {
+	ID           int64           `json:"id"`
+	Name         string          `json:"name"`
+	PriceMonthly *int64          `json:"price_monthly"`
+	TrialDays    int32           `json:"trial_days"`
+	Features     json.RawMessage `json:"features"`
+}
+
+// LandingController::pricing(): SaasPlan::where('is_active', true)->orderByRaw('price_monthly IS NOT NULL')
+// ->orderBy('price_monthly')->orderBy('id') — тарифы без цены (бесплатные и «по запросу») первыми. Тарифов платформы
+// единицы (их заводит суперадмин) — список без пагинации, как в старом.
+func (q *Queries) PublicPricingPlans(ctx context.Context) ([]PublicPricingPlansRow, error) {
+	rows, err := q.db.Query(ctx, publicPricingPlans)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PublicPricingPlansRow
+	for rows.Next() {
+		var i PublicPricingPlansRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.PriceMonthly,
+			&i.TrialDays,
+			&i.Features,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

@@ -218,7 +218,8 @@ func (q *Queries) SuperadminCheapestActivePlan(ctx context.Context) (int64, erro
 const superadminClub = `-- name: SuperadminClub :one
 SELECT c.id, c.name::text AS name, c.slug::text AS slug, c.timezone::text AS timezone, c.created_at,
        s.id AS subscription_id, s.status AS subscription_status, s.saas_plan_id, s.trial_ends_at, s.current_period_ends_at,
-       COALESCE(p.name, '')::text AS plan_name
+       COALESCE(s.discount_percent, 0)::smallint AS discount_percent, s.discount_until, s.discount_note,
+       COALESCE(p.name, '')::text AS plan_name, p.price_monthly AS plan_price_monthly
 FROM clubs c
 LEFT JOIN club_subscriptions s ON s.club_id = c.id
 LEFT JOIN saas_plans p ON p.id = s.saas_plan_id
@@ -236,7 +237,11 @@ type SuperadminClubRow struct {
 	SaasPlanID          *int64     `json:"saas_plan_id"`
 	TrialEndsAt         *time.Time `json:"trial_ends_at"`
 	CurrentPeriodEndsAt *time.Time `json:"current_period_ends_at"`
+	DiscountPercent     int16      `json:"discount_percent"`
+	DiscountUntil       *time.Time `json:"discount_until"`
+	DiscountNote        *string    `json:"discount_note"`
 	PlanName            string     `json:"plan_name"`
+	PlanPriceMonthly    *int64     `json:"plan_price_monthly"`
 }
 
 // ClubController::show(): клуб и подписка с тарифом.
@@ -254,7 +259,11 @@ func (q *Queries) SuperadminClub(ctx context.Context, id int64) (SuperadminClubR
 		&i.SaasPlanID,
 		&i.TrialEndsAt,
 		&i.CurrentPeriodEndsAt,
+		&i.DiscountPercent,
+		&i.DiscountUntil,
+		&i.DiscountNote,
 		&i.PlanName,
+		&i.PlanPriceMonthly,
 	)
 	return i, err
 }
@@ -644,6 +653,7 @@ WITH online AS (
            (SELECT count(*) FROM webhook_deliveries w WHERE w.club_id = c.id AND w.status = 'failed'
                AND w.created_at >= $10)::bigint AS webhook_failures,
            s.id AS subscription_id, s.status AS subscription_status, s.trial_ends_at, s.current_period_ends_at,
+           COALESCE(s.discount_percent, 0)::smallint AS discount_percent, s.discount_until, s.discount_note,
            COALESCE(CASE WHEN s.status = 'trialing' THEN s.trial_ends_at ELSE s.current_period_ends_at END, '0001-01-01 00:00:00+00'::timestamptz)::timestamptz AS subscription_ends_at,
            (s.id IS NOT NULL AND ((s.status = 'active' AND (s.current_period_ends_at IS NULL OR s.current_period_ends_at > $8))
                OR (s.status = 'trialing' AND s.trial_ends_at > $8)))::boolean AS subscription_active
@@ -651,7 +661,7 @@ WITH online AS (
     LEFT JOIN club_subscriptions s ON s.club_id = c.id
     WHERE ($11::text = '' OR c.name ILIKE '%' || $11::text || '%' OR c.slug ILIKE '%' || $11::text || '%')
 )
-SELECT id, name, slug, created_at, owner_name, computers_count, online_count, busy_count, agent_requests, api_requests, last_login_at, sessions_today, webhook_failures, subscription_id, subscription_status, trial_ends_at, current_period_ends_at, subscription_ends_at, subscription_active FROM rows
+SELECT id, name, slug, created_at, owner_name, computers_count, online_count, busy_count, agent_requests, api_requests, last_login_at, sessions_today, webhook_failures, subscription_id, subscription_status, trial_ends_at, current_period_ends_at, discount_percent, discount_until, discount_note, subscription_ends_at, subscription_active FROM rows
 WHERE $1::text = '' OR ($1::text = 'active') = subscription_active
 ORDER BY
     CASE WHEN $2::text = 'name' AND $3::text = 'asc' THEN name END ASC,
@@ -708,6 +718,9 @@ type SuperadminClubsRow struct {
 	SubscriptionStatus  *string    `json:"subscription_status"`
 	TrialEndsAt         *time.Time `json:"trial_ends_at"`
 	CurrentPeriodEndsAt *time.Time `json:"current_period_ends_at"`
+	DiscountPercent     int16      `json:"discount_percent"`
+	DiscountUntil       *time.Time `json:"discount_until"`
+	DiscountNote        *string    `json:"discount_note"`
 	SubscriptionEndsAt  time.Time  `json:"subscription_ends_at"`
 	SubscriptionActive  bool       `json:"subscription_active"`
 }
@@ -756,6 +769,9 @@ func (q *Queries) SuperadminClubs(ctx context.Context, arg SuperadminClubsParams
 			&i.SubscriptionStatus,
 			&i.TrialEndsAt,
 			&i.CurrentPeriodEndsAt,
+			&i.DiscountPercent,
+			&i.DiscountUntil,
+			&i.DiscountNote,
 			&i.SubscriptionEndsAt,
 			&i.SubscriptionActive,
 		); err != nil {

@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
+	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 )
 
 // Тексты TelegramAlerts::configure() и TelegramController::testAlerts().
@@ -195,6 +197,60 @@ func (a *Alerts) ClubRegistered(ctx context.Context, c NewClub) (bool, error) {
 		t(MsgNewClubOwner, map[string]string{"owner": c.OwnerName, "phone": c.OwnerPhone}),
 		t(MsgNewClubTrial, map[string]string{"date": date}),
 		c.URL,
+	}, "\n")
+	return a.deliver(ctx, s.Token, s.ChatID, text), nil
+}
+
+// Тексты TelegramAlerts::invoiceOpened().
+const (
+	MsgInvoice       = "Счёт :number: :club"
+	MsgInvoiceTerms  = ":plan, :months мес., :computers ПК"
+	MsgInvoiceAmount = "К оплате :amount ₸"
+)
+
+// OpenedInvoice — счёт за подписку, который клуб только что выставил и собирается оплатить через Kaspi.
+type OpenedInvoice struct {
+	// Number — номер счёта («ZF-00042»).
+	Number    string
+	Club      string
+	Plan      string
+	Months    int
+	Computers int64
+	// AmountTenge — сумма счёта в целых тенге (сумма счёта всегда целые тенге, BR-180).
+	AmountTenge int64
+	// URL — страница «Оплаты» кабинета суперадмина (route('superadmin.invoices.index')).
+	URL string
+}
+
+// InvoiceOpened сообщает в чат оповещений платформы о выставленном счёте, на языке оповещений:
+//
+//	💳 Счёт :number: :club
+//	:plan, :months мес., :computers ПК
+//	К оплате :amount ₸               // number_format($amount, 0, '.', ' ')
+//	<ссылка на «Оплаты» в кабинете>
+//
+// Бот не настроен — ничего не отправляется (false).
+// Laravel: app/Services/Monitoring/TelegramAlerts.php invoiceOpened() (Zafiro 77ae201).
+func (a *Alerts) InvoiceOpened(ctx context.Context, inv OpenedInvoice) (bool, error) {
+	s, err := a.Settings(ctx)
+	if err != nil || s == nil {
+		return false, err
+	}
+	locale := s.Locale
+	if locale == "" {
+		locale = i18n.SourceLocale
+	}
+	t := func(key string, params map[string]string) string {
+		if a.I18n != nil {
+			return a.I18n.Translate(ctx, locale, key, params)
+		}
+		return i18n.Render(i18n.SourceLocale, key, params)
+	}
+	text := strings.Join([]string{
+		"💳 " + t(MsgInvoice, map[string]string{"number": inv.Number, "club": inv.Club}),
+		t(MsgInvoiceTerms, map[string]string{"plan": inv.Plan, "months": strconv.Itoa(inv.Months), "computers": strconv.FormatInt(inv.Computers, 10)}),
+		t(MsgInvoiceAmount, map[string]string{"amount": money.GroupThousands(inv.AmountTenge, " ")}),
+		inv.URL,
 	}, "\n")
 	return a.deliver(ctx, s.Token, s.ChatID, text), nil
 }

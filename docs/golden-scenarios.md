@@ -2191,7 +2191,8 @@
 
 #### GS-418 · P3 · `web` · `TestLanding_GuestAndSignedIn`
 **Тест:** `LandingPageTest.php` — «the home page presents Zafiro with sign-up for guests and the panel for signed-in users»
-- **Ожидается:** гость: «Весь клуб — в одном окне», ссылки на регистрацию, установщик агента (`LandingController::AGENT_DOWNLOAD`), вики; вошедший: ссылка на `dashboard`, «Открыть панель».
+- **Ожидается:** гость: «Весь клуб - в одном окне» (с 11.2026 — дефис вместо тире, `docs/upstream-2026-11.md` тема Е), ссылки на регистрацию, установщик агента (`LandingController::AGENT_DOWNLOAD`), вики; вошедший: ссылка на `dashboard`, «Открыть панель».
+- **Go/web:** `web/src/features/public/public.test.tsx` «главная: новый первый экран…», `web/e2e/stage3-g7.spec.ts` «лендинг…»; данные — `http` `TestG7Landing`.
 
 #### GS-419 · P3 · `web` · `TestWiki_OwnHost`
 **Тест:** `LandingPageTest.php` — «the wiki opens on its own host; the old /wiki and other pages there lead to it»
@@ -2966,12 +2967,157 @@
 - **Ожидается:** `endOf(null)`, `[пн 00:00 – вс 23:59]` и `[вт 08:00–18:00]` в понедельник 15:00 → `null`.
 - **Оракул:** арифметика `endOf()`/`contains()` сверена с PHP 8.3.6 на 2000 случайных наборах периодов и моментов (`tools/php-oracle/gen-weekly-fixture.php`, целочисленная арифметика — от версии PHP не зависит).
 
+### Сайт: страницы продукта и тарифы (`LandingPageTest.php`, тема Е)
+
+#### GS-572 · P3 · `web` · `TestLanding_MenusAndProductPages`
+**Тест:** `LandingPageTest.php` — «the header menus lead to the features, agent and app pages»
+- **Ожидается:** главная: меню «О продукте» и «Продукты», ссылки на четыре страницы. `/product/features`: «Возможности Zafiro», «Касса и деньги», «Клиенты и лояльность», ссылка на агента и на `#faq` главной. `/product/agent`: «Агент Zafiro на ПК», «Обойти оплату не получится», ссылка на установщик и на регистрацию. `/product/guest-app`: «Приложение для гостей», «Вход на ПК по QR-коду». `/product/staff-app`: «Приложение для сотрудников», «Права как в панели». Вошедший — ссылка на панель.
+- **Go/web:** `web/src/features/public/public.test.tsx` «GS-572 TestLanding_MenusAndProductPages: страницы продукта» и «меню шапки: одно открыто за раз…»; `web/e2e/stage3-g7.spec.ts` «сайт: меню шапки ведут на страницы продукта и тарифы без перезагрузки (GS-572, GS-573)»; визуальное сравнение со старым — `tools/visual/pages.json` `product-*`.
+
+#### GS-573 · P3 · `web` · `TestPricing_ListsActivePlans`
+**Тест:** `LandingPageTest.php` — «the pricing page lists the plans open for subscription»
+- **Дано:** тарифы платформы: «Клуб до 30 ПК» 25 000 ₸, `features ["До 30 ПК"]`, активен; «Старый тариф» не активен.
+- **Ожидается:** главная ссылается на `/pricing`; страница: название, «25 000 ₸», «за ПК в месяц», «До 30 ПК», без «Старый тариф», ссылка на регистрацию.
+- **Go/web:** `http` `TestG7Pricing_GS573` (`GET /api/pricing`: только активные, без цены — первыми, дальше по цене и id, цена в тиынах), `sections/public` `TestPlanFeatures`, `TestGetPricingWithoutPool`; `web/src/features/public/public.test.tsx` «GS-573 TestPricing_ListsActivePlans…» (формат цены `number_format(…, 0, '.', ' ')` — «1 235 ₸» из 123 450 тиынов; «Бесплатно», «По запросу», пробные дни, «Все возможности Zafiro») и «тарифов нет — „Тарифы скоро появятся.“».
+
+### Счета за подписку и скидка клуба (`SubscriptionPaymentTest.php`, `SuperadminCabinetTest.php`, тема Б)
+
+Подготовка: клуб с `n` ПК, тариф «Базовый» 1000 ₸ за ПК (100 000 тиын), Kaspi `{url: "https://pay.kaspi.kz/pay/zafiro",
+recipient: "ИП Zafiro"}`; «сейчас» — 2026-11-15 07:00 UTC. Go: `server/internal/http/subscription_billing_integration_test.go`
+(HTTP → Postgres), расчёты — `server/internal/subscription/calc_test.go`. Правила — BR-180…BR-184, BR-186.
+
+#### GS-536 · P1 · `saas` · `TestCabinet_ClubDiscount`
+**Тест:** `SuperadminCabinetTest.php` — «the superadmin gives a club an individual discount»
+- **Дано:** тариф «Pro» 50 000 ₸; подписка клуба продлена на 30 дней на этом тарифе.
+- **Ожидается:** `discount_percent 101` → ошибка поля; `discount_until` вчера → ошибка поля; `{20, 2026-11-25, «Партнёр»}` → «Скидка сохранена.», цена со скидкой 4 000 000 тиын (40 000 ₸), причина сохранена; список клубов — `discount_percent 20` (бейдж «−20%», `title` — причина); карточка клуба и «Подписка» владельца — 40 000 ₸; `{0, note: "x"}` → «Скидка снята.», `discount_percent 0`, дата и причина `NULL`; в журнале платформы 2 события `superadmin.subscription_discount_changed` (детали `{percent, until}`).
+- **Последний день (GAP-055):** клуб в Asia/Almaty, скидка по 25.11: за минуту до конца дня клуба (25.11 18:59 UTC) — 20 % и в панели клуба, и в кабинете, счёт 800 ₸; в 19:00 UTC (в клубе уже 26.11) — в панели клуба 0 %, счёт 1000 ₸, в кабинете ещё 20 % (кабинет считает по UTC, как старый код вне клуба); через два дня — 0 % везде.
+- **Go:** `TestSubscriptionDiscount/GS-536…`, `subscription` `TestOwnDiscount`, `TestMonthlyPrice`; владелец клуба ставит себе скидку → 403; роль `zafiro_app` не может изменить скидку в базе (`db` `TestUpstreamTablesPrivileges`, миграция `0039`).
+
+#### GS-537 · P2 · `saas` · `TestCabinet_DiscountNeedsSubscription`
+**Тест:** `SuperadminCabinetTest.php` — «a club without a subscription cannot get a discount» — клуб без подписки → 404 (и несуществующий клуб → 404).
+
+#### GS-552 · P1 · `saas` · `TestInvoice_OwnerOpensWithDiscount`
+**Тест:** «the owner opens a bill for all the club PCs, less the discount, and sees how to pay it»
+- **Дано:** 3 ПК, скидка клуба 10 %.
+- **Ожидается:** `GET /api/billing`: `can_pay true`, `computers 3`, `discount_percent 10`, «К оплате» по срокам 1/3/6/12 — 270 000 / 810 000 / 1 620 000 / 3 240 000 тиын; цена на карточке — 90 000 тиын за ПК, 270 000 за 3 ПК. `POST /api/billing/invoices {saas_plan_id, months: 3}` → 201 «Счёт выставлен. Оплатите его через Kaspi.», счёт: `amount` **810 000** тиын (1000 ₸ × 3 × 3 − 10 % = 8 100 ₸), `computers 3`, `price_per_computer 100 000`, `discount_percent 10`, `status pending`, номер `ZF-` + id (5 знаков). Журнал клуба `billing.invoice_opened` «Выставлен счёт ZF-0000N на 8 100 ₸», аудит `money / invoice.opened`. Экран: `pending` с номером и суммой, `kaspi {url, recipient}`. Второй счёт → 422 `invoice` «У клуба уже есть неоплаченный счёт: оплатите или отмените его.», счетов 1. `POST …/cancel` → «Счёт отменён.», `canceled`, журнал `billing.invoice_canceled`; повторная отмена → 422 «Счёт уже закрыт.»; после отмены новый счёт выставляется.
+
+#### GS-553 · P2 · `saas` · `TestInvoice_ValidMonthsPlansKaspi`
+**Тест:** «only allowed months, payable plans and a configured Kaspi link make a bill»
+- `months: 2` → 422 `months`; тариф без цены («Пробный период») и выключенный тариф → 422 `saas_plan_id`; пустое тело → `saas_plan_id` required; Kaspi не настроен (нет настройки или в ней нет `url`) → 422 `invoice` «Оплата пока не настроена. Напишите в поддержку Zafiro.»; счетов 0.
+
+#### GS-554 · P2 · `saas` · `TestInvoice_PayRightAndTenant`
+**Тест:** «staff without the pay right cannot open or cancel bills, and other clubs bills are out of reach»
+- Менеджер: экран открыт, `can_pay false`; `POST /api/billing/invoices` и `…/cancel` → 403. Сотрудник с выданным `billing.pay` (`club_memberships.permissions`) — платит. Владелец отменяет счёт другого клуба → 404, счёт остаётся `pending`; в списке счетов — только свои.
+
+#### GS-555 · P1 · `saas` · `TestInvoice_ExpiredClubCanPay`
+**Тест:** «an expired club can still pay»
+- Пробный период истёк: `GET /api/dashboard` → 402; `GET /api/billing` → 200; `POST /api/billing/invoices {months: 1}` → 201; отмена — тоже без подписки.
+
+#### GS-556 · P1 · `saas` · `TestInvoice_PaidExtendsFromCurrentEnd`
+**Тест:** «the superadmin marks a bill paid and the subscription runs on from its current end»
+- **Дано:** 2 ПК; подписка `active` до 2026-11-25 07:00 UTC на другом тарифе, `canceled_at` заполнен; счёт на 6 месяцев, **1 200 000** тиын (12 000 ₸).
+- **Ожидается:** «Оплаты» (`GET /api/superadmin/invoices`): счёт в `pending` — номер, сумма, клуб, тариф, 2 ПК, `created "15.11.2026 07:00"`. Владелец клуба → 403. `POST /api/superadmin/invoices/{id}/pay` → «Счёт ZF-0000N оплачен, подписка продлена до 25.05.2027.»; подписка `active`, тариф счёта, `current_period_ends_at` = **2027-05-25 07:00 UTC**, `canceled_at NULL`; счёт `paid`, `paid_at` = сейчас, `confirmed_by` = суперадмин, `period_ends_at` = тот же срок; 1 событие `superadmin.invoice_paid` (детали `{amount: 12000, months: 6}`); `platform_money_log`: одна строка `invoice_paid:<id>`, 1 200 000; аудит `money / invoice.paid`. Повтор оплаты и отмена оплаченного → 422 `invoice` «Счёт уже закрыт.», срок, журнал и журнал денег не меняются. Несуществующий счёт → 404.
+
+#### GS-557 · P1 · `saas` · `TestInvoice_ExpiredCountsFromToday`
+**Тест:** «a paid bill of an expired club counts from today»
+- Подписка `expired`, конец месяц назад; счёт на 1 месяц → после оплаты конец = **2026-12-15 07:00 UTC** (сейчас + 1 месяц); панель клуба снова открыта.
+
+#### GS-558 · P2 · `saas` · `TestInvoice_KaspiAndCancelBySuperadmin`
+**Тест:** «the superadmin sets the Kaspi link and cancels bills; clubs cannot reach the cabinet»
+- Владелец клуба: `pay`, `cancel`, `kaspi`, список «Оплаты» → 403. Суперадмин: `url` `http://…`, `javascript:…`, без схемы → 422 `url`; длиннее 500 → 422; `recipient` длиннее 200 → 422; `https://pay.kaspi.kz/pay/new` + «ТОО Zafiro» → «Настройки оплаты сохранены.», `platform_settings.billing_kaspi`, журнал `superadmin.billing_kaspi_changed` «Изменена ссылка на оплату Kaspi»; клуб видит новые реквизиты. `POST …/cancel` → «Счёт отменён.», `canceled`, журнал `superadmin.invoice_canceled`; оплатить отменённый → 422, в журнале денег пусто. Пустая ссылка → настройка удалена, журнал «Оплата через Kaspi отключена», клуб не может выставить счёт.
+
+#### GS-559 · P3 · `notify` · `TestInvoice_TelegramAlert`
+**Тест:** «a new bill is reported to the platform telegram chat»
+- Без бота счёт выставляется, в Telegram ничего не уходит. С ботом (чат 42), 2 ПК, счёт на 1 месяц: `sendMessage`, `chat_id "42"`, текст — четыре строки: «💳 Счёт ZF-0000N: {клуб}», «Базовый, 1 мес., 2 ПК», «К оплате 2 000 ₸», ссылка на «Оплаты» кабинета; отправка — в фоне после ответа.
+
+#### Пробелы покрытия темы Б (числа посчитаны по коду и сверены с PHP 8.4, `tools/php-oracle/gen-subscription-fixture.php`)
+
+| ID | Правило | Сценарий и результат | Go-тест |
+|---|---|---|---|
+| GAP-037 | BR-180 | 1250 ₸ × 3 ПК × 1 мес − 15 % = 3187,5 → **3188 ₸**; 999,99 ₸ × 3 ПК → 3000 ₸, × 1 ПК → 1000 ₸; скидка 100 % → 0 ₸; 0 ПК → как 1 ПК | `subscription` `TestAmount`, `TestAmountMatchesPHP` (11 087 кейсов) |
+| GAP-038 | BR-182 | 1005 ₸ − 50 % = 502,50 ₸; 1000,05 ₸ − 15 % × 250 ПК: на экране 212 510 ₸, счёт 212 511 ₸ | `TestMonthlyPrice`, `TestMonthlyPriceMatchesPHP`, `TestGAP038MonthlyTotalDiffersFromInvoice` |
+| GAP-039 | BR-183 | пробный период до +5 дней, 1 мес → 2026-12-20; бессрочная активная, 12 мес → 2027-11-15; приостановленная (старый срок +90 дней), 3 мес → 2027-02-15; нет строки подписки, 6 мес → 2027-05-15 (строка создана); конец 31.01.2027 + 1 мес → 28.02.2027; 31.01.2028 → 29.02.2028 | `TestPeriodEnd`, `TestAddMonthsNoOverflowMatchesPHP`, `TestSubscriptionInvoices/GAP-039…` |
+| GAP-040 | BR-186 | 4810 ₸ × 12,35 % = 594,035 → **594,04 ₸** (PHP 8.4 — так же); процент 0 → 0; 100 % → вся сумма; 2550 ₸ × 12,35 % = 314,925 → 314,93 ₸ | `TestResellerEarning`, `TestResellerEarningMatchesPHP`, `TestSubscriptionInvoices_Reseller` |
+| GAP-046 | BR-184 | 8 одновременных счетов клуба без строки подписки → создан ровно один, остальные — 422 «У клуба уже есть неоплаченный счёт…» | `TestSubscriptionInvoices_GAP046_ConcurrentOpen` |
+| GAP-054 | BR-186 | реселлер остановлен после выставления — начисление по снимку есть; удалён до оплаты — `reseller_amount NULL`, в журнале денег только `invoice_paid`; остановленный при выставлении — ни скидки, ни процента | `TestSubscriptionInvoices_Reseller` |
+| GAP-055 | BR-181 | последний день скидки: панель клуба — по часам клуба, кабинет — по UTC (см. GS-536) | `TestOwnDiscount`, `TestSubscriptionDiscount/GS-536_GAP-055…` |
+| GAP-052 | — | события `billing.invoice_opened` / `billing.invoice_canceled` в «Журнале действий» клуба показываются кодом события без подписи, как в старом (в `ActivityLog::EVENTS` их нет) | — (UB-4) |
+
+### Каталог и профиль клуба (`ClubCatalogTest.php`, тема В)
+
+Коммиты 1a0487a, 792d822. Денег нет; правила — `business-rules.md` BR-191…BR-195; решения и отличия —
+`docs/open-questions/upstream-catalog.md`. Ответы каталога сверены со стендом старого проекта
+(`http/legacy` `TestCatalogMatchesLaravel`, эталоны `legacy/testdata/catalog-*.laravel.json`).
+
+#### GS-566 · P3 · `club` · `TestClubLocation_Saved`
+**Тест:** «the club owner sets the city and address of the club»
+- **Дано:** владелец клуба; кассир.
+- **Ожидается:** `GET /api/settings` — 25 городов по названию (первый — «Актау»), `city: null`. `city: "atlantis"` → 422
+  `city`; `{aktobe, "пр. Абилкайыр хана, 1"}` → «Город и адрес сохранены.», 1 событие `club.location_changed` «Город и
+  адрес клуба изменены: Актобе, пр. Абилкайыр хана, 1»; то же ещё раз — события нет; очистка → `NULL`, в журнале «—».
+  Кассир → 403.
+- **Go:** `http` `TestClubLocation/GS-566…`; экран — `web` `ProfilePage.test.tsx` «GS-566».
+
+#### GS-567 · P2 · `club` · `TestCatalog_ClubsOfCity`
+**Тест:** «anyone sees the clubs of a city, with the cities and their coordinates»
+- **Дано:** клубы «Бета» (aktobe, адрес), «Альфа» (aktobe), «Алматинский» (almaty), «Без города».
+- **Ожидается:** `GET /api/catalog/clubs?city=aktobe` без токена → `city "aktobe"`, 2 клуба, первый «Альфа», у второго
+  адрес; «Без города» нет; город `aktobe`: `{name "Актобе", lat 50.2839, lng 57.167, clubs 2}`. Без `city` →
+  `"city":null,"clubs":[]`. `city=atlantis` → 422 в формате `{message, errors}`. 31-й запрос за минуту → 429.
+- **Go:** `http/legacy` `TestCatalogCities`.
+
+#### GS-568 · P2 · `auth` · `TestCatalog_LoginJoinsClub`
+**Тест:** «a guest signs in to a club of the list, joins it and does not depend on its subscription»
+- **Дано:** клуб с городом **без подписки**; клуб без города; аккаунт — клиент другого клуба.
+- **Ожидается:** вход с `club_id` клуба без города → 403 `not_club_member`. Вход с `club_id` клуба с городом → 200,
+  `club_id`, `user.balance 0`; членство `client` (скидка 0), строка баланса с нулями, журнал `user.joined_club`;
+  подписки нет. С токеном: `/api/auth/me`, `/api/guest/news`, `/api/guest/history`, `/api/guest/friends` → 200; вход на
+  ПК по QR → 402 (в старом тесте — `GET /api/tariffs` → 402; этот маршрут в слой приложений не перенесён). Повторный
+  вход → членство одно, записи журнала о вступлении нет.
+- **Go:** `http/legacy` `TestCatalogJoin/GS-568…`.
+
+#### GS-569 · P2 · `auth` · `TestCatalog_SwitchClubJoins`
+**Тест:** «a signed-in guest moves to a club of the list and joins it; staff still need the subscription»
+- **Ожидается:** `POST /api/auth/switch-club {club_id}` → 200, клуб в списке `{current: true, role: "client"}`, прежний
+  токен отозван; клуб без города → 403. Сотрудник (`admin`) клуба без подписки: вход → 402 «Подписка клуба не активна.».
+- **Go:** `http/legacy` `TestCatalogJoin/GS-569…`.
+
+#### GS-570 · P3 · `club` · `TestClubProfile_Saved`
+**Тест:** «the club fills its profile for the app: description, contacts, photos and zone equipment»
+- **Дано:** зона VIP 800 ₸, ПК с `cpu_model "11th Gen Intel(R) Core(TM) i5-11400F @ 2.60GHz"`, `ram_total_mb 16253`.
+- **Ожидается:** страница — подсказки «Intel Core i5-11400F» и «16 ГБ». Профиль `{description, phone "+7 700 000 00 00",
+  hours, instagram "@asia.game"}` → в БД `instagram: "asia.game"`; `phone: "<script>"` → ошибка «Телефон — только цифры,
+  пробелы, скобки, «+» и «-».». 2 PNG → сохранены (`sort_order` 1, 2), журнал «Добавлено 2 фото клуба»; не картинка →
+  ошибки `photos.0`; «обложка» второй → она первая; удаление → строки и файла нет. Зона: `{description: "Тихая комната",
+  devices: {monitor: "ASUS 240 Гц", gpu: "", mouse: "Logitech G102"}}` → `devices = {monitor, mouse}`. Фото по адресу →
+  200 с заголовками кэша; другое имя (40 символов) → 404. Кассир → 403.
+- **Go:** `http` `TestClubProfile/*`; экран — `web` `ProfilePage.test.tsx`.
+
+#### GS-571 · P2 · `club` · `TestCatalog_CardsAndClubPage`
+**Тест:** «the app shows the club cards of a city and the club page with zones, free PCs and equipment»
+- **Дано:** клуб с городом и профилем; VIP (800 ₸, `devices.monitor`): ПК1 на связи с `gpu_model`, ПК2 на связи
+  `is_reserved`; Main (500 ₸): ПК3 не на связи; 1 фото.
+- **Ожидается:** список: `pcs 3`, `free_pcs 1`, `price_from 500`, `hours`, `photo_url`. Страница: `city` — название
+  города, описание, `photos [url]`, `zones[0]`: VIP, `pcs 2`, `free_pcs 1`, `devices = [{gpu, "Видеокарта", "NVIDIA GeForce
+  RTX 3060"}, {monitor, "Монитор", "ASUS 240 Гц"}]`; `zones[1].free_pcs 0`, `devices []`. Клуб без города → 404
+  «No query results for model [App\Models\Club] N».
+- **Go:** `http/legacy` `TestCatalogCardsAndClubPage`, `TestCatalogDetectedDevices`, `TestCatalogMatchesLaravel`.
+
+| GAP | Правило | Что проверено | Go-тест |
+|---|---|---|---|
+| GAP-056 | BR-194 | «свободные ПК»: ПК с бронью на сейчас — свободен; с сотрудником (`staff_until` в будущем), с идущей сессией, с сессией без срока, `is_reserved` — нет; сессия или обслуживание кончились — свободен; ПК «в сети» только по базе (`status`, `last_seen_at`), без присутствия агента — нет; без Valkey — 0 | `http/legacy` `TestCatalogFreePCs` |
+| GAP-057 | BR-195 | заблокированный аккаунт не вступает (403 `account_blocked`); неверный пароль — не вступает; 4 одновременных входа — одно членство, одна строка баланса, одна запись журнала, все 200. Запрос от агента ПК с `club_id` чужого клуба — не применимо: вход с ПК в zafirogo — gRPC агента с клубом из сертификата | `http/legacy` `TestCatalogJoin/GAP-057…` |
+| GAP-052 | — | события `club.location_changed`, `club.profile_changed`, `club.photos_added`, `club.photo_deleted`, `club.zone_devices_changed` в «Журнале действий» — кодом события без подписи, как в старом | — (`upstream-catalog.md` UC-12) |
+
+Изменённые сценарии: **GS-471** — на «Настройка клуба» карточек-секций 11 (было 8): `#location` «Город и адрес» —
+тема В (сделано), `#app-booking` — тема Г, `#reseller` — тема Д. **GS-534** — выше, «Прочие исправления» (fcd5d41).
+
 ### Прочие исправления (без денег)
 
 | Коммит | Тест Pest | Go-тест |
 |---|---|---|
 | fcd5d41 | `ApiAuthTest.php` — «mobile login without a club picks a club of the account with an active subscription» | `http/legacy` `TestAuth/login_without_a_club_picks_a_club_with_an_active_subscription` |
-| 1a0487a (часть: гость не зависит от подписки) | `ClubCatalogTest.php` (часть про подписку) | `http/legacy` `TestAuth/GS-230_inactive_subscription` |
+| 1a0487a (часть: гость не зависит от подписки) | `ClubCatalogTest.php` (часть про подписку) | `http/legacy` `TestAuth/GS-230_inactive_subscription`; остальное (каталог, вступление) — GS-566…GS-571 выше |
 | 1490462 | `AgentShopTest.php` — «…Signed in in the mobile app (just used): that is not a PC» | `agent/guestapi` `TestGS081OnePCAtATimeAndTokens` |
 | ff3c6c5 | `ProductDeleteTest.php` — «The warehouse still opens and its history names the deleted product» | `http` `TestWarehouseScreens` |
 | 29efab1 | `SuperadminCabinetTest.php` — строки возможностей с кириллицей | `http/sections/superadmin` `TestSplitFeatures_UTF8` |

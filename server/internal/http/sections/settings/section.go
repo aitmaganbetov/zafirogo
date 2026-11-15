@@ -1,8 +1,9 @@
 // Package settings — REST-раздел: настройки клуба (api/settings.yaml) — «Настройка клуба», «Языки», «Финансы»,
-// «Гости», PIN выхода из агента, логотип и картинка экрана входа; публичная отдача картинок агенту.
+// «Гости», PIN выхода из агента, логотип и картинка экрана входа, город и адрес, «Профиль клуба» (описание, фото,
+// оборудование зон — то, что видит гость в приложении); публичная отдача картинок агенту и приложению.
 //
 // Laravel: app/Http/Controllers/SettingsController.php, LanguageController.php, ClubLogoController.php,
-// ClubSignInImageController.php, app/Http/Requests/SaveSettingsRequest.php. Конвенции — api/README.md.
+// ClubSignInImageController.php, ClubProfileController.php, app/Http/Requests/SaveSettingsRequest.php. Конвенции — api/README.md.
 package settings
 
 import (
@@ -27,6 +28,14 @@ var access = httpx.Access{
 		"DeleteClubLogo":     "settings.logo.destroy",
 		"UploadSigninImage":  "settings.signin-image",
 		"DeleteSigninImage":  "settings.signin-image.destroy",
+		// Тема В (docs/upstream-2026-11.md): город и адрес, профиль клуба для приложения.
+		"SaveClubLocation":    "settings.location",
+		"GetClubProfile":      "settings.profile",
+		"SaveClubProfile":     "settings.profile.update",
+		"UploadClubPhotos":    "settings.photos.store",
+		"DeleteClubPhoto":     "settings.photos.destroy",
+		"SetClubPhotoCover":   "settings.photos.cover",
+		"SaveClubZoneProfile": "settings.profile.zone",
 	},
 }
 
@@ -38,7 +47,10 @@ var _ settingsapi.StrictServerInterface = (*handlers)(nil)
 
 // Section — настройки клуба. Регистрация — server/internal/http/sections.go.
 func Section() httpx.Section {
-	return httpx.Section{Name: "settings", Mount: mount}
+	return httpx.Section{Name: "settings", Mount: mount, Limits: map[string]string{
+		// routes/web.php: settings.photos.store — throttle:20,1.
+		"POST /api/settings/profile/photos": "settings.photos.store",
+	}}
 }
 
 func mount(r chi.Router, d *httpx.Deps) {
@@ -51,4 +63,6 @@ func mount(r chi.Router, d *httpx.Deps) {
 	// (агент грузит их без токена; новая загрузка — новый URL).
 	r.Get("/club-logos/{club}/{file}", h.image(kindLogo))
 	r.Get("/club-signin-images/{club}/{file}", h.image(kindSignin))
+	// ClubProfileController::photo(): фото клуба для гостевого приложения — тоже публичные.
+	r.Get("/club-photos/{club}/{file}", h.clubPhoto)
 }

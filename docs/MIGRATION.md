@@ -9,12 +9,12 @@
 | Раздел | Пунктов |
 |---|---:|
 | 10. Экраны (resources/views) — инвентаризация | 88 |
-| API Zafiro (Laravel): инвентаризация маршрутов, агент ПК, интеграции | 133 |
+| API Zafiro (Laravel): инвентаризация маршрутов, агент ПК, интеграции | 132 |
 | 30. База данных: инвентаризация схемы Zafiro (MySQL → Postgres) | 69 |
 | 40. Настройки: клуба, платформы, конфигурация | 64 |
 | 50. Фоновые задачи, очередь, события | 37 |
 | 60. Интеграции | 52 |
-| 70. Изменения старого проекта после 26.10.2026 | 49 |
+| 70. Изменения старого проекта после 26.10.2026 | 32 |
 
 
 ## 10. Экраны (resources/views) — инвентаризация
@@ -1533,10 +1533,11 @@ Middleware всех маршрутов: `auth`, `superadmin`; на отдель�
 - [ ] А2: время тарифа кончается с периодом действия — `WeeklyPeriods::endOf()`, покупка в агенте, запуск пакета
       (остаток остаётся в пакете), гостевая сессия с кассы; остаток тарифа с лимитом использования — в пакет
       (BR-170…BR-173, GS-529…GS-533, GAP-047, GAP-048).
-- [ ] А4: вход старого REST без `club_id` — сначала клуб с активной подпиской (GS-534).
+- [x] А4: вход старого REST без `club_id` — сначала клуб с активной подпиской (GS-534; `upstream-fixes.md`, тест `http/legacy` `TestAuth/login_without_a_club_picks_a_club_with_an_active_subscription`).
 - [ ] А7: Telegram-сообщение в чат платформы о каждом новом клубе; абзац на экране настроек Telegram (GS-535).
 - [ ] А8: хост кабинета реселлера в списке проверки TLS-сертификатов.
-- [ ] А9: право `billing.pay` (по умолчанию только владелец) в матрице прав и на экране прав.
+- [x] А9: право `billing.pay` (по умолчанию только владелец) в матрице прав — сделано в теме Б (70.2); на экране прав
+      столбца нет, как в старом (`docs/open-questions/upstream-billing.md` UB-3).
 - [ ] А10: записи `reservation.paid` / `reservation.refunded` в истории гостя (агент и приложение).
 - [ ] А11: покупка времени закрывает только неоплаченную бронь клиента (GS-546).
 - [ ] А13: лимит количества тарифа учитывает неотменённые брони этим тарифом (BR-190, GAP-049).
@@ -1544,27 +1545,52 @@ Middleware всех маршрутов: `auth`, `superadmin`; на отдель�
 
 ### 70.2. Б — счета за подписку, скидки клубам, цена «за ПК в месяц»
 
-- [ ] Индивидуальная скидка клуба: `POST superadmin/clubs/{club}/subscription/discount`, бейдж в списке клубов,
-      форма в карточке клуба (BR-181, BR-182, GS-536, GS-537, GAP-038, GAP-055).
-- [ ] Счета: `POST /billing/invoices`, `POST /billing/invoices/{invoice}/cancel` (без проверки подписки, лимит
-      10/мин), один неоплаченный счёт на клуб (BR-180, BR-184, GS-552…GS-555, GAP-037, GAP-046).
-- [ ] Суперадмин «Оплаты»: список счетов, «Оплачен» (продление подписки), отмена, ссылка Kaspi (`platform_settings.billing_kaspi`)
-      (BR-183, GS-556…GS-558, GAP-039).
-- [ ] Экран «Подписка» клуба переписан (цена за ПК, счёт, форма продления, история счетов).
-- [ ] Telegram о новом счёте; события `billing.invoice_*`, `superadmin.invoice_*`, `superadmin.subscription_discount_changed` (GS-559, GAP-052).
-- [ ] Подпись цены тарифа платформы — «за ПК в месяц» (экраны тарифов, «Подписка», `/pricing`) (UQ-5).
+- [x] Индивидуальная скидка клуба: `POST /api/superadmin/clubs/{clubId}/subscription/discount` (`sections/superadmin/clubs.go`
+      `SaSetClubDiscount`), бейдж «−P%» в списке клубов, форма и «к оплате N ₸ в месяц» в карточке клуба
+      (`ClubsPage.tsx`, `ClubPage.tsx`) (BR-181, BR-182, GS-536, GS-537, GAP-038, GAP-055).
+- [x] Счета: `POST /api/billing/invoices`, `POST /api/billing/invoices/{invoiceId}/cancel` (`sections/billing/invoices.go`;
+      без проверки подписки, лимит 10/мин `billing.invoices.store`), один неоплаченный счёт на клуб — индекс и текст
+      ошибки (BR-180, BR-184, GS-552…GS-555, GAP-037, GAP-046). Расчёты и переходы — `server/internal/subscription`.
+- [x] Суперадмин «Оплаты»: `GET /api/superadmin/invoices`, `POST …/invoices/{id}/pay` (продление подписки, журнал денег
+      платформы `invoice_paid:<id>`, начисление реселлеру `reseller_accrual:<id>`), `POST …/cancel`, `POST …/invoices/kaspi`
+      (`platform_settings.billing_kaspi`) — `sections/superadmin/invoices.go`, `InvoicesPage.tsx`, пункт меню «Оплаты»
+      (BR-183, BR-186, GS-556…GS-558, GAP-039, GAP-040, GAP-054).
+- [x] Экран «Подписка» клуба переписан (`web/src/features/billing/BillingPage.tsx`): цена за ПК и за все ПК, скидка, счёт
+      с шагами оплаты и кнопкой Kaspi, форма «Продлить подписку» («К оплате» считает сервер), история счетов.
+- [x] Telegram о новом счёте (`telegram.Alerts.InvoiceOpened`, в фоне после ответа); события `billing.invoice_*` (журнал
+      клуба), `superadmin.invoice_*`, `superadmin.billing_kaspi_changed`, `superadmin.subscription_discount_changed`
+      (журнал платформы) и `audit_log` (GS-559; GAP-052 — подписей событий нет, как в старом, UB-4).
+- [x] Подпись цены тарифа платформы — «за ПК в месяц»: «Подписка» (строка «Стоимость в месяц», список тарифов формы).
+      Экран «Тарифы платформы» кабинета в старом не менялся («Цена в месяц, ₸») — не менялся и здесь; `/pricing` — тема Е (UQ-5).
+- [x] А9: право `billing.pay` (`auth/permissions`: раздел `billing`, маршруты `billing.invoices.store` / `.cancel`); столбца
+      на странице «Права» у него нет, как в старом (UB-3).
+- [x] Безопасность: пул клуба только читает `club_subscriptions` (миграция `0039_club_subscriptions_read_only.sql`,
+      тест `db` `TestUpstreamTablesPrivileges`).
+- Решения, расхождения и остаток — `docs/open-questions/upstream-billing.md`.
 
 ### 70.3. В — каталог и профиль клуба
 
-- [ ] Город (25 городов `App\Support\Cities`) и адрес клуба: `POST /settings/location`, карточка в настройках (GS-566).
-- [ ] Экран «Профиль клуба»: описание и контакты, фото (до 10, обложка), оборудование зон с подсказками от агентов;
-      6 маршрутов `settings.profile*`, `settings.photos.*`; публичный `GET /club-photos/{club}/{file}` (GS-570, UQ-19).
-- [ ] Каталог для приложения: `GET /api/catalog/clubs`, `GET /api/catalog/clubs/{club}` (без токена; свободные ПК —
-      по присутствию, кэш) (GS-567, GS-571, GAP-056, UQ-2, UQ-20).
-- [ ] Вход и смена клуба с `club_id` клуба из каталога делают аккаунт клиентом клуба (GS-568, GS-569, GAP-057, UQ-13).
-- [ ] Гость приложения не зависит от подписки клуба: `/api/auth/me`, друзья (7 маршрутов), новости, история — без
-      проверки подписки; сотрудникам и агенту ПК — по-прежнему 402 (UQ-12).
-- [ ] `docs/mobile-compat.md`: новые маршруты и снятая проверка подписки.
+- [x] Город (25 городов `App\Support\Cities`) и адрес клуба: `PUT /api/settings/location` (Laravel `POST /settings/location`),
+      карточка `#location` в настройках (GS-566, BR-191).
+- [x] Экран «Профиль клуба» (`/settings/profile`): описание и контакты, фото (до 10, обложка), оборудование зон с
+      подсказками от агентов; `GET/PUT /api/settings/profile`, `POST …/photos`, `DELETE …/photos/{id}`,
+      `POST …/photos/{id}/cover`, `PUT …/zones/{id}`; публичный `GET /club-photos/{club}/{file}` (GS-570, UQ-19,
+      BR-192…BR-194).
+- [x] Каталог для приложения: `GET /api/catalog/clubs`, `GET /api/catalog/clubs/{club}` в слое `http/legacy` (без
+      токена, лимиты 30 и 60 в минуту; свободные ПК — по присутствию в Valkey; кэш ответа 45 с; агрегаты в SQL)
+      (GS-567, GS-571, GAP-056, UQ-20). Ответы сверены со стендом старого проекта (`TestCatalogMatchesLaravel`).
+- [x] Поклубный переход (UQ-2): каталог объединяет свои клубы со списком Laravel (`mobile.upstream`), страница и вход
+      в клуб, которого здесь нет, уходят туда; nginx — `/api/catalog/` в zafirogo (`docs/mobile-compat.md` §3.5).
+- [x] Вход и смена клуба с `club_id` клуба из каталога делают аккаунт клиентом клуба (GS-568, GS-569, GAP-057, UQ-13,
+      BR-195).
+- [x] Гость приложения не зависит от подписки клуба: `/api/auth/me`, друзья (7 маршрутов), новости, история — без
+      проверки подписки; сотрудникам и агенту ПК — по-прежнему 402 (UQ-12; сделано в `upstream-fixes.md` UF-3, здесь —
+      вход гостя в клуб без подписки; gRPC агента подписку проверяет — `guestapi.checkSubscription`).
+- [x] `docs/mobile-compat.md`: новые маршруты (§1.5), объединение каталогов (§3.5).
+- [ ] Карточки «Бронь из приложения» (тема Г) и «Реселлер» (тема Д) на «Настройка клуба» — у их исполнителей
+      (GS-471: 11 карточек; сейчас 9).
+- Решения владельца: `docs/open-questions/upstream-catalog.md` UC-Q1 (гость старого сервера и переехавший клуб),
+  UC-Q2 (язык без `Accept-Language`), UC-Q3 (адрес картинок на время перехода), UC-Q4 (задержка каталога 45 с).
 
 ### 70.4. Г — брони из гостевого приложения
 
@@ -1594,10 +1620,14 @@ Middleware всех маршрутов: `auth`, `superadmin`; на отдель�
 
 ### 70.6. Е — лендинг и страницы цен/продуктов
 
-- [ ] Общий каркас лендинга (шапка с меню «О продукте» и «Продукты», подвал, белый фон) и новая главная (GS-418 изм.).
-- [ ] Страницы `/product/features`, `/product/agent`, `/product/guest-app`, `/product/staff-app` (GS-572).
-- [ ] Страница `/pricing` из активных тарифов платформы, цена «за ПК в месяц» (GS-573).
-- [ ] Эталоны визуального сравнения главной — переснять со старого `a680bab` (UQ-22).
+- [x] Общий каркас лендинга (шапка с меню «О продукте» и «Продукты», подвал, белый фон) и новая главная (GS-418 изм.) —
+      `web/src/features/public/{LandingLayout,LandingPage,parts}.tsx`.
+- [x] Страницы `/product/features`, `/product/agent`, `/product/guest-app`, `/product/staff-app` (GS-572) —
+      `web/src/features/public/*Page.tsx`, маршруты `web/src/routes/product/*`.
+- [x] Страница `/pricing` из активных тарифов платформы, цена «за ПК в месяц» (GS-573) — `GET /api/pricing`
+      (`api/public.yaml`, запрос `PublicPricingPlans`), `PricingPage.tsx`.
+- [x] Визуальное сравнение со старым `a680bab` (UQ-22): главная, `/pricing` и четыре страницы продукта — в
+      `tools/visual/pages.json`, расхождение ≤ 0,02 % (решения и остаток — `docs/open-questions/upstream-landing.md`).
 
 ### 70.7. Ж — агент Windows
 

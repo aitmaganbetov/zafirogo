@@ -344,8 +344,26 @@
         "@clock",
         "#club-key"
       ],
+      "hide": [
+        "#app-booking",
+        "[data-settings-anchors] a[href='#app-booking']",
+        "#reseller",
+        "[data-settings-anchors] a[href='#reseller']"
+      ],
       "status": "ported",
-      "note": "Настройка клуба (settings/club.blade.php). #club-key замаскирован: в старом — случайный ключ установки клуба, в новом — ссылка на «Подключение ПК» (Q-037, docs/open-questions/stage3-settings.md S-2)."
+      "note": "Настройка клуба (settings/club.blade.php). #club-key замаскирован: в старом — случайный ключ установки клуба, в новом — ссылка на «Подключение ПК» (Q-037, docs/open-questions/stage3-settings.md S-2). ВРЕМЕННО скрыты (hide) карточки и якоря «Бронь из приложения» (#app-booking, тема Г) и «Реселлер» (#reseller, тема Д) свежего старого проекта: их переносят исполнители этих тем — вместе с карточкой убрать её строки из hide (docs/open-questions/upstream-catalog.md §5). Карточка «Город и адрес» (#location, тема В) сверяется."
+    },
+    {
+      "id": "settings-profile",
+      "old": "/settings/profile",
+      "new": "/settings/profile",
+      "role": "owner",
+      "waitFor": "#club-zones",
+      "mask": [
+        "@clock"
+      ],
+      "status": "ported",
+      "note": "Настройки → Профиль клуба (settings/profile.blade.php, ClubProfileController::show; тема В, docs/upstream-2026-11.md): описание и контакты, фото (в демо-данных фото нет — только форма загрузки), зоны и оборудование с подсказками из данных агентов."
     },
     {
       "id": "settings-languages",
@@ -653,9 +671,59 @@
       "new": "/",
       "role": null,
       "mask": [],
-      "waitFor": "#features",
+      "waitFor": "#faq",
       "status": "ported",
-      "note": "Лендинг (welcome.blade.php, LandingController), гость. Группа 7 (G7)."
+      "note": "Главная (welcome.blade.php на layouts/landing.blade.php, LandingController), гость. Группа 7 (G7); новый вид — тема Е (docs/upstream-2026-11.md)."
+    },
+    {
+      "id": "pricing",
+      "old": "/pricing",
+      "new": "/pricing",
+      "role": null,
+      "mask": [],
+      "waitFor": "main article",
+      "status": "ported",
+      "note": "Тарифы (pricing.blade.php, LandingController::pricing()), гость: тарифы платформы из demo.json. Тема Е."
+    },
+    {
+      "id": "product-features",
+      "old": "/product/features",
+      "new": "/product/features",
+      "role": null,
+      "mask": [],
+      "waitFor": "#more",
+      "status": "ported",
+      "note": "Возможности (product/features.blade.php), гость. Тема Е."
+    },
+    {
+      "id": "product-agent",
+      "old": "/product/agent",
+      "new": "/product/agent",
+      "role": null,
+      "mask": [],
+      "waitFor": "#install",
+      "status": "ported",
+      "note": "Агент на ПК (product/agent.blade.php), гость. Тема Е."
+    },
+    {
+      "id": "product-guest-app",
+      "old": "/product/guest-app",
+      "new": "/product/guest-app",
+      "role": null,
+      "mask": [],
+      "waitFor": "main article",
+      "status": "ported",
+      "note": "Приложение для гостей (product/guest-app.blade.php), гость. Тема Е."
+    },
+    {
+      "id": "product-staff-app",
+      "old": "/product/staff-app",
+      "new": "/product/staff-app",
+      "role": null,
+      "mask": [],
+      "waitFor": "main article",
+      "status": "ported",
+      "note": "Приложение для сотрудников (product/staff-app.blade.php), гость. Тема Е."
     },
     {
       "id": "offline",
@@ -730,7 +798,7 @@
       "role": "owner",
       "waitFor": "dl",
       "status": "ported",
-      "note": "Подписка (billing/index.blade.php, BillingController::show): активная подписка демо-клуба. G7."
+      "note": "Подписка (billing/index.blade.php, BillingController::show): активная подписка демо-клуба, цена «за ПК в месяц» со скидкой 20 %, форма «Продлить подписку» (сумма «К оплате» — с сервера), таблица счетов (оплаченный и отменённый). G7; тема Б (Zafiro 77ae201)."
     },
     {
       "id": "billing-expired",
@@ -739,7 +807,7 @@
       "role": "owner_expired",
       "waitFor": "dl",
       "status": "ported",
-      "note": "Подписка: клуб «Zafiro Lite» (demo.json club 2) с истёкшей подпиской — статус «Истекла»; сюда ведёт 402 разделов панели. G7."
+      "note": "Подписка: клуб «Zafiro Lite» (demo.json club 2) с истёкшей подпиской — статус «Истекла»; сюда ведёт 402 разделов панели. Неоплаченный счёт ZF-00003: жёлтая карточка, шаги оплаты, получатель, кнопка «Оплатить в Kaspi», «Отменить счёт». G7; тема Б (Zafiro 77ae201)."
     },
     {
       "id": "superadmin-dashboard",
@@ -795,6 +863,17 @@
       "waitFor": "form",
       "status": "ported",
       "note": "Кабинет: Тарифы платформы (superadmin/plans/index.blade.php)."
+    },
+    {
+      "id": "superadmin-invoices",
+      "old": "/invoices",
+      "new": "/invoices",
+      "host": "admin.localhost",
+      "role": "superadmin",
+      "waitFor": "#closed-title",
+      "status": "ported",
+      "maxDiffPercent": 2,
+      "note": "Кабинет: Оплаты (superadmin/invoices/index.blade.php, Zafiro 77ae201): счёт, ожидающий оплаты, настройка Kaspi, история (оплаченный и отменённый). Содержимое страницы совпадает; расхождение 1,46 % на широком окне — пункт меню «Реселлеры» старого сайдбара (тема Д, П5): без него «Оплаты» и пункты ниже стоят на строку выше. Порог 2 % — до переноса реселлеров, затем убрать maxDiffPercent."
     },
     {
       "id": "superadmin-news",

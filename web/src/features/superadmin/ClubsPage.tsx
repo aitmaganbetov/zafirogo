@@ -163,6 +163,7 @@ export function ClubsPage({ search }: { readonly search: ClubsSearch }) {
                 <td className={`px-4 py-3 text-right ${club.webhook_failures > 0 ? 'text-red-600' : 'text-gray-500'}`}>{club.webhook_failures}</td>
                 <td className="px-4 py-3">
                   <SubscriptionBadgeView badge={club.badge} />
+                  {club.discount_percent > 0 && <> <span className="rounded-full bg-violet-100 px-2 py-1 text-xs font-medium text-violet-800" title={club.discount_note ?? undefined}>−{club.discount_percent}%</span></>}
                   {club.days_left != null && (
                     <div className={`mt-1 text-xs ${club.days_left <= 3 ? 'text-red-600' : 'text-gray-500'}`}>
                       {t('ещё {{count}} день|ещё {{count}} дня|ещё {{count}} дней', { count: club.days_left })}

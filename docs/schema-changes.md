@@ -624,6 +624,7 @@ Telegram в `platform_settings` — `Crypt::encryptString` (`app/Services/Telegr
 | `0036_club_profile.sql` | `2026_11_13_100000_add_city_and_address_to_clubs_table`, `2026_11_14_100000_create_club_profile` | `clubs.city/address/profile`, `club_zones.devices`, `club_photos`, `club_photo_images` |
 | `0037_app_bookings.sql` | `2026_11_15_…add_app_payment…`, `2026_11_16_…add_tariff…`, `2026_11_17_…add_code…` | `computer_reservations` +5 колонок; виды ledger `reservation_payment`, `reservation_refund`; `ledger_transactions.reservation_id` |
 | `0038_platform_money_log.sql` | — (новая) | `platform_money_log` — журнал денег платформы, только добавление (UQ-6) |
+| `0039_club_subscriptions_read_only.sql` | — (новая, тема Б) | права: пул клуба только читает `club_subscriptions` (замечание Ш0 к 0035) |
 
 ### 17.1. Таблицы и колонки
 
@@ -752,12 +753,20 @@ BR-187) считают по документам (`subscription_invoices`, `rese
 | `reseller_payouts` | нет (нет `club_id`) | ничего | SELECT, INSERT (исправления и удаления нет; каскад при удалении реселлера) |
 | `platform_money_log` | FORCE; `tenant_isolation` (для `zafiro_purge_imported_club` владельца схемы), `platform_access` | ничего | SELECT, INSERT |
 | `clubs.reseller_id`, `reseller_attached_at` | — | не меняет (триггер `clubs_reseller_guard`, ошибка 42501) | меняет |
+| `club_subscriptions` (0039) | FORCE; `tenant_isolation`, `platform_access` (как было) | только SELECT строки своего клуба: ни статус и срок, ни тариф, ни скидку (`discount_*`) не меняет, строку не создаёт, не удаляет и не блокирует (`FOR UPDATE` — 42501) | всё: регистрация клуба, продление, приостановка, тариф, скидка, оплата счёта, истечение |
 
 Следствия для исполнителей тем: код реселлера ищет и клуб привязывает **пул платформы** (`UPDATE clubs … WHERE id = $1
 AND reseller_id IS NULL`); счёт выставляется и отменяется в транзакции клуба (пул клуба видит скидку и процент
 своего реселлера для снимка); оплату счёта, скидку клуба, реселлеров, выплаты и журнал денег платформы пишет пул
 платформы. Тесты: `server/internal/db/privileges_integration_test.go` (`TestAppRoleLeastPrivilege`,
 `TestUpstreamTablesPrivileges`).
+
+**`0039`: подписку меняет только платформа.** До неё у `zafiro_app` был полный INSERT/UPDATE/DELETE на
+`club_subscriptions` (общий GRANT из 0004): RLS ограничивал строкой своего клуба, но в ней пул клуба мог сделать
+подписку активной, продлить срок или дать себе скидку 100 % на следующий счёт. Ни один запрос панели клуба подписку не
+пишет (регистрация, кабинет суперадмина и воркер истечения работают под `zafiro_platform`), поэтому оставлен один SELECT.
+Единственность неоплаченного счёта держит индекс `subscription_invoices_club_id_pending_unique`, а не блокировка строки
+подписки. Down возвращает прежние права.
 
 ### 17.3. Перенос данных (`migrate-from-mysql`)
 

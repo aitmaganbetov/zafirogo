@@ -121,6 +121,7 @@ export function SuperadminLayout({ userName, hasClub, path, onLogout, children }
     { key: 'clubs', href: saHref('/clubs'), icon: 'fas fa-building', label: t('Клубы'), active: under('/clubs') },
     { key: 'users', href: saHref('/accounts'), icon: 'fas fa-users', label: t('Пользователи'), active: under('/accounts') },
     { key: 'plans', href: saHref('/plans'), icon: 'fas fa-tags', label: t('Тарифы платформы'), active: under('/plans') },
+    { key: 'invoices', href: saHref('/invoices'), icon: 'fas fa-receipt', label: t('Оплаты'), active: under('/invoices') },
     { key: 'news', href: saHref('/platform-news'), icon: 'fas fa-newspaper', label: t('Новости'), active: under('/platform-news') },
   ];
   const system: Link[] = [

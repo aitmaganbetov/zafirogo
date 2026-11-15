@@ -84,6 +84,8 @@ DB::transaction(function () use ($data, $created, $hash): void {
         DB::table('clubs')->insert([
             'id' => $c['id'], 'name' => $c['name'], 'slug' => $c['slug'], 'settings' => jsonOrNull($c['settings'] ?? null),
             'locale' => $c['locale'], 'timezone' => $c['timezone'],
+            // Тема В: город, адрес и профиль клуба для гостевого приложения.
+            'city' => $c['city'] ?? null, 'address' => $c['address'] ?? null, 'profile' => jsonOrNull($c['profile'] ?? null),
             'created_at' => $created($c), 'updated_at' => $created($c),
         ]);
         $s = $c['subscription'];
@@ -91,7 +93,27 @@ DB::transaction(function () use ($data, $created, $hash): void {
             'club_id' => $c['id'], 'saas_plan_id' => $s['saas_plan_id'], 'status' => $s['status'],
             'started_at' => utc($s['started_at']), 'trial_ends_at' => utc($s['trial_ends_at'] ?? null),
             'current_period_ends_at' => utc($s['current_period_ends_at'] ?? null),
+            'discount_percent' => $s['discount_percent'] ?? 0, 'discount_until' => $s['discount_until'] ?? null,
+            'discount_note' => $s['discount_note'] ?? null,
             'created_at' => $created($c), 'updated_at' => $created($c),
+        ]);
+    }
+
+    // Оплата подписки (тема Б): ссылка Kaspi платформы и счета клубов.
+    if (isset($data['billing_kaspi'])) {
+        DB::table('platform_settings')->insert([
+            'key' => 'billing_kaspi', 'value' => json_encode($data['billing_kaspi'], JSON_UNESCAPED_UNICODE),
+            'created_at' => $created([]), 'updated_at' => $created([]),
+        ]);
+    }
+    foreach ($data['subscription_invoices'] ?? [] as $i) {
+        DB::table('subscription_invoices')->insert([
+            'id' => $i['id'], 'club_id' => $i['club_id'], 'saas_plan_id' => $i['saas_plan_id'], 'months' => $i['months'],
+            'computers' => $i['computers'], 'price_per_computer' => $i['price_per_computer'],
+            'discount_percent' => $i['discount_percent'], 'amount' => $i['amount'], 'status' => $i['status'],
+            'created_by' => $i['created_by'] ?? null, 'confirmed_by' => $i['confirmed_by'] ?? null,
+            'paid_at' => utc($i['paid_at'] ?? null), 'period_ends_at' => utc($i['period_ends_at'] ?? null),
+            'created_at' => $created($i), 'updated_at' => $created($i),
         ]);
     }
 
@@ -118,6 +140,7 @@ DB::transaction(function () use ($data, $created, $hash): void {
             'is_featured' => $z['is_featured'] ?? false, 'sort_order' => $z['sort_order'],
             'position_x' => $z['position_x'], 'position_y' => $z['position_y'], 'width' => $z['width'], 'height' => $z['height'],
             'rotation' => $z['rotation'] ?? 0, 'price_per_hour' => $z['price_per_hour'] ?? null,
+            'devices' => jsonOrNull($z['devices'] ?? null),
             'created_at' => $created([]), 'updated_at' => $created([]),
         ]);
     }

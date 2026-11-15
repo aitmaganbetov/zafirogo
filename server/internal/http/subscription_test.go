@@ -64,7 +64,7 @@ func TestRequireSubscription(t *testing.T) {
 	// Без middleware в старом: billing.show, logout, clubs.switch, notifications, вход, QR-вход, публичные, SPA.
 	for _, p := range []string{"/api/auth/logout", "/api/auth/club", "/api/auth/me", "/api/notifications", "/api/notifications/seen",
 		"/api/billing", "/api/layout/badges", "/api/i18n/ru", "/api/pc-login/x", "/api/superadmin/leave-club", "/api/ws-ticket",
-		"/api/invitations/t", "/api/landing", "/dashboard", "/offline"} {
+		"/api/invitations/t", "/api/landing", "/api/pricing", "/dashboard", "/offline"} {
 		if got := do(p, 7).Code; got != 204 {
 			t.Errorf("%s: %d, want 204 (exempt)", p, got)
 		}

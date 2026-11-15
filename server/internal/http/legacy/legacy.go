@@ -9,8 +9,9 @@
 //
 // Маршрутизация по клубу при поклубном переходе (docs/mobile-compat.md §3): приложение знает один адрес. Если задан
 // Upstream (старый Laravel), запрос, который не относится к клубу этого сервера (токен не найден в
-// mobile_api_tokens; телефон входа без членства в клубах этого сервера), уходит туда без изменений (обратный
-// прокси); иначе обслуживается здесь.
+// mobile_api_tokens; телефон входа без членства в клубах этого сервера; вход в клуб каталога, которого здесь нет),
+// уходит туда без изменений (обратный прокси); иначе обслуживается здесь. Каталог клубов (/api/catalog/*, до
+// входа) объединяет клубы обоих серверов (catalog.go, решение UQ-2).
 package legacy
 
 import (
@@ -92,6 +93,9 @@ type API struct {
 	inner http.Handler
 	mux   chi.Router
 	proxy *httputil.ReverseProxy
+	// catalog — кэш ответов каталога клубов (catalog.go); upstreamClient — запрос каталога старого сервера.
+	catalog        catalogCache
+	upstreamClient *http.Client
 }
 
 // New собирает слой. d — общие зависимости разделов REST; inner — корневой роутер сервера (для вызова нового
@@ -106,7 +110,7 @@ func New(o Options, d *httpx.Deps, inner http.Handler) *API {
 	if o.Recovery == nil && d.PasswordRecovery != nil {
 		o.Recovery = d.PasswordRecovery
 	}
-	a := &API{o: o, d: d, inner: inner}
+	a := &API{o: o, d: d, inner: inner, upstreamClient: &http.Client{Timeout: catalogUpstreamTimeout}}
 	if o.Upstream != nil {
 		up, host := o.Upstream, o.UpstreamHost
 		a.proxy = &httputil.ReverseProxy{
@@ -172,7 +176,7 @@ func (a *API) Match(r *http.Request) bool {
 	}
 	p := r.URL.Path
 	switch {
-	case strings.HasPrefix(p, "/api/staff/"), strings.HasPrefix(p, "/api/guest/"), legacyOnly[p]:
+	case strings.HasPrefix(p, "/api/staff/"), strings.HasPrefix(p, "/api/guest/"), strings.HasPrefix(p, "/api/catalog/"), legacyOnly[p]:
 		return true
 	case p == "/api/auth/me" || p == "/api/auth/logout":
 		_, _, ok := bearer(r)

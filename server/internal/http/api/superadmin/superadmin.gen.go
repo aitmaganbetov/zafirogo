@@ -20,6 +20,24 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for ClosedInvoiceStatus.
+const (
+	Canceled ClosedInvoiceStatus = "canceled"
+	Paid     ClosedInvoiceStatus = "paid"
+)
+
+// Valid indicates whether the value is a known member of the ClosedInvoiceStatus enum.
+func (e ClosedInvoiceStatus) Valid() bool {
+	switch e {
+	case Canceled:
+		return true
+	case Paid:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for IssueKind.
 const (
 	IssueKindOffline      IssueKind = "offline"
@@ -270,6 +288,27 @@ type ChartLine struct {
 	Translate bool     `json:"translate"`
 }
 
+// ClosedInvoice defines model for ClosedInvoice.
+type ClosedInvoice struct {
+	AmountTiyn int64  `json:"amount_tiyn"`
+	ClubId     int64  `json:"club_id"`
+	ClubName   string `json:"club_name"`
+
+	// Created d.m.Y
+	Created string `json:"created"`
+	Id      int64  `json:"id"`
+	Months  int    `json:"months"`
+	Number  string `json:"number"`
+
+	// Paid Дата оплаты, d.m.Y.
+	Paid     *string             `json:"paid"`
+	PlanName string              `json:"plan_name"`
+	Status   ClosedInvoiceStatus `json:"status"`
+}
+
+// ClosedInvoiceStatus defines model for ClosedInvoice.Status.
+type ClosedInvoiceStatus string
+
 // ClubCard defines model for ClubCard.
 type ClubCard struct {
 	Activity  []LogRow          `json:"activity"`
@@ -278,26 +317,51 @@ type ClubCard struct {
 		Online int64 `json:"online"`
 		Total  int64 `json:"total"`
 	} `json:"computers"`
-	Created      string       `json:"created"`
-	Heatmap      []HeatCell   `json:"heatmap"`
-	Id           int64        `json:"id"`
-	Members      []Member     `json:"members"`
-	Name         string       `json:"name"`
-	Page         int          `json:"page"`
-	PerPage      int          `json:"per_page"`
-	Plans        []PlanOption `json:"plans"`
-	PlatformLogs []LogRow     `json:"platform_logs"`
-	Slug         string       `json:"slug"`
-	Subscription *struct {
-		Active     bool    `json:"active"`
-		PaidUntil  *string `json:"paid_until"`
-		PlanName   *string `json:"plan_name"`
-		SaasPlanId int64   `json:"saas_plan_id"`
-		Status     string  `json:"status"`
-		TrialUntil *string `json:"trial_until"`
-	} `json:"subscription"`
-	Timezone string `json:"timezone"`
-	Total    int64  `json:"total"`
+	Created      string                `json:"created"`
+	Heatmap      []HeatCell            `json:"heatmap"`
+	Id           int64                 `json:"id"`
+	Members      []Member              `json:"members"`
+	Name         string                `json:"name"`
+	Page         int                   `json:"page"`
+	PerPage      int                   `json:"per_page"`
+	Plans        []PlanOption          `json:"plans"`
+	PlatformLogs []LogRow              `json:"platform_logs"`
+	Slug         string                `json:"slug"`
+	Subscription *ClubCardSubscription `json:"subscription"`
+	Timezone     string                `json:"timezone"`
+
+	// Today Сегодня, Y-m-d (min поля «Действует до» формы скидки — now()->toDateString()).
+	Today string `json:"today"`
+	Total int64  `json:"total"`
+}
+
+// ClubCardSubscription defines model for ClubCardSubscription.
+type ClubCardSubscription struct {
+	Active       bool    `json:"active"`
+	DiscountNote *string `json:"discount_note"`
+
+	// DiscountPercent Действующая скидка, % (discountPercent()); 0 — нет или закончилась.
+	DiscountPercent int `json:"discount_percent"`
+
+	// DiscountUntil Последний день скидки, Y-m-d; null — бессрочно.
+	DiscountUntil *string `json:"discount_until"`
+
+	// DiscountUntilLabel То же, d.m.Y.
+	DiscountUntilLabel *string `json:"discount_until_label"`
+
+	// MonthlyPriceTiyn Цена тарифа за ПК в месяц со скидкой клуба, тиыны (ClubSubscription::monthlyPrice()); null — у тарифа нет цены.
+	MonthlyPriceTiyn *int64  `json:"monthly_price_tiyn"`
+	PaidUntil        *string `json:"paid_until"`
+	PlanName         *string `json:"plan_name"`
+
+	// PlanPriceMonthlyTiyn Цена тарифа без скидки, тиыны.
+	PlanPriceMonthlyTiyn *int64 `json:"plan_price_monthly_tiyn"`
+	SaasPlanId           int64  `json:"saas_plan_id"`
+	Status               string `json:"status"`
+
+	// StoredDiscountPercent Сохранённый процент (для подсказки «Скидка P% закончилась дата.»).
+	StoredDiscountPercent int     `json:"stored_discount_percent"`
+	TrialUntil            *string `json:"trial_until"`
 }
 
 // ClubList defines model for ClubList.
@@ -336,22 +400,28 @@ type ClubLoadRow struct {
 
 // ClubRow defines model for ClubRow.
 type ClubRow struct {
-	AgentPerMinute  string            `json:"agent_per_minute"`
-	ApiPerMinute    string            `json:"api_per_minute"`
-	Badge           SubscriptionBadge `json:"badge"`
-	BusyCount       int64             `json:"busy_count"`
-	BusyPercent     *int64            `json:"busy_percent"`
-	ComputersCount  int64             `json:"computers_count"`
-	DaysLeft        *int64            `json:"days_left"`
-	Id              int64             `json:"id"`
-	LastLoginHuman  *string           `json:"last_login_human"`
-	Name            string            `json:"name"`
-	OnlineCount     int64             `json:"online_count"`
-	OutdatedAgents  *int64            `json:"outdated_agents"`
-	OwnerName       *string           `json:"owner_name"`
-	SessionsToday   int64             `json:"sessions_today"`
-	Slug            string            `json:"slug"`
-	WebhookFailures int64             `json:"webhook_failures"`
+	AgentPerMinute string            `json:"agent_per_minute"`
+	ApiPerMinute   string            `json:"api_per_minute"`
+	Badge          SubscriptionBadge `json:"badge"`
+	BusyCount      int64             `json:"busy_count"`
+	BusyPercent    *int64            `json:"busy_percent"`
+	ComputersCount int64             `json:"computers_count"`
+	DaysLeft       *int64            `json:"days_left"`
+
+	// DiscountNote Причина скидки (title бейджа).
+	DiscountNote *string `json:"discount_note"`
+
+	// DiscountPercent Действующая индивидуальная скидка клуба, % (бейдж «−P%»); 0 — нет.
+	DiscountPercent int     `json:"discount_percent"`
+	Id              int64   `json:"id"`
+	LastLoginHuman  *string `json:"last_login_human"`
+	Name            string  `json:"name"`
+	OnlineCount     int64   `json:"online_count"`
+	OutdatedAgents  *int64  `json:"outdated_agents"`
+	OwnerName       *string `json:"owner_name"`
+	SessionsToday   int64   `json:"sessions_today"`
+	Slug            string  `json:"slug"`
+	WebhookFailures int64   `json:"webhook_failures"`
 }
 
 // Dashboard defines model for Dashboard.
@@ -389,6 +459,15 @@ type Dashboard struct {
 	SelectedClubs          []int64         `json:"selected_clubs"`
 	Tables                 []TableSize     `json:"tables"`
 	Today                  string          `json:"today"`
+}
+
+// DiscountForm defines model for DiscountForm.
+type DiscountForm struct {
+	DiscountNote    *string `json:"discount_note,omitempty"`
+	DiscountPercent int     `json:"discount_percent"`
+
+	// DiscountUntil Последний день скидки, Y-m-d; пусто — бессрочно.
+	DiscountUntil *string `json:"discount_until,omitempty"`
 }
 
 // EventOption defines model for EventOption.
@@ -429,6 +508,18 @@ type ImportResult struct {
 	Message      string   `json:"message"`
 }
 
+// InvoiceBoard defines model for InvoiceBoard.
+type InvoiceBoard struct {
+	Closed  []ClosedInvoice  `json:"closed"`
+	Kaspi   *KaspiSettings   `json:"kaspi"`
+	Page    int              `json:"page"`
+	Pending []PendingInvoice `json:"pending"`
+	PerPage int              `json:"per_page"`
+
+	// Total Всего закрытых счетов.
+	Total int64 `json:"total"`
+}
+
 // Issue defines model for Issue.
 type Issue struct {
 	Club   string    `json:"club"`
@@ -439,6 +530,18 @@ type Issue struct {
 
 // IssueKind defines model for Issue.Kind.
 type IssueKind string
+
+// KaspiForm defines model for KaspiForm.
+type KaspiForm struct {
+	Recipient *string `json:"recipient,omitempty"`
+	Url       *string `json:"url,omitempty"`
+}
+
+// KaspiSettings defines model for KaspiSettings.
+type KaspiSettings struct {
+	Recipient string `json:"recipient"`
+	Url       string `json:"url"`
+}
 
 // Language defines model for Language.
 type Language struct {
@@ -551,6 +654,23 @@ type Member struct {
 // Message defines model for Message.
 type Message struct {
 	Message string `json:"message"`
+}
+
+// PendingInvoice defines model for PendingInvoice.
+type PendingInvoice struct {
+	AmountTiyn int64  `json:"amount_tiyn"`
+	ClubId     int64  `json:"club_id"`
+	ClubName   string `json:"club_name"`
+	Computers  int64  `json:"computers"`
+
+	// Created d.m.Y H:i
+	Created              string `json:"created"`
+	DiscountPercent      int    `json:"discount_percent"`
+	Id                   int64  `json:"id"`
+	Months               int    `json:"months"`
+	Number               string `json:"number"`
+	PlanName             string `json:"plan_name"`
+	PricePerComputerTiyn int64  `json:"price_per_computer_tiyn"`
 }
 
 // Plan defines model for Plan.
@@ -676,6 +796,9 @@ type TranslationSave struct {
 // ClubId defines model for ClubId.
 type ClubId = int64
 
+// InvoiceId defines model for InvoiceId.
+type InvoiceId = int64
+
 // LanguageId defines model for LanguageId.
 type LanguageId = int64
 
@@ -730,6 +853,11 @@ type SaDashboardParams struct {
 // SaDashboardParamsPeriod defines parameters for SaDashboard.
 type SaDashboardParamsPeriod string
 
+// SaListInvoicesParams defines parameters for SaListInvoices.
+type SaListInvoicesParams struct {
+	Page *int `form:"page,omitempty" json:"page,omitempty"`
+}
+
 // SaExportTranslationsParams defines parameters for SaExportTranslations.
 type SaExportTranslationsParams struct {
 	Language string `form:"language" json:"language"`
@@ -771,11 +899,17 @@ type SaGrantSuperadminJSONRequestBody = SecondFactorConfirm
 // SaSetAgentReleaseJSONRequestBody defines body for SaSetAgentRelease for application/json ContentType.
 type SaSetAgentReleaseJSONRequestBody = AgentReleaseForm
 
+// SaSetClubDiscountJSONRequestBody defines body for SaSetClubDiscount for application/json ContentType.
+type SaSetClubDiscountJSONRequestBody = DiscountForm
+
 // SaExtendSubscriptionJSONRequestBody defines body for SaExtendSubscription for application/json ContentType.
 type SaExtendSubscriptionJSONRequestBody = ExtendForm
 
 // SaChangeClubPlanJSONRequestBody defines body for SaChangeClubPlan for application/json ContentType.
 type SaChangeClubPlanJSONRequestBody = PlanChoice
+
+// SaSetInvoiceKaspiJSONRequestBody defines body for SaSetInvoiceKaspi for application/json ContentType.
+type SaSetInvoiceKaspiJSONRequestBody = KaspiForm
 
 // SaCreateLanguageJSONRequestBody defines body for SaCreateLanguage for application/json ContentType.
 type SaCreateLanguageJSONRequestBody = LanguageCreate
@@ -839,6 +973,9 @@ type ServerInterface interface {
 	// SaGetClub Клуб
 	// (GET /api/superadmin/clubs/{clubId})
 	SaGetClub(w http.ResponseWriter, r *http.Request, clubId ClubId, params SaGetClubParams)
+	// SaSetClubDiscount Индивидуальная скидка клуба на тариф
+	// (POST /api/superadmin/clubs/{clubId}/subscription/discount)
+	SaSetClubDiscount(w http.ResponseWriter, r *http.Request, clubId ClubId)
 	// SaExtendSubscription Продлить подписку
 	// (POST /api/superadmin/clubs/{clubId}/subscription/extend)
 	SaExtendSubscription(w http.ResponseWriter, r *http.Request, clubId ClubId)
@@ -851,6 +988,18 @@ type ServerInterface interface {
 	// SaDashboard Сервер
 	// (GET /api/superadmin/dashboard)
 	SaDashboard(w http.ResponseWriter, r *http.Request, params SaDashboardParams)
+	// SaListInvoices Оплаты — счета клубов за подписку
+	// (GET /api/superadmin/invoices)
+	SaListInvoices(w http.ResponseWriter, r *http.Request, params SaListInvoicesParams)
+	// SaSetInvoiceKaspi Ссылка на оплату Kaspi и получатель
+	// (POST /api/superadmin/invoices/kaspi)
+	SaSetInvoiceKaspi(w http.ResponseWriter, r *http.Request)
+	// SaCancelInvoice Отменить неоплаченный счёт клуба
+	// (POST /api/superadmin/invoices/{invoiceId}/cancel)
+	SaCancelInvoice(w http.ResponseWriter, r *http.Request, invoiceId InvoiceId)
+	// SaPayInvoice Оплата получена — продлить подписку клуба
+	// (POST /api/superadmin/invoices/{invoiceId}/pay)
+	SaPayInvoice(w http.ResponseWriter, r *http.Request, invoiceId InvoiceId)
 	// SaListLanguages Языки
 	// (GET /api/superadmin/languages)
 	SaListLanguages(w http.ResponseWriter, r *http.Request)
@@ -983,6 +1132,12 @@ func (_ Unimplemented) SaGetClub(w http.ResponseWriter, r *http.Request, clubId 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// SaSetClubDiscount Индивидуальная скидка клуба на тариф
+// (POST /api/superadmin/clubs/{clubId}/subscription/discount)
+func (_ Unimplemented) SaSetClubDiscount(w http.ResponseWriter, r *http.Request, clubId ClubId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // SaExtendSubscription Продлить подписку
 // (POST /api/superadmin/clubs/{clubId}/subscription/extend)
 func (_ Unimplemented) SaExtendSubscription(w http.ResponseWriter, r *http.Request, clubId ClubId) {
@@ -1004,6 +1159,30 @@ func (_ Unimplemented) SaSuspendSubscription(w http.ResponseWriter, r *http.Requ
 // SaDashboard Сервер
 // (GET /api/superadmin/dashboard)
 func (_ Unimplemented) SaDashboard(w http.ResponseWriter, r *http.Request, params SaDashboardParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaListInvoices Оплаты — счета клубов за подписку
+// (GET /api/superadmin/invoices)
+func (_ Unimplemented) SaListInvoices(w http.ResponseWriter, r *http.Request, params SaListInvoicesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaSetInvoiceKaspi Ссылка на оплату Kaspi и получатель
+// (POST /api/superadmin/invoices/kaspi)
+func (_ Unimplemented) SaSetInvoiceKaspi(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaCancelInvoice Отменить неоплаченный счёт клуба
+// (POST /api/superadmin/invoices/{invoiceId}/cancel)
+func (_ Unimplemented) SaCancelInvoice(w http.ResponseWriter, r *http.Request, invoiceId InvoiceId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaPayInvoice Оплата получена — продлить подписку клуба
+// (POST /api/superadmin/invoices/{invoiceId}/pay)
+func (_ Unimplemented) SaPayInvoice(w http.ResponseWriter, r *http.Request, invoiceId InvoiceId) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1492,6 +1671,32 @@ func (siw *ServerInterfaceWrapper) SaGetClub(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
+// SaSetClubDiscount operation middleware
+func (siw *ServerInterfaceWrapper) SaSetClubDiscount(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "clubId" -------------
+	var clubId ClubId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clubId", chi.URLParam(r, "clubId"), &clubId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "clubId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaSetClubDiscount(w, r, clubId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SaExtendSubscription operation middleware
 func (siw *ServerInterfaceWrapper) SaExtendSubscription(w http.ResponseWriter, r *http.Request) {
 
@@ -1607,6 +1812,105 @@ func (siw *ServerInterfaceWrapper) SaDashboard(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.SaDashboard(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaListInvoices operation middleware
+func (siw *ServerInterfaceWrapper) SaListInvoices(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SaListInvoicesParams
+
+	// ------------- Optional query parameter "page" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page", r.URL.Query(), &params.Page, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaListInvoices(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaSetInvoiceKaspi operation middleware
+func (siw *ServerInterfaceWrapper) SaSetInvoiceKaspi(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaSetInvoiceKaspi(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaCancelInvoice operation middleware
+func (siw *ServerInterfaceWrapper) SaCancelInvoice(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "invoiceId" -------------
+	var invoiceId InvoiceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "invoiceId", chi.URLParam(r, "invoiceId"), &invoiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "invoiceId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaCancelInvoice(w, r, invoiceId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaPayInvoice operation middleware
+func (siw *ServerInterfaceWrapper) SaPayInvoice(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "invoiceId" -------------
+	var invoiceId InvoiceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "invoiceId", chi.URLParam(r, "invoiceId"), &invoiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "invoiceId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaPayInvoice(w, r, invoiceId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2295,6 +2599,21 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/superadmin/clubs/{clubId}/subscription/plan", wrapper.SaChangeClubPlan)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/superadmin/clubs/{clubId}/subscription/discount", wrapper.SaSetClubDiscount)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/superadmin/invoices", wrapper.SaListInvoices)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/superadmin/invoices/kaspi", wrapper.SaSetInvoiceKaspi)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/superadmin/invoices/{invoiceId}/pay", wrapper.SaPayInvoice)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/superadmin/invoices/{invoiceId}/cancel", wrapper.SaCancelInvoice)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/superadmin/accounts", wrapper.SaListAccounts)
@@ -3192,6 +3511,93 @@ func (response SaGetClub404JSONResponse) VisitSaGetClubResponse(w http.ResponseW
 	return err
 }
 
+type SaSetClubDiscountRequestObject struct {
+	ClubId ClubId `json:"clubId"`
+	Body   *SaSetClubDiscountJSONRequestBody
+}
+
+type SaSetClubDiscountResponseObject interface {
+	VisitSaSetClubDiscountResponse(w http.ResponseWriter) error
+}
+
+type SaSetClubDiscount200JSONResponse Message
+
+func (response SaSetClubDiscount200JSONResponse) VisitSaSetClubDiscountResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaSetClubDiscount401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaSetClubDiscount401JSONResponse) VisitSaSetClubDiscountResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaSetClubDiscount403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaSetClubDiscount403JSONResponse) VisitSaSetClubDiscountResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaSetClubDiscount404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response SaSetClubDiscount404JSONResponse) VisitSaSetClubDiscountResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaSetClubDiscount422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SaSetClubDiscount422JSONResponse) VisitSaSetClubDiscountResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SaExtendSubscriptionRequestObject struct {
 	ClubId ClubId `json:"clubId"`
 	Body   *SaExtendSubscriptionJSONRequestBody
@@ -3486,6 +3892,302 @@ func (response SaDashboard403JSONResponse) VisitSaDashboardResponse(w http.Respo
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaListInvoicesRequestObject struct {
+	Params SaListInvoicesParams
+}
+
+type SaListInvoicesResponseObject interface {
+	VisitSaListInvoicesResponse(w http.ResponseWriter) error
+}
+
+type SaListInvoices200JSONResponse InvoiceBoard
+
+func (response SaListInvoices200JSONResponse) VisitSaListInvoicesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaListInvoices401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaListInvoices401JSONResponse) VisitSaListInvoicesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaListInvoices403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaListInvoices403JSONResponse) VisitSaListInvoicesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaSetInvoiceKaspiRequestObject struct {
+	Body *SaSetInvoiceKaspiJSONRequestBody
+}
+
+type SaSetInvoiceKaspiResponseObject interface {
+	VisitSaSetInvoiceKaspiResponse(w http.ResponseWriter) error
+}
+
+type SaSetInvoiceKaspi200JSONResponse Message
+
+func (response SaSetInvoiceKaspi200JSONResponse) VisitSaSetInvoiceKaspiResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaSetInvoiceKaspi401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaSetInvoiceKaspi401JSONResponse) VisitSaSetInvoiceKaspiResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaSetInvoiceKaspi403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaSetInvoiceKaspi403JSONResponse) VisitSaSetInvoiceKaspiResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaSetInvoiceKaspi422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SaSetInvoiceKaspi422JSONResponse) VisitSaSetInvoiceKaspiResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaCancelInvoiceRequestObject struct {
+	InvoiceId InvoiceId `json:"invoiceId"`
+}
+
+type SaCancelInvoiceResponseObject interface {
+	VisitSaCancelInvoiceResponse(w http.ResponseWriter) error
+}
+
+type SaCancelInvoice200JSONResponse Message
+
+func (response SaCancelInvoice200JSONResponse) VisitSaCancelInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaCancelInvoice401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaCancelInvoice401JSONResponse) VisitSaCancelInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaCancelInvoice403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaCancelInvoice403JSONResponse) VisitSaCancelInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaCancelInvoice404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response SaCancelInvoice404JSONResponse) VisitSaCancelInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaCancelInvoice422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SaCancelInvoice422JSONResponse) VisitSaCancelInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayInvoiceRequestObject struct {
+	InvoiceId InvoiceId `json:"invoiceId"`
+}
+
+type SaPayInvoiceResponseObject interface {
+	VisitSaPayInvoiceResponse(w http.ResponseWriter) error
+}
+
+type SaPayInvoice200JSONResponse Message
+
+func (response SaPayInvoice200JSONResponse) VisitSaPayInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayInvoice401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaPayInvoice401JSONResponse) VisitSaPayInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayInvoice403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaPayInvoice403JSONResponse) VisitSaPayInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayInvoice404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response SaPayInvoice404JSONResponse) VisitSaPayInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayInvoice422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SaPayInvoice422JSONResponse) VisitSaPayInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -5113,6 +5815,9 @@ type StrictServerInterface interface {
 	// SaGetClub Клуб
 	// (GET /api/superadmin/clubs/{clubId})
 	SaGetClub(ctx context.Context, request SaGetClubRequestObject) (SaGetClubResponseObject, error)
+	// SaSetClubDiscount Индивидуальная скидка клуба на тариф
+	// (POST /api/superadmin/clubs/{clubId}/subscription/discount)
+	SaSetClubDiscount(ctx context.Context, request SaSetClubDiscountRequestObject) (SaSetClubDiscountResponseObject, error)
 	// SaExtendSubscription Продлить подписку
 	// (POST /api/superadmin/clubs/{clubId}/subscription/extend)
 	SaExtendSubscription(ctx context.Context, request SaExtendSubscriptionRequestObject) (SaExtendSubscriptionResponseObject, error)
@@ -5125,6 +5830,18 @@ type StrictServerInterface interface {
 	// SaDashboard Сервер
 	// (GET /api/superadmin/dashboard)
 	SaDashboard(ctx context.Context, request SaDashboardRequestObject) (SaDashboardResponseObject, error)
+	// SaListInvoices Оплаты — счета клубов за подписку
+	// (GET /api/superadmin/invoices)
+	SaListInvoices(ctx context.Context, request SaListInvoicesRequestObject) (SaListInvoicesResponseObject, error)
+	// SaSetInvoiceKaspi Ссылка на оплату Kaspi и получатель
+	// (POST /api/superadmin/invoices/kaspi)
+	SaSetInvoiceKaspi(ctx context.Context, request SaSetInvoiceKaspiRequestObject) (SaSetInvoiceKaspiResponseObject, error)
+	// SaCancelInvoice Отменить неоплаченный счёт клуба
+	// (POST /api/superadmin/invoices/{invoiceId}/cancel)
+	SaCancelInvoice(ctx context.Context, request SaCancelInvoiceRequestObject) (SaCancelInvoiceResponseObject, error)
+	// SaPayInvoice Оплата получена — продлить подписку клуба
+	// (POST /api/superadmin/invoices/{invoiceId}/pay)
+	SaPayInvoice(ctx context.Context, request SaPayInvoiceRequestObject) (SaPayInvoiceResponseObject, error)
 	// SaListLanguages Языки
 	// (GET /api/superadmin/languages)
 	SaListLanguages(ctx context.Context, request SaListLanguagesRequestObject) (SaListLanguagesResponseObject, error)
@@ -5517,6 +6234,39 @@ func (sh *strictHandler) SaGetClub(w http.ResponseWriter, r *http.Request, clubI
 	}
 }
 
+// SaSetClubDiscount operation middleware
+func (sh *strictHandler) SaSetClubDiscount(w http.ResponseWriter, r *http.Request, clubId ClubId) {
+	var request SaSetClubDiscountRequestObject
+
+	request.ClubId = clubId
+
+	var body SaSetClubDiscountJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaSetClubDiscount(ctx, request.(SaSetClubDiscountRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaSetClubDiscount")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaSetClubDiscountResponseObject); ok {
+		if err := validResponse.VisitSaSetClubDiscountResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // SaExtendSubscription operation middleware
 func (sh *strictHandler) SaExtendSubscription(w http.ResponseWriter, r *http.Request, clubId ClubId) {
 	var request SaExtendSubscriptionRequestObject
@@ -5628,6 +6378,115 @@ func (sh *strictHandler) SaDashboard(w http.ResponseWriter, r *http.Request, par
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(SaDashboardResponseObject); ok {
 		if err := validResponse.VisitSaDashboardResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaListInvoices operation middleware
+func (sh *strictHandler) SaListInvoices(w http.ResponseWriter, r *http.Request, params SaListInvoicesParams) {
+	var request SaListInvoicesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaListInvoices(ctx, request.(SaListInvoicesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaListInvoices")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaListInvoicesResponseObject); ok {
+		if err := validResponse.VisitSaListInvoicesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaSetInvoiceKaspi operation middleware
+func (sh *strictHandler) SaSetInvoiceKaspi(w http.ResponseWriter, r *http.Request) {
+	var request SaSetInvoiceKaspiRequestObject
+
+	var body SaSetInvoiceKaspiJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaSetInvoiceKaspi(ctx, request.(SaSetInvoiceKaspiRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaSetInvoiceKaspi")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaSetInvoiceKaspiResponseObject); ok {
+		if err := validResponse.VisitSaSetInvoiceKaspiResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaCancelInvoice operation middleware
+func (sh *strictHandler) SaCancelInvoice(w http.ResponseWriter, r *http.Request, invoiceId InvoiceId) {
+	var request SaCancelInvoiceRequestObject
+
+	request.InvoiceId = invoiceId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaCancelInvoice(ctx, request.(SaCancelInvoiceRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaCancelInvoice")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaCancelInvoiceResponseObject); ok {
+		if err := validResponse.VisitSaCancelInvoiceResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaPayInvoice operation middleware
+func (sh *strictHandler) SaPayInvoice(w http.ResponseWriter, r *http.Request, invoiceId InvoiceId) {
+	var request SaPayInvoiceRequestObject
+
+	request.InvoiceId = invoiceId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaPayInvoice(ctx, request.(SaPayInvoiceRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaPayInvoice")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaPayInvoiceResponseObject); ok {
+		if err := validResponse.VisitSaPayInvoiceResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

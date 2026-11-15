@@ -33,3 +33,9 @@ web/.vite/
 !.vscode/extensions.json
 .DS_Store
 *.swp
+
+# Собранные бинарники cmd/* (попадали в индекс по ошибке)
+/server/visual-seed
+/server/zafiro
+/server/loadgen
+/server/migrate-from-mysql

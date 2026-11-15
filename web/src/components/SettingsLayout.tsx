@@ -22,6 +22,7 @@ interface MenuItem {
 
 const SETTINGS_ITEMS: readonly MenuItem[] = [
   { to: '/settings/club', icon: 'fas fa-building w-4', label: 'Настройка клуба', anchors: true },
+  { to: '/settings/profile', icon: 'fas fa-mobile-screen w-4', label: 'Профиль клуба', anchors: true },
   { to: '/settings/languages', icon: 'fas fa-language w-4', label: 'Языки', anchors: true },
   { to: '/settings/finances', icon: 'fas fa-coins w-4', label: 'Финансы', anchors: true },
   { to: '/settings/guests', icon: 'fas fa-users w-4', label: 'Гости' },
@@ -37,7 +38,7 @@ function itemClass(active: boolean): string {
 export interface SettingsLayoutProps {
   /** Сообщение session('status'). */
   readonly status?: string | null;
-  /** settings.anchors открытой страницы (только club/languages/finances). */
+  /** settings.anchors открытой страницы (только club/profile/languages/finances). */
   readonly anchors?: ReactNode;
   readonly children: ReactNode;
 }

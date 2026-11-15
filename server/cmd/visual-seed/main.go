@@ -157,8 +157,9 @@ func (s *seeder) platform(ctx context.Context) error {
 		}
 		for _, c := range s.f.Clubs {
 			at := s.created(c.CreatedAt)
-			if _, err := tx.Exec(ctx, `INSERT INTO clubs (id, name, slug, settings, locale, timezone, created_at, updated_at)
-				VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $7)`, c.ID, c.Name, c.Slug, jsonOrNil(c.Settings), c.Locale, c.Timezone, at); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO clubs (id, name, slug, settings, locale, timezone, city, address, profile, created_at, updated_at)
+				VALUES ($1, $2, $3, $4::jsonb, $5, $6, $8, $9, $10::jsonb, $7, $7)`, c.ID, c.Name, c.Slug, jsonOrNil(c.Settings), c.Locale, c.Timezone, at,
+				c.City, c.Address, jsonOrNil(c.Profile)); err != nil {
 				return err
 			}
 			sub := c.Subscription
@@ -175,13 +176,58 @@ func (s *seeder) platform(ctx context.Context) error {
 				return err
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO club_subscriptions (club_id, saas_plan_id, status, started_at, trial_ends_at,
-				current_period_ends_at, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
-				c.ID, sub.SaasPlanID, sub.Status, started, trial, period, at); err != nil {
+				current_period_ends_at, discount_percent, discount_until, discount_note, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $8, $9::date, $10, $7, $7)`,
+				c.ID, sub.SaasPlanID, sub.Status, started, trial, period, at, sub.DiscountPercent, sub.DiscountUntil, sub.DiscountNote); err != nil {
 				return err
 			}
 		}
-		return nil
+		return s.billing(ctx, tx)
 	})
+}
+
+// billing — оплата подписки (тема Б): ссылка Kaspi платформы и счета клубов; по оплаченному счёту — строка журнала
+// денег платформы с тем же ключом, что пишет сервер (invoice_paid:<id>).
+func (s *seeder) billing(ctx context.Context, tx pgx.Tx) error {
+	if len(s.f.BillingKaspi) > 0 {
+		if _, err := tx.Exec(ctx, `INSERT INTO platform_settings (key, value, created_at, updated_at) VALUES ('billing_kaspi', $1::jsonb, $2, $2)`,
+			string(s.f.BillingKaspi), s.now); err != nil {
+			return err
+		}
+	}
+	for _, i := range s.f.Invoices {
+		price, err := tiyn(&i.PricePerComputer)
+		if err != nil {
+			return err
+		}
+		amount, err := tiyn(&i.Amount)
+		if err != nil {
+			return err
+		}
+		paid, err := timePtr(i.PaidAt)
+		if err != nil {
+			return err
+		}
+		ends, err := timePtr(i.PeriodEndsAt)
+		if err != nil {
+			return err
+		}
+		at := s.created(i.CreatedAt)
+		if _, err := tx.Exec(ctx, `INSERT INTO subscription_invoices (id, club_id, saas_plan_id, months, computers, price_per_computer,
+				discount_percent, amount, status, created_by, confirmed_by, paid_at, period_ends_at, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)`,
+			i.ID, i.ClubID, i.SaasPlanID, i.Months, i.Computers, int64(price), i.DiscountPercent, int64(amount), i.Status,
+			i.CreatedBy, i.ConfirmedBy, paid, ends, at); err != nil {
+			return err
+		}
+		if i.Status == "paid" {
+			if _, err := tx.Exec(ctx, `INSERT INTO platform_money_log (kind, idempotency_key, amount, club_id, invoice_id, actor_user_id, created_at)
+				VALUES ('invoice_paid', $1, $2, $3, $4, $5, $6)`, "invoice_paid:"+strconv.FormatInt(i.ID, 10), int64(amount), i.ClubID, i.ID, i.ConfirmedBy, paid); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // clubs — справочники клуба и начальные балансы (в транзакции клуба: RLS и проверка тенанта ledger).
@@ -257,10 +303,10 @@ func (s *seeder) catalog(ctx context.Context, tx pgx.Tx, clubID int64) error {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO club_zones (id, club_id, name, description, capacity, icon, theme, status, is_featured,
-			sort_order, position_x, position_y, width, height, rotation, price_per_hour, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17)`,
+			sort_order, position_x, position_y, width, height, rotation, price_per_hour, devices, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $18::jsonb, $17, $17)`,
 			z.ID, z.ClubID, z.Name, z.Description, z.Capacity, z.Icon, z.Theme, z.Status, z.IsFeatured, z.SortOrder,
-			z.PositionX, z.PositionY, z.Width, z.Height, z.Rotation, price, s.now); err != nil {
+			z.PositionX, z.PositionY, z.Width, z.Height, z.Rotation, price, s.now, jsonOrNil(z.Devices)); err != nil {
 			return fmt.Errorf("зона %d: %w", z.ID, err)
 		}
 	}

@@ -19,11 +19,30 @@ type Landing struct {
 	TrialDays   int64  `json:"trial_days"`
 }
 
+// Pricing defines model for Pricing.
+type Pricing struct {
+	Plans []PricingPlan `json:"plans"`
+}
+
+// PricingPlan defines model for PricingPlan.
+type PricingPlan struct {
+	Features []string `json:"features"`
+	Id       int64    `json:"id"`
+	Name     string   `json:"name"`
+
+	// PriceMonthly Цена за ПК в месяц, тиыны; null — цена не задана («Бесплатно» при пробных днях, иначе «По запросу»).
+	PriceMonthly *int64 `json:"price_monthly"`
+	TrialDays    int64  `json:"trial_days"`
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetLanding Данные лендинга
 	// (GET /api/landing)
 	GetLanding(w http.ResponseWriter, r *http.Request)
+	// GetPricing Тарифы платформы для страницы /pricing
+	// (GET /api/pricing)
+	GetPricing(w http.ResponseWriter, r *http.Request)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -33,6 +52,12 @@ type Unimplemented struct{}
 // GetLanding Данные лендинга
 // (GET /api/landing)
 func (_ Unimplemented) GetLanding(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetPricing Тарифы платформы для страницы /pricing
+// (GET /api/pricing)
+func (_ Unimplemented) GetPricing(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -50,6 +75,20 @@ func (siw *ServerInterfaceWrapper) GetLanding(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetLanding(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPricing operation middleware
+func (siw *ServerInterfaceWrapper) GetPricing(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPricing(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -175,6 +214,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/landing", wrapper.GetLanding)
 	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/pricing", wrapper.GetPricing)
+	})
 
 	return r
 }
@@ -200,11 +242,35 @@ func (response GetLanding200JSONResponse) VisitGetLandingResponse(w http.Respons
 	return err
 }
 
+type GetPricingRequestObject struct {
+}
+
+type GetPricingResponseObject interface {
+	VisitGetPricingResponse(w http.ResponseWriter) error
+}
+
+type GetPricing200JSONResponse Pricing
+
+func (response GetPricing200JSONResponse) VisitGetPricingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// GetLanding Данные лендинга
 	// (GET /api/landing)
 	GetLanding(ctx context.Context, request GetLandingRequestObject) (GetLandingResponseObject, error)
+	// GetPricing Тарифы платформы для страницы /pricing
+	// (GET /api/pricing)
+	GetPricing(ctx context.Context, request GetPricingRequestObject) (GetPricingResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -263,6 +329,30 @@ func (sh *strictHandler) GetLanding(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetLandingResponseObject); ok {
 		if err := validResponse.VisitGetLandingResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPricing operation middleware
+func (sh *strictHandler) GetPricing(w http.ResponseWriter, r *http.Request) {
+	var request GetPricingRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPricing(ctx, request.(GetPricingRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPricing")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPricingResponseObject); ok {
+		if err := validResponse.VisitGetPricingResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

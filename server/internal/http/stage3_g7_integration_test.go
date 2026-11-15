@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -181,5 +182,55 @@ func TestG7Landing(t *testing.T) {
 	_ = res.Body.Close()
 	if res.StatusCode != http.StatusOK || res.Header.Get("Cache-Control") != "no-cache" {
 		t.Fatalf("offline: %d %v", res.StatusCode, res.Header)
+	}
+}
+
+// GS-573 (LandingPageTest «the pricing page lists the plans open for subscription»): /api/pricing отдаёт только
+// активные тарифы, порядок — без цены первыми, дальше по цене и id (LandingController::pricing()); цена — тиыны.
+func TestG7Pricing_GS573(t *testing.T) {
+	e, _ := newG7Env(t, time.Now())
+	slug := func(s string) string { return fmt.Sprintf("%s-%d", s, e.club) }
+	ins := func(name string, price any, trial int, features any, active bool) int64 {
+		return e.scalar(`INSERT INTO saas_plans (slug, name, price_monthly, trial_days, features, is_active, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5::jsonb, $6, now(), now()) RETURNING id`, slug(name), name, price, trial, features, active)
+	}
+	club := ins("Клуб до 30 ПК", int64(2500000), 0, `["До 30 ПК"]`, true)
+	old := ins("Старый тариф", int64(100000), 0, nil, false)
+	cheap := ins("Дешевле", int64(2400050), 7, nil, true)
+	free := ins("Старт", nil, 14, nil, true)
+	onRequest := ins("Сеть клубов", nil, 0, `["Любое число ПК"]`, true)
+
+	r := do(t, "GET", e.srv.URL+"/api/pricing", nil, nil) // без входа
+	expect(t, r, http.StatusOK, "pricing")
+	byID := map[int64]map[string]any{}
+	var order []int64
+	for _, raw := range r.body["plans"].([]any) {
+		p := raw.(map[string]any)
+		id := int64(p["id"].(float64))
+		byID[id] = p
+		order = append(order, id)
+	}
+	if _, ok := byID[old]; ok {
+		t.Fatalf("неактивный тариф в списке: %v", byID[old])
+	}
+	pos := func(id int64) int { return slices.Index(order, id) }
+	// Тарифы без цены — раньше платных (между собой — по id), платные — по цене.
+	if pos(free) < 0 || pos(free) >= pos(onRequest) || pos(onRequest) >= pos(cheap) || pos(cheap) >= pos(club) {
+		t.Fatalf("порядок: %v (free %d, on request %d, cheap %d, club %d)", order, free, onRequest, cheap, club)
+	}
+	p := byID[club]
+	if p["name"] != "Клуб до 30 ПК" || p["price_monthly"].(float64) != 2500000 || p["trial_days"].(float64) != 0 ||
+		fmt.Sprint(p["features"]) != "[До 30 ПК]" {
+		t.Fatalf("тариф: %v", p)
+	}
+	if p = byID[free]; p["price_monthly"] != nil || p["trial_days"].(float64) != 14 || fmt.Sprint(p["features"]) != "[]" {
+		t.Fatalf("бесплатный тариф: %v", p)
+	}
+	if byID[cheap]["price_monthly"].(float64) != 2400050 {
+		t.Fatalf("цена в тиынах: %v", byID[cheap])
+	}
+	// Наибольший пробный период активных тарифов — данные всех страниц сайта (LandingController::data()).
+	if r = do(t, "GET", e.srv.URL+"/api/landing", nil, nil); r.body["trial_days"].(float64) < 14 {
+		t.Fatalf("landing: %v", r.body)
 	}
 }

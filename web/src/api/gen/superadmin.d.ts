@@ -148,6 +148,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/superadmin/clubs/{clubId}/subscription/discount": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Индивидуальная скидка клуба на тариф
+         * @description Laravel: ClubController::discount() (superadmin.clubs.discount). Процент 0…100, срок — последний день включительно (не раньше сегодня) или бессрочно, причина до 200 символов; 0 % снимает скидку вместе с датой и причиной. Клуб без подписки — 404. Журнал платформы superadmin.subscription_discount_changed.
+         */
+        post: operations["saSetClubDiscount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/superadmin/invoices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Оплаты — счета клубов за подписку
+         * @description Laravel: InvoiceController::index() (superadmin.invoices.index): счета, ожидающие оплаты (старые первыми), закрытые (новые первыми, по 30) и настройка Kaspi.
+         */
+        get: operations["saListInvoices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/superadmin/invoices/kaspi": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ссылка на оплату Kaspi и получатель
+         * @description Laravel: InvoiceController::kaspi() (superadmin.invoices.kaspi): url — https, до 500 символов; recipient — до 200. Пустая ссылка выключает оплату: клубы не могут выставить счёт. Журнал платформы superadmin.billing_kaspi_changed.
+         */
+        post: operations["saSetInvoiceKaspi"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/superadmin/invoices/{invoiceId}/pay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Оплата получена — продлить подписку клуба
+         * @description Laravel: InvoiceController::pay(), SubscriptionBilling::markPaid() (superadmin.invoices.pay): подписка клуба — тариф счёта, активна ещё N месяцев от конца текущего периода (или от сегодня, BR-183); счёт — оплачен. Повтор — 422 invoice «Счёт уже закрыт.». Журнал платформы superadmin.invoice_paid, журнал денег платформы invoice_paid:<id>.
+         */
+        post: operations["saPayInvoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/superadmin/invoices/{invoiceId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Отменить неоплаченный счёт клуба
+         * @description Laravel: InvoiceController::cancel() (superadmin.invoices.cancel). Закрытый счёт — 422 invoice «Счёт уже закрыт.». Журнал платформы superadmin.invoice_canceled.
+         */
+        post: operations["saCancelInvoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/superadmin/accounts": {
         parameters: {
             query?: never;
@@ -739,6 +839,10 @@ export interface components {
             text: string;
         };
         ClubRow: {
+            /** @description Действующая индивидуальная скидка клуба, % (бейдж «−P%»); 0 — нет. */
+            discount_percent: number;
+            /** @description Причина скидки (title бейджа). */
+            discount_note: string | null;
             /** Format: int64 */
             id: number;
             name: string;
@@ -806,7 +910,37 @@ export interface components {
             busy: number;
             online: string;
         };
+        ClubCardSubscription: {
+            /**
+             * Format: int64
+             * @description Цена тарифа за ПК в месяц со скидкой клуба, тиыны (ClubSubscription::monthlyPrice()); null — у тарифа нет цены.
+             */
+            monthly_price_tiyn: number | null;
+            /**
+             * Format: int64
+             * @description Цена тарифа без скидки, тиыны.
+             */
+            plan_price_monthly_tiyn: number | null;
+            /** @description Действующая скидка, % (discountPercent()); 0 — нет или закончилась. */
+            discount_percent: number;
+            /** @description Сохранённый процент (для подсказки «Скидка P% закончилась дата.»). */
+            stored_discount_percent: number;
+            /** @description Последний день скидки, Y-m-d; null — бессрочно. */
+            discount_until: string | null;
+            /** @description То же, d.m.Y. */
+            discount_until_label: string | null;
+            discount_note: string | null;
+            status: string;
+            /** Format: int64 */
+            saas_plan_id: number;
+            plan_name: string | null;
+            paid_until: string | null;
+            trial_until: string | null;
+            active: boolean;
+        };
         ClubCard: {
+            /** @description Сегодня, Y-m-d (min поля «Действует до» формы скидки — now()->toDateString()). */
+            today: string;
             /** Format: int64 */
             id: number;
             name: string;
@@ -819,15 +953,7 @@ export interface components {
                 /** Format: int64 */
                 online: number;
             };
-            subscription: {
-                status: string;
-                /** Format: int64 */
-                saas_plan_id: number;
-                plan_name: string | null;
-                paid_until: string | null;
-                trial_until: string | null;
-                active: boolean;
-            } | null;
+            subscription: components["schemas"]["ClubCardSubscription"] | null;
             badge: components["schemas"]["SubscriptionBadge"];
             members: components["schemas"]["Member"][];
             page: number;
@@ -838,6 +964,69 @@ export interface components {
             plans: components["schemas"]["PlanOption"][];
             activity: components["schemas"]["LogRow"][];
             platform_logs: components["schemas"]["LogRow"][];
+        };
+        DiscountForm: {
+            discount_percent: number;
+            /** @description Последний день скидки, Y-m-d; пусто — бессрочно. */
+            discount_until?: string | null;
+            discount_note?: string | null;
+        };
+        KaspiForm: {
+            url?: string | null;
+            recipient?: string | null;
+        };
+        KaspiSettings: {
+            url: string;
+            recipient: string;
+        };
+        PendingInvoice: {
+            /** Format: int64 */
+            id: number;
+            number: string;
+            /** Format: int64 */
+            club_id: number;
+            club_name: string;
+            plan_name: string;
+            months: number;
+            /** Format: int64 */
+            computers: number;
+            /** Format: int64 */
+            price_per_computer_tiyn: number;
+            discount_percent: number;
+            /** Format: int64 */
+            amount_tiyn: number;
+            /** @description d.m.Y H:i */
+            created: string;
+        };
+        ClosedInvoice: {
+            /** Format: int64 */
+            id: number;
+            number: string;
+            /** Format: int64 */
+            club_id: number;
+            club_name: string;
+            plan_name: string;
+            months: number;
+            /** Format: int64 */
+            amount_tiyn: number;
+            /** @enum {string} */
+            status: "paid" | "canceled";
+            /** @description d.m.Y */
+            created: string;
+            /** @description Дата оплаты, d.m.Y. */
+            paid: string | null;
+        };
+        InvoiceBoard: {
+            pending: components["schemas"]["PendingInvoice"][];
+            closed: components["schemas"]["ClosedInvoice"][];
+            page: number;
+            per_page: number;
+            /**
+             * Format: int64
+             * @description Всего закрытых счетов.
+             */
+            total: number;
+            kaspi: components["schemas"]["KaspiSettings"] | null;
         };
         ExtendForm: {
             days: number;
@@ -1086,6 +1275,7 @@ export interface components {
     };
     parameters: {
         ClubId: number;
+        InvoiceId: number;
         UserId: number;
         PlanId: number;
         NewsId: number;
@@ -1296,6 +1486,139 @@ export interface operations {
                 "application/json": components["schemas"]["PlanChoice"];
             };
         };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    saSetClubDiscount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clubId: components["parameters"]["ClubId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscountForm"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    saListInvoices: {
+        parameters: {
+            query?: {
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoiceBoard"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    saSetInvoiceKaspi: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KaspiForm"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    saPayInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invoiceId: components["parameters"]["InvoiceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    saCancelInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invoiceId: components["parameters"]["InvoiceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description OK */
             200: {

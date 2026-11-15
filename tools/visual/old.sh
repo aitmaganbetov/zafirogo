@@ -85,7 +85,9 @@ if "visual-now" not in s:
 PY
 
   # Фронт старого проекта (Vite-манифест нужен страницам с @vite): кэш public/build по хешу исходников фронта.
-  local fe_hash; fe_hash="$(cd "$APP" && cat package-lock.json vite.config.js $(find resources/css resources/js -type f | sort) | sha256sum | cut -c1-16)"
+  # resources/views — тоже исходник: Tailwind 4 собирает CSS по классам шаблонов (без них кэш отдавал старые стили
+  # новым страницам — классы новых Blade в CSS не попадали).
+  local fe_hash; fe_hash="$(cd "$APP" && cat package-lock.json vite.config.js $(find resources/css resources/js resources/views -type f | sort) | sha256sum | cut -c1-16)"
   local fe_cache="$CACHE/old-build-$fe_hash"
   if [ ! -f "$fe_cache/manifest.json" ]; then
     log "npm ci && npm run build (фронт старого проекта)"

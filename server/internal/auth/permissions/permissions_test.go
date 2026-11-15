@@ -33,7 +33,7 @@ var matrix = []struct {
 	{"activity_logs.view", "am"},
 	{"settings.view", "am"}, {"settings.update", "am"},
 	{"workers.view", "a"}, {"workers.create", "a"}, {"workers.update", "a"}, {"workers.delete", "a"},
-	{"billing.view", "am"},
+	{"billing.view", "am"}, {"billing.pay", ""},
 }
 
 var roleLetter = map[string]byte{RoleAdmin: 'a', RoleManager: 'm', RoleCashier: 'c', RoleOperator: 'o'}
@@ -207,8 +207,9 @@ func TestGS254_EveryRouteRightExists(t *testing.T) {
 			seen[r] = rr.Right
 		}
 	}
-	if len(seen) != 93 || len(RouteRights) != 51 {
-		t.Errorf("routes = %d, rights = %d, want 93 and 51 (RequireClubArea::ROUTES)", len(seen), len(RouteRights))
+	// 95 маршрутов до ноября 2026 + 7 темы В (settings.location, settings.profile*, settings.photos.*).
+	if len(seen) != 95+7 || len(RouteRights) != 52 {
+		t.Errorf("routes = %d, rights = %d, want 102 and 52 (RequireClubArea::ROUTES)", len(seen), len(RouteRights))
 	}
 	for _, r := range All() {
 		// customer_money.update проверяется в UserController::update() напрямую (ClubPermissions::allows), не маршрутом.

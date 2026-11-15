@@ -55,7 +55,8 @@ rules:
   # db/queries/superadmin_totp.sql): вход (auth/mfa), кабинет, воркер reencrypt-secrets, команда superadmin-totp-reset.
   # GuestClubSettingsForAutoBilling — строка clubs клуба пакета автобиллинга (WHERE id = club_id, тенантная транзакция
   # этого клуба), Этап 7 S7-AB-2.
-  # PublicLanding — saas_plans и platform_settings для лендинга (Этап 3, G7).
+  # PublicLanding — saas_plans и platform_settings для лендинга (Этап 3, G7); PublicPricingPlans — тарифы платформы
+  # для страницы /pricing (тема Е, docs/upstream-2026-11.md).
   # Telegram* — настройки Telegram, коды восстановления пароля и лимиты кодов перевода на аккаунт во всех клубах
   # (Этап 4, H2; db/queries/telegram.sql, пул zafiro_platform).
   # SecretsPlatformSettingsToReseal, SecretsResealPlatformSetting — перешифровка токенов platform_settings воркером
@@ -63,7 +64,14 @@ rules:
   # ReconcileClubs — список клубов для сверки; ReconcileState, ReconcileStarted, …Succeeded, …Failed — одна строка
   # состояния фоновой сверки ledger (ledger_reconcile_state, без club_id), пул zafiro_platform, воркер
   # ledger:reconcile (аудит AC-3; db/queries/reconcile.sql).
+  # SubscriptionPayablePlans, SubscriptionKaspiSetting — saas_plans и platform_settings (без club_id) для экрана
+  # «Подписка» и выставления счёта клубом; SubscriptionClubReseller — реселлер клуба из сессии (clubs WHERE id = club_id)
+  # для снимка скидки и процента в счёте (тема Б; db/queries/subscription_billing.sql).
+  # ClubProfileGet, ClubProfileLock, ClubProfileSetLocation, ClubProfileSetProfile — строка clubs клуба из сессии
+  # (WHERE id = club_id): город, адрес и профиль клуба (тема В; db/queries/club_profile.sql).
+  # Catalog* — каталог клубов гостевого приложения (тема В, docs/upstream-2026-11.md; db/queries/catalog.sql):
+  # публичный список клубов города по всей платформе, пул zafiro_platform; вызывает только http/legacy/catalog.go.
   - name: tenant-filter
     message: "запрос должен фильтровать по club_id (или быть в списке платформенных исключений в sqlc.yaml)"
     rule: |
-      !query.sql.contains("club_id") && !query.name.startsWith("Superadmin") && !query.name.startsWith("Monitoring") && !query.name.startsWith("Telegram") && !(query.name in ["GetClub", "ExpireDueSessions", "ListExpiredTimePackages", "GetUserByPhone", "GetUserAuth", "UpdateUserPasswordHash", "RegisterCreateUser", "RegisterPhoneTaken", "RegisterCreateClub", "RegisterTrialPlan", "InvitationUserEmail", "ClubLocaleTimezone", "I18nEnabledLanguages", "I18nClubLocales", "I18nVersion", "I18nLines", "I18nEnsureLanguage", "I18nLanguageID", "I18nInsertMissing", "AdminAccountsLocked", "AdminUserConflicts", "ClubMapSettings", "AgentReleaseSetting", "SettingsLanguages", "SettingsClub", "SettingsLockClub", "SettingsSave", "SettingsSetTimezone", "SettingsSetLocale", "SettingsSetAgentPin", "SettingsSetStaffMinutes", "SettingsSetLogoPath", "SettingsSetSigninImagePath", "GuestClubSettingsForAutoBilling", "PublicLanding", "SecretsPlatformSettingsToReseal", "SecretsResealPlatformSetting", "ReconcileClubs", "ReconcileState", "ReconcileStarted", "ReconcileSucceeded", "ReconcileFailed"])
+      !query.sql.contains("club_id") && !query.name.startsWith("Superadmin") && !query.name.startsWith("Monitoring") && !query.name.startsWith("Telegram") && !query.name.startsWith("Catalog") && !(query.name in ["GetClub", "ExpireDueSessions", "ListExpiredTimePackages", "GetUserByPhone", "GetUserAuth", "UpdateUserPasswordHash", "RegisterCreateUser", "RegisterPhoneTaken", "RegisterCreateClub", "RegisterTrialPlan", "InvitationUserEmail", "ClubLocaleTimezone", "I18nEnabledLanguages", "I18nClubLocales", "I18nVersion", "I18nLines", "I18nEnsureLanguage", "I18nLanguageID", "I18nInsertMissing", "AdminAccountsLocked", "AdminUserConflicts", "ClubMapSettings", "AgentReleaseSetting", "SettingsLanguages", "SettingsClub", "SettingsLockClub", "SettingsSave", "SettingsSetTimezone", "SettingsSetLocale", "SettingsSetAgentPin", "SettingsSetStaffMinutes", "SettingsSetLogoPath", "SettingsSetSigninImagePath", "ClubProfileGet", "ClubProfileLock", "ClubProfileSetLocation", "ClubProfileSetProfile", "GuestClubSettingsForAutoBilling", "PublicLanding", "PublicPricingPlans", "SecretsPlatformSettingsToReseal", "SecretsResealPlatformSetting", "ReconcileClubs", "ReconcileState", "ReconcileStarted", "ReconcileSucceeded", "ReconcileFailed", "SubscriptionPayablePlans", "SubscriptionKaspiSetting", "SubscriptionClubReseller"])

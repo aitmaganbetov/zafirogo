@@ -355,6 +355,43 @@ func TestUpstreamTablesPrivileges(t *testing.T) {
 	if _, err := d.Platform.Exec(ctx, "UPDATE club_subscriptions SET discount_percent = 101 WHERE club_id = $1", clubA); code(err) != "23514" {
 		t.Errorf("скидка клуба 101 %%: %v", err)
 	}
+	// Подписку меняет только платформа (0039): пул клуба читает строку своего клуба, но не может ни дать себе
+	// скидку, ни продлить или активировать подписку, ни сменить тариф, ни создать или удалить строку, ни
+	// заблокировать её (FOR UPDATE требует права UPDATE).
+	inClub(d.App, clubA, func(tx pgx.Tx) {
+		var percent int
+		var status string
+		if err := tx.QueryRow(ctx, "SELECT discount_percent, status FROM club_subscriptions WHERE club_id = $1", clubA).Scan(&percent, &status); err != nil || percent != 100 || status != "active" {
+			t.Errorf("zafiro_app читает подписку своего клуба: %d %q, %v", percent, status, err)
+		}
+		var n int64
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM club_subscriptions").Scan(&n); err != nil || n != 1 {
+			t.Errorf("zafiro_app видит подписки чужих клубов: %d, %v", n, err)
+		}
+	})
+	for name, q := range map[string]string{
+		"скидка":            "UPDATE club_subscriptions SET discount_percent = 100, discount_until = NULL, discount_note = NULL WHERE club_id = $1",
+		"статус":            "UPDATE club_subscriptions SET status = 'active' WHERE club_id = $1",
+		"срок":              "UPDATE club_subscriptions SET current_period_ends_at = now() + interval '10 years', trial_ends_at = now() + interval '10 years' WHERE club_id = $1",
+		"тариф":             "UPDATE club_subscriptions SET saas_plan_id = saas_plan_id WHERE club_id = $1",
+		"updated_at":        "UPDATE club_subscriptions SET updated_at = now() WHERE club_id = $1",
+		"удаление":          "DELETE FROM club_subscriptions WHERE club_id = $1",
+		"блокировка строки": "SELECT id FROM club_subscriptions WHERE club_id = $1 FOR UPDATE",
+		"вставка для клуба": "INSERT INTO club_subscriptions (club_id, saas_plan_id, status, started_at) SELECT $1, saas_plan_id, 'active', now() FROM club_subscriptions LIMIT 1",
+	} {
+		inClub(d.App, clubA, func(tx pgx.Tx) {
+			if _, err := tx.Exec(ctx, q, clubA); code(err) != "42501" {
+				t.Errorf("zafiro_app, подписка — %s: %v", name, err)
+			}
+		})
+	}
+	if n := one("SELECT count(*) FROM club_subscriptions WHERE club_id = $1 AND discount_percent = 100 AND discount_note = 'акция' AND status = 'active'", clubA); n != 1 {
+		t.Errorf("подписка клуба изменилась после отклонённых запросов пула клуба")
+	}
+	// Платформа по-прежнему меняет всё: продление, приостановка, тариф.
+	if _, err := d.Platform.Exec(ctx, "UPDATE club_subscriptions SET status = 'suspended', canceled_at = now(), current_period_ends_at = now(), updated_at = now() WHERE club_id = $1", clubA); err != nil {
+		t.Errorf("zafiro_platform меняет подписку: %v", err)
+	}
 
 	// --- Выплаты и журнал денег платформы: только добавление ---
 	var payout int64

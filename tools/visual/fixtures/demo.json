@@ -17,11 +17,22 @@
   "saas_plans": [
     { "id": 1, "slug": "pro", "name": "Профессиональный", "price_monthly": "25000.00", "trial_days": 0, "is_active": true }
   ],
+  "_billing": "Оплата подписки (тема Б, Zafiro 77ae201): ссылка Kaspi платформы и счета клубов. Клуб 1 — оплаченный и отменённый счета (история, форма «Продлить подписку», скидка 20 %); клуб 2 — неоплаченный счёт (карточка оплаты). Суммы — тенге; в новом — тиыны.",
+  "billing_kaspi": { "url": "https://pay.kaspi.kz/pay/zafiro", "recipient": "ИП Zafiro" },
+  "subscription_invoices": [
+    { "id": 1, "club_id": 1, "saas_plan_id": 1, "months": 1, "computers": 12, "price_per_computer": "25000.00", "discount_percent": 0, "amount": "300000.00", "status": "paid", "created_by": 2, "confirmed_by": 1, "created_at": "2026-09-30T15:20:00+05:00", "paid_at": "2026-10-01T11:05:00+05:00", "period_ends_at": "2026-11-01T10:00:00+05:00" },
+    { "id": 2, "club_id": 1, "saas_plan_id": 1, "months": 3, "computers": 12, "price_per_computer": "25000.00", "discount_percent": 20, "amount": "720000.00", "status": "canceled", "created_by": 2, "created_at": "2026-10-10T18:40:00+05:00" },
+    { "id": 3, "club_id": 2, "saas_plan_id": 1, "months": 6, "computers": 1, "price_per_computer": "25000.00", "discount_percent": 0, "amount": "150000.00", "status": "pending", "created_by": 14, "created_at": "2026-10-14T23:30:00+05:00" }
+  ],
   "clubs": [
     {
       "id": 1,
       "name": "Zafiro Arena",
       "slug": "zafiro-arena",
+      "_profile": "Тема В (docs/upstream-2026-11.md): город, адрес и профиль клуба для гостевого приложения — карточка «Город и адрес» на /settings/club и страница /settings/profile.",
+      "city": "almaty",
+      "address": "пр. Абая, 10",
+      "profile": {"description": "Киберспортивный клуб в центре города: VIP-зал, консоли, бар.", "phone": "+7 700 000 00 00", "hours": "Круглосуточно", "instagram": "zafiro.arena"},
       "timezone": "Asia/Almaty",
       "locale": "ru",
       "created_at": "2026-09-01T10:00:00+05:00",
@@ -29,7 +40,10 @@
         "saas_plan_id": 1,
         "status": "active",
         "started_at": "2026-09-01T10:00:00+05:00",
-        "current_period_ends_at": "2026-11-01T10:00:00+05:00"
+        "current_period_ends_at": "2026-11-01T10:00:00+05:00",
+        "discount_percent": 20,
+        "discount_until": "2026-10-31",
+        "discount_note": "Партнёр"
       }
     },
     {
@@ -80,7 +94,8 @@
     { "club_id": 2, "user_id": 14, "role": "owner" }
   ],
   "zones": [
-    { "id": 1, "club_id": 1, "name": "VIP-зал", "description": "Персональные игровые места", "capacity": 8, "icon": "crown", "theme": "green", "status": "available", "is_featured": true, "sort_order": 10, "position_x": 20, "position_y": 20, "width": 390, "height": 380, "price_per_hour": "1000.00" },
+    { "id": 1, "club_id": 1, "name": "VIP-зал",
+      "devices": {"monitor": "ASUS ROG 240 Гц", "mouse": "Logitech G Pro"}, "description": "Персональные игровые места", "capacity": 8, "icon": "crown", "theme": "green", "status": "available", "is_featured": true, "sort_order": 10, "position_x": 20, "position_y": 20, "width": 390, "height": 380, "price_per_hour": "1000.00" },
     { "id": 2, "club_id": 1, "name": "Основной зал", "description": "Компьютерная зона", "capacity": 20, "icon": "desktop", "theme": "neutral", "status": "available", "sort_order": 20, "position_x": 425, "position_y": 20, "width": 330, "height": 180, "price_per_hour": "600.00" },
     { "id": 3, "club_id": 1, "name": "Консоли", "description": "PlayStation-зона", "capacity": 10, "icon": "gamepad", "theme": "neutral", "status": "available", "sort_order": 30, "position_x": 770, "position_y": 20, "width": 300, "height": 180 },
     { "id": 4, "club_id": 1, "name": "Бар", "description": "Касса и напитки", "icon": "mug-hot", "theme": "yellow", "status": "service", "sort_order": 40, "position_x": 425, "position_y": 215, "width": 330, "height": 185 },

@@ -52,13 +52,14 @@ var RouteRights = []struct {
 	{"news.update", []string{"news.update"}},
 	{"news.delete", []string{"news.destroy"}},
 	{"activity_logs.view", []string{"activity-logs.index"}},
-	{"settings.view", []string{"settings", "settings.club", "settings.languages", "settings.finances", "settings.guests", "settings.api"}},
-	{"settings.update", []string{"settings.save", "settings.language", "settings.timezone", "settings.logo", "settings.logo.destroy", "settings.signin-image", "settings.signin-image.destroy"}},
+	{"settings.view", []string{"settings", "settings.club", "settings.languages", "settings.finances", "settings.guests", "settings.api", "settings.profile"}},
+	{"settings.update", []string{"settings.save", "settings.language", "settings.timezone", "settings.location", "settings.profile.update", "settings.photos.store", "settings.photos.destroy", "settings.photos.cover", "settings.profile.zone", "settings.logo", "settings.logo.destroy", "settings.signin-image", "settings.signin-image.destroy"}},
 	{"workers.view", []string{"workers.index"}},
 	{"workers.create", []string{"workers.store", "club-invitations.store"}},
 	{"workers.update", []string{"workers.update", "settings.agent-pin", "settings.agent-staff-time"}},
 	{"workers.delete", []string{"workers.destroy"}},
 	{"billing.view", []string{"billing.show"}},
+	{"billing.pay", []string{"billing.invoices.store", "billing.invoices.cancel"}},
 }
 
 // RightFor — право маршрута; "" — маршрута нет в таблице (такой маршрут запрещён). Laravel: RequireClubArea::rightFor().

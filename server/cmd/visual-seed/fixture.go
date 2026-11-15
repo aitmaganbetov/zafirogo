@@ -14,6 +14,8 @@ type Fixture struct {
 		TOTPSecret string `json:"totp_secret"`
 	} `json:"login"`
 	SaasPlans         []SaasPlan        `json:"saas_plans"`
+	BillingKaspi      json.RawMessage   `json:"billing_kaspi"`
+	Invoices          []Invoice         `json:"subscription_invoices"`
 	Clubs             []Club            `json:"clubs"`
 	Users             []User            `json:"users"`
 	Memberships       []Membership      `json:"memberships"`
@@ -44,20 +46,45 @@ type SaasPlan struct {
 }
 
 type Club struct {
-	ID           int64           `json:"id"`
-	Name         string          `json:"name"`
-	Slug         string          `json:"slug"`
-	Timezone     string          `json:"timezone"`
-	Locale       string          `json:"locale"`
-	Settings     json.RawMessage `json:"settings"`
-	CreatedAt    string          `json:"created_at"`
+	ID        int64           `json:"id"`
+	Name      string          `json:"name"`
+	Slug      string          `json:"slug"`
+	Timezone  string          `json:"timezone"`
+	Locale    string          `json:"locale"`
+	Settings  json.RawMessage `json:"settings"`
+	CreatedAt string          `json:"created_at"`
+	// City, Address, Profile — город, адрес и профиль клуба для гостевого приложения (тема В).
+	City         *string         `json:"city"`
+	Address      *string         `json:"address"`
+	Profile      json.RawMessage `json:"profile"`
 	Subscription struct {
 		SaasPlanID          int64   `json:"saas_plan_id"`
 		Status              string  `json:"status"`
 		StartedAt           string  `json:"started_at"`
 		TrialEndsAt         *string `json:"trial_ends_at"`
 		CurrentPeriodEndsAt *string `json:"current_period_ends_at"`
+		DiscountPercent     int16   `json:"discount_percent"`
+		DiscountUntil       *string `json:"discount_until"`
+		DiscountNote        *string `json:"discount_note"`
 	} `json:"subscription"`
+}
+
+// Invoice — счёт клуба за подписку (тема Б): суммы — строки тенге, как в старом decimal(12,2).
+type Invoice struct {
+	ID               int64   `json:"id"`
+	ClubID           int64   `json:"club_id"`
+	SaasPlanID       int64   `json:"saas_plan_id"`
+	Months           int16   `json:"months"`
+	Computers        int32   `json:"computers"`
+	PricePerComputer string  `json:"price_per_computer"`
+	DiscountPercent  int16   `json:"discount_percent"`
+	Amount           string  `json:"amount"`
+	Status           string  `json:"status"`
+	CreatedBy        *int64  `json:"created_by"`
+	ConfirmedBy      *int64  `json:"confirmed_by"`
+	CreatedAt        string  `json:"created_at"`
+	PaidAt           *string `json:"paid_at"`
+	PeriodEndsAt     *string `json:"period_ends_at"`
 }
 
 type User struct {
@@ -99,6 +126,8 @@ type Zone struct {
 	Height       int64   `json:"height"`
 	Rotation     int64   `json:"rotation"`
 	PricePerHour *string `json:"price_per_hour"`
+	// Devices — оборудование зоны, заполненное клубом (тема В).
+	Devices json.RawMessage `json:"devices"`
 }
 
 type Computer struct {

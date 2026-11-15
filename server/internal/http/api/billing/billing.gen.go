@@ -13,6 +13,7 @@ import (
 
 	externalRef0 "github.com/aitmaganbetov/zafirogo/server/internal/http/api/common"
 	"github.com/go-chi/chi/v5"
+	"github.com/oapi-codegen/runtime"
 )
 
 // Defines values for BillingSubscriptionState.
@@ -63,17 +64,77 @@ func (e BillingSubscriptionStatus) Valid() bool {
 	}
 }
 
+// Defines values for InvoiceStatus.
+const (
+	Canceled InvoiceStatus = "canceled"
+	Paid     InvoiceStatus = "paid"
+	Pending  InvoiceStatus = "pending"
+)
+
+// Valid indicates whether the value is a known member of the InvoiceStatus enum.
+func (e InvoiceStatus) Valid() bool {
+	switch e {
+	case Canceled:
+		return true
+	case Paid:
+		return true
+	case Pending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Billing defines model for Billing.
 type Billing struct {
+	// CanPay Право billing.pay — выставить и отменить счёт («Продлить подписку может владелец клуба.»).
+	CanPay bool `json:"can_pay"`
+
+	// Computers ПК, за которые платит клуб — все зарегистрированные, минимум 1 (SubscriptionBilling::computers()).
+	Computers int64 `json:"computers"`
+
+	// DiscountPercent Скидка нового счёта, целые проценты: своя скидка клуба или скидка его реселлера, какая больше
+	// (SubscriptionBilling::discountFor(), BR-181).
+	DiscountPercent int `json:"discount_percent"`
+
+	// Invoices 12 последних счетов клуба, новые первыми.
+	Invoices []Invoice `json:"invoices"`
+	Kaspi    *Kaspi    `json:"kaspi"`
+
+	// Months Сроки счёта (SubscriptionInvoice::MONTHS).
+	Months  []int    `json:"months"`
+	Pending *Invoice `json:"pending"`
+
+	// Plans Тарифы, за которые можно заплатить — включённые и с ценой, по цене (payablePlans()).
+	Plans        []PayablePlan        `json:"plans"`
 	Subscription *BillingSubscription `json:"subscription"`
+}
+
+// BillingMessage defines model for BillingMessage.
+type BillingMessage struct {
+	Message string `json:"message"`
 }
 
 // BillingSubscription defines model for BillingSubscription.
 type BillingSubscription struct {
 	CurrentPeriodEndsAt *time.Time `json:"current_period_ends_at,omitempty"`
 
+	// DiscountPercent Действующая своя скидка клуба, целые проценты (discountPercent()); 0 — нет или закончилась.
+	DiscountPercent int `json:"discount_percent"`
+
+	// DiscountUntil Последний день скидки включительно (Y-m-d); null — бессрочно.
+	DiscountUntil *string `json:"discount_until"`
+
+	// MonthlyPriceTiyn Цена тарифа за ПК в месяц со своей скидкой клуба, тиыны (ClubSubscription::monthlyPrice(), BR-182);
+	// null — у тарифа нет цены.
+	MonthlyPriceTiyn *int64 `json:"monthly_price_tiyn"`
+
+	// MonthlyTotalTiyn «За K ПК» — monthly_price_tiyn × число ПК клуба (как на старом экране, GAP-038).
+	MonthlyTotalTiyn *int64 `json:"monthly_total_tiyn"`
+
 	// PlanName SaasPlan.name (шаблон показывает его через __(), как и новый экран).
-	PlanName string `json:"plan_name"`
+	PlanName   string `json:"plan_name"`
+	SaasPlanId int64  `json:"saas_plan_id"`
 
 	// State Строка «Статус» шаблона: не isActive() — isPastPaidPeriod() ? expired («Истекла») : inactive («Не активна»);
 	// иначе trialing («Пробный период») или active («Активна»).
@@ -89,11 +150,79 @@ type BillingSubscriptionState string
 // BillingSubscriptionStatus defines model for BillingSubscription.Status.
 type BillingSubscriptionStatus string
 
+// Invoice defines model for Invoice.
+type Invoice struct {
+	// AmountTiyn К оплате, тиыны; всегда целые тенге.
+	AmountTiyn      int64     `json:"amount_tiyn"`
+	Computers       int64     `json:"computers"`
+	CreatedAt       time.Time `json:"created_at"`
+	DiscountPercent int       `json:"discount_percent"`
+	Id              int64     `json:"id"`
+	Months          int       `json:"months"`
+
+	// Number Номер для комментария к платежу — «ZF-» + id с нулями до 5 знаков.
+	Number string `json:"number"`
+
+	// PeriodEndsAt До какого момента оплата продлила подписку.
+	PeriodEndsAt         *time.Time    `json:"period_ends_at"`
+	PlanName             string        `json:"plan_name"`
+	PricePerComputerTiyn int64         `json:"price_per_computer_tiyn"`
+	Status               InvoiceStatus `json:"status"`
+}
+
+// InvoiceStatus defines model for Invoice.Status.
+type InvoiceStatus string
+
+// InvoiceCreated defines model for InvoiceCreated.
+type InvoiceCreated struct {
+	Invoice Invoice `json:"invoice"`
+	Message string  `json:"message"`
+}
+
+// InvoiceInput defines model for InvoiceInput.
+type InvoiceInput struct {
+	Months     int   `json:"months"`
+	SaasPlanId int64 `json:"saas_plan_id"`
+}
+
+// Kaspi Ссылка Kaspi Pay платформы и получатель (настройка billing_kaspi); null — оплата не настроена.
+type Kaspi struct {
+	Recipient *string `json:"recipient"`
+	Url       string  `json:"url"`
+}
+
+// PayablePlan defines model for PayablePlan.
+type PayablePlan struct {
+	// Amounts «К оплате» по срокам для числа ПК и скидки клуба на сейчас — та же формула, по которой сервер выставит счёт
+	// (SubscriptionBilling::amount()); во фронте сумма не считается.
+	Amounts []PlanAmount `json:"amounts"`
+	Id      int64        `json:"id"`
+	Name    string       `json:"name"`
+
+	// PriceMonthlyTiyn Цена за ПК в месяц без скидки, тиыны.
+	PriceMonthlyTiyn int64 `json:"price_monthly_tiyn"`
+}
+
+// PlanAmount defines model for PlanAmount.
+type PlanAmount struct {
+	AmountTiyn int64 `json:"amount_tiyn"`
+	Months     int   `json:"months"`
+}
+
+// CreateInvoiceJSONRequestBody defines body for CreateInvoice for application/json ContentType.
+type CreateInvoiceJSONRequestBody = InvoiceInput
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetBilling Подписка клуба
 	// (GET /api/billing)
 	GetBilling(w http.ResponseWriter, r *http.Request)
+	// CreateInvoice Выставить счёт за подписку
+	// (POST /api/billing/invoices)
+	CreateInvoice(w http.ResponseWriter, r *http.Request)
+	// CancelInvoice Отменить свой неоплаченный счёт
+	// (POST /api/billing/invoices/{invoiceId}/cancel)
+	CancelInvoice(w http.ResponseWriter, r *http.Request, invoiceId int64)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -103,6 +232,18 @@ type Unimplemented struct{}
 // GetBilling Подписка клуба
 // (GET /api/billing)
 func (_ Unimplemented) GetBilling(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CreateInvoice Выставить счёт за подписку
+// (POST /api/billing/invoices)
+func (_ Unimplemented) CreateInvoice(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// CancelInvoice Отменить свой неоплаченный счёт
+// (POST /api/billing/invoices/{invoiceId}/cancel)
+func (_ Unimplemented) CancelInvoice(w http.ResponseWriter, r *http.Request, invoiceId int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -120,6 +261,46 @@ func (siw *ServerInterfaceWrapper) GetBilling(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetBilling(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateInvoice operation middleware
+func (siw *ServerInterfaceWrapper) CreateInvoice(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateInvoice(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelInvoice operation middleware
+func (siw *ServerInterfaceWrapper) CancelInvoice(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "invoiceId" -------------
+	var invoiceId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "invoiceId", chi.URLParam(r, "invoiceId"), &invoiceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "invoiceId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelInvoice(w, r, invoiceId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -245,6 +426,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/billing", wrapper.GetBilling)
 	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/billing/invoices", wrapper.CreateInvoice)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/billing/invoices/{invoiceId}/cancel", wrapper.CancelInvoice)
+	})
 
 	return r
 }
@@ -302,11 +489,192 @@ func (response GetBilling403JSONResponse) VisitGetBillingResponse(w http.Respons
 	return err
 }
 
+type CreateInvoiceRequestObject struct {
+	Body *CreateInvoiceJSONRequestBody
+}
+
+type CreateInvoiceResponseObject interface {
+	VisitCreateInvoiceResponse(w http.ResponseWriter) error
+}
+
+type CreateInvoice201JSONResponse InvoiceCreated
+
+func (response CreateInvoice201JSONResponse) VisitCreateInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvoice401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response CreateInvoice401JSONResponse) VisitCreateInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvoice403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response CreateInvoice403JSONResponse) VisitCreateInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvoice422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response CreateInvoice422JSONResponse) VisitCreateInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvoice429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response CreateInvoice429JSONResponse) VisitCreateInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelInvoiceRequestObject struct {
+	InvoiceId int64 `json:"invoiceId"`
+}
+
+type CancelInvoiceResponseObject interface {
+	VisitCancelInvoiceResponse(w http.ResponseWriter) error
+}
+
+type CancelInvoice200JSONResponse BillingMessage
+
+func (response CancelInvoice200JSONResponse) VisitCancelInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelInvoice401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response CancelInvoice401JSONResponse) VisitCancelInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelInvoice403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response CancelInvoice403JSONResponse) VisitCancelInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelInvoice404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response CancelInvoice404JSONResponse) VisitCancelInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CancelInvoice422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response CancelInvoice422JSONResponse) VisitCancelInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// GetBilling Подписка клуба
 	// (GET /api/billing)
 	GetBilling(ctx context.Context, request GetBillingRequestObject) (GetBillingResponseObject, error)
+	// CreateInvoice Выставить счёт за подписку
+	// (POST /api/billing/invoices)
+	CreateInvoice(ctx context.Context, request CreateInvoiceRequestObject) (CreateInvoiceResponseObject, error)
+	// CancelInvoice Отменить свой неоплаченный счёт
+	// (POST /api/billing/invoices/{invoiceId}/cancel)
+	CancelInvoice(ctx context.Context, request CancelInvoiceRequestObject) (CancelInvoiceResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -365,6 +733,63 @@ func (sh *strictHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetBillingResponseObject); ok {
 		if err := validResponse.VisitGetBillingResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateInvoice operation middleware
+func (sh *strictHandler) CreateInvoice(w http.ResponseWriter, r *http.Request) {
+	var request CreateInvoiceRequestObject
+
+	var body CreateInvoiceJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateInvoice(ctx, request.(CreateInvoiceRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateInvoice")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateInvoiceResponseObject); ok {
+		if err := validResponse.VisitCreateInvoiceResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CancelInvoice operation middleware
+func (sh *strictHandler) CancelInvoice(w http.ResponseWriter, r *http.Request, invoiceId int64) {
+	var request CancelInvoiceRequestObject
+
+	request.InvoiceId = invoiceId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CancelInvoice(ctx, request.(CancelInvoiceRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CancelInvoice")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CancelInvoiceResponseObject); ok {
+		if err := validResponse.VisitCancelInvoiceResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

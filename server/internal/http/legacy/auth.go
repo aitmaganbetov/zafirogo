@@ -509,6 +509,57 @@ func (a *API) localUser(ctx context.Context, phone string) (store.GetUserByPhone
 	return u, rows, true, err
 }
 
+// clubHere — клуб есть на этом сервере (маршрутизация входа при поклубном переходе).
+func (a *API) clubHere(ctx context.Context, clubID int64) (bool, error) {
+	var here bool
+	err := pgx.BeginTxFunc(ctx, a.d.Pool, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+		var err error
+		here, err = store.New(tx).CatalogClubExists(ctx, clubID)
+		return err
+	})
+	return here, err
+}
+
+// joinClub — аккаунт становится клиентом клуба из каталога приложения: членство client со скидкой 0, строка баланса
+// с нулями, журнал user.joined_club — одной транзакцией клуба. nil — вступить нельзя: клуба нет или у него нет
+// города (клуба нет в каталоге). Клуб — из запроса входа (до аутентификации, решение UQ-13); условие «клуб с
+// городом» проверяет запрос вставки. Повторный или параллельный вход членство не дублирует (уникальный ключ
+// club_id + user_id): тогда возвращается существующее членство.
+// Laravel: app/Http/Controllers/Api/AuthController.php joinClub() (Zafiro 1a0487a).
+func (a *API) joinClub(ctx context.Context, userID int64, userName string, clubID int64) (*store.MobileUserClubsRow, error) {
+	if clubID <= 0 {
+		return nil, nil
+	}
+	now := a.d.NowFunc()
+	err := db.InTenantTx(ctx, a.d.Pool, clubID, func(q *store.Queries) error {
+		n, err := q.CatalogJoinClub(ctx, store.CatalogJoinClubParams{UserID: userID, ClubID: clubID, Now: now})
+		if err != nil || n == 0 {
+			return err
+		}
+		// MemberBalance::firstOrCreate(['user_id'], ['balance' => 0, 'bonus_balance' => 0]).
+		if err := q.EnsureMemberBalance(ctx, store.EnsureMemberBalanceParams{ClubID: clubID, UserID: userID}); err != nil {
+			return err
+		}
+		_, err = activity.Record(ctx, q, activity.Entry{ClubID: clubID, Event: "user.joined_club",
+			Description: a.tc(ctx, clubID, "Клиент стал клиентом клуба в мобильном приложении: :user", map[string]string{"user": userName}),
+			UserID:      userID, SubjectType: morphUser, SubjectID: userID, At: now})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	_, rows, err := a.clubList(ctx, userID, clubID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		if rows[i].ClubID == clubID {
+			return &rows[i], nil
+		}
+	}
+	return nil, nil
+}
+
 // recordLoginFailed — ActivityLogger::recordFailedLogin('auth.api_login_failed', …): во всех клубах аккаунта.
 func (a *API) recordLoginFailed(ctx context.Context, user store.GetUserByPhoneRow, clubs []store.MobileUserClubsRow, reason, device string) {
 	if a.d.PlatformPool == nil || len(clubs) == 0 {
@@ -553,7 +604,18 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "login lookup", err)
 		return
 	}
-	if len(clubs) == 0 && a.forward(w, r) {
+	elsewhere := len(clubs) == 0
+	// Вход в клуб, выбранный в каталоге (club_id): клуба здесь нет — он ещё на старом сервере, вход туда; клуб
+	// здесь и аккаунт здесь — вход (и вступление) здесь, даже если у аккаунта тут ещё нет клубов (UQ-2).
+	if requested, ok := b.integer("club_id"); ok && requested > 0 && a.proxy != nil {
+		here, err := a.clubHere(ctx, requested)
+		if err != nil {
+			a.fail(w, r, "login club lookup", err)
+			return
+		}
+		elsewhere = !here || (!found && elsewhere)
+	}
+	if elsewhere && a.forward(w, r) {
 		return
 	}
 	a.throttle(ratelimit.CustomerLogin)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -654,6 +716,25 @@ func (a *API) doLogin(w http.ResponseWriter, r *http.Request, b body, user store
 			membership, active = &c, on
 		}
 	}
+	// Гость входит в клуб, выбранный в списке клубов города: аккаунт становится клиентом этого клуба.
+	// Laravel: app/Http/Controllers/Api/AuthController.php issueUserLoginResponse() (Zafiro 1a0487a):
+	//   if (! $membership && ! $agentContract && $requestedClubId !== null
+	//       && ($club = Club::query()->whereNotNull('city')->find($requestedClubId)) !== null) { joinClub(…) }
+	// ($agentContract — вход с ПК клуба; в новом сервере это gRPC агента, сюда он не приходит.)
+	if membership == nil && requested != 0 {
+		joined, err := a.joinClub(ctx, user.ID, user.Name, requested)
+		if err != nil {
+			a.fail(w, r, "join club", err)
+			return
+		}
+		// Клиенту подписка клуба не нужна (needsSubscription); членство сотрудника, появившееся параллельно, — нужна.
+		if membership = joined; joined != nil && needsSubscription(joined.Role) {
+			if active, err = a.clubActive(ctx, joined.ClubID); err != nil {
+				a.fail(w, r, "subscription", err)
+				return
+			}
+		}
+	}
 	if membership == nil {
 		failed("no_club_access")
 		writeCode(w, http.StatusForbidden, a.t(r, msgNoClubAccess, nil), "not_club_member")
@@ -749,16 +830,38 @@ func (a *API) switchClub(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "clubs", err)
 		return
 	}
-	if !slices.ContainsFunc(rows, func(c store.MobileUserClubsRow) bool { return c.ClubID == clubID }) {
-		writeMessage(w, http.StatusForbidden, a.t(r, msgNoClubAccess, nil))
-		return
+	i := slices.IndexFunc(rows, func(c store.MobileUserClubsRow) bool { return c.ClubID == clubID })
+	var role string
+	if i >= 0 {
+		role = rows[i].Role
+	} else {
+		// if (! $membership && ($club = Club::query()->whereNotNull('city')->find($clubId)) !== null) { joinClub(…) }
+		// Laravel: app/Http/Controllers/Api/AuthController.php switchClub() (Zafiro 1a0487a).
+		var name string
+		if err := a.userTx(ctx, t.UserID, func(q *store.Queries) error {
+			u, err := q.GetUserAuth(ctx, t.UserID)
+			name = u.Name
+			return err
+		}); err != nil {
+			a.fail(w, r, "user", err)
+			return
+		}
+		joined, err := a.joinClub(ctx, t.UserID, name, clubID)
+		if err != nil {
+			a.fail(w, r, "join club", err)
+			return
+		}
+		if joined == nil {
+			writeMessage(w, http.StatusForbidden, a.t(r, msgNoClubAccess, nil))
+			return
+		}
+		role = joined.Role
 	}
 	active, err := a.clubActive(ctx, clubID)
 	if err != nil {
 		a.fail(w, r, "subscription", err)
 		return
 	}
-	role := rows[slices.IndexFunc(rows, func(c store.MobileUserClubsRow) bool { return c.ClubID == clubID })].Role
 	if needsSubscription(role) && !active {
 		writeMessage(w, http.StatusPaymentRequired, a.tc(ctx, clubID, msgSubscription, nil))
 		return

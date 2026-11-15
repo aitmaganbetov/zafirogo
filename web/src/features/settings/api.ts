@@ -5,7 +5,7 @@ import type { components as IC, paths as IP } from '../../api/gen/integrations';
 
 /*
  * Настройки клуба (api/settings.yaml) и «API и интеграции» (api/integrations.yaml). Laravel: SettingsController,
- * LanguageController, ClubLogoController, ClubSignInImageController, IntegrationController. Ключи Query —
+ * LanguageController, ClubLogoController, ClubSignInImageController, ClubProfileController, IntegrationController. Ключи Query —
  * ['settings', …] и ['integrations', …].
  */
 
@@ -19,12 +19,18 @@ export type IntegrationsPage = IC['schemas']['IntegrationsPage'];
 export type CreatedSecret = IC['schemas']['CreatedSecret'];
 export type DeliveryPage = IC['schemas']['DeliveryPage'];
 export type SettingsSection = 'club' | 'finances' | 'guests';
+export type ClubProfilePage = SC['schemas']['ClubProfilePage'];
+export type ZoneProfile = SC['schemas']['ZoneProfile'];
 
 export const clubSettingsQuery = () =>
   queryOptions({ queryKey: ['settings', 'club'], queryFn: ({ signal }) => unwrap(settingsApi.GET('/api/settings', { signal })) });
 
 export const languagesQuery = () =>
   queryOptions({ queryKey: ['settings', 'languages'], queryFn: ({ signal }) => unwrap(settingsApi.GET('/api/settings/languages', { signal })) });
+
+/** Настройки → Профиль клуба (ClubProfileController::show()). */
+export const clubProfileQuery = () =>
+  queryOptions({ queryKey: ['settings', 'profile'], queryFn: ({ signal }) => unwrap(settingsApi.GET('/api/settings/profile', { signal })) });
 
 export const integrationsQuery = () =>
   queryOptions({ queryKey: ['integrations'], queryFn: ({ signal }) => unwrap(integrationsApi.GET('/api/settings/integrations', { signal })) });
@@ -39,11 +45,19 @@ export const saveLanguage = (locale: string) => unwrap(settingsApi.PUT('/api/set
 export const saveAgentPin = (pin: string, pin_confirmation: string) =>
   unwrap(settingsApi.PUT('/api/settings/agent-pin', { body: { pin, pin_confirmation } }));
 export const saveStaffTime = (minutes: string) => unwrap(settingsApi.PUT('/api/settings/agent-staff-time', { body: { minutes } }));
+export const saveLocation = (city: string, address: string) => unwrap(settingsApi.PUT('/api/settings/location', { body: { city, address } }));
+export const saveProfile = (body: SC['schemas']['ClubProfileRequest']) => unwrap(settingsApi.PUT('/api/settings/profile', { body }));
+export const deletePhoto = (photo: number) =>
+  unwrap(settingsApi.DELETE('/api/settings/profile/photos/{photo}', { params: { path: { photo } } }));
+export const coverPhoto = (photo: number) =>
+  unwrap(settingsApi.POST('/api/settings/profile/photos/{photo}/cover', { params: { path: { photo } } }));
+export const saveZoneProfile = (zone: number, body: SC['schemas']['ZoneProfileRequest']) =>
+  unwrap(settingsApi.PUT('/api/settings/profile/zones/{zone}', { params: { path: { zone } }, body }));
 export const deleteLogo = () => unwrap(settingsApi.DELETE('/api/settings/logo'));
 export const deleteSigninImage = () => unwrap(settingsApi.DELETE('/api/settings/signin-image'));
 
 /** Загрузка картинки формой multipart (как enctype="multipart/form-data" старой формы). */
-export async function uploadImage(url: '/api/settings/logo' | '/api/settings/signin-image', form: FormData): Promise<{ message: string }> {
+export async function uploadImage(url: '/api/settings/logo' | '/api/settings/signin-image' | '/api/settings/profile/photos', form: FormData): Promise<{ message: string }> {
   const res = await apiFetch(new Request(new URL(url, location.origin), { method: 'POST', body: form, credentials: 'same-origin' }));
   if (!res.ok) throw await errorFromResponse(res);
   return (await res.json()) as { message: string };

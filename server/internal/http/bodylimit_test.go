@@ -58,6 +58,11 @@ func TestBodyLimitMultipartAndV1(t *testing.T) {
 	}{
 		{"/api/settings/signin-image", "multipart/form-data; boundary=x", 4 << 20, 4 << 20},
 		{"/api/settings/signin-image", "multipart/form-data; boundary=x", 9 << 20, MaxMultipartBody},
+		// Фото клуба — до 10 файлов по 3 МБ одной формой: свой предел только у этого маршрута.
+		{"/api/settings/profile/photos", "multipart/form-data; boundary=x", 20 << 20, 20 << 20},
+		{"/api/settings/profile/photos", "multipart/form-data; boundary=x", 40 << 20, MaxPhotosBody},
+		{"/api/settings/profile/photos", "application/json", 2 << 20, MaxJSONBody},
+		{"/api/settings/profile/photos/1/cover", "multipart/form-data; boundary=x", 9 << 20, MaxMultipartBody},
 		{"/api/cash-register/sales", "application/json", 2 << 20, MaxJSONBody},
 		{"/api/v1/customers", "application/json", 2 << 20, 2 << 20},
 	} {

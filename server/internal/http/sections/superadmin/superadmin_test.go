@@ -200,3 +200,30 @@ func TestSplitFeatures_UTF8(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// Правило Laravel 'url:https' ссылки Kaspi: только абсолютный https-адрес с хостом (ссылку открывают клубы).
+func TestHTTPSURL(t *testing.T) {
+	for _, ok := range []string{"https://pay.kaspi.kz/pay/zafiro", "https://kaspi.kz/pay/x?id=1&a=b", "HTTPS://pay.kaspi.kz/"} {
+		if !httpsURL(ok) {
+			t.Errorf("%q должен приниматься", ok)
+		}
+	}
+	for _, bad := range []string{"http://pay.kaspi.kz/pay", "javascript:alert(1)", "pay.kaspi.kz/pay", "https://", "//pay.kaspi.kz", "https://pay.kaspi.kz/a b", "ftp://kaspi.kz", "data:text/html,x", "https:pay.kaspi.kz"} {
+		if httpsURL(bad) {
+			t.Errorf("%q не должен приниматься", bad)
+		}
+	}
+}
+
+// Скидка клуба в audit_log: дата и причина — только если заданы.
+func TestDiscountAudit(t *testing.T) {
+	until := time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC)
+	note := "Партнёр"
+	got := discountAudit(20, &until, &note)
+	if got["discount_percent"] != 20 || got["discount_until"] != "2026-11-25" || got["discount_note"] != "Партнёр" {
+		t.Fatalf("%v", got)
+	}
+	if got := discountAudit(0, nil, nil); len(got) != 1 || got["discount_percent"] != 0 {
+		t.Fatalf("%v", got)
+	}
+}

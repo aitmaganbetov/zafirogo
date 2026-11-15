@@ -14,6 +14,11 @@ const (
 	MaxJSONBody = 1 << 20
 	// MaxMultipartBody — загрузки (картинка входа ≤ 3 МБ, импорт переводов ≤ 2 МБ, новость ≤ 2 МБ + поля).
 	MaxMultipartBody = 8 << 20
+	// MaxPhotosBody — загрузка фото клуба (POST /api/settings/profile/photos): до 10 файлов по 3 МБ одной формой,
+	// как в старом (ClubProfileController::storePhotos(): photos — max:10, photos.* — max:3072) + поля формы.
+	MaxPhotosBody = 32 << 20
+	// photosPath — единственный маршрут с пределом MaxPhotosBody.
+	photosPath = "/api/settings/profile/photos"
 )
 
 // bodyLimit ограничивает тело запроса (http.MaxBytesReader: чтение сверх предела — ошибка, разбор — 400/413).
@@ -24,6 +29,9 @@ func bodyLimit(next http.Handler) http.Handler {
 			limit := int64(MaxJSONBody)
 			if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err == nil && mt == "multipart/form-data" {
 				limit = MaxMultipartBody
+				if r.Method == http.MethodPost && r.URL.Path == photosPath {
+					limit = MaxPhotosBody
+				}
 			}
 			if r.ContentLength > limit {
 				writeError(w, http.StatusRequestEntityTooLarge, "payload_too_large")

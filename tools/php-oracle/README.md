@@ -58,6 +58,31 @@ cd server && ZAFIRO_PHP_ORACLE=1 ZAFIRO_PHP_BIN="docker run --rm -i php:8.4.27-c
 
 8.3 и 8.4 расходятся в 13 475 кейсах из 310 449 — см. `docs/business-rules.md` BR-001 и `docs/open-questions/stage1-money.md` MQ-1.
 
+## Деньги подписки платформы (тема Б, ноябрь 2026)
+
+`gen-subscription-fixture.php` снимает с PHP 8.4 ответы формул счёта за подписку и пишет
+`server/internal/subscription/testdata/php_subscription.json` (числа — тиыны и базисные пункты):
+
+| Ключ | Строка | Что проверяет Go (`server/internal/subscription/calc_test.go`) |
+|---|---|---|
+| `amount` | `[цена за ПК, ПК, месяцы, скидка %, round(цена × ПК × месяцы × (100 − скидка) / 100) × 100]` | `Amount` — BR-180, GAP-037 |
+| `monthly` | `[цена, скидка %, round(цена × (100 − скидка) / 100, 2) × 100]` | `MonthlyPrice` — BR-182, GAP-038 |
+| `earning` | `[сумма счёта, процент в б. п., round(сумма × процент / 100, 2) × 100]` | `ResellerEarning` — BR-186, GAP-040 |
+| `add_months` | `[момент UTC, месяцы, addMonthsNoOverflow]` | `AddMonthsNoOverflow` — BR-183, GAP-039 |
+
+Формулы — буквальные копии `SubscriptionBilling::amount()`, `ClubSubscription::monthlyPrice()` и расчёта `$earning` в
+`SubscriptionBilling::markPaid()`; цена читается строкой `decimal(12,2)` и приводится к float, как в Eloquent. Кандидаты
+(детерминированно, `mt_srand(20261115)`): сценарии GS и GAP, сетка «цена в целых тенге × все скидки × все сроки»,
+случайные цены с тиынами и отдельно — попадающие ровно на половину тенге (тиына). В Go формулы целочисленные (решение
+UQ-7): при цене в целых тенге ответы равны всегда; на половинах при цене с тиынами float PHP иногда даёт на единицу
+меньше — тест допускает только это расхождение (`docs/open-questions/upstream-billing.md` UB-1).
+
+```sh
+docker run --rm -v "$PWD":/w -w /w php:8.4.27-cli php tools/php-oracle/gen-subscription-fixture.php \
+  > server/internal/subscription/testdata/php_subscription.json
+cd server && go test ./internal/subscription/
+```
+
 ## Pest-оракул
 
 Прогон эталонных сценариев на **старом Laravel** (одноразовая копия `../Zafiro`, сам проект не меняется) и

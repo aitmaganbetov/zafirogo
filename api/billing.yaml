@@ -3,8 +3,10 @@ info:
   title: zafirogo API — billing
   version: 0.1.0
   description: |
-    Экран «Подписка» (BillingController::show, billing/index.blade.php). Право billing.view (club-area), без проверки
-    подписки — сюда ведёт 402 «Подписка клуба не активна.». Конвенции — api/README.md.
+    Экран «Подписка» (BillingController, billing/index.blade.php): подписка клуба, счёт за подписку и его оплата по
+    ссылке Kaspi (SubscriptionBilling, BR-180…BR-184). Права: billing.view — экран, billing.pay — выставить и отменить
+    счёт (по умолчанию только владелец). Без проверки подписки — сюда ведёт 402 «Подписка клуба не активна.», и клуб
+    с истёкшей подпиской может выставить счёт. Суммы — целые тиыны. Конвенции — api/README.md.
 servers:
   - url: /
 security:
@@ -17,6 +19,8 @@ paths:
       summary: Подписка клуба
       description: |
         ClubSubscription клуба с планом; нет подписки — subscription: null («Для клуба ещё не оформлена подписка.»).
+        Плюс всё для оплаты: число ПК, скидка, тарифы с готовыми суммами счёта по срокам (сумму считает сервер),
+        реквизиты Kaspi, неоплаченный счёт и 12 последних счетов.
       responses:
         "200":
           description: Подписка.
@@ -28,6 +32,69 @@ paths:
           $ref: "common.yaml#/components/responses/Unauthenticated"
         "403":
           $ref: "common.yaml#/components/responses/Forbidden"
+  /api/billing/invoices:
+    post:
+      operationId: createInvoice
+      tags: [billing]
+      summary: Выставить счёт за подписку
+      description: |
+        Laravel: BillingController::store() (billing.invoices.store, право billing.pay, throttle:10,1; без middleware
+        subscription). Сумма = цена тарифа за ПК × число ПК клуба × месяцы со скидкой, целые тенге (BR-180). У клуба
+        один неоплаченный счёт (BR-184). Ошибки 422: saas_plan_id (тариф выключен или без цены), months (не 1/3/6/12),
+        invoice («Оплата пока не настроена…», «У клуба уже есть неоплаченный счёт…»). Журнал клуба
+        billing.invoice_opened, сообщение в Telegram-чат платформы.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvoiceInput"
+      responses:
+        "201":
+          description: Счёт выставлен.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvoiceCreated"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+        "429":
+          $ref: "common.yaml#/components/responses/TooManyRequests"
+  /api/billing/invoices/{invoiceId}/cancel:
+    post:
+      operationId: cancelInvoice
+      tags: [billing]
+      summary: Отменить свой неоплаченный счёт
+      description: |
+        Laravel: BillingController::cancel() (billing.invoices.cancel, право billing.pay). Счёт другого клуба — 404;
+        уже оплаченный или отменённый — 422 invoice «Счёт уже закрыт.». Журнал клуба billing.invoice_canceled.
+      parameters:
+        - name: invoiceId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Счёт отменён.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
 components:
   securitySchemes:
     bearerAuth:
@@ -37,16 +104,172 @@ components:
   schemas:
     Billing:
       type: object
-      required: [subscription]
+      required: [subscription, can_pay, computers, discount_percent, months, plans, kaspi, pending, invoices]
       properties:
         subscription:
           allOf:
             - $ref: "#/components/schemas/BillingSubscription"
           nullable: true
+        can_pay:
+          type: boolean
+          description: Право billing.pay — выставить и отменить счёт («Продлить подписку может владелец клуба.»).
+        computers:
+          type: integer
+          format: int64
+          description: ПК, за которые платит клуб — все зарегистрированные, минимум 1 (SubscriptionBilling::computers()).
+        discount_percent:
+          type: integer
+          description: |
+            Скидка нового счёта, целые проценты: своя скидка клуба или скидка его реселлера, какая больше
+            (SubscriptionBilling::discountFor(), BR-181).
+        months:
+          type: array
+          description: Сроки счёта (SubscriptionInvoice::MONTHS).
+          items:
+            type: integer
+        plans:
+          type: array
+          description: Тарифы, за которые можно заплатить — включённые и с ценой, по цене (payablePlans()).
+          items:
+            $ref: "#/components/schemas/PayablePlan"
+        kaspi:
+          allOf:
+            - $ref: "#/components/schemas/Kaspi"
+          nullable: true
+        pending:
+          allOf:
+            - $ref: "#/components/schemas/Invoice"
+          nullable: true
+        invoices:
+          type: array
+          description: 12 последних счетов клуба, новые первыми.
+          items:
+            $ref: "#/components/schemas/Invoice"
+    Kaspi:
+      type: object
+      description: Ссылка Kaspi Pay платформы и получатель (настройка billing_kaspi); null — оплата не настроена.
+      required: [url, recipient]
+      properties:
+        url:
+          type: string
+        recipient:
+          type: string
+          nullable: true
+    PayablePlan:
+      type: object
+      required: [id, name, price_monthly_tiyn, amounts]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        price_monthly_tiyn:
+          type: integer
+          format: int64
+          description: Цена за ПК в месяц без скидки, тиыны.
+        amounts:
+          type: array
+          description: |
+            «К оплате» по срокам для числа ПК и скидки клуба на сейчас — та же формула, по которой сервер выставит счёт
+            (SubscriptionBilling::amount()); во фронте сумма не считается.
+          items:
+            $ref: "#/components/schemas/PlanAmount"
+    PlanAmount:
+      type: object
+      required: [months, amount_tiyn]
+      properties:
+        months:
+          type: integer
+        amount_tiyn:
+          type: integer
+          format: int64
+    Invoice:
+      type: object
+      required: [id, number, plan_name, months, computers, price_per_computer_tiyn, discount_percent, amount_tiyn, status, created_at, period_ends_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        number:
+          type: string
+          description: Номер для комментария к платежу — «ZF-» + id с нулями до 5 знаков.
+        plan_name:
+          type: string
+        months:
+          type: integer
+        computers:
+          type: integer
+          format: int64
+        price_per_computer_tiyn:
+          type: integer
+          format: int64
+        discount_percent:
+          type: integer
+        amount_tiyn:
+          type: integer
+          format: int64
+          description: К оплате, тиыны; всегда целые тенге.
+        status:
+          type: string
+          enum: [pending, paid, canceled]
+        created_at:
+          type: string
+          format: date-time
+        period_ends_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: До какого момента оплата продлила подписку.
+    InvoiceInput:
+      type: object
+      required: [saas_plan_id, months]
+      properties:
+        saas_plan_id:
+          type: integer
+          format: int64
+        months:
+          type: integer
+    InvoiceCreated:
+      type: object
+      required: [message, invoice]
+      properties:
+        message:
+          type: string
+        invoice:
+          $ref: "#/components/schemas/Invoice"
+    BillingMessage:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
     BillingSubscription:
       type: object
-      required: [plan_name, status, state]
+      required: [plan_name, saas_plan_id, status, state, monthly_price_tiyn, monthly_total_tiyn, discount_percent, discount_until]
       properties:
+        saas_plan_id:
+          type: integer
+          format: int64
+        monthly_price_tiyn:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Цена тарифа за ПК в месяц со своей скидкой клуба, тиыны (ClubSubscription::monthlyPrice(), BR-182);
+            null — у тарифа нет цены.
+        monthly_total_tiyn:
+          type: integer
+          format: int64
+          nullable: true
+          description: «За K ПК» — monthly_price_tiyn × число ПК клуба (как на старом экране, GAP-038).
+        discount_percent:
+          type: integer
+          description: Действующая своя скидка клуба, целые проценты (discountPercent()); 0 — нет или закончилась.
+        discount_until:
+          type: string
+          nullable: true
+          description: Последний день скидки включительно (Y-m-d); null — бессрочно.
         plan_name:
           type: string
           description: SaasPlan.name (шаблон показывает его через __(), как и новый экран).

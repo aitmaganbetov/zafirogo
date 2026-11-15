@@ -25,10 +25,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/pricing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Тарифы платформы для страницы /pricing
+         * @description LandingController::pricing(): активные тарифы (saas_plans.is_active), порядок — `price_monthly IS NOT NULL`,
+         *     `price_monthly`, `id` (бесплатные и «по запросу» первыми). Цена — целые тиыны «за ПК в месяц» (null — без цены).
+         *     Остальные данные страницы (пробный период, установщик) — GET /api/landing.
+         */
+        get: operations["getPricing"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        Pricing: {
+            plans: components["schemas"]["PricingPlan"][];
+        };
+        PricingPlan: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            /**
+             * Format: int64
+             * @description Цена за ПК в месяц, тиыны; null — цена не задана («Бесплатно» при пробных днях, иначе «По запросу»).
+             */
+            price_monthly: number | null;
+            /** Format: int64 */
+            trial_days: number;
+            features: string[];
+        };
         Landing: {
             /** Format: int64 */
             trial_days: number;
@@ -59,6 +97,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Landing"];
+                };
+            };
+        };
+    };
+    getPricing: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Тарифы. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Pricing"];
                 };
             };
         };

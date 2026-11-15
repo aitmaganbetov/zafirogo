@@ -265,6 +265,144 @@ paths:
           $ref: common.yaml#/components/responses/NotFound
         '422':
           $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/clubs/{clubId}/subscription/discount:
+    post:
+      operationId: saSetClubDiscount
+      tags:
+      - superadmin
+      summary: Индивидуальная скидка клуба на тариф
+      description: 'Laravel: ClubController::discount() (superadmin.clubs.discount). Процент 0…100, срок — последний
+        день включительно (не раньше сегодня) или бессрочно, причина до 200 символов; 0 % снимает скидку вместе с датой
+        и причиной. Клуб без подписки — 404. Журнал платформы superadmin.subscription_discount_changed.'
+      parameters:
+      - $ref: '#/components/parameters/ClubId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscountForm'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/invoices:
+    get:
+      operationId: saListInvoices
+      tags:
+      - superadmin
+      summary: Оплаты — счета клубов за подписку
+      description: 'Laravel: InvoiceController::index() (superadmin.invoices.index): счета, ожидающие оплаты (старые
+        первыми), закрытые (новые первыми, по 30) и настройка Kaspi.'
+      parameters:
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceBoard'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+  /api/superadmin/invoices/kaspi:
+    post:
+      operationId: saSetInvoiceKaspi
+      tags:
+      - superadmin
+      summary: Ссылка на оплату Kaspi и получатель
+      description: 'Laravel: InvoiceController::kaspi() (superadmin.invoices.kaspi): url — https, до 500 символов;
+        recipient — до 200. Пустая ссылка выключает оплату: клубы не могут выставить счёт. Журнал платформы
+        superadmin.billing_kaspi_changed.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KaspiForm'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/invoices/{invoiceId}/pay:
+    post:
+      operationId: saPayInvoice
+      tags:
+      - superadmin
+      summary: Оплата получена — продлить подписку клуба
+      description: 'Laravel: InvoiceController::pay(), SubscriptionBilling::markPaid() (superadmin.invoices.pay):
+        подписка клуба — тариф счёта, активна ещё N месяцев от конца текущего периода (или от сегодня, BR-183); счёт —
+        оплачен. Повтор — 422 invoice «Счёт уже закрыт.». Журнал платформы superadmin.invoice_paid, журнал денег
+        платформы invoice_paid:<id>.'
+      parameters:
+      - $ref: '#/components/parameters/InvoiceId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
+  /api/superadmin/invoices/{invoiceId}/cancel:
+    post:
+      operationId: saCancelInvoice
+      tags:
+      - superadmin
+      summary: Отменить неоплаченный счёт клуба
+      description: 'Laravel: InvoiceController::cancel() (superadmin.invoices.cancel). Закрытый счёт — 422 invoice
+        «Счёт уже закрыт.». Журнал платформы superadmin.invoice_canceled.'
+      parameters:
+      - $ref: '#/components/parameters/InvoiceId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '401':
+          $ref: common.yaml#/components/responses/Unauthenticated
+        '403':
+          $ref: common.yaml#/components/responses/Forbidden
+        '404':
+          $ref: common.yaml#/components/responses/NotFound
+        '422':
+          $ref: common.yaml#/components/responses/ValidationFailed
   /api/superadmin/accounts:
     get:
       operationId: saListAccounts
@@ -1023,6 +1161,14 @@ components:
       schema: &id002
         type: integer
         format: int64
+    InvoiceId:
+      name: invoiceId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
     UserId:
       name: userId
       in: path
@@ -1450,7 +1596,16 @@ components:
       - webhook_failures
       - badge
       - days_left
+      - discount_percent
+      - discount_note
       properties:
+        discount_percent:
+          type: integer
+          description: Действующая индивидуальная скидка клуба, % (бейдж «−P%»); 0 — нет.
+        discount_note:
+          type: string
+          nullable: true
+          description: Причина скидки (title бейджа).
         id: *id002
         name: *id003
         slug: *id003
@@ -1543,6 +1698,57 @@ components:
         hour: *id007
         busy: *id002
         online: *id003
+    ClubCardSubscription:
+      type: object
+      required:
+      - status
+      - saas_plan_id
+      - plan_name
+      - paid_until
+      - trial_until
+      - active
+      - monthly_price_tiyn
+      - plan_price_monthly_tiyn
+      - discount_percent
+      - stored_discount_percent
+      - discount_until
+      - discount_until_label
+      - discount_note
+      properties:
+        monthly_price_tiyn:
+          type: integer
+          format: int64
+          nullable: true
+          description: Цена тарифа за ПК в месяц со скидкой клуба, тиыны (ClubSubscription::monthlyPrice());
+            null — у тарифа нет цены.
+        plan_price_monthly_tiyn:
+          type: integer
+          format: int64
+          nullable: true
+          description: Цена тарифа без скидки, тиыны.
+        discount_percent:
+          type: integer
+          description: Действующая скидка, % (discountPercent()); 0 — нет или закончилась.
+        stored_discount_percent:
+          type: integer
+          description: Сохранённый процент (для подсказки «Скидка P% закончилась дата.»).
+        discount_until:
+          type: string
+          nullable: true
+          description: Последний день скидки, Y-m-d; null — бессрочно.
+        discount_until_label:
+          type: string
+          nullable: true
+          description: То же, d.m.Y.
+        discount_note:
+          type: string
+          nullable: true
+        status: *id003
+        saas_plan_id: *id002
+        plan_name: *id004
+        paid_until: *id004
+        trial_until: *id004
+        active: *id005
     ClubCard:
       type: object
       required:
@@ -1562,7 +1768,11 @@ components:
       - plans
       - activity
       - platform_logs
+      - today
       properties:
+        today:
+          type: string
+          description: Сегодня, Y-m-d (min поля «Действует до» формы скидки — now()->toDateString()).
         id: *id002
         name: *id003
         slug: *id003
@@ -1578,21 +1788,7 @@ components:
             online: *id002
         subscription:
           allOf:
-          - type: object
-            required:
-            - status
-            - saas_plan_id
-            - plan_name
-            - paid_until
-            - trial_until
-            - active
-            properties:
-              status: *id003
-              saas_plan_id: *id002
-              plan_name: *id004
-              paid_until: *id004
-              trial_until: *id004
-              active: *id005
+          - $ref: '#/components/schemas/ClubCardSubscription'
           nullable: true
         badge:
           $ref: '#/components/schemas/SubscriptionBadge'
@@ -1619,6 +1815,155 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LogRow'
+    DiscountForm:
+      type: object
+      required:
+      - discount_percent
+      properties:
+        discount_percent:
+          type: integer
+        discount_until:
+          type: string
+          nullable: true
+          description: Последний день скидки, Y-m-d; пусто — бессрочно.
+        discount_note:
+          type: string
+          nullable: true
+    KaspiForm:
+      type: object
+      properties:
+        url:
+          type: string
+          nullable: true
+        recipient:
+          type: string
+          nullable: true
+    KaspiSettings:
+      type: object
+      required:
+      - url
+      - recipient
+      properties:
+        url:
+          type: string
+        recipient:
+          type: string
+    PendingInvoice:
+      type: object
+      required:
+      - id
+      - number
+      - club_id
+      - club_name
+      - plan_name
+      - months
+      - computers
+      - price_per_computer_tiyn
+      - discount_percent
+      - amount_tiyn
+      - created
+      properties:
+        id:
+          type: integer
+          format: int64
+        number:
+          type: string
+        club_id:
+          type: integer
+          format: int64
+        club_name:
+          type: string
+        plan_name:
+          type: string
+        months:
+          type: integer
+        computers:
+          type: integer
+          format: int64
+        price_per_computer_tiyn:
+          type: integer
+          format: int64
+        discount_percent:
+          type: integer
+        amount_tiyn:
+          type: integer
+          format: int64
+        created:
+          type: string
+          description: d.m.Y H:i
+    ClosedInvoice:
+      type: object
+      required:
+      - id
+      - number
+      - club_id
+      - club_name
+      - plan_name
+      - months
+      - amount_tiyn
+      - status
+      - created
+      - paid
+      properties:
+        id:
+          type: integer
+          format: int64
+        number:
+          type: string
+        club_id:
+          type: integer
+          format: int64
+        club_name:
+          type: string
+        plan_name:
+          type: string
+        months:
+          type: integer
+        amount_tiyn:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum:
+          - paid
+          - canceled
+        created:
+          type: string
+          description: d.m.Y
+        paid:
+          type: string
+          nullable: true
+          description: Дата оплаты, d.m.Y.
+    InvoiceBoard:
+      type: object
+      required:
+      - pending
+      - closed
+      - page
+      - per_page
+      - total
+      - kaspi
+      properties:
+        pending:
+          type: array
+          items:
+            $ref: '#/components/schemas/PendingInvoice'
+        closed:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClosedInvoice'
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+          format: int64
+          description: Всего закрытых счетов.
+        kaspi:
+          allOf:
+          - $ref: '#/components/schemas/KaspiSettings'
+          nullable: true
     ExtendForm:
       type: object
       required:

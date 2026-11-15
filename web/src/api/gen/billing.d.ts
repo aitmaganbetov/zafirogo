@@ -14,10 +14,57 @@ export interface paths {
         /**
          * Подписка клуба
          * @description ClubSubscription клуба с планом; нет подписки — subscription: null («Для клуба ещё не оформлена подписка.»).
+         *     Плюс всё для оплаты: число ПК, скидка, тарифы с готовыми суммами счёта по срокам (сумму считает сервер),
+         *     реквизиты Kaspi, неоплаченный счёт и 12 последних счетов.
          */
         get: operations["getBilling"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/invoices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Выставить счёт за подписку
+         * @description Laravel: BillingController::store() (billing.invoices.store, право billing.pay, throttle:10,1; без middleware
+         *     subscription). Сумма = цена тарифа за ПК × число ПК клуба × месяцы со скидкой, целые тенге (BR-180). У клуба
+         *     один неоплаченный счёт (BR-184). Ошибки 422: saas_plan_id (тариф выключен или без цены), months (не 1/3/6/12),
+         *     invoice («Оплата пока не настроена…», «У клуба уже есть неоплаченный счёт…»). Журнал клуба
+         *     billing.invoice_opened, сообщение в Telegram-чат платформы.
+         */
+        post: operations["createInvoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/billing/invoices/{invoiceId}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Отменить свой неоплаченный счёт
+         * @description Laravel: BillingController::cancel() (billing.invoices.cancel, право billing.pay). Счёт другого клуба — 404;
+         *     уже оплаченный или отменённый — 422 invoice «Счёт уже закрыт.». Журнал клуба billing.invoice_canceled.
+         */
+        post: operations["cancelInvoice"];
         delete?: never;
         options?: never;
         head?: never;
@@ -30,8 +77,109 @@ export interface components {
     schemas: {
         Billing: {
             subscription: components["schemas"]["BillingSubscription"] | null;
+            /** @description Право billing.pay — выставить и отменить счёт («Продлить подписку может владелец клуба.»). */
+            can_pay: boolean;
+            /**
+             * Format: int64
+             * @description ПК, за которые платит клуб — все зарегистрированные, минимум 1 (SubscriptionBilling::computers()).
+             */
+            computers: number;
+            /**
+             * @description Скидка нового счёта, целые проценты: своя скидка клуба или скидка его реселлера, какая больше
+             *     (SubscriptionBilling::discountFor(), BR-181).
+             */
+            discount_percent: number;
+            /** @description Сроки счёта (SubscriptionInvoice::MONTHS). */
+            months: number[];
+            /** @description Тарифы, за которые можно заплатить — включённые и с ценой, по цене (payablePlans()). */
+            plans: components["schemas"]["PayablePlan"][];
+            kaspi: components["schemas"]["Kaspi"] | null;
+            pending: components["schemas"]["Invoice"] | null;
+            /** @description 12 последних счетов клуба, новые первыми. */
+            invoices: components["schemas"]["Invoice"][];
+        };
+        /** @description Ссылка Kaspi Pay платформы и получатель (настройка billing_kaspi); null — оплата не настроена. */
+        Kaspi: {
+            url: string;
+            recipient: string | null;
+        };
+        PayablePlan: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            /**
+             * Format: int64
+             * @description Цена за ПК в месяц без скидки, тиыны.
+             */
+            price_monthly_tiyn: number;
+            /**
+             * @description «К оплате» по срокам для числа ПК и скидки клуба на сейчас — та же формула, по которой сервер выставит счёт
+             *     (SubscriptionBilling::amount()); во фронте сумма не считается.
+             */
+            amounts: components["schemas"]["PlanAmount"][];
+        };
+        PlanAmount: {
+            months: number;
+            /** Format: int64 */
+            amount_tiyn: number;
+        };
+        Invoice: {
+            /** Format: int64 */
+            id: number;
+            /** @description Номер для комментария к платежу — «ZF-» + id с нулями до 5 знаков. */
+            number: string;
+            plan_name: string;
+            months: number;
+            /** Format: int64 */
+            computers: number;
+            /** Format: int64 */
+            price_per_computer_tiyn: number;
+            discount_percent: number;
+            /**
+             * Format: int64
+             * @description К оплате, тиыны; всегда целые тенге.
+             */
+            amount_tiyn: number;
+            /** @enum {string} */
+            status: "pending" | "paid" | "canceled";
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description До какого момента оплата продлила подписку.
+             */
+            period_ends_at: string | null;
+        };
+        InvoiceInput: {
+            /** Format: int64 */
+            saas_plan_id: number;
+            months: number;
+        };
+        InvoiceCreated: {
+            message: string;
+            invoice: components["schemas"]["Invoice"];
+        };
+        BillingMessage: {
+            message: string;
         };
         BillingSubscription: {
+            /** Format: int64 */
+            saas_plan_id: number;
+            /**
+             * Format: int64
+             * @description Цена тарифа за ПК в месяц со своей скидкой клуба, тиыны (ClubSubscription::monthlyPrice(), BR-182);
+             *     null — у тарифа нет цены.
+             */
+            monthly_price_tiyn: number | null;
+            /**
+             * Format: int64
+             * @description «За K ПК» — monthly_price_tiyn × число ПК клуба (как на старом экране, GAP-038).
+             */
+            monthly_total_tiyn: number | null;
+            /** @description Действующая своя скидка клуба, целые проценты (discountPercent()); 0 — нет или закончилась. */
+            discount_percent: number;
+            /** @description Последний день скидки включительно (Y-m-d); null — бессрочно. */
+            discount_until: string | null;
             /** @description SaasPlan.name (шаблон показывает его через __(), как и новый экран). */
             plan_name: string;
             /** @enum {string} */
@@ -53,6 +201,16 @@ export interface components {
             /** @description Текст для пользователя (русский текст = ключ перевода). */
             message?: string;
         };
+        ValidationError: {
+            /** @enum {string} */
+            error: "validation_failed";
+            /** @description Первая ошибка. */
+            message: string;
+            /** @description Поле формы → тексты ошибок (как Laravel withErrors). */
+            errors: {
+                [key: string]: string[];
+            };
+        };
     };
     responses: {
         /** @description Нет действующей сессии. */
@@ -66,6 +224,34 @@ export interface components {
         };
         /** @description Нет прав (текст — как в старом коде). */
         Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Ошибка в полях формы. */
+        ValidationFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ValidationError"];
+            };
+        };
+        /** @description Превышен лимит (throttle). Заголовки Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset. */
+        TooManyRequests: {
+            headers: {
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Не найдено. */
+        NotFound: {
             headers: {
                 [name: string]: unknown;
             };
@@ -101,6 +287,60 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    createInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvoiceInput"];
+            };
+        };
+        responses: {
+            /** @description Счёт выставлен. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvoiceCreated"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    cancelInvoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invoiceId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Счёт отменён. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingMessage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
 }

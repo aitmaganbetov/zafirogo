@@ -6,10 +6,11 @@ info:
     Настройки клуба: «Настройка клуба», «Языки», «Финансы», «Гости» (SettingsController, LanguageController,
     ClubLogoController, ClubSignInImageController). Конвенции — api/README.md.
     Настройки — JSON clubs.settings (секции club, finances, guests) и колонки clubs (timezone, locale, PIN выхода,
-    agent_staff_minutes, логотип, картинка экрана входа). Уровни бонуса и накопительной скидки пишутся в формате v2
+    agent_staff_minutes, логотип, картинка экрана входа, город, адрес, профиль для приложения). Уровни бонуса и накопительной скидки пишутся в формате v2
     (решение Q-003): пороги — тиыны, проценты — базисные пункты.
     Логотип и картинка экрана входа — публичные GET /club-logos/{club}/{file} и /club-signin-images/{club}/{file}
-    (вне /api, без токена: агент грузит их по URL из ClubConfig).
+    (вне /api, без токена: агент грузит их по URL из ClubConfig). Фото клуба — публичный GET /club-photos/{club}/{file}
+    (его грузит гостевое приложение).
 servers:
   - url: /
 security:
@@ -294,11 +295,213 @@ paths:
           $ref: "common.yaml#/components/responses/Unauthenticated"
         "403":
           $ref: "common.yaml#/components/responses/Forbidden"
+  /api/settings/location:
+    put:
+      operationId: saveClubLocation
+      tags: [settings]
+      summary: Город и адрес клуба
+      description: |
+        Laravel: SettingsController::location() (settings.location, settings.update): `city` — nullable, ключ списка
+        городов (App\Support\Cities, 25 городов); `address` — nullable|string|max:255. Без города клуба нет в каталоге
+        гостевого приложения. Журнал club.location_changed — только если город или адрес изменились.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LocationRequest"
+      responses:
+        "200":
+          description: Город и адрес сохранены.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/settings/profile:
+    get:
+      operationId: getClubProfile
+      tags: [settings]
+      summary: Профиль клуба для гостевого приложения
+      description: |
+        Laravel: ClubProfileController::show() (settings.profile, settings.view): описание и контакты, фото
+        (первое — обложка), зоны с числом ПК, ценой часа, оборудованием и подсказками из данных агентов
+        (ZoneDevices::detected()).
+      responses:
+        "200":
+          description: Профиль клуба.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClubProfilePage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+    put:
+      operationId: saveClubProfile
+      tags: [settings]
+      summary: Описание и контакты клуба
+      description: |
+        Laravel: ClubProfileController::update() (settings.profile.update, settings.update): description ≤ 2000,
+        phone ≤ 32 (`/^[+\d\s()\-]+$/`), hours ≤ 100, instagram ≤ 64 (`/^@?[A-Za-z0-9._]+$/`, «@» убирается). Пустые поля
+        не хранятся; пустой профиль — NULL. Журнал club.profile_changed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClubProfileRequest"
+      responses:
+        "200":
+          description: Описание клуба сохранено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/settings/profile/photos:
+    post:
+      operationId: uploadClubPhotos
+      tags: [settings]
+      summary: Добавить фото клуба
+      description: |
+        Laravel: ClubProfileController::storePhotos() (settings.photos.store, settings.update, throttle:20,1):
+        `photos` — required|array|max:10; каждое — `file|mimes:jpg,jpeg,png,webp|max:3072|dimensions:200…6000`.
+        У клуба не больше 10 фото. Журнал club.photos_added. Поля формы — `photos[]` (как в старой форме) или `photos`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                "photos[]":
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        "200":
+          description: Фото добавлены.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+        "429":
+          $ref: "common.yaml#/components/responses/TooManyRequests"
+  /api/settings/profile/photos/{photo}:
+    delete:
+      operationId: deleteClubPhoto
+      tags: [settings]
+      summary: Удалить фото клуба
+      description: Laravel — ClubProfileController::destroyPhoto() (settings.photos.destroy). Журнал club.photo_deleted.
+      parameters:
+        - $ref: "#/components/parameters/PhotoId"
+      responses:
+        "200":
+          description: Фото удалено.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/settings/profile/photos/{photo}/cover:
+    post:
+      operationId: setClubPhotoCover
+      tags: [settings]
+      summary: Сделать фото обложкой клуба
+      description: |
+        Laravel — ClubProfileController::coverPhoto() (settings.photos.cover): sort_order = min − 1 (фото становится
+        первым). В журнал не пишется.
+      parameters:
+        - $ref: "#/components/parameters/PhotoId"
+      responses:
+        "200":
+          description: Обложка изменена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+  /api/settings/profile/zones/{zone}:
+    put:
+      operationId: saveClubZoneProfile
+      tags: [settings]
+      summary: Описание и оборудование зоны
+      description: |
+        Laravel — ClubProfileController::updateZone() (settings.profile.zone, settings.update): description ≤ 500,
+        devices.<cpu|gpu|ram|monitor|keyboard|mouse|headset|chair> ≤ 120. Пустые значения не хранятся. Журнал
+        club.zone_devices_changed.
+      parameters:
+        - name: zone
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ZoneProfileRequest"
+      responses:
+        "200":
+          description: Зона сохранена.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "404":
+          $ref: "common.yaml#/components/responses/NotFound"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
+  parameters:
+    PhotoId:
+      name: photo
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
   schemas:
     SettingsMessage:
       type: object
@@ -454,10 +657,142 @@ components:
         label:
           type: string
           description: "(UTC+05:00) Asia/Almaty"
+    LocationRequest:
+      type: object
+      properties:
+        city:
+          type: string
+          nullable: true
+          description: Ключ города (aktobe, almaty, …); пусто — «Не указан».
+        address:
+          type: string
+          nullable: true
+    CityOption:
+      type: object
+      required: [key, name]
+      properties:
+        key:
+          type: string
+        name:
+          type: string
+          description: Название на языке клуба.
+    ClubProfileRequest:
+      type: object
+      properties:
+        description:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        hours:
+          type: string
+          nullable: true
+        instagram:
+          type: string
+          nullable: true
+    ZoneProfileRequest:
+      type: object
+      properties:
+        description:
+          type: string
+          nullable: true
+        devices:
+          type: object
+          nullable: true
+          description: Оборудование зоны — ключ поля → значение (неизвестные ключи игнорируются).
+          additionalProperties:
+            type: string
+            nullable: true
+    ClubProfile:
+      type: object
+      description: clubs.profile (пустых полей нет).
+      properties:
+        description:
+          type: string
+        phone:
+          type: string
+        hours:
+          type: string
+        instagram:
+          type: string
+          description: Имя аккаунта без «@».
+    ClubPhoto:
+      type: object
+      required: [id, url]
+      properties:
+        id:
+          type: integer
+          format: int64
+        url:
+          type: string
+          description: Публичный адрес /club-photos/{club}/{file}.
+    DeviceField:
+      type: object
+      required: [key, label]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+          description: Подпись поля на языке клуба.
+    ZoneProfile:
+      type: object
+      required: [id, name, description, computers_count, price_per_hour, devices, detected]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        computers_count:
+          type: integer
+          format: int64
+        price_per_hour:
+          type: integer
+          format: int64
+          nullable: true
+          description: Цена часа зоны, тиыны.
+        devices:
+          type: object
+          description: Оборудование, заполненное клубом.
+          additionalProperties:
+            type: string
+        detected:
+          type: object
+          description: Подсказки из данных агентов (cpu, gpu, ram) — placeholder полей.
+          additionalProperties:
+            type: string
+    ClubProfilePage:
+      type: object
+      required: [profile, photos, photo_limit, zones, device_fields]
+      properties:
+        profile:
+          $ref: "#/components/schemas/ClubProfile"
+        photos:
+          type: array
+          description: Фото по порядку показа; первое — обложка.
+          items:
+            $ref: "#/components/schemas/ClubPhoto"
+        photo_limit:
+          type: integer
+          format: int32
+          description: ClubPhoto::LIMIT.
+        zones:
+          type: array
+          items:
+            $ref: "#/components/schemas/ZoneProfile"
+        device_fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeviceField"
     ClubSettingsPage:
       type: object
       required: [club_name, settings, timezone, timezones_kazakhstan, timezones_all, club_time, agent_pin_set_at,
-        agent_staff_minutes, can_manage_agent_pin, logo_url, signin_image_url]
+        agent_staff_minutes, can_manage_agent_pin, logo_url, signin_image_url, city, address, cities]
       properties:
         club_name:
           type: string
@@ -495,6 +830,18 @@ components:
         signin_image_url:
           type: string
           nullable: true
+        city:
+          type: string
+          nullable: true
+          description: Ключ города клуба (null — не указан, клуба нет в каталоге приложения).
+        address:
+          type: string
+          nullable: true
+        cities:
+          type: array
+          description: Города по названию на языке клуба (Cities::options()).
+          items:
+            $ref: "#/components/schemas/CityOption"
     LanguageItem:
       type: object
       required: [code, name, is_enabled]

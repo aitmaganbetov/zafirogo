@@ -1,7 +1,8 @@
 // Package public — публичные страницы без входа (api/public.yaml и не-JSON адреса). Laravel: LandingController,
 // PwaController (manifest, offline), маршруты api-docs.spec (routes/web.php:119–129).
 //
-//   - GET /api/landing — данные лендинга (страница — SPA, web/src/features/public);
+//   - GET /api/landing — данные лендинга и страниц продукта (страницы — SPA, web/src/features/public);
+//   - GET /api/pricing — активные тарифы платформы для страницы /pricing;
 //   - GET /offline — страница «Нет подключения» (HTML с текстами на всех включённых языках; её кэширует service worker);
 //   - GET /manifest.webmanifest — манифест PWA (решение Q-068);
 //   - GET /docs/api/openapi.yaml — спецификация Integration API v1 (страница Swagger UI — SPA /docs/api).
@@ -32,7 +33,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/webui"
 )
 
-var access = httpx.Access{Public: []string{"GetLanding"}}
+var access = httpx.Access{Public: []string{"GetLanding", "GetPricing"}}
 
 // Константы старого кода.
 const (
@@ -110,6 +111,38 @@ func (h *handlers) GetLanding(ctx context.Context, _ publicapi.GetLandingRequest
 		out.DownloadUrl = u
 	}
 	return publicapi.GetLanding200JSONResponse(out), nil
+}
+
+// GetPricing — LandingController::pricing(): тарифы, открытые для подписки (порядок — в запросе). Цена — тиыны
+// «за ПК в месяц» (в MySQL decimal(12,2) в тенге); формат «25 000 ₸» — на странице (number_format без копеек).
+func (h *handlers) GetPricing(ctx context.Context, _ publicapi.GetPricingRequestObject) (publicapi.GetPricingResponseObject, error) {
+	out := publicapi.Pricing{Plans: []publicapi.PricingPlan{}}
+	if h.d.PlatformPool == nil {
+		return publicapi.GetPricing200JSONResponse(out), nil
+	}
+	var rows []store.PublicPricingPlansRow
+	if err := db.InPlatformTx(ctx, h.d.PlatformPool, func(q *store.Queries) error {
+		var err error
+		rows, err = q.PublicPricingPlans(ctx)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	for _, p := range rows {
+		out.Plans = append(out.Plans, publicapi.PricingPlan{Id: p.ID, Name: p.Name, PriceMonthly: p.PriceMonthly,
+			TrialDays: int64(p.TrialDays), Features: planFeatures(p.Features)})
+	}
+	return publicapi.GetPricing200JSONResponse(out), nil
+}
+
+// planFeatures — `$plan->features ?? []` (cast 'array'): пункты тарифа — список строк, как их сохраняет суперадмин
+// (PlanController: по одному в строке). NULL и не-список — пусто (страница покажет «Все возможности Zafiro»).
+func planFeatures(raw json.RawMessage) []string {
+	var f []string
+	if len(raw) == 0 || json.Unmarshal(raw, &f) != nil || f == nil {
+		return []string{}
+	}
+	return f
 }
 
 // downloadURL — AgentUpdate::downloadUrl(): release()['download_url'], только https:// и корректный URL.

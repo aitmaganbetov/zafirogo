@@ -29,6 +29,7 @@ import (
 var access = httpx.Access{Public: []string{
 	"SaDashboard", "SaSetAgentRelease", "SaClearAgentRelease",
 	"SaListClubs", "SaGetClub", "SaExtendSubscription", "SaSuspendSubscription", "SaChangeClubPlan",
+	"SaSetClubDiscount", "SaListInvoices", "SaSetInvoiceKaspi", "SaPayInvoice", "SaCancelInvoice",
 	"SaListAccounts", "SaBlockAccount", "SaUnblockAccount", "SaGrantSuperadmin", "SaRevokeSuperadmin", "SaResetSecondFactor",
 	"SaListPlans", "SaCreatePlan", "SaUpdatePlan", "SaListLogs",
 	"SaListPlatformNews", "SaCreatePlatformNews", "SaUpdatePlatformNews", "SaDeletePlatformNews",

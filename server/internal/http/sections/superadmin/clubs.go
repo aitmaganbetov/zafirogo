@@ -14,6 +14,7 @@ import (
 	superadminapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/superadmin"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
+	"github.com/aitmaganbetov/zafirogo/server/internal/subscription"
 )
 
 // Laravel: app/Http/Controllers/Superadmin/ClubController.php, app/Services/Monitoring/ClubAttention.php.
@@ -66,10 +67,10 @@ func (h *handlers) SaListClubs(ctx context.Context, req superadminapi.SaListClub
 		}
 		search = strings.TrimSpace(*p.Search)
 	}
-	subscription := ""
+	subscribed := ""
 	if p.Subscription != nil {
-		subscription = string(*p.Subscription)
-		if subscription != "active" && subscription != "inactive" {
+		subscribed = string(*p.Subscription)
+		if subscribed != "active" && subscribed != "inactive" {
 			return nil, httpx.RuleError("subscription", "in")
 		}
 	}
@@ -99,13 +100,13 @@ func (h *handlers) SaListClubs(ctx context.Context, req superadminapi.SaListClub
 	out := superadminapi.ClubList{Items: []superadminapi.ClubRow{}, Page: pg, PerPage: clubsPage, Sort: sort, Direction: direction,
 		LoadMinutes: loadMinutes, Issues: []superadminapi.Issue{}}
 	err := h.tx(ctx, func(q *store.Queries) error {
-		total, err := q.SuperadminCountClubs(ctx, store.SuperadminCountClubsParams{Search: search, Subscription: subscription, Now: &now})
+		total, err := q.SuperadminCountClubs(ctx, store.SuperadminCountClubsParams{Search: search, Subscription: subscribed, Now: &now})
 		if err != nil {
 			return err
 		}
 		out.Total = total
 		rows, err := q.SuperadminClubs(ctx, store.SuperadminClubsParams{
-			Subscription: subscription, Sort: sort, Direction: direction, PageOffset: int64(pg-1) * clubsPage, PageSize: clubsPage,
+			Subscription: subscribed, Sort: sort, Direction: direction, PageOffset: int64(pg-1) * clubsPage, PageSize: clubsPage,
 			OnlineClubIds: ids, OnlineCounts: counts, Now: &now, LoadFrom: now.Unix()/60 - loadMinutes,
 			DayAgo: now.Add(-24 * time.Hour), Search: search,
 		})
@@ -141,6 +142,10 @@ func (h *handlers) SaListClubs(ctx context.Context, req superadminapi.SaListClub
 				OnlineCount: r.OnlineCount, BusyCount: r.BusyCount, SessionsToday: r.SessionsToday, WebhookFailures: r.WebhookFailures,
 				AgentPerMinute: phpNum(float64(r.AgentRequests)/loadMinutes, 1), ApiPerMinute: phpNum(float64(r.ApiRequests)/loadMinutes, 1),
 				Badge: badge(r.SubscriptionStatus, r.TrialEndsAt, r.CurrentPeriodEndsAt, now)}
+			// Бейдж «−P%»: ($club->subscription?->discountPercent() ?? 0) > 0, title — причина.
+			if row.DiscountPercent = subscription.OwnDiscount(int(r.DiscountPercent), r.DiscountUntil, now, time.UTC); row.DiscountPercent > 0 {
+				row.DiscountNote = r.DiscountNote
+			}
 			if r.OwnerName != "" {
 				name := r.OwnerName
 				row.OwnerName = &name
@@ -272,15 +277,19 @@ func (h *handlers) SaGetClub(ctx context.Context, req superadminapi.SaGetClubReq
 		if c.CreatedAt != nil {
 			out.Created = c.CreatedAt.UTC().Format("02.01.2006")
 		}
+		out.Today = now.UTC().Format("2006-01-02")
 		if c.SubscriptionStatus != nil && c.SaasPlanID != nil {
-			s := &struct {
-				Active     bool    `json:"active"`
-				PaidUntil  *string `json:"paid_until"`
-				PlanName   *string `json:"plan_name"`
-				SaasPlanId int64   `json:"saas_plan_id"`
-				Status     string  `json:"status"`
-				TrialUntil *string `json:"trial_until"`
-			}{Active: out.Badge.Active, SaasPlanId: *c.SaasPlanID, Status: *c.SubscriptionStatus}
+			s := &superadminapi.ClubCardSubscription{Active: out.Badge.Active, SaasPlanId: *c.SaasPlanID, Status: *c.SubscriptionStatus,
+				StoredDiscountPercent: int(c.DiscountPercent), DiscountNote: c.DiscountNote, PlanPriceMonthlyTiyn: c.PlanPriceMonthly}
+			// Кабинет — вне клуба: последний день скидки считается по UTC (CurrentClub::timezone() без клуба).
+			s.DiscountPercent = subscription.OwnDiscount(int(c.DiscountPercent), c.DiscountUntil, now, time.UTC)
+			if c.DiscountUntil != nil {
+				s.DiscountUntil = ptr(c.DiscountUntil.Format("2006-01-02"))
+				s.DiscountUntilLabel = ptr(c.DiscountUntil.Format("02.01.2006"))
+			}
+			if c.PlanPriceMonthly != nil {
+				s.MonthlyPriceTiyn = ptr(subscription.MonthlyPrice(*c.PlanPriceMonthly, s.DiscountPercent))
+			}
 			if c.PlanName != "" {
 				s.PlanName = ptr(c.PlanName)
 			}
@@ -507,4 +516,124 @@ func (h *handlers) SaChangeClubPlan(ctx context.Context, req superadminapi.SaCha
 		return nil, err
 	}
 	return superadminapi.SaChangeClubPlan200JSONResponse(msg(h.d.T(ctx, "Тариф клуба изменён.", nil))), nil
+}
+
+// Тексты ClubController::discount() (ключи перевода).
+const (
+	msgDiscountSaved     = "Скидка сохранена."
+	msgDiscountRemoved   = "Скидка снята."
+	logDiscountRemoved   = "Скидка клуба :club снята"
+	logDiscountUntil     = "Скидка клуба :club: :percent% до :date"
+	logDiscountForever   = "Скидка клуба :club: :percent% бессрочно"
+	maxDiscountNoteChars = 200
+)
+
+// SaSetClubDiscount — ClubController::discount(): индивидуальная скидка на цену тарифа, бессрочно или по дату
+// включительно; 0 % снимает её вместе с датой и причиной (BR-181).
+//
+//	'discount_percent' => ['required', 'integer', 'min:0', 'max:100'],
+//	'discount_until' => ['nullable', 'date', 'after_or_equal:today'],
+//	'discount_note' => ['nullable', 'string', 'max:200'],
+func (h *handlers) SaSetClubDiscount(ctx context.Context, req superadminapi.SaSetClubDiscountRequestObject) (superadminapi.SaSetClubDiscountResponseObject, error) {
+	now := h.d.NowFunc()
+	var fe httpx.FormErrors
+	var percent int
+	if req.Body == nil {
+		fe.Add("discount_percent", httpx.RuleMessage("discount_percent", "required", ""))
+	} else {
+		percent = req.Body.DiscountPercent
+	}
+	switch {
+	case percent < 0:
+		fe.Add("discount_percent", httpx.RuleMessage("discount_percent", "min", "0"))
+	case percent > 100:
+		fe.Add("discount_percent", httpx.RuleMessage("discount_percent", "max", "100"))
+	}
+	var until *time.Time
+	var note *string
+	if req.Body != nil {
+		// TrimStrings, ConvertEmptyStringsToNull.
+		if req.Body.DiscountUntil != nil && strings.TrimSpace(*req.Body.DiscountUntil) != "" {
+			today := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
+			switch day, err := time.Parse("2006-01-02", strings.TrimSpace(*req.Body.DiscountUntil)); {
+			case err != nil:
+				fe.Add("discount_until", httpx.RuleMessage("discount_until", "date", ""))
+			case day.Before(today):
+				fe.Add("discount_until", httpx.RuleMessage("discount_until", "after_or_equal", "today"))
+			default:
+				until = &day
+			}
+		}
+		if req.Body.DiscountNote != nil && strings.TrimSpace(*req.Body.DiscountNote) != "" {
+			text := strings.TrimSpace(*req.Body.DiscountNote)
+			if len([]rune(text)) > maxDiscountNoteChars {
+				fe.Add("discount_note", httpx.RuleMessage("discount_note", "max_string", "200"))
+			}
+			note = &text
+		}
+	}
+	// 'discount_until' => $percent > 0 ? … : null — 0 % стирает дату и причину.
+	if percent == 0 {
+		until, note = nil, nil
+	}
+	err := h.tx(ctx, func(q *store.Queries) error {
+		name, err := q.SuperadminClubExists(ctx, req.ClubId)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return httpx.NotFound()
+		}
+		if err != nil {
+			return err
+		}
+		if err := fe.Err(); err != nil {
+			return err
+		}
+		cur, err := q.SuperadminLockSubscriptionDiscount(ctx, req.ClubId)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return httpx.NotFound() // abort_if($subscription === null, 404)
+		}
+		if err != nil {
+			return err
+		}
+		if err := q.SuperadminSetSubscriptionDiscount(ctx, store.SuperadminSetSubscriptionDiscountParams{
+			DiscountPercent: int16(percent), DiscountUntil: until, DiscountNote: note, Now: &now, ClubID: req.ClubId}); err != nil { // #nosec G115 -- 0…100
+			return err
+		}
+		entry := activity.PlatformEntry{Event: "superadmin.subscription_discount_changed", ClubID: req.ClubId,
+			SubjectType: subjectSubscribed, SubjectID: cur.ID, Details: map[string]any{"percent": percent, "until": nil}}
+		switch {
+		case percent == 0:
+			entry.Key, entry.Params = logDiscountRemoved, map[string]string{"club": name}
+		case until != nil:
+			entry.Key = logDiscountUntil
+			entry.Params = map[string]string{"club": name, "percent": strconv.Itoa(percent), "date": until.Format("02.01.2006")}
+			entry.Details["until"] = until.Format("2006-01-02")
+		default:
+			entry.Key, entry.Params = logDiscountForever, map[string]string{"club": name, "percent": strconv.Itoa(percent)}
+		}
+		if err := h.log(ctx, q, entry); err != nil {
+			return err
+		}
+		return h.audit(ctx, q, req.ClubId, "tariff", "subscription.discount_changed", subjectSubscribed, cur.ID,
+			discountAudit(int(cur.DiscountPercent), cur.DiscountUntil, cur.DiscountNote), discountAudit(percent, until, note))
+	})
+	if err != nil {
+		return nil, err
+	}
+	text := msgDiscountSaved
+	if percent == 0 {
+		text = msgDiscountRemoved
+	}
+	return superadminapi.SaSetClubDiscount200JSONResponse(msg(h.d.T(ctx, text, nil))), nil
+}
+
+// discountAudit — скидка клуба для audit_log.
+func discountAudit(percent int, until *time.Time, note *string) map[string]any {
+	m := map[string]any{"discount_percent": percent}
+	if until != nil {
+		m["discount_until"] = until.Format("2006-01-02")
+	}
+	if note != nil {
+		m["discount_note"] = *note
+	}
+	return m
 }

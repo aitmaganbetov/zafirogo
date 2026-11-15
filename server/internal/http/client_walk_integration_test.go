@@ -34,7 +34,7 @@ func TestClientIsNotStaffOnAnyRoute(t *testing.T) {
 
 	// Успех клиенту разрешён только здесь (публичное и своё).
 	allowed := map[string]bool{
-		"GET /api/forgot-password": true, "GET /api/i18n": true, "GET /api/i18n/{locale}": true, "GET /api/landing": true,
+		"GET /api/forgot-password": true, "GET /api/i18n": true, "GET /api/i18n/{locale}": true, "GET /api/landing": true, "GET /api/pricing": true,
 		"GET /api/layout/badges": true, // счётчики по правам: клиенту — нули (LayoutBadges)
 		"GET /api/auth/me":       true, "POST /api/auth/logout": true, "POST /api/auth/logout-all": true,
 		"GET /api/pc-login/{code}": true, "POST /api/pc-login/{code}": true,

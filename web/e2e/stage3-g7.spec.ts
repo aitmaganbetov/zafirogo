@@ -1,7 +1,7 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 
 /*
- * Группа 7: лендинг, QR-вход на ПК с телефона — с моком API (page.route), против vite preview.
+ * Группа 7: сайт (главная, страницы продукта, тарифы — тема Е), QR-вход на ПК с телефона — с моком API (page.route), против vite preview.
  */
 
 const CODE = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd';
@@ -41,6 +41,8 @@ async function mockApi(page: Page, state: MockState) {
         return fulfill(route, { access_token: 't', token_type: 'Bearer', expires_in: 600, csrf_token: 'c', me: ME });
       case '/api/landing':
         return fulfill(route, { trial_days: 30, download_url: 'https://example.test/agent.exe' });
+      case '/api/pricing':
+        return fulfill(route, { plans: [{ id: 1, name: 'Клуб до 30 ПК', price_monthly: 2500000, trial_days: 0, features: ['До 30 ПК'] }] });
       case `/api/pc-login/${CODE}`:
         if (!authed) return fulfill(route, { error: 'unauthenticated', message: 'Unauthenticated.' }, 401);
         if (method === 'GET') {
@@ -66,11 +68,82 @@ test('лендинг: пробный период с сервера, ссылк�
   await mockApi(page, { open: true, approve: 'ok' });
   await page.goto('/');
   await expect(page).toHaveTitle('Zafiro — система управления компьютерным клубом');
+  await expect(page.locator('h1')).toHaveText('Весь клуб - в одном окне');
   await expect(page.locator('main a[href="/register"]').first()).toHaveText('30 дней бесплатно');
   await expect(page.locator('a[href="https://example.test/agent.exe"]')).toBeVisible();
-  await expect(page.locator('header a[href="/login"]')).toBeVisible();
-  await expect(page.locator('body')).toHaveClass(/bg-\[#0b0d10\]/);
-  await expect(page.getByText('Сейчас занято: 10 из 16')).toBeVisible();
+  await expect(page.locator('header a[href="/login"]').last()).toBeVisible();
+  // Новый вид (тема Е): белый фон, снимок карты клуба, тёмный блок мобильных приложений.
+  await expect(page.locator('body')).toHaveClass(/bg-white/);
+  await expect(page.locator('main img[src="/images/club-map.webp"]')).toBeVisible();
+  await expect(page.locator('#apps h2')).toHaveText('Мобильные приложения для гостей и сотрудников');
+});
+
+test('сайт: меню шапки ведут на страницы продукта и тарифы без перезагрузки (GS-572, GS-573)', async ({ page }) => {
+  await mockApi(page, { open: true, approve: 'ok' });
+  await page.goto('/');
+  await page.evaluate('window.spa = true');
+  const menu = (title: string) => page.locator('header details[data-landing-menu]:visible', { hasText: title });
+
+  await menu('О продукте').locator('summary').click();
+  await expect(menu('О продукте')).toHaveAttribute('open', '');
+  // Одно меню за раз.
+  await menu('Продукты').locator('summary').click();
+  await expect(menu('О продукте')).not.toHaveAttribute('open', '');
+  await menu('Продукты').locator('a[href="/product/agent"]').click();
+  await expect(page).toHaveURL(/\/product\/agent$/);
+  await expect(page).toHaveTitle('Агент Zafiro на ПК — вход, тарифы, магазин и защита ПК');
+  await expect(page.locator('h1')).toHaveText('Агент Zafiro на ПК');
+  await expect(page.locator('main a[href="https://example.test/agent.exe"]')).toBeVisible();
+
+  await menu('Продукты').locator('summary').click();
+  await page.keyboard.press('Escape');
+  await expect(menu('Продукты')).not.toHaveAttribute('open', '');
+
+  await menu('О продукте').locator('summary').click();
+  await menu('О продукте').locator('a[href="/product/features"]').click();
+  await expect(page.locator('h1')).toHaveText('Возможности Zafiro');
+  // Новая страница — меню снова закрыто (как после загрузки страницы в старом), её пункт отмечен.
+  await expect(menu('О продукте')).not.toHaveAttribute('open', '');
+  await expect(page.locator('header a[aria-current="page"]').first()).toHaveAttribute('href', '/product/features');
+
+  for (const [href, h1] of [['/product/guest-app', 'Приложение для гостей'], ['/product/staff-app', 'Приложение для сотрудников']] as const) {
+    await page.locator(`footer a[href="${href}"]`).click();
+    await expect(page.locator('h1')).toHaveText(h1);
+  }
+
+  await page.locator('header a[href="/pricing"]:visible').click();
+  await expect(page).toHaveTitle('Тарифы Zafiro — подписка для компьютерного клуба');
+  const card = page.locator('main article');
+  await expect(card).toHaveCount(1);
+  await expect(card.locator('h2')).toHaveText('Клуб до 30 ПК');
+  await expect(card).toContainText('25 000 ₸');
+  await expect(card).toContainText('за ПК в месяц');
+  await expect(card.locator('li')).toHaveText(['До 30 ПК']);
+  await expect(card.locator('a[href="/register"]')).toHaveText('Зарегистрировать клуб');
+
+  // С другой страницы «Вопросы» ведут к блоку главной.
+  await page.locator('footer a[href="/#faq"]').click();
+  await expect(page).toHaveURL(/\/#faq$/);
+  await expect(page.locator('#faq h2')).toBeInViewport();
+  // Все переходы — роутером, без перезагрузки документа.
+  expect(await page.evaluate<boolean>('window.spa === true')).toBe(true);
+});
+
+test('сайт на телефоне: одно меню «Меню» с обоими разделами, документ не шире окна', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await mockApi(page, { open: true, approve: 'ok' });
+  for (const path of ['/', '/pricing', '/product/features', '/product/agent', '/product/guest-app', '/product/staff-app']) {
+    await page.goto(path);
+    await expect(page.locator('h1')).toBeVisible();
+    expect(await page.evaluate<number>('document.documentElement.scrollWidth - window.innerWidth'), path).toBeLessThanOrEqual(0);
+  }
+  const menu = page.locator('header details[data-landing-menu]:visible');
+  await expect(menu).toHaveCount(1);
+  await menu.locator('summary').click();
+  await expect(menu.locator('a')).toHaveCount(9); // 6 пунктов меню, «Тарифы», Wiki, «Войти»
+  await expect(menu.locator('a[href="/login"]')).toBeVisible();
+  await menu.locator('a[href="/product/guest-app"]').click();
+  await expect(page.locator('h1')).toHaveText('Приложение для гостей');
 });
 
 test('QR-вход: гость → вход (pc_login) → подтверждение → «Готово»', async ({ page }) => {

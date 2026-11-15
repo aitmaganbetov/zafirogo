@@ -6,8 +6,8 @@ import { SettingsCard } from '../../components/SettingsCard';
 import { SettingsLayout } from '../../components/SettingsLayout';
 import { formatDate } from '../../lib/datetime';
 import {
-  clubSettingsQuery, deleteLogo, deleteSigninImage, firstError, minutesToInput, saveAgentPin, saveStaffTime, saveTimezone,
-  uploadImage,
+  clubSettingsQuery, deleteLogo, deleteSigninImage, firstError, minutesToInput, saveAgentPin, saveLocation, saveStaffTime,
+  saveTimezone, uploadImage,
 } from './api';
 import { SettingsAnchors } from './SettingsAnchors';
 import { SettingsForm } from './SettingsForm';
@@ -16,8 +16,8 @@ import { useSettingsResult } from './status';
 /*
  * Настройки → Настройка клуба — перенос resources/views/settings/club.blade.php (SettingsController::club()):
  * секция club (форма settings.save), «Ключ установки клуба» (Q-037: заменён кодами регистрации и ключами образа —
- * ссылка на «Подключение ПК»), логотип, картинка экрана входа, часовой пояс, PIN выхода из агента и время
- * обслуживания ПК.
+ * ссылка на «Подключение ПК»), логотип, картинка экрана входа, город и адрес (SettingsController::location() — по
+ * городу гости находят клуб в мобильном приложении), часовой пояс, PIN выхода из агента и время обслуживания ПК.
  */
 
 const INPUT = 'brand-focus w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-4 py-2 text-gray-900 dark:text-gray-100 focus:outline-none';
@@ -67,6 +67,7 @@ export function ClubSettingsPage() {
   const logoDelete = useAction('logo', () => deleteLogo());
   const signin = useAction('image', (f: FormData) => uploadImage('/api/settings/signin-image', f));
   const signinDelete = useAction('image', () => deleteSigninImage());
+  const location = useAction('location', ({ city, address }: { city: string; address: string }) => saveLocation(city, address));
   // Пояс клуба — в /api/auth/me (часы панели, даты экранов): перечитать.
   const timezone = useAction('timezone', (v: string) => saveTimezone(v), () => session.reloadMe());
   const pin = useAction('pin', ({ p, c }: { p: string; c: string }) => saveAgentPin(p, c));
@@ -87,6 +88,7 @@ export function ClubSettingsPage() {
     ['club-key', t('Ключ установки клуба')],
     ['club-logo', t('Логотип клуба')],
     ['signin-image', t('Картинка экрана входа')],
+    ['location', t('Город и адрес')],
     ['timezone', t('Часовой пояс')],
     ['agent-pin', t('PIN-код для выхода из агента')],
   ];
@@ -238,6 +240,29 @@ export function ClubSettingsPage() {
               )}
             </div>
           </div>
+        </>
+      ))}
+
+      {card('location', t('Город и адрес'), (
+        <>
+          <p className="mb-3 text-sm text-gray-600 dark:text-gray-400">{t('Гости видят клуб в мобильном приложении в списке клубов своего города. Без города клуба в списке нет.')}</p>
+          <ErrorBox message={firstError(errorOf('location'), 'city', 'address')} />
+          <form method="POST" action="/settings/location" className="flex flex-wrap items-end gap-3" onSubmit={(e) => { const f = fd(e); if (!readOnly) location.mutate({ city: str(f, 'city'), address: str(f, 'address') }); }}>
+            <label className="min-w-0 flex-1 basis-48">
+              <span className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">{t('Город')}</span>
+              <select name="city" className={SMALL} defaultValue={data.city ?? ''}>
+                <option value="">{t('Не указан')}</option>
+                {data.cities.map((c) => (
+                  <option key={c.key} value={c.key}>{c.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="min-w-0 flex-[2] basis-64">
+              <span className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">{t('Адрес')}</span>
+              <input type="text" name="address" maxLength={255} defaultValue={data.address ?? ''} placeholder={t('ул. Абая, 10')} className={SMALL} />
+            </label>
+            <button type="submit" className="brand-button rounded-lg px-4 py-2 text-sm">{t('Сохранить')}</button>
+          </form>
         </>
       ))}
 

@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import type { FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { unwrap } from '../../api/http';
+import { isApiError, unwrap } from '../../api/http';
 import { authApi, session } from '../../auth/session';
 import { Pagination } from '../../components/Pagination';
 import { useAdminPageTitle } from '../../layouts/adminSession';
-import { changeClubPlan, clubQuery, extendSubscription, firstError, suspendSubscription } from './api';
+import { formatMoney } from '../../lib/money';
+import { changeClubPlan, clubQuery, extendSubscription, firstError, setClubDiscount, suspendSubscription } from './api';
 import { roleLabel } from './roles';
 import { LogRows, SubscriptionBadgeView } from './components';
 import { saHref } from './host';
@@ -39,6 +40,19 @@ export function ClubPage({ clubId, page }: { readonly clubId: number; readonly p
   const extend = useMutation({ mutationFn: (b: { days: number; saas_plan_id?: number }) => extendSubscription(clubId, b), onSuccess: done, onError: fail });
   const plan = useMutation({ mutationFn: (id: number) => changeClubPlan(clubId, id), onSuccess: done, onError: fail });
   const suspend = useMutation({ mutationFn: () => suspendSubscription(clubId), onSuccess: done, onError: fail });
+  // @error($field) под формой скидки (вдобавок к первой ошибке в layout).
+  const [discountErrors, setDiscountErrors] = useState<readonly string[]>([]);
+  const discount = useMutation({
+    mutationFn: (b: { discount_percent: number; discount_until: string | null; discount_note: string | null }) => setClubDiscount(clubId, b),
+    onSuccess: (r) => {
+      setDiscountErrors([]);
+      return done(r);
+    },
+    onError: (e) => {
+      setDiscountErrors(isApiError(e) ? ['discount_percent', 'discount_until', 'discount_note'].flatMap((f) => e.fieldErrors[f]?.slice(0, 1) ?? []) : []);
+      fail(e);
+    },
+  });
   const view = useMutation({
     // Открыть панель клуба только для просмотра; дальше — панель клуба (dashboard).
     mutationFn: async () => {
@@ -65,6 +79,15 @@ export function ClubPage({ clubId, page }: { readonly clubId: number; readonly p
   const submitPlan = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     plan.mutate(Number(new FormData(e.currentTarget).get('saas_plan_id')));
+  };
+  const submitDiscount = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const text = (name: string) => {
+      const v = f.get(name);
+      return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
+    };
+    discount.mutate({ discount_percent: Number(f.get('discount_percent')), discount_until: text('discount_until'), discount_note: text('discount_note') });
   };
   const submitSuspend = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -127,6 +150,12 @@ export function ClubPage({ clubId, page }: { readonly clubId: number; readonly p
             {t('Тариф: {{plan}}', { plan: sub?.plan_name ?? '—' })}
             {sub?.paid_until && <> · {t('оплачено до {{date}}', { date: sub.paid_until })}</>}
             {sub?.trial_until && <> · {t('пробный период до {{date}}', { date: sub.trial_until })}</>}
+            {sub?.monthly_price_tiyn != null && (
+              <>
+                {' '}· {t('к оплате {{price}} ₸ в месяц', { price: formatMoney(sub.monthly_price_tiyn, 0, '.', ' ') })}
+                {sub.discount_percent > 0 && sub.plan_price_monthly_tiyn != null && <> <span className="text-gray-500">({t('без скидки {{price}} ₸', { price: formatMoney(sub.plan_price_monthly_tiyn, 0, '.', ' ') })})</span></>}
+              </>
+            )}
           </p>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <form method="POST" className="space-y-2 rounded-lg bg-gray-50 p-4 dark:bg-gray-800" onSubmit={submitExtend}>
@@ -167,6 +196,21 @@ export function ClubPage({ clubId, page }: { readonly clubId: number; readonly p
                 <button type="submit" className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm" disabled={plan.isPending}>
                   {t('Сохранить тариф')}
                 </button>
+              </form>
+            )}
+            {sub && (
+              // key: после сохранения поля формы берут новые значения по умолчанию (как перезагрузка страницы).
+              <form key={`${sub.discount_percent}|${sub.discount_until ?? ''}|${sub.discount_note ?? ''}`} method="POST" className="space-y-2 rounded-lg bg-gray-50 p-4 dark:bg-gray-800" onSubmit={submitDiscount}>
+                <h4 className="text-sm font-medium text-gray-900 dark:text-white">{t('Индивидуальная скидка')}</h4>
+                {sub.discount_percent === 0 && sub.stored_discount_percent > 0 && (
+                  <p className="text-xs text-gray-500">{t('Скидка {{percent}}% закончилась {{date}}.', { percent: sub.stored_discount_percent, date: sub.discount_until_label ?? '' })}</p>
+                )}
+                <label className="block text-sm"><span className="mb-1 block text-gray-600">{t('Скидка, %')}</span><input type="number" name="discount_percent" min="0" max="100" defaultValue={sub.discount_percent} required className={`w-full ${INPUT}`} /></label>
+                <label className="block text-sm"><span className="mb-1 block text-gray-600">{t('Действует до (пусто — бессрочно)')}</span><input type="date" name="discount_until" min={data.today} defaultValue={sub.discount_percent > 0 ? (sub.discount_until ?? '') : ''} className={`w-full ${INPUT}`} /></label>
+                <label className="block text-sm"><span className="mb-1 block text-gray-600">{t('Причина')}</span><input type="text" name="discount_note" maxLength={200} defaultValue={sub.discount_percent > 0 ? (sub.discount_note ?? '') : ''} className={`w-full ${INPUT}`} /></label>
+                {discountErrors.map((message) => <p key={message} className="text-xs text-red-600">{message}</p>)}
+                <p className="text-xs text-gray-500">{t('0% — снять скидку.')}</p>
+                <button type="submit" className="w-full rounded-lg border border-gray-300 px-4 py-2 text-sm" disabled={discount.isPending}>{t('Сохранить скидку')}</button>
               </form>
             )}
             {sub?.active && (

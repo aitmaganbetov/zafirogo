@@ -186,6 +186,7 @@ WITH online AS (
            (SELECT count(*) FROM webhook_deliveries w WHERE w.club_id = c.id AND w.status = 'failed'
                AND w.created_at >= sqlc.arg(day_ago))::bigint AS webhook_failures,
            s.id AS subscription_id, s.status AS subscription_status, s.trial_ends_at, s.current_period_ends_at,
+           COALESCE(s.discount_percent, 0)::smallint AS discount_percent, s.discount_until, s.discount_note,
            COALESCE(CASE WHEN s.status = 'trialing' THEN s.trial_ends_at ELSE s.current_period_ends_at END, '0001-01-01 00:00:00+00'::timestamptz)::timestamptz AS subscription_ends_at,
            (s.id IS NOT NULL AND ((s.status = 'active' AND (s.current_period_ends_at IS NULL OR s.current_period_ends_at > sqlc.arg(now)))
                OR (s.status = 'trialing' AND s.trial_ends_at > sqlc.arg(now))))::boolean AS subscription_active
@@ -275,7 +276,8 @@ ORDER BY s.id;
 -- ClubController::show(): клуб и подписка с тарифом.
 SELECT c.id, c.name::text AS name, c.slug::text AS slug, c.timezone::text AS timezone, c.created_at,
        s.id AS subscription_id, s.status AS subscription_status, s.saas_plan_id, s.trial_ends_at, s.current_period_ends_at,
-       COALESCE(p.name, '')::text AS plan_name
+       COALESCE(s.discount_percent, 0)::smallint AS discount_percent, s.discount_until, s.discount_note,
+       COALESCE(p.name, '')::text AS plan_name, p.price_monthly AS plan_price_monthly
 FROM clubs c
 LEFT JOIN club_subscriptions s ON s.club_id = c.id
 LEFT JOIN saas_plans p ON p.id = s.saas_plan_id

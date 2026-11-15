@@ -3,7 +3,7 @@ info:
   title: zafirogo API — public
   version: 0.1.0
   description: |
-    Публичные страницы без входа: лендинг (LandingController). Остальное публичное — не JSON и не в этом файле:
+    Публичные страницы без входа: лендинг, страницы продукта и тарифы (LandingController). Остальное публичное — не JSON и не в этом файле:
     /offline (PwaController::offline, HTML), /manifest.webmanifest (PwaController::manifest), /docs/api/openapi.yaml
     (спецификация Integration API v1) — server/internal/http/sections/public; /wiki — server/internal/webui/wiki.go.
     Конвенции — api/README.md.
@@ -26,8 +26,53 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Landing"
+  /api/pricing:
+    get:
+      operationId: getPricing
+      tags: [public]
+      summary: Тарифы платформы для страницы /pricing
+      description: |
+        LandingController::pricing(): активные тарифы (saas_plans.is_active), порядок — `price_monthly IS NOT NULL`,
+        `price_monthly`, `id` (бесплатные и «по запросу» первыми). Цена — целые тиыны «за ПК в месяц» (null — без цены).
+        Остальные данные страницы (пробный период, установщик) — GET /api/landing.
+      responses:
+        "200":
+          description: Тарифы.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pricing"
 components:
   schemas:
+    Pricing:
+      type: object
+      required: [plans]
+      properties:
+        plans:
+          type: array
+          items:
+            $ref: "#/components/schemas/PricingPlan"
+    PricingPlan:
+      type: object
+      required: [id, name, price_monthly, trial_days, features]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        price_monthly:
+          type: integer
+          format: int64
+          nullable: true
+          description: Цена за ПК в месяц, тиыны; null — цена не задана («Бесплатно» при пробных днях, иначе «По запросу»).
+        trial_days:
+          type: integer
+          format: int64
+        features:
+          type: array
+          items:
+            type: string
     Landing:
       type: object
       required: [trial_days, download_url]

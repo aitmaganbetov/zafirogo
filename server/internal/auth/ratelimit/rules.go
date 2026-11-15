@@ -204,9 +204,15 @@ var throttles = []struct {
 	{"club-computers.guest-session", 30, 1},
 	{"users.password", 20, 1},
 	{"reservations.customers", 60, 1},
+	// routes/web.php: settings.photos.store — throttle:20,1 (без префикса; здесь — имя маршрута).
+	{"settings.photos.store", 20, 1},
+	{"billing.invoices.store", 10, 1},
 	// routes/api.php
 	{"api.auth.clubs", 30, 1},
 	{"api.auth.switch-club", 10, 1},
+	// Каталог клубов гостевого приложения (публичный, без токена — по IP).
+	{"api.catalog.clubs", 30, 1},
+	{"api.catalog.club", 60, 1},
 	{"api.products.index", 60, 1},
 	{"api.tariffs.index", 60, 1},
 	{"api.tariffs.purchase", 10, 1},

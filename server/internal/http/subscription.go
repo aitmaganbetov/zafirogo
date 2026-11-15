@@ -40,6 +40,7 @@ var subscriptionExempt = []string{
 	"/api/billing",       // billing.show — сюда ведёт неактивная подписка
 	"/api/pc-login",      // QR-вход на ПК (свои проверки подписки клуба кода)
 	"/api/landing",       // лендинг
+	"/api/pricing",       // страница тарифов платформы (публичная)
 }
 
 func subscriptionExemptPath(path string) bool {

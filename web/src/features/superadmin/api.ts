@@ -122,6 +122,25 @@ export const suspendSubscription = (clubId: number) =>
 export const changeClubPlan = (clubId: number, planId: number) =>
   unwrap(saApi.POST('/api/superadmin/clubs/{clubId}/subscription/plan', { params: { path: { clubId } }, body: { saas_plan_id: planId } }));
 
+export const setClubDiscount = (clubId: number, body: S['DiscountForm']) =>
+  unwrap(saApi.POST('/api/superadmin/clubs/{clubId}/subscription/discount', { params: { path: { clubId } }, body }));
+
+// ---------------------------------------------------------------------------
+// Оплаты: счета клубов за подписку (InvoiceController)
+// ---------------------------------------------------------------------------
+
+export type InvoiceBoard = S['InvoiceBoard'];
+
+export const invoicesQuery = (page?: number) =>
+  queryOptions({
+    queryKey: ['superadmin', 'invoices', page ?? 1],
+    queryFn: ({ signal }) => unwrap(saApi.GET('/api/superadmin/invoices', { params: { query: { page } }, signal })),
+  });
+
+export const payInvoice = (invoiceId: number) => unwrap(saApi.POST('/api/superadmin/invoices/{invoiceId}/pay', { params: { path: { invoiceId } } }));
+export const cancelInvoice = (invoiceId: number) => unwrap(saApi.POST('/api/superadmin/invoices/{invoiceId}/cancel', { params: { path: { invoiceId } } }));
+export const setInvoiceKaspi = (body: S['KaspiForm']) => unwrap(saApi.POST('/api/superadmin/invoices/kaspi', { body }));
+
 // ---------------------------------------------------------------------------
 // Пользователи, тарифы, журнал
 // ---------------------------------------------------------------------------

@@ -45,8 +45,9 @@ func TestNamedRuleValues(t *testing.T) {
 		}
 		rules[r.Name] = r
 	}
-	if len(rules) != 13+2+1+39 {
-		t.Errorf("rules = %d, want 55 (13 named + 2 web + superadmin-totp + 39 throttle:N,M)", len(rules))
+	// 40 throttle:N,M до ноября 2026 + 3 темы В (api.catalog.clubs, api.catalog.club, settings.photos.store).
+	if len(rules) != 13+2+1+40+3 {
+		t.Errorf("rules = %d, want 59 (13 named + 2 web + superadmin-totp + 43 throttle:N,M)", len(rules))
 	}
 	for name, lims := range want {
 		r, ok := rules[name]

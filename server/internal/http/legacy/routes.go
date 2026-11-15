@@ -17,6 +17,11 @@ func (a *API) routes() chi.Router {
 	r.NotFound(a.notFound)
 	r.MethodNotAllowed(a.notFound)
 
+	// routes/api.php: каталог клубов гостевого приложения — публичный, до входа (ClubCatalogController).
+	// whereNumber('club'): не число — маршрута нет.
+	r.With(a.throttle("api.catalog.clubs")).Get("/api/catalog/clubs", a.catalogIndex)
+	r.With(a.throttle("api.catalog.club")).Get("/api/catalog/clubs/{club:[0-9]+}", a.catalogShow)
+
 	// routes/api.php: /api/auth/*
 	r.Post("/api/auth/login", a.login)
 	r.Post("/api/auth/password/code", a.passwordRoute(a.passwordCode))

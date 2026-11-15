@@ -15,10 +15,18 @@ const (
 	ActionCreate = "create"
 	ActionUpdate = "update"
 	ActionDelete = "delete"
+	// ActionPay — выставить и отменить счёт за подписку (billing.pay, Zafiro 77ae201). В ACTIONS старого кода его нет:
+	// у права нет столбца на странице «Права», поэтому выдать его сотруднику из панели нельзя — платит владелец
+	// (docs/open-questions/upstream-billing.md UB-3).
+	ActionPay = "pay"
 )
 
 // Actions — порядок столбцов на странице «Права». Laravel: ClubPermissions::ACTIONS.
 var Actions = []string{ActionView, ActionCreate, ActionUpdate, ActionDelete}
+
+// actionOrder — порядок действий внутри раздела в ClubPermissions::SECTIONS: столбцы страницы и следом действия
+// без столбца (pay).
+var actionOrder = append(slices.Clone(Actions), ActionPay)
 
 // Группы ролей. Laravel: ClubPermissions::STAFF, DESK, MANAGERS (private const).
 var (
@@ -56,7 +64,8 @@ var Sections = []Section{
 	{"activity_logs", map[string][]string{ActionView: managers}},
 	{"settings", map[string][]string{ActionView: managers, ActionUpdate: managers}},
 	{"workers", map[string][]string{ActionView: {RoleAdmin}, ActionCreate: {RoleAdmin}, ActionUpdate: {RoleAdmin}, ActionDelete: {RoleAdmin}}},
-	{"billing", map[string][]string{ActionView: managers}},
+	// Paying is the owner's: others get it only when the owner grants it (Zafiro 77ae201, право billing.pay).
+	{"billing", map[string][]string{ActionView: managers, ActionPay: {}}},
 }
 
 var sectionIndex = func() map[string]map[string][]string {
@@ -145,7 +154,7 @@ func Allows(m *Membership, right string) bool {
 func All() []string {
 	rights := make([]string, 0, 64)
 	for _, s := range Sections {
-		for _, a := range Actions { // порядок действий как в литерале PHP (view, create, update, delete)
+		for _, a := range actionOrder { // порядок действий как в литерале PHP (view, create, update, delete; pay)
 			if _, ok := s.Actions[a]; ok {
 				rights = append(rights, s.Name+"."+a)
 			}
@@ -198,5 +207,5 @@ var SectionLabels = map[string]SectionLabel{
 	"activity_logs":  {"Журнал действий", map[string]string{"view": "Логи клуба"}},
 	"settings":       {"Настройки клуба", map[string]string{"view": "Открыть настройки", "update": "Сохранить настройки, логотип, картинку"}},
 	"workers":        {"Работники", map[string]string{"view": "Список сотрудников", "create": "Добавить или пригласить", "update": "Изменить роль, PIN-код агента", "delete": "Убрать сотрудника"}},
-	"billing":        {"Подписка", map[string]string{"view": "Тариф Zafiro и оплата"}},
+	"billing":        {"Подписка", map[string]string{"view": "Тариф Zafiro и оплата", "pay": "Выставить и отменить счёт"}},
 }

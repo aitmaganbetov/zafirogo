@@ -12,17 +12,15 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 )
 
-// phpFloat — число, как его отдаёт json_encode((float) $x) в PHP ≥ 7.1 (serialize_precision = -1): кратчайшая
-// запись, целое — с ".0" (1500.0). Так старый API отдавал балансы и скидку в /api/auth/*.
+// phpFloat — число, как его отдаёт json_encode((float) $x) в ответе Laravel (response()->json() — флаги 0, без
+// JSON_PRESERVE_ZERO_FRACTION; serialize_precision = -1): кратчайшая запись, целое — без дробной части (1500, 0),
+// дробное — 1500.5. Так старый API отдаёт балансы и скидку в /api/auth/* (сверено с PHP 8.4 и стендом старого
+// проекта; тест старого проекта: assertJsonPath('user.balance', 0) — строгое сравнение с целым).
 type phpFloat float64
 
-// MarshalJSON — 1500.5, 1500.0, 0.0.
+// MarshalJSON — 1500.5, 1500, 0.
 func (f phpFloat) MarshalJSON() ([]byte, error) {
-	s := strconv.FormatFloat(float64(f), 'f', -1, 64)
-	if !strings.Contains(s, ".") {
-		s += ".0"
-	}
-	return []byte(s), nil
+	return []byte(strconv.FormatFloat(float64(f), 'f', -1, 64)), nil
 }
 
 func phpFloatOf(f float64) phpFloat { return phpFloat(f) }

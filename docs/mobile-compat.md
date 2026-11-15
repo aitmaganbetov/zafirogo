@@ -24,7 +24,7 @@
 ## 1. Вызов приложения → маршрут → новый сервис
 
 Формат ответа — как в старом контроллере (поля, порядок, `null`), суммы — как отдавал старый API: в `/api/auth/*`
-— `float` тенге (`json_encode((float) …)`: `1500.0`), в `/api/staff/*` — строки `"1500.00"`
+— `float` тенге (`json_encode((float) …)` в ответе Laravel: `1500`, `1500.5` — целое без дробной части), в `/api/staff/*` — строки `"1500.00"`
 (`StaffApiController::money()`), в журнале клиента и переводе — строки со знаком (`GuestHistory::negative()`,
 `Friends::formatCents()`). Внутри — только тиыны.
 
@@ -46,8 +46,11 @@
   клуб с истёкшей подпиской не мешает войти в остальные (Zafiro fcd5d41). С выбранным клубом — как раньше.
 - **Гость приложения не зависит от подписки клуба** (Zafiro 1a0487a, `AuthController::needsSubscription()`): вход и
   смена клуба проверяют подписку только у сотрудников (роли `owner, admin, manager, cashier, operator`);
-  `GET /api/auth/me` — без `subscription`. Вход по списку клубов города (вступление в клуб из приложения) —
-  новая функция «каталог клубов», в этом слое её нет.
+  `GET /api/auth/me` — без `subscription`.
+- **Вступление в клуб из каталога** (Zafiro 1a0487a, `AuthController::joinClub()`): вход и смена клуба с `club_id`
+  клуба **с городом**, в котором у аккаунта нет членства, делают аккаунт клиентом этого клуба (членство `client`,
+  строка баланса с нулями, журнал `user.joined_club`); клуб без города — 403 `not_club_member`, как раньше (§1.5,
+  `business-rules.md` BR-195).
 
 ### 1.2. mobileclient (гостевые маршруты `routes/api.php`)
 
@@ -125,6 +128,28 @@ API отдаёт строку («-150.00») — суммы в журнале п�
 Запрос к такому пути с токеном клуба этого сервера — 404 `{"message": "The route … could not be found."}`; с токеном
 старого сервера — уходит туда (§3).
 
+### 1.5. Каталог клубов (mobileclient, до входа)
+
+Маршруты публичные, без токена (`routes/api.php`, `Api\ClubCatalogController`); лимит — по IP. Код —
+`legacy/catalog.go`, запросы — `db/queries/catalog.sql` (пул `zafiro_platform`: список по всем клубам платформы).
+
+| Вызов | Маршрут | Laravel | Новый код | Лимит |
+|---|---|---|---|---|
+| `catalog` | `GET /api/catalog/clubs?city=` | `ClubCatalogController::index()` | `CatalogCityCounts`, `CatalogCityClubs` (число ПК, цена «от», обложка — агрегаты в SQL), `CatalogFreeCandidates` + присутствие агентов | `api.catalog.clubs` 30/мин |
+| `clubPage` | `GET /api/catalog/clubs/{club}` | `ClubCatalogController::show()` | `CatalogClub`, `ClubProfileZones` (ПК и найденное агентами железо зон одним запросом), `ClubProfilePhotos`, свободные ПК | `api.catalog.club` 60/мин |
+| фото клуба | `GET /club-photos/{club}/{file}` | `ClubProfileController::photo()` | раздел `settings` (`clubPhoto`), байты — `club_photo_images` | — |
+
+- Ответ `index`: `{cities: [{key, name, lat, lng, clubs}], city, clubs: [{id, name, address, logo_url, photo_url, hours,
+  pcs, free_pcs, price_from}]}`; `show`: `{id, name, city, address, logo_url, description, phone, hours, instagram,
+  photos: [url], zones: [{id, name, description, price_per_hour, pcs, free_pcs, devices: [{key, label, value}]}]}`.
+  `price_from` и `price_per_hour` — `(float)` тенге как `json_encode` PHP: `500`, `500.5`, без цен — `null` / `0`.
+  Порядок ключей, типы и `null` сверены с ответами стенда старого проекта — `TestCatalogMatchesLaravel`.
+- Города — по названию на языке `Accept-Language`; неизвестный `city` — 422 `{message, errors}`; клуб без города или
+  несуществующий — 404 «No query results for model [App\Models\Club] N»; `{club}` не число — маршрута нет.
+- **Свободные ПК** — по присутствию агентов в Valkey (не по `last_seen_at`), брони не учитываются (BR-194).
+- **Кэш**: ответ хранится 45 с в памяти инстанса (ключ — город + язык, клуб + язык), решение UQ-20.
+- Адреса `logo_url`, `photo_url`, `photos` — `agent.guest.public_base_url` + `/club-logos/…`, `/club-photos/…`.
+
 ## 2. Аутентификация (Sanctum)
 
 ### 2.1. Формат
@@ -180,6 +205,9 @@ API отдаёт строку («-150.00») — суммы в журнале п�
 | `POST /api/auth/login` | у телефона есть членство хотя бы в одном клубе этого сервера | прокси |
 | `POST /api/auth/password/*` | то же по нормализованному телефону | прокси |
 | Без токена на защищённый маршрут | — | 401 здесь (Laravel ответил бы так же) |
+| `POST /api/auth/login` с `club_id` (клуб выбран в каталоге) | клуб есть на этом сервере **и** аккаунт есть на этом сервере (вступает в клуб здесь) | клуба здесь нет — прокси, даже если у аккаунта есть другие клубы здесь |
+| `GET /api/catalog/clubs` | всегда здесь: свои клубы + список Laravel (§3.5) | — |
+| `GET /api/catalog/clubs/{club}` | клуб с городом есть здесь | прокси |
 
 Пока `mobile.upstream` пуст (все клубы здесь), прокси нет — всё обслуживается здесь.
 
@@ -204,7 +232,7 @@ mobile:
 Пример nginx на `zafiro.kz` (на время перехода):
 
 ```nginx
-location ~ ^/api/(auth|guest|staff)/ {
+location ~ ^/api/(auth|guest|staff|catalog)/ {
     proxy_pass http://zafirogo;              # zafirogo сам вернёт чужие запросы в Laravel (mobile.upstream)
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;   # доверенный прокси: http.trusted_proxies
@@ -224,6 +252,32 @@ Sanctum. Старые агенты ПК (до перехода на gRPC) тож
 - [ ] Сброс пароля такого аккаунта меняет пароль только на новом сервере.
 - [ ] После переноса клуб в Laravel заморожен (README инструмента переноса): его токены там больше не нужны.
 
+### 3.5. Каталог клубов на двух серверах (решение UQ-2)
+
+Каталог — список клубов всей платформы, запрос без токена, а клубы во время перехода живут на двух серверах.
+
+- **Список города** (`GET /api/catalog/clubs`): zafirogo отдаёт свои клубы с городом и, пока задан `mobile.upstream`,
+  добавляет клубы из ответа Laravel на тот же запрос (тот же `city` и `Accept-Language`; карточки Laravel — как есть).
+  Список — по названию, не больше 500; число клубов города — сумма двух серверов. Клуб, который есть в обоих списках,
+  показывается один раз — наш. Laravel не ответил за 5 с или ответил не 200 — отдаём свои клубы, такой ответ не
+  кэшируется (следующий запрос спросит Laravel снова).
+- Запрос к Laravel несёт `X-Forwarded-For` с адресом клиента: лимит `throttle:30,1` Laravel считается по клиенту, а не
+  по адресу zafirogo (Laravel должен доверять zafirogo как прокси — так же, как для входа, §3.1).
+- **Страница клуба** и **вход с `club_id`** клуба, которого здесь нет, — прокси на Laravel (§3.1).
+- **Картинки**: `agent.guest.public_base_url` на время перехода — хост, который обслуживает zafirogo (панель):
+  `/club-logos/…` и `/club-photos/…` клубов нового сервера на основном домене попали бы в Laravel (404). Карточки
+  Laravel несут свои адреса (основной домен → Laravel).
+
+Шаги переезда клуба с городом (дополнение к README инструмента переноса):
+
+- [ ] После переноса клуба — на старом сервере очистить у него город: `UPDATE clubs SET city = NULL WHERE id = <id>`
+      (клуб там заморожен; при откате переезда — вернуть значение). Иначе число клубов города в списке городов
+      завышается на переехавшие клубы, а гость старого сервера, выбрав такой клуб, вступит в его замороженную копию.
+- [ ] Гость, у которого нет аккаунта на новом сервере, вступить в переехавший клуб не может (вход уходит в Laravel, там
+      клуб без города → 403). Поэтому клубы с городом (участники каталога) переносить последними и одной волной
+      (`docs/open-questions/upstream-catalog.md` UC-Q1) — тогда до последней волны каталог целиком отдаёт Laravel,
+      после неё — целиком zafirogo, и `mobile.upstream` убирается.
+
 ## 4. Тесты
 
 `server/internal/http/legacy/legacy_integration_test.go` (`go test -tags=integration`): вход/профиль/выход, неверный
@@ -233,3 +287,7 @@ Sanctum. Старые агенты ПК (до перехода на gRPC) тож
 (GS-099…GS-101), новости и журнал (GS-519), QR (GS-522: устарел, другой клуб), приложение сотрудника GS-274…GS-281
 (роли и права, смена кассира с бонусом и Z-отчётом, клиенты, склад, заказы, чат, уведомления, отчёт дня, карта и
 управление ПК), заказ чужого клуба — 404.
+
+`server/internal/http/legacy/catalog_integration_test.go`: каталог (GS-567, GS-571), свободные ПК (GAP-056), найденное
+агентами железо, сверка ответов со стендом Laravel (`testdata/catalog-*.laravel.json`), кэш, лимиты 30 и 60 в минуту,
+объединение со старым сервером и маршрутизация входа (UQ-2), вступление в клуб (GS-568, GS-569, GAP-057).

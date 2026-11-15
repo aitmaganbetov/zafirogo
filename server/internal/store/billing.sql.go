@@ -12,7 +12,8 @@ import (
 
 const billingSubscription = `-- name: BillingSubscription :one
 
-SELECT s.status, s.trial_ends_at, s.current_period_ends_at, p.name AS plan_name
+SELECT s.status, s.trial_ends_at, s.current_period_ends_at, s.saas_plan_id, s.discount_percent, s.discount_until,
+       p.name AS plan_name, p.price_monthly
 FROM club_subscriptions s
 JOIN saas_plans p ON p.id = s.saas_plan_id
 WHERE s.club_id = $1
@@ -22,10 +23,15 @@ type BillingSubscriptionRow struct {
 	Status              string     `json:"status"`
 	TrialEndsAt         *time.Time `json:"trial_ends_at"`
 	CurrentPeriodEndsAt *time.Time `json:"current_period_ends_at"`
+	SaasPlanID          int64      `json:"saas_plan_id"`
+	DiscountPercent     int16      `json:"discount_percent"`
+	DiscountUntil       *time.Time `json:"discount_until"`
 	PlanName            string     `json:"plan_name"`
+	PriceMonthly        *int64     `json:"price_monthly"`
 }
 
 // Экран «Подписка» (Этап 3, G7): BillingController::show() — подписка клуба с планом (with('plan')).
+// Счета, скидка и оплата — db/queries/subscription_billing.sql.
 func (q *Queries) BillingSubscription(ctx context.Context, clubID int64) (BillingSubscriptionRow, error) {
 	row := q.db.QueryRow(ctx, billingSubscription, clubID)
 	var i BillingSubscriptionRow
@@ -33,7 +39,11 @@ func (q *Queries) BillingSubscription(ctx context.Context, clubID int64) (Billin
 		&i.Status,
 		&i.TrialEndsAt,
 		&i.CurrentPeriodEndsAt,
+		&i.SaasPlanID,
+		&i.DiscountPercent,
+		&i.DiscountUntil,
 		&i.PlanName,
+		&i.PriceMonthly,
 	)
 	return i, err
 }

@@ -45,6 +45,55 @@ type AgentPinRequest struct {
 	PinConfirmation *string `json:"pin_confirmation,omitempty"`
 }
 
+// CityOption defines model for CityOption.
+type CityOption struct {
+	Key string `json:"key"`
+
+	// Name Название на языке клуба.
+	Name string `json:"name"`
+}
+
+// ClubPhoto defines model for ClubPhoto.
+type ClubPhoto struct {
+	Id int64 `json:"id"`
+
+	// Url Публичный адрес /club-photos/{club}/{file}.
+	Url string `json:"url"`
+}
+
+// ClubProfile clubs.profile (пустых полей нет).
+type ClubProfile struct {
+	Description *string `json:"description,omitempty"`
+	Hours       *string `json:"hours,omitempty"`
+
+	// Instagram Имя аккаунта без «@».
+	Instagram *string `json:"instagram,omitempty"`
+	Phone     *string `json:"phone,omitempty"`
+}
+
+// ClubProfilePage defines model for ClubProfilePage.
+type ClubProfilePage struct {
+	DeviceFields []DeviceField `json:"device_fields"`
+
+	// PhotoLimit ClubPhoto::LIMIT.
+	PhotoLimit int32 `json:"photo_limit"`
+
+	// Photos Фото по порядку показа; первое — обложка.
+	Photos []ClubPhoto `json:"photos"`
+
+	// Profile clubs.profile (пустых полей нет).
+	Profile ClubProfile   `json:"profile"`
+	Zones   []ZoneProfile `json:"zones"`
+}
+
+// ClubProfileRequest defines model for ClubProfileRequest.
+type ClubProfileRequest struct {
+	Description *string `json:"description,omitempty"`
+	Hours       *string `json:"hours,omitempty"`
+	Instagram   *string `json:"instagram,omitempty"`
+	Phone       *string `json:"phone,omitempty"`
+}
+
 // ClubSettings defines model for ClubSettings.
 type ClubSettings struct {
 	Club     SettingsClubSection     `json:"club"`
@@ -54,13 +103,21 @@ type ClubSettings struct {
 
 // ClubSettingsPage defines model for ClubSettingsPage.
 type ClubSettingsPage struct {
+	Address *string `json:"address"`
+
 	// AgentPinSetAt Когда задан PIN выхода (null — не задан).
 	AgentPinSetAt     *time.Time `json:"agent_pin_set_at"`
 	AgentStaffMinutes int32      `json:"agent_staff_minutes"`
 
 	// CanManageAgentPin Право workers.update (PIN и время обслуживания).
-	CanManageAgentPin bool   `json:"can_manage_agent_pin"`
-	ClubName          string `json:"club_name"`
+	CanManageAgentPin bool `json:"can_manage_agent_pin"`
+
+	// Cities Города по названию на языке клуба (Cities::options()).
+	Cities []CityOption `json:"cities"`
+
+	// City Ключ города клуба (null — не указан, клуба нет в каталоге приложения).
+	City     *string `json:"city"`
+	ClubName string  `json:"club_name"`
 
 	// ClubTime «Сейчас в клубе» — d.m.Y H:i в поясе клуба.
 	ClubTime       string       `json:"club_time"`
@@ -74,6 +131,14 @@ type ClubSettingsPage struct {
 
 	// TimezonesKazakhstan Пояса Казахстана (группа «Казахстан»).
 	TimezonesKazakhstan []TimezoneOption `json:"timezones_kazakhstan"`
+}
+
+// DeviceField defines model for DeviceField.
+type DeviceField struct {
+	Key string `json:"key"`
+
+	// Label Подпись поля на языке клуба.
+	Label string `json:"label"`
 }
 
 // LanguageItem defines model for LanguageItem.
@@ -94,6 +159,14 @@ type LanguagesPage struct {
 
 	// Locale Язык клуба (LocaleResolver::forClub()).
 	Locale string `json:"locale"`
+}
+
+// LocationRequest defines model for LocationRequest.
+type LocationRequest struct {
+	Address *string `json:"address,omitempty"`
+
+	// City Ключ города (aktobe, almaty, …); пусто — «Не указан».
+	City *string `json:"city,omitempty"`
 }
 
 // PercentLevel defines model for PercentLevel.
@@ -184,9 +257,42 @@ type TimezoneRequest struct {
 	Timezone *string `json:"timezone,omitempty"`
 }
 
+// ZoneProfile defines model for ZoneProfile.
+type ZoneProfile struct {
+	ComputersCount int64   `json:"computers_count"`
+	Description    *string `json:"description"`
+
+	// Detected Подсказки из данных агентов (cpu, gpu, ram) — placeholder полей.
+	Detected map[string]string `json:"detected"`
+
+	// Devices Оборудование, заполненное клубом.
+	Devices map[string]string `json:"devices"`
+	Id      int64             `json:"id"`
+	Name    string            `json:"name"`
+
+	// PricePerHour Цена часа зоны, тиыны.
+	PricePerHour *int64 `json:"price_per_hour"`
+}
+
+// ZoneProfileRequest defines model for ZoneProfileRequest.
+type ZoneProfileRequest struct {
+	Description *string `json:"description,omitempty"`
+
+	// Devices Оборудование зоны — ключ поля → значение (неизвестные ключи игнорируются).
+	Devices *map[string]*string `json:"devices,omitempty"`
+}
+
+// PhotoId defines model for PhotoId.
+type PhotoId = int64
+
 // UploadClubLogoMultipartBody defines parameters for UploadClubLogo.
 type UploadClubLogoMultipartBody struct {
 	Logo *openapi_types.File `json:"logo,omitempty"`
+}
+
+// UploadClubPhotosMultipartBody defines parameters for UploadClubPhotos.
+type UploadClubPhotosMultipartBody struct {
+	Photos *[]openapi_types.File `json:"photos[],omitempty"`
 }
 
 // SaveClubSettingsParamsSection defines parameters for SaveClubSettings.
@@ -206,8 +312,20 @@ type SaveAgentStaffTimeJSONRequestBody = StaffTimeRequest
 // SaveClubLanguageJSONRequestBody defines body for SaveClubLanguage for application/json ContentType.
 type SaveClubLanguageJSONRequestBody = LanguageRequest
 
+// SaveClubLocationJSONRequestBody defines body for SaveClubLocation for application/json ContentType.
+type SaveClubLocationJSONRequestBody = LocationRequest
+
 // UploadClubLogoMultipartRequestBody defines body for UploadClubLogo for multipart/form-data ContentType.
 type UploadClubLogoMultipartRequestBody UploadClubLogoMultipartBody
+
+// SaveClubProfileJSONRequestBody defines body for SaveClubProfile for application/json ContentType.
+type SaveClubProfileJSONRequestBody = ClubProfileRequest
+
+// UploadClubPhotosMultipartRequestBody defines body for UploadClubPhotos for multipart/form-data ContentType.
+type UploadClubPhotosMultipartRequestBody UploadClubPhotosMultipartBody
+
+// SaveClubZoneProfileJSONRequestBody defines body for SaveClubZoneProfile for application/json ContentType.
+type SaveClubZoneProfileJSONRequestBody = ZoneProfileRequest
 
 // SaveClubSettingsJSONRequestBody defines body for SaveClubSettings for application/json ContentType.
 type SaveClubSettingsJSONRequestBody = SettingsSaveRequest
@@ -297,12 +415,33 @@ type ServerInterface interface {
 	// GetClubLanguages Языки и язык клуба
 	// (GET /api/settings/languages)
 	GetClubLanguages(w http.ResponseWriter, r *http.Request)
+	// SaveClubLocation Город и адрес клуба
+	// (PUT /api/settings/location)
+	SaveClubLocation(w http.ResponseWriter, r *http.Request)
 	// DeleteClubLogo Удалить логотип клуба
 	// (DELETE /api/settings/logo)
 	DeleteClubLogo(w http.ResponseWriter, r *http.Request)
 	// UploadClubLogo Загрузить логотип клуба
 	// (POST /api/settings/logo)
 	UploadClubLogo(w http.ResponseWriter, r *http.Request)
+	// GetClubProfile Профиль клуба для гостевого приложения
+	// (GET /api/settings/profile)
+	GetClubProfile(w http.ResponseWriter, r *http.Request)
+	// SaveClubProfile Описание и контакты клуба
+	// (PUT /api/settings/profile)
+	SaveClubProfile(w http.ResponseWriter, r *http.Request)
+	// UploadClubPhotos Добавить фото клуба
+	// (POST /api/settings/profile/photos)
+	UploadClubPhotos(w http.ResponseWriter, r *http.Request)
+	// DeleteClubPhoto Удалить фото клуба
+	// (DELETE /api/settings/profile/photos/{photo})
+	DeleteClubPhoto(w http.ResponseWriter, r *http.Request, photo PhotoId)
+	// SetClubPhotoCover Сделать фото обложкой клуба
+	// (POST /api/settings/profile/photos/{photo}/cover)
+	SetClubPhotoCover(w http.ResponseWriter, r *http.Request, photo PhotoId)
+	// SaveClubZoneProfile Описание и оборудование зоны
+	// (PUT /api/settings/profile/zones/{zone})
+	SaveClubZoneProfile(w http.ResponseWriter, r *http.Request, zone int64)
 	// SaveClubSettings Сохранить секцию настроек
 	// (PUT /api/settings/sections/{section})
 	SaveClubSettings(w http.ResponseWriter, r *http.Request, section SaveClubSettingsParamsSection)
@@ -351,6 +490,12 @@ func (_ Unimplemented) GetClubLanguages(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// SaveClubLocation Город и адрес клуба
+// (PUT /api/settings/location)
+func (_ Unimplemented) SaveClubLocation(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // DeleteClubLogo Удалить логотип клуба
 // (DELETE /api/settings/logo)
 func (_ Unimplemented) DeleteClubLogo(w http.ResponseWriter, r *http.Request) {
@@ -360,6 +505,42 @@ func (_ Unimplemented) DeleteClubLogo(w http.ResponseWriter, r *http.Request) {
 // UploadClubLogo Загрузить логотип клуба
 // (POST /api/settings/logo)
 func (_ Unimplemented) UploadClubLogo(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetClubProfile Профиль клуба для гостевого приложения
+// (GET /api/settings/profile)
+func (_ Unimplemented) GetClubProfile(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaveClubProfile Описание и контакты клуба
+// (PUT /api/settings/profile)
+func (_ Unimplemented) SaveClubProfile(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// UploadClubPhotos Добавить фото клуба
+// (POST /api/settings/profile/photos)
+func (_ Unimplemented) UploadClubPhotos(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// DeleteClubPhoto Удалить фото клуба
+// (DELETE /api/settings/profile/photos/{photo})
+func (_ Unimplemented) DeleteClubPhoto(w http.ResponseWriter, r *http.Request, photo PhotoId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SetClubPhotoCover Сделать фото обложкой клуба
+// (POST /api/settings/profile/photos/{photo}/cover)
+func (_ Unimplemented) SetClubPhotoCover(w http.ResponseWriter, r *http.Request, photo PhotoId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaveClubZoneProfile Описание и оборудование зоны
+// (PUT /api/settings/profile/zones/{zone})
+func (_ Unimplemented) SaveClubZoneProfile(w http.ResponseWriter, r *http.Request, zone int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -466,6 +647,20 @@ func (siw *ServerInterfaceWrapper) GetClubLanguages(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// SaveClubLocation operation middleware
+func (siw *ServerInterfaceWrapper) SaveClubLocation(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaveClubLocation(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteClubLogo operation middleware
 func (siw *ServerInterfaceWrapper) DeleteClubLogo(w http.ResponseWriter, r *http.Request) {
 
@@ -485,6 +680,126 @@ func (siw *ServerInterfaceWrapper) UploadClubLogo(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UploadClubLogo(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetClubProfile operation middleware
+func (siw *ServerInterfaceWrapper) GetClubProfile(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetClubProfile(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaveClubProfile operation middleware
+func (siw *ServerInterfaceWrapper) SaveClubProfile(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaveClubProfile(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UploadClubPhotos operation middleware
+func (siw *ServerInterfaceWrapper) UploadClubPhotos(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadClubPhotos(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteClubPhoto operation middleware
+func (siw *ServerInterfaceWrapper) DeleteClubPhoto(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "photo" -------------
+	var photo PhotoId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "photo", chi.URLParam(r, "photo"), &photo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "photo", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteClubPhoto(w, r, photo)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetClubPhotoCover operation middleware
+func (siw *ServerInterfaceWrapper) SetClubPhotoCover(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "photo" -------------
+	var photo PhotoId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "photo", chi.URLParam(r, "photo"), &photo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "photo", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetClubPhotoCover(w, r, photo)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaveClubZoneProfile operation middleware
+func (siw *ServerInterfaceWrapper) SaveClubZoneProfile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "zone" -------------
+	var zone int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "zone", chi.URLParam(r, "zone"), &zone, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "zone", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaveClubZoneProfile(w, r, zone)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -707,6 +1022,27 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/settings/signin-image", wrapper.UploadSigninImage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/settings/location", wrapper.SaveClubLocation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/settings/profile", wrapper.GetClubProfile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/settings/profile", wrapper.SaveClubProfile)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/settings/profile/photos", wrapper.UploadClubPhotos)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/settings/profile/photos/{photo}", wrapper.DeleteClubPhoto)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/settings/profile/photos/{photo}/cover", wrapper.SetClubPhotoCover)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/settings/profile/zones/{zone}", wrapper.SaveClubZoneProfile)
 	})
 
 	return r
@@ -1028,6 +1364,76 @@ func (response GetClubLanguages403JSONResponse) VisitGetClubLanguagesResponse(w 
 	return err
 }
 
+type SaveClubLocationRequestObject struct {
+	Body *SaveClubLocationJSONRequestBody
+}
+
+type SaveClubLocationResponseObject interface {
+	VisitSaveClubLocationResponse(w http.ResponseWriter) error
+}
+
+type SaveClubLocation200JSONResponse SettingsMessage
+
+func (response SaveClubLocation200JSONResponse) VisitSaveClubLocationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveClubLocation401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaveClubLocation401JSONResponse) VisitSaveClubLocationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveClubLocation403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaveClubLocation403JSONResponse) VisitSaveClubLocationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveClubLocation422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SaveClubLocation422JSONResponse) VisitSaveClubLocationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DeleteClubLogoRequestObject struct {
 }
 
@@ -1140,6 +1546,445 @@ type UploadClubLogo422JSONResponse struct {
 }
 
 func (response UploadClubLogo422JSONResponse) VisitUploadClubLogoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClubProfileRequestObject struct {
+}
+
+type GetClubProfileResponseObject interface {
+	VisitGetClubProfileResponse(w http.ResponseWriter) error
+}
+
+type GetClubProfile200JSONResponse ClubProfilePage
+
+func (response GetClubProfile200JSONResponse) VisitGetClubProfileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClubProfile401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response GetClubProfile401JSONResponse) VisitGetClubProfileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClubProfile403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response GetClubProfile403JSONResponse) VisitGetClubProfileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveClubProfileRequestObject struct {
+	Body *SaveClubProfileJSONRequestBody
+}
+
+type SaveClubProfileResponseObject interface {
+	VisitSaveClubProfileResponse(w http.ResponseWriter) error
+}
+
+type SaveClubProfile200JSONResponse SettingsMessage
+
+func (response SaveClubProfile200JSONResponse) VisitSaveClubProfileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveClubProfile401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaveClubProfile401JSONResponse) VisitSaveClubProfileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveClubProfile403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaveClubProfile403JSONResponse) VisitSaveClubProfileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveClubProfile422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SaveClubProfile422JSONResponse) VisitSaveClubProfileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadClubPhotosRequestObject struct {
+	Body *multipart.Reader
+}
+
+type UploadClubPhotosResponseObject interface {
+	VisitUploadClubPhotosResponse(w http.ResponseWriter) error
+}
+
+type UploadClubPhotos200JSONResponse SettingsMessage
+
+func (response UploadClubPhotos200JSONResponse) VisitUploadClubPhotosResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadClubPhotos401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response UploadClubPhotos401JSONResponse) VisitUploadClubPhotosResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadClubPhotos403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response UploadClubPhotos403JSONResponse) VisitUploadClubPhotosResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadClubPhotos422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response UploadClubPhotos422JSONResponse) VisitUploadClubPhotosResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadClubPhotos429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response UploadClubPhotos429JSONResponse) VisitUploadClubPhotosResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteClubPhotoRequestObject struct {
+	Photo PhotoId `json:"photo"`
+}
+
+type DeleteClubPhotoResponseObject interface {
+	VisitDeleteClubPhotoResponse(w http.ResponseWriter) error
+}
+
+type DeleteClubPhoto200JSONResponse SettingsMessage
+
+func (response DeleteClubPhoto200JSONResponse) VisitDeleteClubPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteClubPhoto401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response DeleteClubPhoto401JSONResponse) VisitDeleteClubPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteClubPhoto403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response DeleteClubPhoto403JSONResponse) VisitDeleteClubPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteClubPhoto404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response DeleteClubPhoto404JSONResponse) VisitDeleteClubPhotoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetClubPhotoCoverRequestObject struct {
+	Photo PhotoId `json:"photo"`
+}
+
+type SetClubPhotoCoverResponseObject interface {
+	VisitSetClubPhotoCoverResponse(w http.ResponseWriter) error
+}
+
+type SetClubPhotoCover200JSONResponse SettingsMessage
+
+func (response SetClubPhotoCover200JSONResponse) VisitSetClubPhotoCoverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetClubPhotoCover401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SetClubPhotoCover401JSONResponse) VisitSetClubPhotoCoverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetClubPhotoCover403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SetClubPhotoCover403JSONResponse) VisitSetClubPhotoCoverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetClubPhotoCover404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response SetClubPhotoCover404JSONResponse) VisitSetClubPhotoCoverResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveClubZoneProfileRequestObject struct {
+	Zone int64 `json:"zone"`
+	Body *SaveClubZoneProfileJSONRequestBody
+}
+
+type SaveClubZoneProfileResponseObject interface {
+	VisitSaveClubZoneProfileResponse(w http.ResponseWriter) error
+}
+
+type SaveClubZoneProfile200JSONResponse SettingsMessage
+
+func (response SaveClubZoneProfile200JSONResponse) VisitSaveClubZoneProfileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveClubZoneProfile401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaveClubZoneProfile401JSONResponse) VisitSaveClubZoneProfileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveClubZoneProfile403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaveClubZoneProfile403JSONResponse) VisitSaveClubZoneProfileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveClubZoneProfile404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response SaveClubZoneProfile404JSONResponse) VisitSaveClubZoneProfileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaveClubZoneProfile422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SaveClubZoneProfile422JSONResponse) VisitSaveClubZoneProfileResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -1432,12 +2277,33 @@ type StrictServerInterface interface {
 	// GetClubLanguages Языки и язык клуба
 	// (GET /api/settings/languages)
 	GetClubLanguages(ctx context.Context, request GetClubLanguagesRequestObject) (GetClubLanguagesResponseObject, error)
+	// SaveClubLocation Город и адрес клуба
+	// (PUT /api/settings/location)
+	SaveClubLocation(ctx context.Context, request SaveClubLocationRequestObject) (SaveClubLocationResponseObject, error)
 	// DeleteClubLogo Удалить логотип клуба
 	// (DELETE /api/settings/logo)
 	DeleteClubLogo(ctx context.Context, request DeleteClubLogoRequestObject) (DeleteClubLogoResponseObject, error)
 	// UploadClubLogo Загрузить логотип клуба
 	// (POST /api/settings/logo)
 	UploadClubLogo(ctx context.Context, request UploadClubLogoRequestObject) (UploadClubLogoResponseObject, error)
+	// GetClubProfile Профиль клуба для гостевого приложения
+	// (GET /api/settings/profile)
+	GetClubProfile(ctx context.Context, request GetClubProfileRequestObject) (GetClubProfileResponseObject, error)
+	// SaveClubProfile Описание и контакты клуба
+	// (PUT /api/settings/profile)
+	SaveClubProfile(ctx context.Context, request SaveClubProfileRequestObject) (SaveClubProfileResponseObject, error)
+	// UploadClubPhotos Добавить фото клуба
+	// (POST /api/settings/profile/photos)
+	UploadClubPhotos(ctx context.Context, request UploadClubPhotosRequestObject) (UploadClubPhotosResponseObject, error)
+	// DeleteClubPhoto Удалить фото клуба
+	// (DELETE /api/settings/profile/photos/{photo})
+	DeleteClubPhoto(ctx context.Context, request DeleteClubPhotoRequestObject) (DeleteClubPhotoResponseObject, error)
+	// SetClubPhotoCover Сделать фото обложкой клуба
+	// (POST /api/settings/profile/photos/{photo}/cover)
+	SetClubPhotoCover(ctx context.Context, request SetClubPhotoCoverRequestObject) (SetClubPhotoCoverResponseObject, error)
+	// SaveClubZoneProfile Описание и оборудование зоны
+	// (PUT /api/settings/profile/zones/{zone})
+	SaveClubZoneProfile(ctx context.Context, request SaveClubZoneProfileRequestObject) (SaveClubZoneProfileResponseObject, error)
 	// SaveClubSettings Сохранить секцию настроек
 	// (PUT /api/settings/sections/{section})
 	SaveClubSettings(ctx context.Context, request SaveClubSettingsRequestObject) (SaveClubSettingsResponseObject, error)
@@ -1632,6 +2498,37 @@ func (sh *strictHandler) GetClubLanguages(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// SaveClubLocation operation middleware
+func (sh *strictHandler) SaveClubLocation(w http.ResponseWriter, r *http.Request) {
+	var request SaveClubLocationRequestObject
+
+	var body SaveClubLocationJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaveClubLocation(ctx, request.(SaveClubLocationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaveClubLocation")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaveClubLocationResponseObject); ok {
+		if err := validResponse.VisitSaveClubLocationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // DeleteClubLogo operation middleware
 func (sh *strictHandler) DeleteClubLogo(w http.ResponseWriter, r *http.Request) {
 	var request DeleteClubLogoRequestObject
@@ -1680,6 +2577,177 @@ func (sh *strictHandler) UploadClubLogo(w http.ResponseWriter, r *http.Request) 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UploadClubLogoResponseObject); ok {
 		if err := validResponse.VisitUploadClubLogoResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetClubProfile operation middleware
+func (sh *strictHandler) GetClubProfile(w http.ResponseWriter, r *http.Request) {
+	var request GetClubProfileRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetClubProfile(ctx, request.(GetClubProfileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetClubProfile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetClubProfileResponseObject); ok {
+		if err := validResponse.VisitGetClubProfileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaveClubProfile operation middleware
+func (sh *strictHandler) SaveClubProfile(w http.ResponseWriter, r *http.Request) {
+	var request SaveClubProfileRequestObject
+
+	var body SaveClubProfileJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaveClubProfile(ctx, request.(SaveClubProfileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaveClubProfile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaveClubProfileResponseObject); ok {
+		if err := validResponse.VisitSaveClubProfileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UploadClubPhotos operation middleware
+func (sh *strictHandler) UploadClubPhotos(w http.ResponseWriter, r *http.Request) {
+	var request UploadClubPhotosRequestObject
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UploadClubPhotos(ctx, request.(UploadClubPhotosRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UploadClubPhotos")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UploadClubPhotosResponseObject); ok {
+		if err := validResponse.VisitUploadClubPhotosResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteClubPhoto operation middleware
+func (sh *strictHandler) DeleteClubPhoto(w http.ResponseWriter, r *http.Request, photo PhotoId) {
+	var request DeleteClubPhotoRequestObject
+
+	request.Photo = photo
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteClubPhoto(ctx, request.(DeleteClubPhotoRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteClubPhoto")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteClubPhotoResponseObject); ok {
+		if err := validResponse.VisitDeleteClubPhotoResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetClubPhotoCover operation middleware
+func (sh *strictHandler) SetClubPhotoCover(w http.ResponseWriter, r *http.Request, photo PhotoId) {
+	var request SetClubPhotoCoverRequestObject
+
+	request.Photo = photo
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetClubPhotoCover(ctx, request.(SetClubPhotoCoverRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetClubPhotoCover")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetClubPhotoCoverResponseObject); ok {
+		if err := validResponse.VisitSetClubPhotoCoverResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaveClubZoneProfile operation middleware
+func (sh *strictHandler) SaveClubZoneProfile(w http.ResponseWriter, r *http.Request, zone int64) {
+	var request SaveClubZoneProfileRequestObject
+
+	request.Zone = zone
+
+	var body SaveClubZoneProfileJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaveClubZoneProfile(ctx, request.(SaveClubZoneProfileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaveClubZoneProfile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaveClubZoneProfileResponseObject); ok {
+		if err := validResponse.VisitSaveClubZoneProfileResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

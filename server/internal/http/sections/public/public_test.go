@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
+	publicapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/public"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 )
 
@@ -73,5 +75,33 @@ func TestOfflineAndManifest(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil || w.Header().Get("Content-Type") != "application/manifest+json" ||
 		len(m.Shortcuts) != 3 || m.Shortcuts[0].Name != "Касса" || m.Shortcuts[2].URL != "/club-computers" || m.Lang != "ru" {
 		t.Fatalf("manifest: %s %+v", w.Body, m)
+	}
+}
+
+// `$plan->features ?? []`: список строк суперадмина; NULL и не-список — пусто («Все возможности Zafiro» на странице).
+func TestPlanFeatures(t *testing.T) {
+	for raw, want := range map[string][]string{
+		`["До 30 ПК","Поддержка"]`: {"До 30 ПК", "Поддержка"},
+		`[]`:                       {},
+		`null`:                     {},
+		``:                         {},
+		`{"a":"b"}`:                {},
+		`"строка"`:                 {},
+	} {
+		if got := planFeatures(json.RawMessage(raw)); !slices.Equal(got, want) {
+			t.Errorf("%s: %q", raw, got)
+		}
+	}
+}
+
+// Без пула платформы (сервер без базы) — пустой список тарифов, а не ошибка: страница покажет «Тарифы скоро появятся.».
+func TestGetPricingWithoutPool(t *testing.T) {
+	h := &handlers{d: &httpx.Deps{}}
+	res, err := h.GetPricing(t.Context(), publicapi.GetPricingRequestObject{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, ok := res.(publicapi.GetPricing200JSONResponse); !ok || out.Plans == nil || len(out.Plans) != 0 {
+		t.Fatalf("%#v", res)
 	}
 }

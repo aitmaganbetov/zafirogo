@@ -43,10 +43,16 @@ const (
 // GetClubSettings — club(), finances(), guests(): loadSettings() и данные карточек «Настройки клуба».
 func (h *handlers) GetClubSettings(ctx context.Context, _ settingsapi.GetClubSettingsRequestObject) (settingsapi.GetClubSettingsResponseObject, error) {
 	p := httpx.Principal(ctx)
-	var row store.SettingsClubRow
+	var (
+		row  store.SettingsClubRow
+		prof store.ClubProfileGetRow
+	)
 	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		var err error
-		row, err = q.SettingsClub(ctx, p.ClubID)
+		if row, err = q.SettingsClub(ctx, p.ClubID); err != nil {
+			return err
+		}
+		prof, err = q.ClubProfileGet(ctx, p.ClubID)
 		return err
 	})
 	if err != nil {
@@ -64,6 +70,10 @@ func (h *handlers) GetClubSettings(ctx context.Context, _ settingsapi.GetClubSet
 		ClubTime:            now.In(loc).Format("02.01.2006 15:04"),
 		AgentStaffMinutes:   row.AgentStaffMinutes,
 		CanManageAgentPin:   p.Can("workers.update"),
+		// Карточка «Город и адрес» (SettingsController::club(): 'cities' => Cities::options()).
+		City:    prof.City,
+		Address: prof.Address,
+		Cities:  h.cityOptions(ctx),
 	}
 	if row.PinSet {
 		out.AgentPinSetAt = row.AgentExitPinChangedAt

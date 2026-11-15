@@ -76,6 +76,8 @@ type env struct {
 	upHits   atomic.Int64
 	// notifier — команды агенту после коммита (BalanceChanged и т. п.), как stream.Notifier в app.
 	notifier *recNotifier
+	// presence — присутствие агентов ПК (каталог: «свободные ПК»); nil — все ПК не в сети.
+	presence httpserver.Presence
 }
 
 type option func(*legacy.Options)
@@ -118,7 +120,7 @@ func newEnv(t *testing.T, opts ...func(*env) option) *env {
 	}
 	e.srv = httptest.NewServer(httpserver.NewRouter(httpserver.Options{
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: svc, Limiter: lim,
-		Pool: tdb.App, PlatformPool: tdb.Platform, Billing: bill, Cash: cash, Passwords: h,
+		Pool: tdb.App, PlatformPool: tdb.Platform, Billing: bill, Cash: cash, Passwords: h, Presence: e.presence,
 		Legacy: func(d *httpx.Deps, root http.Handler) func(http.Handler) http.Handler {
 			return legacy.New(lo, d, root).Middleware
 		},
@@ -277,8 +279,9 @@ func TestAuth(t *testing.T) {
 		if !sanctumRe.MatchString(tok) || r.body["token"] != tok {
 			t.Fatalf("token %q", tok)
 		}
-		// Деньги — float тенге как json_encode((float)…): 0.0 (Profile.fromJson: _num).
-		if !strings.Contains(r.raw, `"balance":0.0`) || !strings.Contains(r.raw, `"discount":0.0`) {
+		// Деньги — float тенге как json_encode((float)…) в ответе Laravel: целое — без дробной части (0, 1500),
+		// Profile.fromJson читает через _num. Сверено со стендом старого проекта (PHP 8.4).
+		if !strings.Contains(r.raw, `"balance":0,`) || !strings.Contains(r.raw, `"discount":0,`) {
 			t.Errorf("balances not PHP floats: %s", r.raw)
 		}
 		expect(t, e.do("GET", "/api/auth/me", tok, nil), 200, map[string]any{"user.id": uid, "user.phone": phone})

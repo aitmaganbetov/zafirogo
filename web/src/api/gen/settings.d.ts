@@ -206,6 +206,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/location": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Город и адрес клуба
+         * @description Laravel: SettingsController::location() (settings.location, settings.update): `city` — nullable, ключ списка
+         *     городов (App\Support\Cities, 25 городов); `address` — nullable|string|max:255. Без города клуба нет в каталоге
+         *     гостевого приложения. Журнал club.location_changed — только если город или адрес изменились.
+         */
+        put: operations["saveClubLocation"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Профиль клуба для гостевого приложения
+         * @description Laravel: ClubProfileController::show() (settings.profile, settings.view): описание и контакты, фото
+         *     (первое — обложка), зоны с числом ПК, ценой часа, оборудованием и подсказками из данных агентов
+         *     (ZoneDevices::detected()).
+         */
+        get: operations["getClubProfile"];
+        /**
+         * Описание и контакты клуба
+         * @description Laravel: ClubProfileController::update() (settings.profile.update, settings.update): description ≤ 2000,
+         *     phone ≤ 32 (`/^[+\d\s()\-]+$/`), hours ≤ 100, instagram ≤ 64 (`/^@?[A-Za-z0-9._]+$/`, «@» убирается). Пустые поля
+         *     не хранятся; пустой профиль — NULL. Журнал club.profile_changed.
+         */
+        put: operations["saveClubProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/profile/photos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Добавить фото клуба
+         * @description Laravel: ClubProfileController::storePhotos() (settings.photos.store, settings.update, throttle:20,1):
+         *     `photos` — required|array|max:10; каждое — `file|mimes:jpg,jpeg,png,webp|max:3072|dimensions:200…6000`.
+         *     У клуба не больше 10 фото. Журнал club.photos_added. Поля формы — `photos[]` (как в старой форме) или `photos`.
+         */
+        post: operations["uploadClubPhotos"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/profile/photos/{photo}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Удалить фото клуба
+         * @description Laravel — ClubProfileController::destroyPhoto() (settings.photos.destroy). Журнал club.photo_deleted.
+         */
+        delete: operations["deleteClubPhoto"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/profile/photos/{photo}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Сделать фото обложкой клуба
+         * @description Laravel — ClubProfileController::coverPhoto() (settings.photos.cover): sort_order = min − 1 (фото становится
+         *     первым). В журнал не пишется.
+         */
+        post: operations["setClubPhotoCover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/profile/zones/{zone}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Описание и оборудование зоны
+         * @description Laravel — ClubProfileController::updateZone() (settings.profile.zone, settings.update): description ≤ 500,
+         *     devices.<cpu|gpu|ram|monitor|keyboard|mouse|headset|chair> ≤ 120. Пустые значения не хранятся. Журнал
+         *     club.zone_devices_changed.
+         */
+        put: operations["saveClubZoneProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -298,6 +433,81 @@ export interface components {
             /** @description (UTC+05:00) Asia/Almaty */
             label: string;
         };
+        LocationRequest: {
+            /** @description Ключ города (aktobe, almaty, …); пусто — «Не указан». */
+            city?: string | null;
+            address?: string | null;
+        };
+        CityOption: {
+            key: string;
+            /** @description Название на языке клуба. */
+            name: string;
+        };
+        ClubProfileRequest: {
+            description?: string | null;
+            phone?: string | null;
+            hours?: string | null;
+            instagram?: string | null;
+        };
+        ZoneProfileRequest: {
+            description?: string | null;
+            /** @description Оборудование зоны — ключ поля → значение (неизвестные ключи игнорируются). */
+            devices?: {
+                [key: string]: string | null;
+            } | null;
+        };
+        /** @description clubs.profile (пустых полей нет). */
+        ClubProfile: {
+            description?: string;
+            phone?: string;
+            hours?: string;
+            /** @description Имя аккаунта без «@». */
+            instagram?: string;
+        };
+        ClubPhoto: {
+            /** Format: int64 */
+            id: number;
+            /** @description Публичный адрес /club-photos/{club}/{file}. */
+            url: string;
+        };
+        DeviceField: {
+            key: string;
+            /** @description Подпись поля на языке клуба. */
+            label: string;
+        };
+        ZoneProfile: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            description: string | null;
+            /** Format: int64 */
+            computers_count: number;
+            /**
+             * Format: int64
+             * @description Цена часа зоны, тиыны.
+             */
+            price_per_hour: number | null;
+            /** @description Оборудование, заполненное клубом. */
+            devices: {
+                [key: string]: string;
+            };
+            /** @description Подсказки из данных агентов (cpu, gpu, ram) — placeholder полей. */
+            detected: {
+                [key: string]: string;
+            };
+        };
+        ClubProfilePage: {
+            profile: components["schemas"]["ClubProfile"];
+            /** @description Фото по порядку показа; первое — обложка. */
+            photos: components["schemas"]["ClubPhoto"][];
+            /**
+             * Format: int32
+             * @description ClubPhoto::LIMIT.
+             */
+            photo_limit: number;
+            zones: components["schemas"]["ZoneProfile"][];
+            device_fields: components["schemas"]["DeviceField"][];
+        };
         ClubSettingsPage: {
             club_name: string;
             settings: components["schemas"]["ClubSettings"];
@@ -319,6 +529,11 @@ export interface components {
             can_manage_agent_pin: boolean;
             logo_url: string | null;
             signin_image_url: string | null;
+            /** @description Ключ города клуба (null — не указан, клуба нет в каталоге приложения). */
+            city: string | null;
+            address: string | null;
+            /** @description Города по названию на языке клуба (Cities::options()). */
+            cities: components["schemas"]["CityOption"][];
         };
         LanguageItem: {
             code: string;
@@ -375,8 +590,29 @@ export interface components {
                 "application/json": components["schemas"]["ValidationError"];
             };
         };
+        /** @description Превышен лимит (throttle). Заголовки Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset. */
+        TooManyRequests: {
+            headers: {
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Не найдено. */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
-    parameters: never;
+    parameters: {
+        PhotoId: number;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -666,6 +902,192 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    saveClubLocation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocationRequest"];
+            };
+        };
+        responses: {
+            /** @description Город и адрес сохранены. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsMessage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getClubProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Профиль клуба. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClubProfilePage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    saveClubProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClubProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Описание клуба сохранено. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsMessage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    uploadClubPhotos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    "photos[]"?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Фото добавлены. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsMessage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    deleteClubPhoto: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                photo: components["parameters"]["PhotoId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Фото удалено. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsMessage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setClubPhotoCover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                photo: components["parameters"]["PhotoId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Обложка изменена. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsMessage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    saveClubZoneProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                zone: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ZoneProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Зона сохранена. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsMessage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
         };
     };
 }
