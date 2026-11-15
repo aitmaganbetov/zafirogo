@@ -5,7 +5,7 @@ name: zafirogo-agent-it
 
 services:
   postgres:
-    image: mirror.gcr.io/library/postgres:18.6
+    image: mirror.gcr.io/library/postgres:18.7
     environment:
       POSTGRES_DB: zafiro_agent_it
       POSTGRES_USER: zafiro
