@@ -20,7 +20,7 @@ func TestValidateAndSubject(t *testing.T) {
 	if err := Validate(0, "a.b"); !errors.Is(err, ErrInvalidEvent) {
 		t.Error("club 0 must be invalid")
 	}
-	if Subject(12, "chat.message") != "club.12.chat.message" || ClubSubjects(12) != "club.12.>" {
+	if Subject(12, "chat.message") != "club.12.chat.message" {
 		t.Error("subject format")
 	}
 }

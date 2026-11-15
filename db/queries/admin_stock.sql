@@ -13,11 +13,6 @@ WHERE club_id = sqlc.arg(club_id)
 ORDER BY name, id
 LIMIT sqlc.arg(page_size);
 
--- name: AdminGetProduct :one
-SELECT id, sku, name, category, product_category_id, price, quantity, updated_at
-FROM products
-WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id) AND deleted_at IS NULL;
-
 -- name: AdminListProductCategories :many
 -- Категории склада (форма товара), по имени.
 SELECT id, name

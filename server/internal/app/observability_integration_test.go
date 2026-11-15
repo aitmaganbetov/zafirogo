@@ -26,7 +26,7 @@ import (
 // scrape читает /metrics внутреннего порта.
 func scrape(t *testing.T, addr string) string {
 	t.Helper()
-	resp, err := http.Get("http://" + addr + "/metrics") //nolint:noctx // тест
+	resp, err := http.Get("http://" + addr + "/metrics") // тест
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestObservabilityMetrics(t *testing.T) {
 	}
 
 	// Публичный порт /metrics не обслуживает (SPA или 404, но не текст метрик).
-	if resp, err := http.Get(base + "/metrics"); err == nil { //nolint:noctx // тест
+	if resp, err := http.Get(base + "/metrics"); err == nil { // тест
 		b, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if strings.Contains(string(b), "zafiro_http_requests_total") {
@@ -92,7 +92,7 @@ func TestObservabilityMetrics(t *testing.T) {
 	}
 
 	// Неудачный вход (пароль в фикстуре — не хеш, вход невозможен).
-	resp, err := http.Post(base+"/api/auth/login", "application/json", //nolint:noctx // тест
+	resp, err := http.Post(base+"/api/auth/login", "application/json", // тест
 		strings.NewReader(fmt.Sprintf(`{"phone":%q,"password":"wrong-password"}`, phone)))
 	if err != nil {
 		t.Fatal(err)
@@ -238,4 +238,12 @@ func TestObservabilityMetrics(t *testing.T) {
 	if err := r.stop(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+}
+
+// MetricsAddr — адрес внутреннего порта /metrics ("" — выключен).
+func (a *App) MetricsAddr() string {
+	if a.metricsLis == nil {
+		return ""
+	}
+	return a.metricsLis.Addr().String()
 }

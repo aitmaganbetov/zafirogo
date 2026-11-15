@@ -1,9 +1,7 @@
 package stock
 
 import (
-	"errors"
 	"strconv"
-	"strings"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 )
@@ -52,13 +50,6 @@ func (e *Error) Error() string {
 		return e.Field + ": " + e.Message
 	}
 	return e.Field + ": " + e.Rule
-}
-
-// AsError возвращает *Error из цепочки ошибок.
-func AsError(err error) (*Error, bool) {
-	var e *Error
-	ok := errors.As(err, &e)
-	return e, ok
 }
 
 // Movement — движение склада: что записать в stock_movements и чем стал остаток товара.
@@ -136,33 +127,6 @@ func Initial(productID, quantity int64) (m Movement, ok bool, err error) {
 		return Movement{}, false, nil
 	}
 	return Movement{ProductID: productID, Type: Receipt, Quantity: quantity, BalanceAfter: quantity, Note: NoteInitial, Change: quantity}, true, nil
-}
-
-// ParsePrice — цена товара из формы (BR-071, BR-072).
-//
-// Laravel: app/Http/Requests/StoreProductRequest.php — price required|numeric|min:0|max:9999999999.99;
-// CreateProductAction / UpdateProductAction писали строку запроса в decimal(12,2) (округление MySQL).
-// Решение Q-002 (docs/DECISIONS.md): разбор строгий (money.ParseTenge) — > 2 знаков после точки — ошибка decimal
-// (а не округление), экспонента и запятая — numeric. Пробелы по краям обрезаются (TrimStrings).
-func ParsePrice(s string) (money.Tiyn, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, &Error{Field: "price", Rule: "required"}
-	}
-	t, err := money.ParseTenge(s)
-	switch {
-	case errors.Is(err, money.ErrTooManyDecimals):
-		return 0, &Error{Field: "price", Rule: "decimal"}
-	case errors.Is(err, money.ErrOutOfRange):
-		return 0, &Error{Field: "price", Rule: "max"}
-	case err != nil:
-		return 0, &Error{Field: "price", Rule: "numeric"}
-	case t < 0:
-		return 0, &Error{Field: "price", Rule: "min"}
-	case t > MaxPrice:
-		return 0, &Error{Field: "price", Rule: "max"}
-	}
-	return t, nil
 }
 
 // Change — изменение поля товара «было → стало» (журнал product.updated).

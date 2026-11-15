@@ -78,7 +78,7 @@ func (t *TransferCodes) Send(ctx context.Context, clubID, userID, friendshipID i
 			return err
 		}
 		if limitErr = limits("code", now, st.LastAt, st.InHour, st.FirstInHour); limitErr != nil {
-			return nil
+			return nil //nolint:nilerr // отказ по лимиту возвращается после коммита транзакции (limitErr)
 		}
 		hash, err := t.Hasher.Hash(ctx, code)
 		if err != nil {

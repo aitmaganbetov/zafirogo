@@ -32,9 +32,6 @@ const (
 
 var panics atomic.Uint64
 
-// Panics — сколько паник перехвачено с запуска процесса.
-func Panics() uint64 { return panics.Load() }
-
 // PanicError — паника фоновой задачи как ошибка.
 type PanicError struct {
 	Value any

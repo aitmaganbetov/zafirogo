@@ -12,6 +12,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/bonus"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
+	"github.com/aitmaganbetov/zafirogo/server/internal/clubtz"
 	settingsapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/settings"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -79,15 +80,7 @@ func (h *handlers) GetClubSettings(ctx context.Context, _ settingsapi.GetClubSet
 }
 
 // clubLocation — CurrentClub::timezone(): неизвестный пояс — UTC.
-func clubLocation(tz string) *time.Location {
-	if tz == "" {
-		return time.UTC
-	}
-	if l, err := time.LoadLocation(tz); err == nil {
-		return l
-	}
-	return time.UTC
-}
+func clubLocation(tz string) *time.Location { return clubtz.Location(tz) }
 
 // settingsView — значения для формы (как их выводит Blade: число, @checked, @selected).
 func settingsView(s clubSettings) settingsapi.ClubSettings {

@@ -465,6 +465,7 @@ type SumClubAccountByPeriodRow struct {
 	Entries int64 `json:"entries"`
 }
 
+// Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
 // Оборот счёта клуба за период [from, to) (SUM в SQL). Знак — как в проводках (> 0 кредит).
 func (q *Queries) SumClubAccountByPeriod(ctx context.Context, arg SumClubAccountByPeriodParams) (SumClubAccountByPeriodRow, error) {
 	row := q.db.QueryRow(ctx, sumClubAccountByPeriod,

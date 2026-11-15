@@ -16,6 +16,7 @@ import (
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/session"
 	grpcserver "github.com/aitmaganbetov/zafirogo/server/internal/grpc"
+	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
 	"github.com/aitmaganbetov/zafirogo/server/internal/shop"
 )
@@ -52,12 +53,7 @@ func rpcError(code codes.Code, reason agentv1.ErrorCode, message string, params 
 	return withI18nKey(grpcserver.Error(code, reason, msg, md), message, params)
 }
 
-func substitute(msg string, params map[string]string) string {
-	for k, v := range params {
-		msg = strings.ReplaceAll(msg, ":"+k, v)
-	}
-	return msg
-}
+func substitute(msg string, params map[string]string) string { return i18n.Substitute(msg, params) }
 
 func validation(field, message string) error { return grpcserver.Validation(field, message) }
 
@@ -178,24 +174,22 @@ func pricingStatus(e *pricing.Error) error {
 	return rpcError(code, reason, e.Message, e.Params, e.Field)
 }
 
+// sessionStatus — ошибки пересадки (session.PlanTransfer). Ошибки покупки и запуска пакета приходят как
+// *pricing.Error (pricingStatus).
 func sessionStatus(e *session.Error) error {
 	reason := agentv1.ErrorCode_ERROR_CODE_VALIDATION_FAILED
 	switch e {
-	case session.ErrComputerReserved:
-		reason = agentv1.ErrorCode_ERROR_CODE_COMPUTER_RESERVED
-	case session.ErrComputerBusy, session.ErrTransferSameOrMissing, session.ErrTransferUnavailable:
+	case session.ErrTransferSameOrMissing, session.ErrTransferUnavailable:
 		reason = agentv1.ErrorCode_ERROR_CODE_SEAT_UNAVAILABLE
 	case session.ErrTransferNotOwnSession:
 		reason = agentv1.ErrorCode_ERROR_CODE_NO_ACTIVE_SESSION
-	case session.ErrPackageExpired, session.ErrPackageWrongZone, session.ErrPackageOutsidePeriod:
-		reason = agentv1.ErrorCode_ERROR_CODE_PACKAGE_UNAVAILABLE
 	}
 	return rpcError(codes.FailedPrecondition, reason, e.Message, nil, e.Field)
 }
 
 func balanceStatus(e *billing.BalanceError) error {
 	switch {
-	case e.Field == "amount" && strings.Contains(e.Message, "Недостаточно"):
+	case e.Field == "amount" && e.Code == billing.CodeInsufficientFunds:
 		return rpcError(codes.FailedPrecondition, agentv1.ErrorCode_ERROR_CODE_INSUFFICIENT_FUNDS, e.Message, e.Params, e.Field)
 	case e.Field == "amount":
 		return rpcError(codes.InvalidArgument, agentv1.ErrorCode_ERROR_CODE_TRANSFER_LIMIT, e.Message, e.Params, e.Field)

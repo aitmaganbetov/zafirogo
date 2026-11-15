@@ -120,18 +120,3 @@ func parseExp(s string) (int, bool) {
 }
 
 func allDigitsOrEmpty(s string) bool { return s == "" || allDigits(s) }
-
-// ParseTengeViaFloat — сумма из запроса, которую старый код сначала приводил к float, а затем писал в decimal:
-// is_numeric (правило `numeric`) → (float) $s → SQL-строка (string)$float (precision 14) → округление MySQL.
-//   - Laravel: app/Http/Controllers/Api/Staff/CashController.php topUp() — (float) $data['amount'];
-//   - Laravel: app/Services/CashRegisterService.php topUpBalance(float $amount) — $balance->increment($balanceType, $amount) (BR-053).
-//
-// Отличается от ParseTengeRounded только для строк с > 14 значащими цифрами: "1.00499999999999999" → float 1.005 →
-// "1.005" → 101 тиын (а по строке было бы 100). Перевод приход/расход (CashRegisterService::transact(), BR-054)
-// передаёт строку как есть — для него ParseTengeRounded.
-func ParseTengeViaFloat(s string) (Tiyn, error) {
-	if !PHPIsNumeric(s) {
-		return 0, ErrInvalidAmount
-	}
-	return FromTengeFloatDecimal(PHPStringToFloat(s))
-}

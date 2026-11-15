@@ -199,7 +199,7 @@ func (e *env) instance(t testing.TB, name string, tune func(*Options)) *instance
 		t.Fatalf("New: %v", err)
 	}
 	gs := grpc.NewServer(grpc.StreamInterceptor(testIdentity))
-	Register(gs, svc)
+	agentv1.RegisterAgentServiceServer(gs, svc)
 	lis := bufconn.Listen(1 << 20)
 	go func() { _ = gs.Serve(lis) }()
 	cc, err := grpc.NewClient("passthrough:///bufnet",

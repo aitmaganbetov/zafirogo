@@ -17,7 +17,6 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
-	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/identity"
@@ -199,27 +198,6 @@ func NewServer(opts Options, register func(*grpc.Server)) (*Server, error) {
 	return &Server{Server: srv, tls: tlsCfg}, nil
 }
 
-// ServeContext обслуживает lis до отмены ctx, затем GracefulStop (не дольше grace, потом Stop).
-func (s *Server) ServeContext(ctx context.Context, lis net.Listener, grace time.Duration) error {
-	errc := make(chan error, 1)
-	go func() { errc <- s.Serve(lis) }()
-	select {
-	case err := <-errc:
-		return err
-	case <-ctx.Done():
-	}
-	done := make(chan struct{})
-	go func() { s.GracefulStop(); close(done) }()
-	t := time.NewTimer(grace)
-	defer t.Stop()
-	select {
-	case <-done:
-	case <-t.C:
-		s.Stop()
-	}
-	return nil
-}
-
 func withDefaults(l Limits) Limits {
 	d := DefaultLimits()
 	if l.MaxRecvMsgSize > 0 {
@@ -380,6 +358,3 @@ func recoverStream(logger *slog.Logger) grpc.StreamServerInterceptor {
 		return handler(srv, ss)
 	}
 }
-
-// IsCode — код gRPC ошибки (для тестов).
-func IsCode(err error, c codes.Code) bool { return status.Code(err) == c }

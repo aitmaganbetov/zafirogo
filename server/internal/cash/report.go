@@ -279,9 +279,6 @@ const (
 	ReportZ ReportType = "Z"
 )
 
-// CheckXReport — X-отчёт строится только по открытой смене (CashRegisterController::xReport(): firstOrFail → 404).
-func CheckXReport(open *Shift) bool { return open.IsOpen() }
-
 // People — имена в шапке отчёта.
 type People struct {
 	Cashier  string // открывший смену; «—», если неизвестен
@@ -368,21 +365,5 @@ func KZT(t money.Tiyn) string { return NumberFormat(t) + " KZT" }
 
 // NumberFormat — PHP number_format($tenge, 2, ',', ' '): разделитель тысяч — пробел, дробной части — запятая.
 func NumberFormat(t money.Tiyn) string {
-	s := t.Tenge() // "-1234.50"
-	neg := strings.HasPrefix(s, "-")
-	s = strings.TrimPrefix(s, "-")
-	whole, frac, _ := strings.Cut(s, ".")
-	var b strings.Builder
-	if neg {
-		b.WriteByte('-')
-	}
-	for i := 0; i < len(whole); i++ {
-		if i > 0 && (len(whole)-i)%3 == 0 {
-			b.WriteByte(' ')
-		}
-		b.WriteByte(whole[i])
-	}
-	b.WriteByte(',')
-	b.WriteString(frac)
-	return b.String()
+	return money.NumberFormat(t, ",", " ")
 }

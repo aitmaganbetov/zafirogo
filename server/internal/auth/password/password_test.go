@@ -37,7 +37,7 @@ func TestLaravelBcrypt(t *testing.T) {
 	if _, err := h.Verify(ctx, "Secret", laravelBcrypt); !errors.Is(err, ErrMismatch) {
 		t.Fatalf("wrong password: %v", err)
 	}
-	if !IsLegacy(laravelBcrypt) || !h.NeedsRehash(laravelBcrypt) {
+	if !isBcrypt(laravelBcrypt) || !h.NeedsRehash(laravelBcrypt) {
 		t.Fatal("bcrypt must be legacy")
 	}
 }

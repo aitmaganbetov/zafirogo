@@ -10,46 +10,6 @@ import (
 	"time"
 )
 
-const monitoringAddClubRequests = `-- name: MonitoringAddClubRequests :exec
-INSERT INTO club_request_metrics (club_id, minute, agent_requests, api_requests, panel_requests, guest_requests, errors, duration_ms)
-SELECT c.id, $1, $2, $3, $4,
-       $5, $6, $7
-FROM clubs c WHERE c.id = $8::bigint
-ON CONFLICT (club_id, minute) DO UPDATE SET
-    agent_requests = club_request_metrics.agent_requests + EXCLUDED.agent_requests,
-    api_requests = club_request_metrics.api_requests + EXCLUDED.api_requests,
-    panel_requests = club_request_metrics.panel_requests + EXCLUDED.panel_requests,
-    guest_requests = club_request_metrics.guest_requests + EXCLUDED.guest_requests,
-    errors = club_request_metrics.errors + EXCLUDED.errors,
-    duration_ms = club_request_metrics.duration_ms + EXCLUDED.duration_ms
-`
-
-type MonitoringAddClubRequestsParams struct {
-	Minute        int64 `json:"minute"`
-	AgentRequests int64 `json:"agent_requests"`
-	ApiRequests   int64 `json:"api_requests"`
-	PanelRequests int64 `json:"panel_requests"`
-	GuestRequests int64 `json:"guest_requests"`
-	Errors        int64 `json:"errors"`
-	DurationMs    int64 `json:"duration_ms"`
-	ClubID        int64 `json:"club_id"`
-}
-
-// То же по клубу; клубы, которых нет, пропускаются (как $known в старом коде).
-func (q *Queries) MonitoringAddClubRequests(ctx context.Context, arg MonitoringAddClubRequestsParams) error {
-	_, err := q.db.Exec(ctx, monitoringAddClubRequests,
-		arg.Minute,
-		arg.AgentRequests,
-		arg.ApiRequests,
-		arg.PanelRequests,
-		arg.GuestRequests,
-		arg.Errors,
-		arg.DurationMs,
-		arg.ClubID,
-	)
-	return err
-}
-
 const monitoringAddClubRequestsBatch = `-- name: MonitoringAddClubRequestsBatch :exec
 INSERT INTO club_request_metrics (club_id, minute, agent_requests, api_requests, panel_requests, guest_requests, errors, duration_ms)
 SELECT c.id, u.minute, u.agent_requests, u.api_requests, u.panel_requests, u.guest_requests, u.errors, u.duration_ms
@@ -189,35 +149,6 @@ func (q *Queries) MonitoringErrorTotals(ctx context.Context, fromMinute int64) (
 	var i MonitoringErrorTotalsRow
 	err := row.Scan(&i.Requests, &i.Errors)
 	return i, err
-}
-
-const monitoringInsertLoadSnapshot = `-- name: MonitoringInsertLoadSnapshot :exec
-INSERT INTO club_load_snapshots (club_id, captured_at, weekday, hour, computers, online, busy)
-VALUES ($1::bigint, $2, $3, $4, $5,
-        $6, $7)
-`
-
-type MonitoringInsertLoadSnapshotParams struct {
-	ClubID     int64     `json:"club_id"`
-	CapturedAt time.Time `json:"captured_at"`
-	Weekday    int16     `json:"weekday"`
-	Hour       int16     `json:"hour"`
-	Computers  int64     `json:"computers"`
-	Online     int64     `json:"online"`
-	Busy       int64     `json:"busy"`
-}
-
-func (q *Queries) MonitoringInsertLoadSnapshot(ctx context.Context, arg MonitoringInsertLoadSnapshotParams) error {
-	_, err := q.db.Exec(ctx, monitoringInsertLoadSnapshot,
-		arg.ClubID,
-		arg.CapturedAt,
-		arg.Weekday,
-		arg.Hour,
-		arg.Computers,
-		arg.Online,
-		arg.Busy,
-	)
-	return err
 }
 
 const monitoringInsertLoadSnapshots = `-- name: MonitoringInsertLoadSnapshots :exec

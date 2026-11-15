@@ -343,7 +343,7 @@ func RandomSerial() (*big.Int, error) {
 // SerialString — серийный номер в hex нижним регистром (ключ в agent_certificates и Identity.CertSerial).
 func SerialString(n *big.Int) string { return n.Text(16) }
 
-// ParseCertificatePEM разбирает один сертификат в PEM.
+// ParseCertificatePEM разбирает один сертификат в PEM (нагрузочный генератор cmd/loadgen и интеграционные тесты).
 func ParseCertificatePEM(certPEM []byte) (*x509.Certificate, error) {
 	certs, err := parseCertificates(certPEM)
 	if err != nil {

@@ -13,9 +13,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/bonus"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/pricing"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/session"
+	"github.com/aitmaganbetov/zafirogo/server/internal/clubtz"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
@@ -53,12 +55,11 @@ func loadClub(ctx context.Context, q *store.Queries, clubID int64) (clubContext,
 	if err != nil {
 		return clubContext{}, fmt.Errorf("service: club settings: %w", err)
 	}
-	// Laravel: CurrentClub::localTimezone() — пустая строка → config('app.timezone') (UTC).
-	loc := time.UTC
-	if c.Timezone != "" {
-		if loc, err = time.LoadLocation(c.Timezone); err != nil {
-			return clubContext{}, fmt.Errorf("service: club timezone %q: %w", c.Timezone, err)
-		}
+	// Laravel: CurrentClub::localTimezone() — пустая строка → config('app.timezone') (UTC). Деньги: периоды продажи
+	// и действия тарифа считаются во времени клуба, поэтому неизвестный пояс — ошибка, а не молчаливый UTC.
+	loc, err := clubtz.Strict(c.Timezone)
+	if err != nil {
+		return clubContext{}, fmt.Errorf("service: %w", err)
 	}
 	return clubContext{
 		rules:      pricing.RulesFromFinances(fin),
@@ -290,45 +291,24 @@ func markArrivedBy(ctx context.Context, q *store.Queries, clubID, computerID, us
 // ---------------------------------------------------------------------------
 
 // MaxTotalSpent — club_memberships.total_spent в старой схеме decimal(12,2): больше — ошибка MySQL и откат.
-const MaxTotalSpent money.Tiyn = 999_999_999_999
+const MaxTotalSpent = billing.MaxTotalSpent
 
 // ErrTotalSpentOverflow — накопительные траты вышли бы за decimal(12,2).
 var ErrTotalSpentOverflow = errors.New("service: total_spent overflow")
 
-// addSpending — LoyaltyProgram::addSpending() (стр. 45–50): increment('total_spent') при cents > 0;
-// нет членства — ничего (UPDATE 0 строк). BR-042: только оплата с основного баланса.
+// addSpending — LoyaltyProgram::addSpending() (стр. 45–50): billing.AddSpending (BR-042: только оплата с
+// основного баланса).
 func addSpending(ctx context.Context, q *store.Queries, clubID, userID int64, cents money.Tiyn, now time.Time) error {
-	if cents <= 0 {
-		return nil
-	}
-	total, err := q.IncrementTotalSpent(ctx, store.IncrementTotalSpentParams{ClubID: clubID, UserID: userID, Cents: int64(cents), Now: &now})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if money.Tiyn(total) > MaxTotalSpent {
+	err := billing.AddSpending(ctx, q, clubID, userID, cents, now)
+	if errors.Is(err, billing.ErrTotalSpentOverflow) {
 		return ErrTotalSpentOverflow
 	}
-	return nil
+	return err
 }
 
-// subtractSpending — LoyaltyProgram::subtractSpending() (стр. 53–63): траты уменьшаются, но не ниже нуля
-// (bonus.SubtractSpending под блокировкой строки членства). Нет членства — ничего.
+// subtractSpending — LoyaltyProgram::subtractSpending() (стр. 53–63): billing.SubtractSpending.
 func subtractSpending(ctx context.Context, q *store.Queries, clubID, userID int64, cents money.Tiyn, now time.Time) error {
-	if cents <= 0 {
-		return nil
-	}
-	m, err := q.LockMembershipForPurchase(ctx, store.LockMembershipForPurchaseParams{ClubID: clubID, UserID: userID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	next := bonus.SubtractSpending(money.Tiyn(m.TotalSpent), cents)
-	return q.SetTotalSpent(ctx, store.SetTotalSpentParams{ClubID: clubID, UserID: userID, TotalSpent: int64(next), Now: &now})
+	return billing.SubtractSpending(ctx, q, clubID, userID, cents, now)
 }
 
 // ---------------------------------------------------------------------------

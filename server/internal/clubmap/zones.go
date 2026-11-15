@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
+	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
@@ -127,17 +128,7 @@ func (e Env) t(key string, params map[string]string) string {
 	return substitute(key, params)
 }
 
-func substitute(s string, params map[string]string) string {
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
-	}
-	slices.SortFunc(keys, func(a, b string) int { return len(b) - len(a) })
-	for _, k := range keys {
-		s = strings.ReplaceAll(s, ":"+k, params[k])
-	}
-	return s
-}
+func substitute(s string, params map[string]string) string { return i18n.Substitute(s, params) }
 
 // validateZone — правила StoreClubZoneRequest по порядку полей (первая ошибка).
 func validateZone(ctx context.Context, q *store.Queries, clubID int64, in *ZoneInput) error {

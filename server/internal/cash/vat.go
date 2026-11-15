@@ -9,6 +9,9 @@ const VATRatePercent = 5
 // (половина — вверх), результат в тиынах (кратен 100). Решение Q-019: показ как в старом, расчёт — в тиынах без
 // float; фронт (web/src/features/cash/vat.ts) считает так же и сверяется с testdata/vat.json.
 //
+// Эталон: сервер НДС не считает (в API его нет) — функция нужна только как образец для общих векторов
+// testdata/vat.json, по которым сверяется фронт (vat.test.ts) и этот пакет (vat_test.go); из cmd/* не вызывается.
+//
 // Laravel: resources/views/cash-register/index.blade.php render(): document.getElementById('tax').textContent =
 // money(Math.round(total * 5 / 105)) — total в тенге (float). Отрицательных сумм в корзине нет; для них — 0.
 func VATIncluded(total money.Tiyn) money.Tiyn {

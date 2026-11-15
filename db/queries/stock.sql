@@ -18,11 +18,6 @@ ORDER BY id
 LIMIT 1
 FOR UPDATE;
 
--- name: GetProduct :one
-SELECT *
-FROM products
-WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);
-
 -- name: SetProductQuantity :exec
 -- Новый остаток после движения (вычислен под блокировкой строки). CHECK (quantity >= 0) — последний рубеж.
 UPDATE products
@@ -34,14 +29,6 @@ INSERT INTO stock_movements (club_id, product_id, user_id, type, quantity, balan
 VALUES (sqlc.arg(club_id), sqlc.arg(product_id), sqlc.narg(user_id), sqlc.arg(type), sqlc.arg(quantity),
         sqlc.arg(balance_after), sqlc.narg(note), sqlc.arg(now), sqlc.arg(now))
 RETURNING *;
-
--- name: ListProductStockMovements :many
--- Движения товара, новые сверху (keyset по id: before_id — последний id предыдущей страницы).
-SELECT *
-FROM stock_movements
-WHERE club_id = sqlc.arg(club_id) AND product_id = sqlc.arg(product_id) AND id < sqlc.arg(before_id)
-ORDER BY id DESC
-LIMIT sqlc.arg(page_size);
 
 -- name: GetProductCategory :one
 -- ProductCategory::query()->findOrFail($id) (клуб — global scope).

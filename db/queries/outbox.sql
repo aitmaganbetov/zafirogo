@@ -36,9 +36,3 @@ WHERE (club_id, id) IN (SELECT old.club_id, old.id FROM outbox_events AS old
                         WHERE old.published_at < sqlc.arg(published_before)::timestamptz
                         ORDER BY old.published_at
                         LIMIT sqlc.arg(batch_size));
-
--- name: CountUnpublishedOutboxEvents :one
--- Платформенный: размер очереди и возраст самого старого события (метрика/алерт).
-SELECT count(*)::bigint AS pending, COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0)::bigint AS oldest_age_seconds, count(DISTINCT club_id)::bigint AS clubs
-FROM outbox_events
-WHERE published_at IS NULL;

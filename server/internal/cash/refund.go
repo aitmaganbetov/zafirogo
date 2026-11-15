@@ -107,7 +107,7 @@ type TopUpRefund struct {
 //
 // Сравнения float здесь равносильны целочисленным: каждая сторона — одно decimal-значение, приведённое к float.
 // balance nil — у клиента нет строки member_balances. Траты лояльности не меняются.
-// Тот же расчёт делает billing.RefundTopUp при проводке в ledger; эта функция — чистая модель правила для тестов и UI.
+// Единственная реализация правила: её вызывает billing.RefundTopUp под блокировкой баланса перед проводкой в ledger.
 func PlanTopUpRefund(top TopUpReceipt, amount money.Tiyn, balance *MemberBalance) (TopUpRefund, error) {
 	field := FieldMain
 	if top.Field == FieldBonus {
@@ -139,11 +139,4 @@ func PlanTopUpRefund(top TopUpReceipt, amount money.Tiyn, balance *MemberBalance
 		out.NewBalance = bonus
 	}
 	return out, nil
-}
-
-// CanShowRefund — показывать ли кнопку «Возврат» у прихода в списке операций и в чеке.
-// Laravel: resources/views/cash-register/refund-button.blade.php: возврата ещё нет, есть право (canRefund),
-// refundKind() !== null и смена операции открыта. Уже возвращённый приход показывает «Возвращено».
-func CanShowRefund(op Operation, refunded, canRefund bool, opShift *Shift) bool {
-	return !refunded && canRefund && op.RefundKind() != RefundNone && opShift.IsOpen()
 }

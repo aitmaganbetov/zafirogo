@@ -20,20 +20,6 @@ VALUES (sqlc.arg(minute), sqlc.arg(channel), sqlc.arg(requests), sqlc.arg(errors
 ON CONFLICT (minute, channel) DO UPDATE SET requests = request_metrics.requests + EXCLUDED.requests,
     errors = request_metrics.errors + EXCLUDED.errors, duration_ms = request_metrics.duration_ms + EXCLUDED.duration_ms;
 
--- name: MonitoringAddClubRequests :exec
--- То же по клубу; клубы, которых нет, пропускаются (как $known в старом коде).
-INSERT INTO club_request_metrics (club_id, minute, agent_requests, api_requests, panel_requests, guest_requests, errors, duration_ms)
-SELECT c.id, sqlc.arg(minute), sqlc.arg(agent_requests), sqlc.arg(api_requests), sqlc.arg(panel_requests),
-       sqlc.arg(guest_requests), sqlc.arg(errors), sqlc.arg(duration_ms)
-FROM clubs c WHERE c.id = sqlc.arg(club_id)::bigint
-ON CONFLICT (club_id, minute) DO UPDATE SET
-    agent_requests = club_request_metrics.agent_requests + EXCLUDED.agent_requests,
-    api_requests = club_request_metrics.api_requests + EXCLUDED.api_requests,
-    panel_requests = club_request_metrics.panel_requests + EXCLUDED.panel_requests,
-    guest_requests = club_request_metrics.guest_requests + EXCLUDED.guest_requests,
-    errors = club_request_metrics.errors + EXCLUDED.errors,
-    duration_ms = club_request_metrics.duration_ms + EXCLUDED.duration_ms;
-
 -- name: MonitoringAddClubRequestsBatch :exec
 -- MonitoringAddClubRequests пачкой (PB-14): одна команда на сброс счётчиков вместо строки на клуб и минуту (сотни
 -- запросов в транзакции раз в минуту на каждом инстансе). Строки вставляются в порядке (минута, клуб) — тот же
@@ -74,11 +60,6 @@ FROM clubs c
 JOIN club_computers pc ON pc.club_id = c.id
 GROUP BY c.id, c.timezone
 ORDER BY c.id;
-
--- name: MonitoringInsertLoadSnapshot :exec
-INSERT INTO club_load_snapshots (club_id, captured_at, weekday, hour, computers, online, busy)
-VALUES (sqlc.arg(club_id)::bigint, sqlc.arg(captured_at), sqlc.arg(weekday), sqlc.arg(hour), sqlc.arg(computers),
-        sqlc.arg(online), sqlc.arg(busy));
 
 -- name: MonitoringPruneServerMetrics :execrows
 DELETE FROM server_metrics WHERE minute < sqlc.arg(before_minute);

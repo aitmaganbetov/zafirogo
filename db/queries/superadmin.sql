@@ -430,10 +430,6 @@ UPDATE users SET blocked_at = sqlc.narg(blocked_at), updated_at = sqlc.arg(now) 
 -- name: SuperadminSetUserSuperadmin :exec
 UPDATE users SET is_superadmin = sqlc.arg(is_superadmin), updated_at = sqlc.arg(now) WHERE id = sqlc.arg(id);
 
--- name: SuperadminUserHasMembership :one
--- «Панель своего клуба» в меню кабинета: есть ли у суперадмина членство.
-SELECT EXISTS (SELECT 1 FROM club_memberships WHERE user_id = sqlc.arg(user_id));
-
 -- ---------------------------------------------------------------------------
 -- Новости платформы (Superadmin\NewsController, NewsManager)
 -- ---------------------------------------------------------------------------
@@ -537,11 +533,6 @@ ORDER BY t.id;
 
 -- name: SuperadminLanguageStrings :many
 SELECT id, key_hash::text AS key_hash, value FROM translations WHERE language_id = sqlc.arg(language_id);
-
--- name: SuperadminUpsertTranslation :exec
-INSERT INTO translations (language_id, "group", key, key_hash, value, created_at, updated_at)
-VALUES (sqlc.arg(language_id), sqlc.arg(grp), sqlc.arg(key), sqlc.arg(key_hash), sqlc.arg(value), sqlc.arg(now), sqlc.arg(now))
-ON CONFLICT (language_id, "group", key_hash) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
 
 -- name: SuperadminUpsertTranslations :exec
 -- SuperadminUpsertTranslation пачкой (PB-14): сохранение страницы/импорт переводов — одна команда. Хеши в пачке

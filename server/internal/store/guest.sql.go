@@ -305,52 +305,6 @@ func (q *Queries) GuestComputer(ctx context.Context, arg GuestComputerParams) (G
 	return i, err
 }
 
-const guestComputersByIDs = `-- name: GuestComputersByIDs :many
-SELECT c.id, c.number, c.display_name, c.device_name, z.name AS zone_name
-FROM club_computers c
-JOIN club_zones z ON z.club_id = c.club_id AND z.id = c.club_zone_id
-WHERE c.club_id = $1 AND c.id = ANY($2::bigint[])
-`
-
-type GuestComputersByIDsParams struct {
-	ClubID int64   `json:"club_id"`
-	Ids    []int64 `json:"ids"`
-}
-
-type GuestComputersByIDsRow struct {
-	ID          int64   `json:"id"`
-	Number      int64   `json:"number"`
-	DisplayName *string `json:"display_name"`
-	DeviceName  *string `json:"device_name"`
-	ZoneName    string  `json:"zone_name"`
-}
-
-func (q *Queries) GuestComputersByIDs(ctx context.Context, arg GuestComputersByIDsParams) ([]GuestComputersByIDsRow, error) {
-	rows, err := q.db.Query(ctx, guestComputersByIDs, arg.ClubID, arg.Ids)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GuestComputersByIDsRow
-	for rows.Next() {
-		var i GuestComputersByIDsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Number,
-			&i.DisplayName,
-			&i.DeviceName,
-			&i.ZoneName,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const guestComputersForAutoBilling = `-- name: GuestComputersForAutoBilling :many
 SELECT c.id, c.club_zone_id, c.number, c.display_name, c.device_name, z.name AS zone_name, z.price_per_hour,
        c.current_session_id, c.current_session_user_id, c.session_guest, c.session_ends_at

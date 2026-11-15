@@ -35,7 +35,7 @@ var customPlanQueries = map[string]struct{}{
 	"SuperadminUsers": {}, "SuperadminCountUsers": {}, "SuperadminClubs": {}, "SuperadminCountClubs": {},
 	// Товары, заказы, ПК.
 	"AdminListProducts": {}, "CashListProducts": {}, "StockListProductsPage": {}, "WarehouseCountProducts": {},
-	"ShopOrdersPage": {}, "ShopOrdersCount": {}, "ListComputersByClub": {},
+	"ShopOrdersPage": {}, "ShopOrdersCount": {},
 	// API интеграций и мобильный API персонала.
 	"ApiV1Products": {}, "ApiV1Sales": {}, "ApiV1StockMovements": {}, "ApiV1Computers": {}, "ApiV1Tariffs": {},
 	"MobileStaffProducts": {}, "MobileStaffOrders": {}, "MobileStaffCustomers": {}, "IntegrationsListDeliveries": {},

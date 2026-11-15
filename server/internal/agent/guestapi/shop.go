@@ -22,7 +22,7 @@ type shopService struct {
 // Токен гостя не обязателен (витрина на экране входа); с токеном лимит считается на гостя, без — на ПК.
 func (ss *shopService) ListProducts(ctx context.Context, req *agentv1.ListProductsRequest) (*agentv1.ListProductsResponse, error) {
 	s := ss.s
-	id, err := pc(ctx)
+	id, err := pc(ctx) //nolint:wastedassign // здесь важна проверка сертификата ПК; id ниже возвращает guestCall/call
 	if err != nil {
 		return nil, err
 	}

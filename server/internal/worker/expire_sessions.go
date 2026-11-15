@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
+	"github.com/aitmaganbetov/zafirogo/server/internal/worker/leader"
 )
 
 // ExpireSessionsJob — имя задачи и ключ advisory lock (hashtext('job:<name>')).
@@ -21,7 +21,7 @@ const ExpireSessionsInterval = time.Minute
 
 // ExpireSessions — фоновая задача истечения сессий ПК (вместо cron Laravel).
 //
-// Один исполнитель на кластер (docs/parts/50-jobs.md п. 17, Q-086): в начале тика задача берёт
+// Один исполнитель на кластер (docs/parts/50-jobs.md п. 17, Q-086): тик идёт под leader.RunOnce —
 // pg_try_advisory_lock(hashtext('job:club-computers:expire-sessions')) на выделенном соединении пула;
 // не взяла (идёт на другом инстансе) — пропускает тик. Лок снимается в конце тика, а при падении
 // процесса — вместе с соединением.
@@ -43,68 +43,35 @@ type ExpireSessions struct {
 
 // Run выполняет тики до отмены ctx. Первый тик — сразу.
 func (w *ExpireSessions) Run(ctx context.Context) error {
-	interval := w.Interval
-	if interval <= 0 {
-		interval = ExpireSessionsInterval
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		if _, _, err := w.Tick(ctx); err != nil && ctx.Err() == nil {
-			w.log().Error("expire sessions tick failed", "job", ExpireSessionsJob, "err", err)
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-t.C:
-		}
-	}
+	return loop{
+		job: ExpireSessionsJob, failed: "expire sessions tick failed", log: w.Log,
+		interval: intervalOr(w.Interval, ExpireSessionsInterval), fixedRate: true,
+	}.run(ctx, func(ctx context.Context) error { _, _, err := w.Tick(ctx); return err })
 }
 
 // Tick — один запуск: ran = false, если лок держит другой исполнитель; n — сколько сессий снято.
 func (w *ExpireSessions) Tick(ctx context.Context) (ran bool, n int, err error) {
-	conn, err := w.Pool.Acquire(ctx)
-	if err != nil {
-		return false, 0, fmt.Errorf("worker: acquire connection: %w", err)
-	}
-	defer conn.Release()
-
-	key := "job:" + ExpireSessionsJob
-	var locked bool
-	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock(hashtext($1))", key).Scan(&locked); err != nil {
-		return false, 0, fmt.Errorf("worker: advisory lock: %w", err)
-	}
-	if !locked {
-		return false, 0, nil
-	}
-	defer func() {
-		// Отдельный контекст: лок нужно снять и при отменённом ctx, иначе соединение вернётся в пул с ним.
-		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		var ok bool
-		if uerr := conn.QueryRow(unlockCtx, "SELECT pg_advisory_unlock(hashtext($1))", key).Scan(&ok); uerr != nil || !ok {
-			// Соединение с невыясненным состоянием лока в пул не возвращаем.
-			_ = conn.Conn().Close(unlockCtx)
-		}
-	}()
-
 	now := time.Now
 	if w.Now != nil {
 		now = w.Now
 	}
-	// Тик выполняется на том же соединении, что держит лок.
-	// Системное действие: журнал computer.session_expired (Решение Q-010) требует IP.
-	expired, err := service.ExpireDueSessions(ctx, conn, now(), activity.RequestMeta{IP: "127.0.0.1"})
-	if err != nil {
-		return true, 0, err
-	}
-	if len(expired) > 0 {
-		w.log().Info("paid sessions expired", "job", ExpireSessionsJob, "count", len(expired))
-		if w.OnExpired != nil {
-			w.OnExpired(ctx, expired)
+	ran, err = leader.RunOnce(ctx, w.Pool, ExpireSessionsJob, func(ctx context.Context, conn *pgxpool.Conn) error {
+		// Тик выполняется на том же соединении, что держит лок.
+		// Системное действие: журнал computer.session_expired (Решение Q-010) требует IP.
+		expired, err := service.ExpireDueSessions(ctx, conn, now(), activity.RequestMeta{IP: "127.0.0.1"})
+		if err != nil {
+			return err
 		}
-	}
-	return true, len(expired), nil
+		n = len(expired)
+		if n > 0 {
+			w.log().Info("paid sessions expired", "job", ExpireSessionsJob, "count", n)
+			if w.OnExpired != nil {
+				w.OnExpired(ctx, expired)
+			}
+		}
+		return nil
+	})
+	return ran, n, err
 }
 
 func (w *ExpireSessions) log() *slog.Logger {

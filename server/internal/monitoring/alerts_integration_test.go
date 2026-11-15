@@ -223,3 +223,12 @@ func TestClubSnapshots_HeatMapOfflineAlert(t *testing.T) {
 	}
 	wantMessages(t, tg, "все ПК ушли офлайн", "снова в сети: ПК онлайн — 3.")
 }
+
+// IsOpen — Alerts::isOpen().
+func (a *Alerts) IsOpen(ctx context.Context, key string) (bool, error) {
+	if a == nil || a.Valkey == nil {
+		return false, nil
+	}
+	n, err := a.Valkey.Do(ctx, a.Valkey.B().Exists().Key(a.key(key)).Build()).AsInt64()
+	return n > 0, err
+}

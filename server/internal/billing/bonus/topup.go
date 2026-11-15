@@ -18,34 +18,25 @@ type TopUpBonus struct {
 	Cents   money.Tiyn
 }
 
-// TopUpFor — TopUpBonus::for(float $amount) (BR-041): бонус за пополнение основного баланса.
-// levels — уровни в силе (TopUpLevelsInForce: пусто, если бонус выключен). amount — сумма в тенге
-// как float из запроса ((float) $data['amount']); перевод в центы — (int) round($amount * 100) PHP 8.4+.
+// TopUpForCents — TopUpBonus::for(float $amount) (BR-041): бонус за пополнение основного баланса, начиная с уже
+// посчитанных центов. levels — уровни в силе (TopUpLevelsInForce: пусто, если бонус выключен).
 //
 // Laravel: app/Services/TopUpBonus.php TopUpBonus::for() (~стр. 29–35):
 //
 //	$cents = (int) round($amount * 100);
 //	$percent = PercentLevels::percentAt($this->levels(), 'amount', $cents);
 //	return ['percent' => $percent, 'cents' => intdiv($cents * (int) round($percent * 100) + 5000, 10000)];
-func TopUpFor(levels []Level, amount float64) (TopUpBonus, error) {
-	return TopUpForCents(levels, int64(money.FromTengeFloat(amount)))
-}
-
-// TopUpForTengeString — TopUpFor((float) $s): сумма пополнения строкой из запроса (как
-// (float) $data['amount'] в CashRegisterController::topUpBalance() и Api/Staff/CashController::topUp()).
-func TopUpForTengeString(levels []Level, amount string) (TopUpBonus, error) {
-	return TopUpFor(levels, money.PHPStringToFloat(amount))
-}
-
-// TopUpForCents — TopUpBonus::for() начиная с уже посчитанных центов ($cents).
+//
+// $cents приходит от кассы: cash.ParseTopUpAmount → TopUpAmount.BonusBase (решение Q-002: ввод не больше двух
+// знаков после точки, для него (int) round($amount * 100) равно сумме точно — cash/rules_test.go).
 // Бонус — «половина вверх» до тиына: intdiv($cents * bp + 5000, 10000), bp = (int) round($percent * 100)
 // без ограничения 0…10000 (в отличие от discounted(), BR-012).
 func TopUpForCents(levels []Level, cents int64) (TopUpBonus, error) {
 	percent := PercentAt(levels, cents)
 	// Laravel: app/Services/TopUpBonus.php TopUpBonus::for() — intdiv($cents * (int) round($percent * 100) + 5000, 10000)
-	bonus, err := money.MulDivRound(cents, money.BasisPoints(percent), 5000, 10000)
+	bonus, err := money.PercentOfHalfUp(money.Tiyn(cents), money.BasisPoints(percent))
 	if err != nil {
 		return TopUpBonus{}, ErrOverflow
 	}
-	return TopUpBonus{Percent: percent, Cents: money.Tiyn(bonus)}, nil
+	return TopUpBonus{Percent: percent, Cents: bonus}, nil
 }

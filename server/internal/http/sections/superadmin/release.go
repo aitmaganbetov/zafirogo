@@ -75,7 +75,7 @@ func readRelease(ctx context.Context, q *store.Queries) (release, error) {
 	}
 	var r release
 	if json.Unmarshal(raw, &r) != nil {
-		return release{}, nil
+		return release{}, nil //nolint:nilerr // нечитаемая настройка — как «релиз не объявлен»
 	}
 	r.raw = raw
 	return r, nil

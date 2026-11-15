@@ -2165,33 +2165,6 @@ func (q *Queries) SuperadminUpdatePlatformNews(ctx context.Context, arg Superadm
 	return err
 }
 
-const superadminUpsertTranslation = `-- name: SuperadminUpsertTranslation :exec
-INSERT INTO translations (language_id, "group", key, key_hash, value, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $6)
-ON CONFLICT (language_id, "group", key_hash) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
-`
-
-type SuperadminUpsertTranslationParams struct {
-	LanguageID int64      `json:"language_id"`
-	Grp        string     `json:"grp"`
-	Key        string     `json:"key"`
-	KeyHash    string     `json:"key_hash"`
-	Value      string     `json:"value"`
-	Now        *time.Time `json:"now"`
-}
-
-func (q *Queries) SuperadminUpsertTranslation(ctx context.Context, arg SuperadminUpsertTranslationParams) error {
-	_, err := q.db.Exec(ctx, superadminUpsertTranslation,
-		arg.LanguageID,
-		arg.Grp,
-		arg.Key,
-		arg.KeyHash,
-		arg.Value,
-		arg.Now,
-	)
-	return err
-}
-
 const superadminUpsertTranslations = `-- name: SuperadminUpsertTranslations :exec
 INSERT INTO translations (language_id, "group", key, key_hash, value, created_at, updated_at)
 SELECT $1::bigint, u.grp, u.key, u.key_hash, u.value, $2::timestamptz, $2::timestamptz
@@ -2222,18 +2195,6 @@ func (q *Queries) SuperadminUpsertTranslations(ctx context.Context, arg Superadm
 		arg.Vals,
 	)
 	return err
-}
-
-const superadminUserHasMembership = `-- name: SuperadminUserHasMembership :one
-SELECT EXISTS (SELECT 1 FROM club_memberships WHERE user_id = $1)
-`
-
-// «Панель своего клуба» в меню кабинета: есть ли у суперадмина членство.
-func (q *Queries) SuperadminUserHasMembership(ctx context.Context, userID int64) (bool, error) {
-	row := q.db.QueryRow(ctx, superadminUserHasMembership, userID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
 }
 
 const superadminUserMemberships = `-- name: SuperadminUserMemberships :many

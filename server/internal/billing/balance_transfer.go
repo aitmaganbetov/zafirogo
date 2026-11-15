@@ -100,7 +100,7 @@ func FriendTransfer(ctx context.Context, q *store.Queries, p FriendTransferParam
 		return FriendTransferResult{}, err
 	}
 	if balances[p.UserID].Main < p.Amount {
-		return FriendTransferResult{}, &BalanceError{Field: "amount", Message: msgNotEnoughMain}
+		return FriendTransferResult{}, &BalanceError{Code: CodeInsufficientFunds, Field: "amount", Message: msgNotEnoughMain}
 	}
 	meta, err := json.Marshal(map[string]any{"friendship_id": p.FriendshipID, "to_user_id": friendID})
 	if err != nil {

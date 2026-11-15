@@ -2,12 +2,15 @@ package guestapi
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/jackc/pgx/v5"
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
@@ -129,12 +132,19 @@ func (a *AgentService) VerifyStaffPin(ctx context.Context, req *agentv1.VerifySt
 	var user *store.GuestUserInClubRow
 	if bearer(ctx) != "" {
 		if g, err := s.tokens.FromContext(ctx, id); err == nil {
-			_ = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
-				if u, err := q.GuestUserInClub(ctx, store.GuestUserInClubParams{ClubID: id.ClubID, UserID: g.UserID}); err == nil {
+			// Ошибка чтения не меняет ответ (как раньше — «гость не вошёл»), но попадает в журнал (BC-18).
+			if err := db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
+				u, err := q.GuestUserInClub(ctx, store.GuestUserInClubParams{ClubID: id.ClubID, UserID: g.UserID})
+				if errors.Is(err, pgx.ErrNoRows) {
+					return nil // не член клуба
+				}
+				if err == nil {
 					user = &u
 				}
-				return nil
-			})
+				return err
+			}); err != nil {
+				s.o.Log.WarnContext(ctx, "staff pin: signed-in guest not read", "club_id", id.ClubID, "user_id", g.UserID, "err", err)
+			}
 		}
 	}
 	now := s.o.Now()

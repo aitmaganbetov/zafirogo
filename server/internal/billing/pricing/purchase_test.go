@@ -242,6 +242,55 @@ func TestPackageStart_CappedByExpiry(t *testing.T) {
 		_, err := QuoteStartPackage(PackageStartInput{MinutesLeft: 30, ExpiresAt: t0.Add(time.Hour), Tariff: &limited, UserID: 1, Now: t0})
 		assertErr(t, err, ErrPackageOutOfPeriod)
 	})
+	t.Run("GAP-014/микросекунды_now", func(t *testing.T) {
+		// getTimestamp(): 10:00:00.9 → 10:01:00 = 60 с → 1 мин.
+		p, err := QuoteStartPackage(PackageStartInput{MinutesLeft: 90, ExpiresAt: t0.Add(time.Minute), Tariff: &tariff, UserID: 1, Now: t0.Add(900 * time.Millisecond)})
+		assertErr(t, err, nil)
+		if p.Minutes != 1 {
+			t.Fatalf("%+v", p)
+		}
+		if m, err := PackageStartMinutes(90, t0.Add(time.Minute), t0.Add(900*time.Millisecond)); err != nil || m != 1 {
+			t.Fatalf("PackageStartMinutes = %d, %v", m, err)
+		}
+	})
+	t.Run("BR-024/порядок_проверок", func(t *testing.T) {
+		// Срок → ПК (ensureComputerFor) → зона тарифа → период действия.
+		zoned := tariff
+		zoned.ZoneIDs = []int64{2}
+		in := PackageStartInput{MinutesLeft: 30, ExpiresAt: t0.Add(time.Hour), Tariff: &zoned, UserID: 1, Now: t0,
+			Computer: Computer{ZoneID: i64(1), Reserved: true}}
+		_, err := QuoteStartPackage(in)
+		assertErr(t, err, ErrComputerReserved)
+		expired := in
+		expired.ExpiresAt = t0
+		_, err = QuoteStartPackage(expired)
+		assertErr(t, err, ErrPackageExpired)
+		in.Computer.Reserved = false
+		_, err = QuoteStartPackage(in)
+		assertErr(t, err, ErrPackageNotForPC)
+		outside := tariff
+		outside.ZoneIDs = []int64{2}
+		outside.ValidityPeriods = WeeklyPeriods{period("mon", "00:00", "mon", "23:59")}
+		in.Tariff = &outside
+		_, err = QuoteStartPackage(in)
+		assertErr(t, err, ErrPackageNotForPC)
+		in.Computer.ZoneID = i64(2)
+		_, err = QuoteStartPackage(in)
+		assertErr(t, err, ErrPackageOutOfPeriod)
+	})
+	t.Run("BR-024/продление_своей_сессии", func(t *testing.T) {
+		pc := Computer{ZoneID: i64(1), PaidSession: true, SessionUserID: i64(1), SessionEndsAt: t0.Add(20 * time.Minute)}
+		p, err := QuoteStartPackage(PackageStartInput{MinutesLeft: 30, ExpiresAt: t0.Add(time.Hour), UserID: 1, Computer: pc, Now: t0})
+		assertErr(t, err, nil)
+		if !p.ExtendsSession || !p.SessionEndsAt.Equal(t0.Add(50*time.Minute)) {
+			t.Fatalf("%+v", p)
+		}
+	})
+	t.Run("BR-024/отрицательный_баланс", func(t *testing.T) {
+		// sell(0, 'main_balance_only', 'main'): $mainBalance < $mainPayment (0) → «Недостаточно средств для покупки тарифа.»
+		_, err := QuoteStartPackage(PackageStartInput{MinutesLeft: 30, ExpiresAt: t0.Add(time.Hour), UserID: 1, Now: t0, Balances: Balances{Main: -1}})
+		assertErr(t, err, ErrInsufficientFunds)
+	})
 	t.Run("BR-024/тариф_удалён_физически", func(t *testing.T) {
 		_, err := QuoteStartPackage(PackageStartInput{MinutesLeft: 30, ExpiresAt: t0.Add(time.Hour), UserID: 1, Computer: Computer{ZoneID: i64(4)}, Now: t0})
 		assertErr(t, err, nil)
@@ -258,4 +307,25 @@ func TestDiscount_100PercentFreeTariff(t *testing.T) {
 			t.Fatalf("%+v", p)
 		}
 	})
+}
+
+// BR-020: ensureComputerFor() — резерв, чужая оплаченная сессия (гостевая — тоже чужая), своя сессия.
+// Признак PaidSession (hasPaidSession(), BR-030) считает вызывающий — billing/service/load_test.go.
+func TestComputer_CheckForCustomer(t *testing.T) {
+	cases := []struct {
+		name string
+		pc   Computer
+		want error
+	}{
+		{"BR-020/свободен", Computer{}, nil},
+		{"BR-020/резерв", Computer{Reserved: true}, ErrComputerReserved},
+		{"BR-020/резерв_раньше_сессии", Computer{Reserved: true, PaidSession: true, SessionUserID: i64(99)}, ErrComputerReserved},
+		{"BR-020/чужая_сессия", Computer{PaidSession: true, SessionUserID: i64(99)}, ErrComputerBusy},
+		{"BR-020/гостевая_сессия", Computer{PaidSession: true, SessionGuest: true}, ErrComputerBusy},
+		{"BR-020/своя_сессия", Computer{PaidSession: true, SessionUserID: i64(1)}, nil},
+		{"BR-020/чужая_истёкшая", Computer{SessionUserID: i64(99), SessionEndsAt: t0.Add(-time.Minute)}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) { assertErr(t, c.pc.CheckForCustomer(1), c.want) })
+	}
 }

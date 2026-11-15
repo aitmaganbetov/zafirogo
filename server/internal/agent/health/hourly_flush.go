@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -124,12 +123,7 @@ type HourlyFlusher struct {
 	Interval time.Duration
 	Now      func() time.Time
 	Log      *slog.Logger
-
-	rows atomic.Int64
 }
-
-// Rows — сколько строк часа записано (замеры, тесты).
-func (f *HourlyFlusher) Rows() int64 { return f.rows.Load() }
 
 func (f *HourlyFlusher) log() *slog.Logger {
 	if f.Log != nil {
@@ -322,7 +316,6 @@ func (f *HourlyFlusher) flushClub(ctx context.Context, k hourlyKeys, hour time.T
 		}); err != nil {
 			return 0, fmt.Errorf("health: hourly upsert club %d: %w", club, err)
 		}
-		f.rows.Add(written)
 	}
 	del := make(valkey.Commands, 0, len(members)+len(members)/hourlyBatch+1)
 	for _, m := range members {

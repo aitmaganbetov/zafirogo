@@ -388,55 +388,6 @@ func (q *Queries) ListPendingAgentCommands(ctx context.Context, arg ListPendingA
 	return items, nil
 }
 
-const markAgentOffline = `-- name: MarkAgentOffline :execrows
-UPDATE club_computers
-SET status = 'offline', last_seen_at = $1, updated_at = $2
-WHERE club_id = $3 AND id = $4 AND status = 'online'
-`
-
-type MarkAgentOfflineParams struct {
-	LastSeenAt *time.Time `json:"last_seen_at"`
-	Now        *time.Time `json:"now"`
-	ClubID     int64      `json:"club_id"`
-	ComputerID int64      `json:"computer_id"`
-}
-
-// Стрим закрыт и не открылся снова за время ожидания (или истёк TTL после падения инстанса).
-// last_seen_at — когда ПК последний раз был на связи.
-func (q *Queries) MarkAgentOffline(ctx context.Context, arg MarkAgentOfflineParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markAgentOffline,
-		arg.LastSeenAt,
-		arg.Now,
-		arg.ClubID,
-		arg.ComputerID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const markAgentOnline = `-- name: MarkAgentOnline :execrows
-UPDATE club_computers
-SET status = 'online', last_seen_at = $1, updated_at = $1
-WHERE club_id = $2 AND id = $3 AND status <> 'online'
-`
-
-type MarkAgentOnlineParams struct {
-	Now        *time.Time `json:"now"`
-	ClubID     int64      `json:"club_id"`
-	ComputerID int64      `json:"computer_id"`
-}
-
-// Исправление гонки «фоновая проверка записала офлайн, а ПК уже переподключился» (presence.Sweeper).
-func (q *Queries) MarkAgentOnline(ctx context.Context, arg MarkAgentOnlineParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markAgentOnline, arg.Now, arg.ClubID, arg.ComputerID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const markAgentsOffline = `-- name: MarkAgentsOffline :many
 UPDATE club_computers c
 SET status = 'offline', last_seen_at = u.seen, updated_at = $1

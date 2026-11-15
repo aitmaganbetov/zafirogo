@@ -110,12 +110,6 @@ SELECT user_id, balance
 FROM member_balances
 WHERE club_id = sqlc.arg(club_id) AND user_id = ANY(sqlc.arg(user_ids)::bigint[]);
 
--- name: GuestComputersByIDs :many
-SELECT c.id, c.number, c.display_name, c.device_name, z.name AS zone_name
-FROM club_computers c
-JOIN club_zones z ON z.club_id = c.club_id AND z.id = c.club_zone_id
-WHERE c.club_id = sqlc.arg(club_id) AND c.id = ANY(sqlc.arg(ids)::bigint[]);
-
 -- name: GuestClubForAgent :one
 -- Настройки клуба для агента (ClubConfig, PIN выхода) — клуб ПК, с которого запрос.
 SELECT cl.name, cl.settings, cl.locale, cl.timezone, cl.agent_staff_minutes, cl.logo_path, cl.signin_image_path,

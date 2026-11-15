@@ -135,3 +135,26 @@ func TestBuildPackSkipsIdentity(t *testing.T) {
 		t.Error("no ETag")
 	}
 }
+
+// BC-16: одна подстановка :name на сервер — длинные ключи раньше коротких, результат не зависит от порядка map.
+func TestSubstitute(t *testing.T) {
+	cases := []struct {
+		line   string
+		params map[string]string
+		want   string
+	}{
+		{"Без параметров", nil, "Без параметров"},
+		{"ПК :computer занят", map[string]string{"computer": "PC-01"}, "ПК PC-01 занят"},
+		{"Недостаточно товара: :product.", map[string]string{"product": "Cola"}, "Недостаточно товара: Cola."},
+		{":computer / :computer_name", map[string]string{"computer": "4", "computer_name": "PC-04"}, "4 / PC-04"},
+		{":a:ab:abc", map[string]string{"a": "1", "ab": "2", "abc": "3"}, "123"},
+		{"нет такого :ключа", map[string]string{"other": "x"}, "нет такого :ключа"},
+	}
+	for _, c := range cases {
+		for range 20 { // порядок обхода map случаен
+			if got := Substitute(c.line, c.params); got != c.want {
+				t.Fatalf("Substitute(%q) = %q, want %q", c.line, got, c.want)
+			}
+		}
+	}
+}

@@ -187,11 +187,14 @@ func (e *authEvents) ClubViewed(ctx context.Context, userID, clubID int64) {
 		return
 	}
 	var name string
-	_ = db.InPlatformTx(ctx, e.platform, func(q *store.Queries) error {
+	// Имя клуба не прочиталось — запись журнала остаётся с пустым именем (как раньше), ошибка — в журнал (BC-18).
+	if err := db.InPlatformTx(ctx, e.platform, func(q *store.Queries) error {
 		n, err := q.SuperadminClubExists(ctx, clubID)
 		name = n
 		return err
-	})
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		e.log.WarnContext(ctx, "platform log: club name not read", "club_id", clubID, "err", err)
+	}
 	e.platformLog(ctx, activity.PlatformEntry{Event: "superadmin.club_viewed", Key: "Суперадмин открыл клуб :club на просмотр",
 		Params: map[string]string{"club": name}, UserID: userID, ClubID: clubID})
 }
@@ -222,13 +225,18 @@ func (e *authEvents) platformLog(ctx context.Context, entry activity.PlatformEnt
 
 func (e *authEvents) userName(ctx context.Context, userID int64) string {
 	var name string
-	_ = db.InPlatformTx(ctx, e.platform, func(q *store.Queries) error {
+	if err := db.InPlatformTx(ctx, e.platform, func(q *store.Queries) error {
 		u, err := q.GetUserAuth(ctx, userID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
 		if err == nil {
 			name = u.Name
 		}
-		return nil
-	})
+		return err
+	}); err != nil {
+		e.log.WarnContext(ctx, "platform log: user name not read", "user_id", userID, "err", err)
+	}
 	return name
 }
 

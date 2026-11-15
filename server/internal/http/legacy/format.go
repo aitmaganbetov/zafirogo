@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 )
 
@@ -30,42 +31,13 @@ func phpFloatOf(f float64) phpFloat { return phpFloat(f) }
 func tenge(t int64) phpFloat { return phpFloat(float64(t) / 100) }
 
 // moneyStr — StaffApiController::money(): number_format((float) $x, 2, '.', ”) — "1500.00", "-150.00".
-func moneyStr(t int64) string {
-	sign := ""
-	if t < 0 {
-		sign, t = "-", -t
-	}
-	return sign + strconv.FormatInt(t/100, 10) + "." + leftPad2(t%100)
-}
-
-func leftPad2(n int64) string {
-	if n < 10 {
-		return "0" + strconv.FormatInt(n, 10)
-	}
-	return strconv.FormatInt(n, 10)
-}
+func moneyStr(t int64) string { return money.Tiyn(t).Tenge() }
 
 // moneySpaced — number_format($x, 2, '.', ' ') ("1 500.00"), сообщения о бонусе.
-func moneySpaced(t int64) string { return groupThousands(moneyStr(t), ".", " ") }
+func moneySpaced(t int64) string { return money.NumberFormat(money.Tiyn(t), ".", " ") }
 
 // moneyComma — number_format($x, 2, ',', ' ') ("1 500,00"), сообщение гостевой сессии.
-func moneyComma(t int64) string { return groupThousands(moneyStr(t), ",", " ") }
-
-func groupThousands(s, dec, sep string) string {
-	sign := ""
-	if strings.HasPrefix(s, "-") {
-		sign, s = "-", s[1:]
-	}
-	intPart, frac, _ := strings.Cut(s, ".")
-	var b strings.Builder
-	for i, r := range intPart {
-		if i > 0 && (len(intPart)-i)%3 == 0 {
-			b.WriteString(sep)
-		}
-		b.WriteRune(r)
-	}
-	return sign + b.String() + dec + frac
-}
+func moneyComma(t int64) string { return money.NumberFormat(money.Tiyn(t), ",", " ") }
 
 // zulu — StaffApiController::at(): toIso8601ZuluString() ("2026-10-31T12:00:00Z"); nil — null.
 func zulu(t *time.Time) *string {
@@ -104,15 +76,10 @@ func (cs clubSetting) value(section, key string) any {
 }
 
 // currency — data_get($settings, 'finances.currency', 'KZT').
+// Старый мобильный API отдаёт значение буквально (пустая строка, не-строка — как есть): billingsvc.CurrencyOf
+// в режиме literal; новый сервер в остальных местах берёт только непустую строку (BC-06).
 func (cs clubSetting) currency() string {
-	if s, ok := cs.value("finances", "currency").(string); ok {
-		return s
-	}
-	if v := cs.value("finances", "currency"); v != nil {
-		b, _ := json.Marshal(v)
-		return string(b)
-	}
-	return "KZT"
+	return billingsvc.CurrencyOf(cs.value("finances", "currency"), true)
 }
 
 // flag — filter_var($v ?? $def, FILTER_VALIDATE_BOOLEAN).

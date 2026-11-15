@@ -1,16 +1,15 @@
 package stock
 
 import (
+	"errors"
 	"strings"
 	"testing"
-
-	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 )
 
 func wantErr(t *testing.T, err error, field, ruleOrMsg string) {
 	t.Helper()
-	e, ok := AsError(err)
-	if !ok || e.Field != field || (e.Rule != ruleOrMsg && e.Message != ruleOrMsg) {
+	var e *Error
+	if !errors.As(err, &e) || e.Field != field || (e.Rule != ruleOrMsg && e.Message != ruleOrMsg) {
 		t.Fatalf("want %s %q, got %v", field, ruleOrMsg, err)
 	}
 }
@@ -106,30 +105,14 @@ func TestAdjustRules(t *testing.T) {
 	}
 }
 
-func TestParsePrice(t *testing.T) {
-	for in, want := range map[string]money.Tiyn{"1800": 180000, "0": 0, "-0": 0, "100.05": 10005, " 12.9 ": 1290, "9999999999.99": MaxPrice} {
-		got, err := ParsePrice(in)
-		if err != nil || got != want {
-			t.Errorf("ParsePrice(%q) = %v, %v; want %v", in, got, err, want)
-		}
-	}
-	// Решение Q-002 (docs/DECISIONS.md): было — "100.005" → 100.01, "12.999" → 13.00, "1.5e2" → 150.00; стало — 422.
-	for in, rule := range map[string]string{"": "required", "abc": "numeric", "-0.01": "min", "10000000000": "max",
-		"100.005": "decimal", "12.999": "decimal", "9999999999.994": "decimal", "1.5e2": "numeric", "1e20": "numeric"} {
-		_, err := ParsePrice(in)
-		wantErr(t, err, "price", rule)
-	}
-}
-
 func TestProductChanges(t *testing.T) {
 	old := ProductFields{SKU: "A", Name: "Cola", CategoryID: 1, Category: "Напитки", Price: 10000}
 	if ch := ProductChanges(old, old); len(ch) != 0 {
 		t.Fatalf("no changes expected: %v", ch)
 	}
 	// Та же цена в другой записи — не изменение (originalIsEquivalent по decimal:2).
-	p, _ := ParsePrice("100.0")
 	upd := old
-	upd.Price = p
+	upd.Price = 10000 // «100.0» и «100.00» — одна сумма в тиынах
 	if ch := ProductChanges(old, upd); len(ch) != 0 {
 		t.Fatalf("same rounded price: %v", ch)
 	}

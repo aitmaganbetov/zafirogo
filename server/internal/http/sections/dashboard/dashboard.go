@@ -3,14 +3,15 @@ package dashboard
 
 import (
 	"context"
-	"encoding/json"
 	"slices"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
+	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/clubmap"
+	"github.com/aitmaganbetov/zafirogo/server/internal/clubtz"
 	dashboardapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/dashboard"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -75,9 +76,7 @@ func (h *handlers) GetDashboard(ctx context.Context, _ dashboardapi.GetDashboard
 		if settings, err = q.ClubMapSettings(ctx, clubID); err != nil {
 			return err
 		}
-		if loc, err = time.LoadLocation(settings.Timezone); err != nil {
-			loc = time.UTC
-		}
+		loc = clubtz.Location(settings.Timezone)
 		bounds := DayBounds(now, loc)
 		out.Days = make([]dashboardapi.DashboardDay, 7)
 		for i := range 7 {
@@ -101,16 +100,7 @@ func (h *handlers) GetDashboard(ctx context.Context, _ dashboardapi.GetDashboard
 			}
 			after = page[len(page)-1].ID
 		}
-		var s struct {
-			Finances struct {
-				Currency any `json:"currency"`
-			} `json:"finances"`
-		}
-		_ = json.Unmarshal(settings.Settings, &s)
-		out.Currency = "KZT"
-		if c, ok := s.Finances.Currency.(string); ok && c != "" {
-			out.Currency = c
-		}
+		out.Currency = billingsvc.ClubCurrency(settings.Settings)
 		recent, err = q.DashboardRecentCash(ctx, clubID)
 		return err
 	})

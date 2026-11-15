@@ -254,23 +254,6 @@ func (q *Queries) ApiV1ComputersByIDs(ctx context.Context, arg ApiV1ComputersByI
 	return items, nil
 }
 
-const apiV1CountComputers = `-- name: ApiV1CountComputers :one
-SELECT count(*)::bigint FROM club_computers WHERE club_id = $1 AND id = ANY($2::bigint[])
-`
-
-type ApiV1CountComputersParams struct {
-	ClubID int64   `json:"club_id"`
-	Ids    []int64 `json:"ids"`
-}
-
-// Rule::exists('club_computers', 'id')->where('club_id', …) для computer_ids.*: сколько id из списка — ПК клуба.
-func (q *Queries) ApiV1CountComputers(ctx context.Context, arg ApiV1CountComputersParams) (int64, error) {
-	row := q.db.QueryRow(ctx, apiV1CountComputers, arg.ClubID, arg.Ids)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const apiV1FindKey = `-- name: ApiV1FindKey :one
 
 SELECT k.id, k.club_id, k.created_by, k.prefix, k.key_hash, k.scopes, k.allowed_ips, k.rate_limit_per_minute,

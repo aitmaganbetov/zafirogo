@@ -36,23 +36,10 @@ type LogRetention struct {
 
 // Run выполняет тики до отмены ctx (первый — сразу).
 func (w *LogRetention) Run(ctx context.Context) error {
-	interval := w.Interval
-	if interval <= 0 {
-		interval = LogRetentionInterval
-	}
-	t := time.NewTimer(0)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-t.C:
-			if _, _, err := w.Tick(ctx); err != nil && ctx.Err() == nil {
-				w.log().Error("log retention tick failed", "job", LogRetentionJob, "err", err)
-			}
-			t.Reset(interval)
-		}
-	}
+	return loop{
+		job: LogRetentionJob, failed: "log retention tick failed", log: w.Log,
+		interval: intervalOr(w.Interval, LogRetentionInterval),
+	}.run(ctx, func(ctx context.Context) error { _, _, err := w.Tick(ctx); return err })
 }
 
 // Tick — один запуск: dropped — сколько партиций удалено.

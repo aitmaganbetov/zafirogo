@@ -10,44 +10,6 @@ import (
 	"time"
 )
 
-const adminGetProduct = `-- name: AdminGetProduct :one
-SELECT id, sku, name, category, product_category_id, price, quantity, updated_at
-FROM products
-WHERE club_id = $1 AND id = $2 AND deleted_at IS NULL
-`
-
-type AdminGetProductParams struct {
-	ClubID int64 `json:"club_id"`
-	ID     int64 `json:"id"`
-}
-
-type AdminGetProductRow struct {
-	ID                int64      `json:"id"`
-	Sku               string     `json:"sku"`
-	Name              string     `json:"name"`
-	Category          string     `json:"category"`
-	ProductCategoryID *int64     `json:"product_category_id"`
-	Price             int64      `json:"price"`
-	Quantity          int64      `json:"quantity"`
-	UpdatedAt         *time.Time `json:"updated_at"`
-}
-
-func (q *Queries) AdminGetProduct(ctx context.Context, arg AdminGetProductParams) (AdminGetProductRow, error) {
-	row := q.db.QueryRow(ctx, adminGetProduct, arg.ClubID, arg.ID)
-	var i AdminGetProductRow
-	err := row.Scan(
-		&i.ID,
-		&i.Sku,
-		&i.Name,
-		&i.Category,
-		&i.ProductCategoryID,
-		&i.Price,
-		&i.Quantity,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const adminListProductCategories = `-- name: AdminListProductCategories :many
 SELECT id, name
 FROM product_categories

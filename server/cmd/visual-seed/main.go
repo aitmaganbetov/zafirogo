@@ -612,7 +612,7 @@ func (s *seeder) sequences(ctx context.Context) error {
 	for _, c := range cols {
 		tbl, column := pgx.Identifier{c.table}.Sanitize(), pgx.Identifier{c.column}.Sanitize()
 		// setval(seq, max, true): следующий id = max + 1; пустая таблица — 1 (is_called = false).
-		//nolint:gosec // имена таблиц и колонок — из information_schema, экранированы pgx.Identifier
+		// Имена таблиц и колонок — из information_schema, экранированы pgx.Identifier.
 		q := fmt.Sprintf(`SELECT setval(pg_get_serial_sequence($1, $2), coalesce((SELECT max(%s) FROM %s), 1),
 			(SELECT max(%s) FROM %s) IS NOT NULL)`, column, tbl, column, tbl)
 		if _, err := s.pool.Exec(ctx, q, c.table, c.column); err != nil {

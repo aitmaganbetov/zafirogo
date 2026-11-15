@@ -88,6 +88,7 @@ type ListClubAuditLogRow struct {
 	CreatedAt           time.Time       `json:"created_at"`
 }
 
+// Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
 // Новые сверху, keyset по (created_at, id); период — диапазоном [from, before).
 func (q *Queries) ListClubAuditLog(ctx context.Context, arg ListClubAuditLogParams) ([]ListClubAuditLogRow, error) {
 	rows, err := q.db.Query(ctx, listClubAuditLog,

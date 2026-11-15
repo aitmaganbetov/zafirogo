@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
+	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 )
 
 // Computer — то, из чего строится состояние ПК (club_computers + присутствие).
@@ -144,20 +145,7 @@ func Details(h Hardware) string {
 
 // numberFormat — number_format($n) PHP: тысячи через запятую.
 func numberFormat(n int64) string {
-	s := strconv.FormatInt(n, 10)
-	neg := strings.HasPrefix(s, "-")
-	s = strings.TrimPrefix(s, "-")
-	var b strings.Builder
-	for i, r := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			b.WriteByte(',')
-		}
-		b.WriteRune(r)
-	}
-	if neg {
-		return "-" + b.String()
-	}
-	return b.String()
+	return money.GroupThousands(n, ",")
 }
 
 // ---------------------------------------------------------------------------

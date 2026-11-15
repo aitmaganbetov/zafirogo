@@ -31,7 +31,7 @@ type oracleFixture struct {
 
 func loadFixture(t *testing.T, path string) oracleFixture {
 	t.Helper()
-	data, err := os.ReadFile(path) //nolint:gosec // G304: путь — константа теста или временный файл теста
+	data, err := os.ReadFile(path) // G304: путь — константа теста или временный файл теста
 	if err != nil {
 		t.Fatalf("чтение фикстуры: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestPHPRoundOracleFull(t *testing.T) {
 	}
 	defer func() { _ = script.Close() }()
 	argv = append(argv, "-d", "memory_limit=2G", "--", "--full", "-")
-	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // G204: тестовый запуск оракула из переменной окружения разработчика
+	cmd := exec.Command(argv[0], argv[1:]...) // G204: тестовый запуск оракула из переменной окружения разработчика
 	var out bytes.Buffer
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = script, &out, os.Stderr
 	if err := cmd.Run(); err != nil {

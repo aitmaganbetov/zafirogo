@@ -101,7 +101,7 @@ func (p *PasswordRecovery) SendCode(ctx context.Context, phone string) error {
 			return err
 		}
 		if limitErr = limits("phone", now, st.LastAt, st.InHour, st.FirstInHour); limitErr != nil {
-			return nil
+			return nil //nolint:nilerr // отказ по лимиту возвращается после коммита транзакции (limitErr)
 		}
 		hash, err := p.Hasher.Hash(ctx, code)
 		if err != nil {

@@ -199,7 +199,12 @@ func (n *abNotifier) BalanceChanged(ctx context.Context, clubID, userID int64, b
 		if pcs, err := s.o.Presence.SignedInOrList(ctx, clubID, userID); err == nil {
 			for _, st := range pcs {
 				if st.SignedInUserID == userID {
-					_ = s.abUpdate(ctx, st.ComputerID, 0, ms(s.o.Now()))
+					// Пересмотр ПК не поставился в очередь — баланс уже изменён, ответ не трогаем; следующий тик
+					// увидит ПК по сроку. Ошибка — в журнал (BC-18).
+					if err := s.abUpdate(ctx, st.ComputerID, 0, ms(s.o.Now())); err != nil {
+						s.o.Log.WarnContext(ctx, "auto billing: recheck not scheduled", "job", "agent-auto-billing",
+							"club_id", clubID, "computer_id", st.ComputerID, "err", err)
+					}
 				}
 			}
 		}
@@ -579,7 +584,7 @@ func (s *Server) abOne(ctx context.Context, raw string, now time.Time, pre *abPr
 	pc, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		_ = vc.Do(ctx, vc.B().Zrem().Key(s.abDue()).Member(raw).Build()).Error()
-		return nil
+		return nil //nolint:nilerr // мусорная запись очереди (не id ПК) удаляется и пропускается
 	}
 	if err := s.abProcess(ctx, pc, pre); err != nil && ctx.Err() == nil {
 		_ = vc.Do(ctx, vc.B().Zadd().Key(s.abDue()).ScoreMember().ScoreMember(float64(now.Add(AutoBillingRetry).UnixMilli()), raw).Build()).Error()

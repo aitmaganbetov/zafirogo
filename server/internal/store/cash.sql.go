@@ -18,6 +18,7 @@ JOIN ledger_entries e ON e.club_id = a.club_id AND e.account_id = a.id
 WHERE a.club_id = $1 AND a.kind = 'cash_drawer' AND a.user_id IS NULL
 `
 
+// Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
 // Остаток счёта кассы по журналу: касса — актив, остаток = −SUM(amount) (docs/schema-changes.md §10.1).
 func (q *Queries) CashDrawerLedgerBalance(ctx context.Context, clubID int64) (int64, error) {
 	row := q.db.QueryRow(ctx, cashDrawerLedgerBalance, clubID)
@@ -616,6 +617,7 @@ type ListCashShiftTransactionsParams struct {
 	PageSize    int32 `json:"page_size"`
 }
 
+// Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
 // Операции смены по порядку id (keyset: after_id — последний id предыдущей страницы).
 func (q *Queries) ListCashShiftTransactions(ctx context.Context, arg ListCashShiftTransactionsParams) ([]CashTransaction, error) {
 	rows, err := q.db.Query(ctx, listCashShiftTransactions,

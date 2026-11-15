@@ -98,6 +98,13 @@ func Render(locale, line string, params map[string]string) string {
 			line = Choose(locale, line, n)
 		}
 	}
+	return Substitute(line, params)
+}
+
+// Substitute — подстановки :name в тексте, как makeReplacements() Laravel: длинные ключи раньше коротких
+// (":computer_name" не должен съесться ":computer"), при равной длине — по алфавиту (результат не зависит от
+// порядка обхода map). Общая для сервера: переводы, ошибки агента, подписи карты.
+func Substitute(line string, params map[string]string) string {
 	if len(params) == 0 {
 		return line
 	}

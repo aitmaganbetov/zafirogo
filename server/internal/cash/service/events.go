@@ -138,17 +138,5 @@ func (s *Service) balanceChanged(ctx context.Context, q *store.Queries, clubID, 
 	return nil
 }
 
-// currencyOf — data_get(settings, 'finances.currency', 'KZT').
-func currencyOf(settings []byte) string {
-	var root struct {
-		Finances struct {
-			Currency any `json:"currency"`
-		} `json:"finances"`
-	}
-	if json.Unmarshal(settings, &root) == nil {
-		if c, ok := root.Finances.Currency.(string); ok && c != "" {
-			return c
-		}
-	}
-	return "KZT"
-}
+// currencyOf — валюта клуба: billingsvc.ClubCurrency.
+func currencyOf(settings []byte) string { return billingsvc.ClubCurrency(settings) }

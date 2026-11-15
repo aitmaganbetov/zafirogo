@@ -136,7 +136,8 @@ func eq[T comparable](t *testing.T, what string, got, want T) {
 
 func wantErr(t *testing.T, err error, field, rule, msg string) {
 	t.Helper()
-	e, ok := stock.AsError(err)
+	var e *stock.Error
+	ok := errors.As(err, &e)
 	if !ok || e.Field != field || e.Rule != rule || e.Message != msg {
 		t.Fatalf("err = %v, want %s %s%s", err, field, rule, msg)
 	}

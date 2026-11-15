@@ -16,7 +16,6 @@ import (
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
-	"github.com/aitmaganbetov/zafirogo/server/internal/billing/bonus"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
@@ -266,15 +265,7 @@ func credit(ctx context.Context, q *store.Queries, p HandleParams, o store.ShopL
 	})
 }
 
-// subtractSpending — LoyaltyProgram::subtractSpending(): траты уменьшаются, но не ниже нуля; нет членства — ничего.
+// subtractSpending — LoyaltyProgram::subtractSpending(): billing.SubtractSpending (не ниже нуля; нет членства — ничего).
 func subtractSpending(ctx context.Context, q *store.Queries, clubID, userID int64, cents money.Tiyn, now time.Time) error {
-	m, err := q.LockMembershipForPurchase(ctx, store.LockMembershipForPurchaseParams{ClubID: clubID, UserID: userID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	next := bonus.SubtractSpending(money.Tiyn(m.TotalSpent), cents)
-	return q.SetTotalSpent(ctx, store.SetTotalSpentParams{ClubID: clubID, UserID: userID, TotalSpent: int64(next), Now: &now})
+	return billing.SubtractSpending(ctx, q, clubID, userID, cents, now)
 }

@@ -21,7 +21,6 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/valkey-io/valkey-go"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -195,9 +194,6 @@ func New(o Options) (*Service, error) {
 	go s.tickLoop()
 	return s, nil
 }
-
-// Register регистрирует сервис в gRPC-сервере (server/internal/grpc: grpc.NewServer(opts, register)).
-func Register(gs *grpc.Server, svc *Service) { agentv1.RegisterAgentServiceServer(gs, svc) }
 
 // Commands — Commands.Send для остального сервера.
 func (s *Service) Commands() *commands.Sender { return s.sender }

@@ -3,8 +3,6 @@
 // Механизм — сессионный advisory lock Postgres pg_try_advisory_lock(hashtext('job:<name>')) на выделенном
 // соединении пула. Не взяли — задачу сейчас выполняет другой инстанс. Лок живёт, пока живо соединение:
 // при падении процесса или обрыве связи Postgres снимает его сам, и задачу подхватывает другой инстанс.
-// Ключ совпадает с server/internal/worker/expire_sessions.go (hashtext('job:'+имя)), поэтому обе
-// реализации исключают друг друга.
 //
 // Два способа:
 //   - RunOnce — периодическая задача: взять лок в начале тика, выполнить, снять (как withoutOverlapping +
@@ -118,7 +116,7 @@ func Hold(ctx context.Context, pool *pgxpool.Pool, name string, opts HoldOptions
 			ferr := fn(ctx, lock)
 			lock.Release()
 			if ctx.Err() != nil {
-				return nil
+				return nil //nolint:nilerr // штатная остановка по ctx
 			}
 			if ferr != nil && !errors.Is(ferr, context.Canceled) {
 				log.Warn("leader: worker stopped, re-electing", "job", name, "err", ferr)

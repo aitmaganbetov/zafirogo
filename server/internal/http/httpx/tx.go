@@ -95,7 +95,7 @@ func PageSize(limit *int) int32 {
 	if *limit > MaxPageSize {
 		return MaxPageSize
 	}
-	return int32(*limit) //nolint:gosec // ограничено MaxPageSize
+	return int32(*limit) // ограничено MaxPageSize
 }
 
 // EncodeCursor — непрозрачный курсор keyset-пагинации (JSON в base64url).
@@ -138,22 +138,7 @@ func Ptr[T any](v T) *T { return &v }
 
 // NumberFormat — number_format($tenge, 2, dec, ' ') PHP для суммы в тиынах (тексты статусов старого кода).
 func NumberFormat(t money.Tiyn, dec string) string {
-	s := t.Tenge()
-	neg := strings.HasPrefix(s, "-")
-	s = strings.TrimPrefix(s, "-")
-	whole, frac, _ := strings.Cut(s, ".")
-	var b strings.Builder
-	for i, r := range whole {
-		if i > 0 && (len(whole)-i)%3 == 0 {
-			b.WriteByte(' ')
-		}
-		b.WriteRune(r)
-	}
-	out := b.String() + dec + frac
-	if neg {
-		out = "-" + out
-	}
-	return out
+	return money.NumberFormat(t, dec, " ")
 }
 
 // Itoa — strconv.FormatInt(v, 10).

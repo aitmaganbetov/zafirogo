@@ -57,7 +57,7 @@ func TestGoldenCash(t *testing.T) {
 			sale := s.mustSale(owner, SaleItem{ProductID: cola, Quantity: 3})
 			eq(t, "sale", sale.Amount, 210000)
 			eq(t, "stock", s.products[cola].Quantity, 7)
-			eq(t, "refund button", CanShowRefund(sale, false, true, sh), true)
+			eq(t, "refund button", refundButton(sale, false, true, sh), true)
 
 			ref, _, err := s.refund(owner, sale)
 			if err != nil {
@@ -69,7 +69,7 @@ func TestGoldenCash(t *testing.T) {
 			eq(t, "stock", s.products[cola].Quantity, 10)
 			eq(t, "balance", s.totals(sh).Balance(), 100000)
 			eq(t, "flash amount", NumberFormat(ref.Amount), "2 100,00") // «Возврат проведён: 2 100,00 KZT выданы из кассы.»
-			eq(t, "refund button after", CanShowRefund(sale, true, true, sh), false)
+			eq(t, "refund button after", refundButton(sale, true, true, sh), false)
 
 			_, _, err = s.refund(owner, sale)
 			wantErr(t, err, "refund", MsgAlreadyRefunded)
@@ -110,9 +110,9 @@ func TestGoldenCash(t *testing.T) {
 			p := s.product("Товар", 10000, 5)
 			sale := s.mustSale(owner, SaleItem{ProductID: p, Quantity: 1})
 			other := s.mustTransact(owner, Income, "300", "Разное")
-			eq(t, "no right: sale button", CanShowRefund(sale, false, false, sh), false)
-			eq(t, "right: sale button", CanShowRefund(sale, false, true, sh), true)
-			eq(t, "right: other button", CanShowRefund(other, false, true, sh), false)
+			eq(t, "no right: sale button", refundButton(sale, false, false, sh), false)
+			eq(t, "right: sale button", refundButton(sale, false, true, sh), true)
+			eq(t, "right: other button", refundButton(other, false, true, sh), false)
 			_, _, err := s.refund(cashier, other)
 			wantErr(t, err, "refund", MsgNotRefundable)
 			ref, _, err := s.refund(cashier, sale)
@@ -138,7 +138,7 @@ func TestGoldenCash(t *testing.T) {
 			s.mustTransact(owner, Income, "3000", "Продажа")
 			s.mustTransact(owner, Expense, "1000", "Расход")
 			eq(t, "ops", len(s.shiftOps(sh.ID)), 2)
-			eq(t, "X-report allowed", CheckXReport(s.openShiftPtr()), true)
+			eq(t, "X-report allowed", s.openShiftPtr().IsOpen(), true) // xReport(): открытая смена firstOrFail → 404
 			hasLine(t, s.report(sh).Lines(sh.ID, People{}), "Итог в кассе · 12 000,00 KZT")
 		},
 		// «Z report must be printed before the shift can be closed»
@@ -155,7 +155,7 @@ func TestGoldenCash(t *testing.T) {
 			eq(t, "status", sh.Status, StatusClosed)
 			eq(t, "closing_balance", sh.ClosingBalance, 700000)
 			wantErr(t, s.close(sh, owner, true), "shift", MsgShiftAlreadyClose)
-			eq(t, "X-report on closed", CheckXReport(s.openShiftPtr()), false)
+			eq(t, "X-report on closed", s.openShiftPtr().IsOpen(), false)
 		},
 		// «POS sale writes off products and records cash income»
 		"GS-010": func(t *testing.T) {
@@ -346,7 +346,7 @@ func TestGoldenCash(t *testing.T) {
 			s.mustOpen("0", owner)
 			_, _, err := s.refund(owner, sale)
 			wantErr(t, err, "refund", MsgRefundOpenShift)
-			eq(t, "button on closed shift", CanShowRefund(sale, false, true, first), false)
+			eq(t, "button on closed shift", refundButton(sale, false, true, first), false)
 		},
 		"GAP-024": func(t *testing.T) {
 			s := newSim(t)
@@ -586,3 +586,10 @@ func eqLines(t *testing.T, what string, got, want []string) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+
+// refundButton — кнопка «Возврат» у прихода, как её собирает экран из полей ответа сервера (CashReceipt:
+// refundable = RefundKind() != RefundNone, can_refund — право cash.delete, shift_open — смена операции открыта;
+// web/src/features/cash/RefundButton.tsx). Laravel: resources/views/cash-register/refund-button.blade.php.
+func refundButton(op Operation, refunded, canRefund bool, opShift *Shift) bool {
+	return !refunded && canRefund && op.RefundKind() != RefundNone && opShift.IsOpen()
+}

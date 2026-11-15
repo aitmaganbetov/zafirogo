@@ -10,6 +10,7 @@ VALUES (sqlc.arg(club_id), sqlc.arg(event), sqlc.arg(description), sqlc.arg(user
 RETURNING id;
 
 -- name: ListClubActivityLogs :many
+-- Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
 -- Новые сверху, keyset по (created_at, id); период — диапазоном [from, before). Пустой event — все события.
 SELECT id, event, description, user_id, subject_type, subject_id, details, ip_address, user_agent, created_at
 FROM activity_logs

@@ -40,26 +40,10 @@ type AutoBilling struct {
 // Run выполняет тики до отмены ctx. Каждый тик — под локом задачи (leader.RunOnce): соединение пула zafiro_platform
 // берётся только на время тика, а не держится постоянно (пул платформы маленький: проверка готовности, воркеры).
 func (w *AutoBilling) Run(ctx context.Context) error {
-	interval := w.Interval
-	if interval <= 0 {
-		interval = AutoBillingInterval
-	}
-	log := w.Log
-	if log == nil {
-		log = slog.Default()
-	}
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		if _, err := w.Tick(ctx); err != nil && ctx.Err() == nil {
-			log.Error("auto billing tick failed", "job", AutoBillingJob, "err", err)
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-t.C:
-		}
-	}
+	return loop{
+		job: AutoBillingJob, failed: "auto billing tick failed", log: w.Log,
+		interval: intervalOr(w.Interval, AutoBillingInterval), fixedRate: true,
+	}.run(ctx, func(ctx context.Context) error { _, err := w.Tick(ctx); return err })
 }
 
 // Tick — один проход под локом; ran = false — тик выполняет другой инстанс.

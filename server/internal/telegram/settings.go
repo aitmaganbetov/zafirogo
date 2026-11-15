@@ -69,7 +69,7 @@ func (s *Store) Read(ctx context.Context, key string) (*Secret, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	if len(raw) == 0 || dec.Decode(&v) != nil || v.Token == "" || s.Box == nil {
-		return nil, nil
+		return nil, nil //nolint:nilerr // нет настройки или она нечитаема — «не настроено»
 	}
 	token, err := s.Box.Open(v.Token)
 	if err != nil {

@@ -118,11 +118,6 @@ func Subject(clubID int64, typ string) string {
 	return SubjectPrefix + strconv.FormatInt(clubID, 10) + "." + typ
 }
 
-// ClubSubjects — все события клуба: club.<club_id>.>.
-func ClubSubjects(clubID int64) string {
-	return SubjectPrefix + strconv.FormatInt(clubID, 10) + ".>"
-}
-
 // Envelope — тело сообщения в JetStream (и основа сообщения WebSocket, docs/realtime.md).
 type Envelope struct {
 	// ID — id события (uuid), он же Nats-Msg-Id.

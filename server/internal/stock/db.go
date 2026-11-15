@@ -106,7 +106,7 @@ type CreateProductParams struct {
 	SKU        string
 	Name       string
 	CategoryID int64
-	Price      money.Tiyn // ParsePrice
+	Price      money.Tiyn // 0…MaxPrice
 	Quantity   int64
 	Now        time.Time
 }

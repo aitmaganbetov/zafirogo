@@ -154,3 +154,9 @@ func TestPHPUnserializeString(t *testing.T) {
 		}
 	}
 }
+
+// LooksEncrypted — Encrypter::appearsEncrypted(): base64 строгий, JSON с iv, value, mac.
+func LooksEncrypted(v string) bool {
+	_, err := decodeLaravelPayload(v)
+	return err == nil
+}

@@ -3,6 +3,7 @@ package monitoring
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"regexp"
 	"strconv"
@@ -122,7 +123,7 @@ type Table struct {
 // BiggestTables — 8 крупнейших таблиц схемы public (размер с индексами, МБ с одним знаком; строки — оценка).
 func BiggestTables(ctx context.Context, pool db.Beginner) []Table {
 	var out []Table
-	_ = pgx.BeginTxFunc(ctx, pool, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+	err := pgx.BeginTxFunc(ctx, pool, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT c.relname::text, round(pg_total_relation_size(c.oid) / 1048576.0, 1)::float8,
 		       GREATEST(c.reltuples, 0)::bigint
 		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -141,5 +142,9 @@ func BiggestTables(ctx context.Context, pool db.Beginner) []Table {
 		}
 		return rows.Err()
 	})
+	if err != nil {
+		// Блок «крупнейшие таблицы» остаётся пустым или неполным (как раньше); ошибка — в журнал (BC-18).
+		slog.Default().WarnContext(ctx, "monitoring: biggest tables not read", "err", err)
+	}
 	return out
 }

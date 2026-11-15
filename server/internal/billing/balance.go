@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -47,6 +48,8 @@ type BalanceActor struct {
 
 // BalanceError — ошибка проверки с полем формы и текстом-ключом перевода (как ValidationException::withMessages).
 type BalanceError struct {
+	// Code — машинный код для ветвления (в старом коде его не было); пусто — обычная ошибка проверки.
+	Code    string
 	Field   string
 	Message string            // русский текст = ключ t()
 	Params  map[string]string // подстановки :name
@@ -60,6 +63,9 @@ func (e *BalanceError) Error() string {
 	return e.Field + ": " + msg
 }
 
+// CodeInsufficientFunds — BalanceError.Code: на основном счёте не хватает денег (перевод другу).
+const CodeInsufficientFunds = "insufficient_funds"
+
 // ErrBalanceAmountOutOfRange — сумма вне допустимого правилами формы диапазона (валидация запроса).
 var ErrBalanceAmountOutOfRange = errors.New("billing: amount out of range")
 
@@ -72,7 +78,6 @@ const (
 	msgTransferOnlyFriends   = "Переводить можно только друзьям."
 	msgNotEnoughMain         = "Недостаточно средств на основном счёте."
 	msgWriteOffMoreThanFunds = "На балансе клиента меньше суммы списания: :amount."
-	msgTopUpAlreadySpent     = "Клиент уже потратил часть пополнения: на балансе меньше суммы возврата."
 	msgTransferCodeWrong     = "Код неверный или устарел. Запросите новый код."
 )
 
@@ -253,30 +258,26 @@ func RefundTopUp(ctx context.Context, q *store.Queries, p RefundTopUpParams) (Re
 		return refundTopUpResult(*replay, p.UserID, p.Field), nil
 	}
 
+	// Правило возврата — cash.PlanTopUpRefund (одна реализация; golden-сценарии BR-055 в пакете cash и
+	// TestRefundTopUpMatchesPlan здесь): хватает ли баланса и сколько бонуса за пополнение забрать.
+	var have *cash.MemberBalance
 	balances, err := ledger.LockBalances(ctx, q, p.ClubID, p.UserID)
-	if errors.Is(err, ledger.ErrBalanceNotFound) {
-		return RefundTopUpResult{}, &BalanceError{Field: "refund", Message: msgTopUpAlreadySpent}
+	switch {
+	case errors.Is(err, ledger.ErrBalanceNotFound): // нет строки member_balances — have = nil
+	case err != nil:
+		return RefundTopUpResult{}, err
+	default:
+		b := balances[p.UserID]
+		have = &cash.MemberBalance{Main: b.Main, Bonus: b.Bonus}
 	}
+	plan, err := cash.PlanTopUpRefund(cash.TopUpReceipt{UserID: p.UserID, Field: cash.BalanceField(p.Field), Bonus: p.Bonus}, p.Amount, have)
 	if err != nil {
+		if ce, ok := cash.AsError(err); ok {
+			return RefundTopUpResult{}, &BalanceError{Field: ce.Field, Message: ce.Message}
+		}
 		return RefundTopUpResult{}, err
 	}
-	b := balances[p.UserID]
-	fieldBalance := b.Main
-	if p.Field == FieldBonus {
-		fieldBalance = b.Bonus
-	}
-	if fieldBalance < p.Amount {
-		return RefundTopUpResult{}, &BalanceError{Field: "refund", Message: msgTopUpAlreadySpent}
-	}
-	bonusAfter := b.Bonus
-	if p.Field == FieldBonus {
-		bonusAfter -= p.Amount
-	}
-	// Laravel: $bonus = min((float) ($topUp['bonus'] ?? 0), (float) $balance->refresh()->bonus_balance); if ($bonus > 0)
-	bonusBack := min(p.Bonus, bonusAfter)
-	if bonusBack < 0 {
-		bonusBack = 0
-	}
+	bonusBack := plan.BonusTakenBack
 
 	deltas := map[ledger.Account]money.Tiyn{
 		p.Field.account(p.UserID):                    -p.Amount,
@@ -562,22 +563,7 @@ func sortEntries(e []ledger.Entry) {
 
 // numberFormatSpaced — PHP number_format($x, 2, '.', ' ') для суммы с двумя знаками: "1 234.50", "-12.00".
 func numberFormatSpaced(t money.Tiyn) string {
-	s := t.Tenge()
-	neg := strings.HasPrefix(s, "-")
-	s = strings.TrimPrefix(s, "-")
-	whole, frac, _ := strings.Cut(s, ".")
-	var b strings.Builder
-	for i, c := range whole {
-		if i > 0 && (len(whole)-i)%3 == 0 {
-			b.WriteByte(' ')
-		}
-		b.WriteRune(c)
-	}
-	out := b.String() + "." + frac
-	if neg {
-		out = "-" + out
-	}
-	return out
+	return money.NumberFormat(t, ".", " ")
 }
 
 // auditMoney пишет запись аудита о денежной операции (категория money).

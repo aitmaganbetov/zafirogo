@@ -103,6 +103,7 @@ FROM cash_transactions
 WHERE club_id = sqlc.arg(club_id) AND refund_of_id = sqlc.arg(refund_of_id);
 
 -- name: ListCashShiftTransactions :many
+-- Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
 -- Операции смены по порядку id (keyset: after_id — последний id предыдущей страницы).
 SELECT *
 FROM cash_transactions
@@ -169,6 +170,7 @@ FROM clubs
 WHERE id = sqlc.arg(club_id) AND id = zafiro_current_club_id();
 
 -- name: CashDrawerLedgerBalance :one
+-- Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
 -- Остаток счёта кассы по журналу: касса — актив, остаток = −SUM(amount) (docs/schema-changes.md §10.1).
 SELECT COALESCE(-sum(e.amount), 0)::bigint AS balance
 FROM ledger_accounts a

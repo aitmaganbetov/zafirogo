@@ -90,7 +90,7 @@ func TestCheckedArithmetic(t *testing.T) {
 	}
 }
 
-func TestAddSub(t *testing.T) {
+func TestAdd(t *testing.T) {
 	if got, err := Add(150, 250); got != 400 || err != nil {
 		t.Errorf("Add = %d, %v", got, err)
 	}
@@ -100,11 +100,8 @@ func TestAddSub(t *testing.T) {
 	if _, err := Add(math.MaxInt64, 1); !errors.Is(err, ErrOutOfRange) {
 		t.Errorf("Add(MaxInt64, 1): %v", err)
 	}
-	if got, err := Sub(100, 250); got != -150 || err != nil {
-		t.Errorf("Sub = %d, %v", got, err)
-	}
-	if _, err := Sub(0, math.MinInt64); !errors.Is(err, ErrOutOfRange) {
-		t.Errorf("Sub(0, MinInt64): %v", err)
+	if got, err := Add(100, -250); got != -150 || err != nil {
+		t.Errorf("Add(100, -250) = %d, %v", got, err)
 	}
 }
 

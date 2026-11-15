@@ -24,6 +24,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
+	"github.com/aitmaganbetov/zafirogo/server/internal/clubtz"
 	integrationsapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/integrations"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/realtime"
@@ -188,11 +189,7 @@ func (h *handlers) GetIntegrations(ctx context.Context, _ integrationsapi.GetInt
 
 // tomorrow — now()->addDay()->toDateString() в поясе клуба.
 func tomorrow(now time.Time, tz string) string {
-	loc, err := time.LoadLocation(tz)
-	if err != nil || tz == "" {
-		loc = time.UTC
-	}
-	return now.In(loc).AddDate(0, 0, 1).Format("2006-01-02")
+	return now.In(clubtz.Location(tz)).AddDate(0, 0, 1).Format("2006-01-02")
 }
 
 // deliveryCursor — keyset журнала доставок: id последней показанной строки.
@@ -373,10 +370,7 @@ func validateKey(req *integrationsapi.ApiKeyRequest, now time.Time, tz string, m
 		}
 	}
 	if req.ExpiresAt != nil && strings.TrimSpace(*req.ExpiresAt) != "" {
-		loc, err := time.LoadLocation(tz)
-		if err != nil || tz == "" {
-			loc = time.UTC
-		}
+		loc := clubtz.Location(tz)
 		t, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(*req.ExpiresAt), loc)
 		switch {
 		case err != nil:

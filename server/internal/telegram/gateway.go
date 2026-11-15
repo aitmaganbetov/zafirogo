@@ -70,7 +70,7 @@ func (g *Gateway) SendCode(ctx context.Context, phone, code string, ttl time.Dur
 	})
 	if err != nil {
 		g.log().WarnContext(ctx, "Telegram Gateway did not send a code", "error", "no response")
-		return false, nil
+		return false, nil //nolint:nilerr // сбой шлюза — «код не отправлен» (в журнале), как в старом TelegramGateway
 	}
 	if !resp.OK {
 		g.log().WarnContext(ctx, "Telegram Gateway did not send a code", "error", resp.Error)

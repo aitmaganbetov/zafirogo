@@ -421,7 +421,7 @@ func (h *handlers) agentUpdate(ctx context.Context, q *store.Queries, clubID int
 		ReleasedAt any `json:"released_at"`
 	}
 	if json.Unmarshal(raw, &rel) != nil {
-		return items, nil
+		return items, nil //nolint:nilerr // нечитаемая настройка релиза — раздела «Обновление агента» просто нет
 	}
 	latest, _ := rel.Latest.(string)
 	if !clubmap.ValidLatest(latest) {

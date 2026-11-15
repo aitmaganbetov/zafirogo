@@ -44,7 +44,7 @@ func CheckFriendTransfer(ctx context.Context, q *store.Queries, clubID, userID, 
 		main = money.Tiyn(b.Balance)
 	}
 	if main < amount {
-		return &BalanceError{Field: "amount", Message: msgNotEnoughMain}
+		return &BalanceError{Code: CodeInsufficientFunds, Field: "amount", Message: msgNotEnoughMain}
 	}
 	return nil
 }

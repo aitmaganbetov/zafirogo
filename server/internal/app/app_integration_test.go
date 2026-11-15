@@ -184,7 +184,7 @@ func start(t *testing.T, cfg *config.Config) *running {
 
 func getJSON(t *testing.T, u string) (int, map[string]any) {
 	t.Helper()
-	resp, err := http.Get(u) //nolint:noctx // тест
+	resp, err := http.Get(u) // тест
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func TestAppEndToEnd(t *testing.T) {
 		}
 	}
 	// /ws — за авторизацией.
-	if resp, err := http.Get(base + "/ws"); err != nil { //nolint:noctx // тест
+	if resp, err := http.Get(base + "/ws"); err != nil { // тест
 		t.Fatal(err)
 	} else {
 		_ = resp.Body.Close()

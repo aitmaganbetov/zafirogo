@@ -203,14 +203,6 @@ func encodeNumber(n phpNumber) json.RawMessage {
 	return b
 }
 
-// String — (string) число PHP (журнал settings.updated).
-func (n phpNumber) String() string {
-	if n.isFloat {
-		return money.PHPFloatString(n.f)
-	}
-	return strconv.FormatInt(n.i, 10)
-}
-
 var firstNumber = regexp.MustCompile(`[\d]+(?:[.,][\d]+)?`)
 
 // minutes — SettingsController::minutes(): число → number(); строка вида «30 сек» / «5,5 мин» — первое число

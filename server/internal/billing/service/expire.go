@@ -37,7 +37,7 @@ type ExpiredSession struct {
 // meta — «запрос» системного действия (IP обязателен для журнала).
 //
 // platform — пул логина zafiro_platform (запрос по всем клубам). now усекается до секунды, как строка
-// Y-m-d H:i:s, которую подставлял старый код (session.IsDue — то же условие для одного ПК).
+// Y-m-d H:i:s, которую подставлял старый код (expireIfDue() для одного ПК — то же условие, `! isFuture()`).
 func ExpireDueSessions(ctx context.Context, platform db.Beginner, now time.Time, meta activity.RequestMeta) ([]ExpiredSession, error) {
 	at := session.StoredTime(now)
 	var out []ExpiredSession

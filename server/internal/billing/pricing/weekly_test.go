@@ -165,25 +165,6 @@ func TestTariffList_ReasonsNotOffered(t *testing.T) {
 	})
 }
 
-func TestWeeklyPeriods_IsAlways(t *testing.T) {
-	cases := []struct {
-		name string
-		p    WeeklyPeriods
-		want bool
-	}{
-		{"BR-017/isAlways/nil", nil, true},
-		{"BR-017/isAlways/вся_неделя", WeeklyPeriods{period("tue", "10:00", "tue", "11:00"), period("mon", "00:00", "sun", "23:59")}, true},
-		{"BR-017/isAlways/почти", WeeklyPeriods{period("mon", "00:00", "sun", "23:58")}, false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := c.p.IsAlways(); got != c.want {
-				t.Fatalf("IsAlways = %v, want %v", got, c.want)
-			}
-		})
-	}
-}
-
 // WeeklyPeriods::minutes(): '/^(\d{2}):(\d{2})$/', иначе 0.
 func TestPeriodMinutes(t *testing.T) {
 	cases := map[string]int{

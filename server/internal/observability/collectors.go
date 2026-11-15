@@ -173,7 +173,7 @@ func (c *sourceCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 // Запросы при сборе — платформенный пул (все клубы, только агрегаты). Индексы: outbox_events_unpublished_index,
-// webhook_deliveries_status_next_attempt_at_index. Счёт outbox — как store.CountUnpublishedOutboxEvents.
+// webhook_deliveries_status_next_attempt_at_index. Счёт outbox — здесь (отдельного запроса sqlc нет).
 const (
 	sqlOutboxLag = `SELECT count(*)::float8, COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0)::float8
 FROM outbox_events WHERE published_at IS NULL`

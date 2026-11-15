@@ -40,8 +40,12 @@ func Discounted(price money.Tiyn, percent float64) (money.Tiyn, error) {
 		return 0, err
 	}
 	bp := DiscountBasisPoints(percent)
-	off := money.IntDiv(int64(price)*bp+5000, 10000) // ≤ 1e12 * 1e4 — без переполнения
-	return money.Tiyn(max(0, int64(price)-off)), nil
+	// intdiv($price * $bp + 5000, 10000) — money.PercentOfHalfUp (та же формула, что у бонуса за пополнение, BR-041).
+	off, err := money.PercentOfHalfUp(price, bp)
+	if err != nil { // цена ≤ MaxPrice, bp ≤ 10000 — переполнения нет
+		return 0, ErrInvalidInput
+	}
+	return max(0, price-off), nil
 }
 
 // TariffPrice — цена тарифа для клиента: со скидкой, если у тарифа «Применять скидку» и область

@@ -52,23 +52,10 @@ type ReencryptResult struct {
 
 // Run выполняет тики до отмены ctx; первый — сразу.
 func (w *ReencryptSecrets) Run(ctx context.Context) error {
-	interval := w.Interval
-	if interval <= 0 {
-		interval = ReencryptSecretsInterval
-	}
-	t := time.NewTimer(0)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-t.C:
-			if _, _, err := w.Tick(ctx); err != nil && ctx.Err() == nil {
-				w.log().Error("reencrypt secrets tick failed", "job", ReencryptSecretsJob, "err", err)
-			}
-			t.Reset(interval)
-		}
-	}
+	return loop{
+		job: ReencryptSecretsJob, failed: "reencrypt secrets tick failed", log: w.Log,
+		interval: intervalOr(w.Interval, ReencryptSecretsInterval),
+	}.run(ctx, func(ctx context.Context) error { _, _, err := w.Tick(ctx); return err })
 }
 
 // Tick — один проход: ran = false, если лок держит другой инстанс.

@@ -31,25 +31,8 @@ func DiscountIsCumulative(levels []Level, personalDiscount float64, totalSpent m
 	return LoyaltyPercentFor(levels, totalSpent) > personalDiscount
 }
 
-// AddSpending — новое значение total_spent после LoyaltyProgram::addSpending() (BR-042):
-// растёт только на положительную сумму (оплата с основного баланса; бонусы не считаются).
-// Траты копятся всегда, даже при выключенной программе.
-//
-// Laravel: app/Services/LoyaltyProgram.php LoyaltyProgram::addSpending() (~стр. 45–50):
-//
-//	if ($cents > 0) { ...->increment('total_spent', formatCents($cents)); }
-//
-// Предел здесь — только общий предел арифметики пакета money: выход за money.MaxAmount → money.ErrOutOfRange.
-// Предел колонки (в MySQL decimal(12,2), больше 9 999 999 999.99 — ошибка 1264 и откат) проверяет сервис:
-// billing/service MaxTotalSpent (решение SV-7, docs/DECISIONS.md / stage1-service.md).
-func AddSpending(totalSpent, cents money.Tiyn) (money.Tiyn, error) {
-	if cents <= 0 {
-		return totalSpent, nil
-	}
-	return money.Add(totalSpent, cents)
-}
-
-// SubtractSpending — новое значение total_spent после LoyaltyProgram::subtractSpending() (BR-042):
+// SubtractSpending — новое значение total_spent после LoyaltyProgram::subtractSpending() (BR-042;
+// рост трат — SQL-инкремент billing.AddSpending, там же предел decimal(12,2), решение SV-7):
 // возврат (отмена заказа, возврат основного баланса при завершении сессии) уменьшает траты,
 // но не ниже нуля.
 //

@@ -45,7 +45,7 @@ func connectPC(ctx context.Context, t *testing.T, p *pc, certPEM string, pcID in
 		t.Fatal("no Welcome")
 	}
 	go func() {
-		for range msgs { //nolint:revive // слив сообщений, чтобы recv не блокировался
+		for range msgs { // слив сообщений, чтобы recv не блокировался
 		}
 	}()
 	return func() { scancel(); _ = conn.Close() }, ec

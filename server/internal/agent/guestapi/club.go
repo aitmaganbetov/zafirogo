@@ -18,6 +18,8 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/identity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/bonus"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/pricing"
+	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
+	"github.com/aitmaganbetov/zafirogo/server/internal/clubtz"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
@@ -53,7 +55,7 @@ type clubSettings struct {
 }
 
 func parseClubSettings(raw []byte) clubSettings {
-	cs := clubSettings{section: map[string]map[string]json.RawMessage{}, currency: "KZT"}
+	cs := clubSettings{section: map[string]map[string]json.RawMessage{}, currency: billingsvc.DefaultCurrency}
 	// CurrentClub::settings(): некорректный JSON → [] (все значения по умолчанию).
 	_ = json.Unmarshal(raw, &cs.root)
 	for _, name := range []string{"guests", "club", "finances"} {
@@ -71,10 +73,7 @@ func parseClubSettings(raw []byte) clubSettings {
 		cs.bonus = b
 	}
 	// data_get($settings, 'finances.currency', 'KZT').
-	var cur string
-	if v, ok := cs.section["finances"]["currency"]; ok && json.Unmarshal(v, &cur) == nil && cur != "" {
-		cs.currency = cur
-	}
+	cs.currency = billingsvc.ClubCurrency(raw)
 	return cs
 }
 
@@ -212,14 +211,8 @@ func loadClub(ctx context.Context, q *store.Queries, id identity.Identity) (club
 	if err != nil {
 		return clubInfo{}, err
 	}
-	ci := clubInfo{id: id.ClubID, row: row, settings: parseClubSettings(row.Settings), loc: time.UTC}
 	// CurrentClub::localTimezone(): пустая строка → UTC.
-	if row.Timezone != "" {
-		if loc, err := time.LoadLocation(row.Timezone); err == nil {
-			ci.loc = loc
-		}
-	}
-	return ci, nil
+	return clubInfo{id: id.ClubID, row: row, settings: parseClubSettings(row.Settings), loc: clubtz.Location(row.Timezone)}, nil
 }
 
 // subscriptionActive — ClubSubscription::isActive() (app/Models/ClubSubscription.php стр. 31–35, BR-130).

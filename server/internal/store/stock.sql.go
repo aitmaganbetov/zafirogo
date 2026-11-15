@@ -10,36 +10,6 @@ import (
 	"time"
 )
 
-const getProduct = `-- name: GetProduct :one
-SELECT id, sku, name, category, product_category_id, price, quantity, created_at, updated_at, club_id, deleted_at
-FROM products
-WHERE club_id = $1 AND id = $2
-`
-
-type GetProductParams struct {
-	ClubID int64 `json:"club_id"`
-	ID     int64 `json:"id"`
-}
-
-func (q *Queries) GetProduct(ctx context.Context, arg GetProductParams) (Product, error) {
-	row := q.db.QueryRow(ctx, getProduct, arg.ClubID, arg.ID)
-	var i Product
-	err := row.Scan(
-		&i.ID,
-		&i.Sku,
-		&i.Name,
-		&i.Category,
-		&i.ProductCategoryID,
-		&i.Price,
-		&i.Quantity,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ClubID,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
 const getProductCategory = `-- name: GetProductCategory :one
 SELECT id, name
 FROM product_categories
@@ -184,58 +154,6 @@ func (q *Queries) ListActiveClubServicesByIDs(ctx context.Context, arg ListActiv
 	for rows.Next() {
 		var i ListActiveClubServicesByIDsRow
 		if err := rows.Scan(&i.ID, &i.Name, &i.Price); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listProductStockMovements = `-- name: ListProductStockMovements :many
-SELECT id, product_id, user_id, type, quantity, balance_after, note, created_at, updated_at, club_id
-FROM stock_movements
-WHERE club_id = $1 AND product_id = $2 AND id < $3
-ORDER BY id DESC
-LIMIT $4
-`
-
-type ListProductStockMovementsParams struct {
-	ClubID    int64 `json:"club_id"`
-	ProductID int64 `json:"product_id"`
-	BeforeID  int64 `json:"before_id"`
-	PageSize  int32 `json:"page_size"`
-}
-
-// Движения товара, новые сверху (keyset по id: before_id — последний id предыдущей страницы).
-func (q *Queries) ListProductStockMovements(ctx context.Context, arg ListProductStockMovementsParams) ([]StockMovement, error) {
-	rows, err := q.db.Query(ctx, listProductStockMovements,
-		arg.ClubID,
-		arg.ProductID,
-		arg.BeforeID,
-		arg.PageSize,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []StockMovement
-	for rows.Next() {
-		var i StockMovement
-		if err := rows.Scan(
-			&i.ID,
-			&i.ProductID,
-			&i.UserID,
-			&i.Type,
-			&i.Quantity,
-			&i.BalanceAfter,
-			&i.Note,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ClubID,
-		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

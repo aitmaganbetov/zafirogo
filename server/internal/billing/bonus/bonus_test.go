@@ -282,65 +282,28 @@ func TestLoyalty(t *testing.T) {
 	}
 }
 
-// TestSpending — BR-042: траты растут на оплату с основного и уменьшаются на возврат, не ниже нуля.
-func TestSpending(t *testing.T) {
-	type step struct {
-		add   bool
-		cents money.Tiyn
-		want  money.Tiyn
-	}
+// TestSubtractSpending — BR-042: возврат уменьшает траты, но не ниже нуля. Полные сценарии (рост и возврат,
+// GS-034…GS-036, GAP-002, GAP-011) идут через боевой путь — billing.AddSpending / SubtractSpending
+// (billing/spending_integration_test.go).
+func TestSubtractSpending(t *testing.T) {
 	tests := []struct {
-		name  string
-		start money.Tiyn
-		steps []step
+		name               string
+		total, cents, want money.Tiyn
 	}{
-		// BR-042: тариф 900.00 основным (+200 бонусами не считаются) → +900.00; возврат 150.00 → −150.00.
-		{"BR-042", 0, []step{{true, 90000, 90000}, {false, 15000, 75000}}},
-		// GS-034: 950.00 → +600.00 (поминутно) → +900.00 = 2450.00.
-		{"GS-034", 0, []step{{true, 95000, 95000}, {true, 60000, 155000}, {true, 90000, 245000}}},
-		// GS-035: смешанная оплата — в траты идёт только основная часть 400.00.
-		{"GS-035", 0, []step{{true, 40000, 40000}}},
-		// GS-036: заказ 700.00 → отмена → 0.00.
-		{"GS-036", 0, []step{{true, 70000, 70000}, {false, 70000, 0}}},
-		// GAP-002: покупка 600.00 основным → завершение через 30 мин с возвратом 300.00 → 300.00.
-		{"GAP-002", 0, []step{{true, 60000, 60000}, {false, 30000, 30000}}},
-		// GAP-011: цена 0 (скидка 100 %) — траты не меняются.
-		{"GAP-011", 12345, []step{{true, 0, 12345}}},
-		// GAP-013: 200.00 − 350.00 → 0.00 (не −150).
-		{"GAP-013", 20000, []step{{false, 35000, 0}}},
-		// Неположительные суммы игнорируются (if ($cents <= 0) return).
-		{"BR-042/неположительные", 500, []step{{true, -100, 500}, {false, -100, 500}, {false, 0, 500}}},
-		{"BR-042/ровно_до_нуля", 500, []step{{false, 500, 0}}},
+		{"BR-042/возврат_150", 90000, 15000, 75000},
+		{"GS-036/отмена_заказа", 70000, 70000, 0},
+		{"GAP-002", 60000, 30000, 30000},
+		{"GAP-013/не_ниже_нуля", 20000, 35000, 0},
+		{"BR-042/отрицательная", 500, -100, 500},
+		{"BR-042/ноль", 500, 0, 500},
+		{"BR-042/ровно_до_нуля", 500, 500, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			total := tt.start
-			for i, s := range tt.steps {
-				if s.add {
-					var err error
-					if total, err = AddSpending(total, s.cents); err != nil {
-						t.Fatal(err)
-					}
-				} else {
-					total = SubtractSpending(total, s.cents)
-				}
-				if total != s.want {
-					t.Fatalf("шаг %d: total_spent = %d, want %d", i+1, total, s.want)
-				}
+			if got := SubtractSpending(tt.total, tt.cents); got != tt.want {
+				t.Fatalf("SubtractSpending(%d, %d) = %d, want %d", tt.total, tt.cents, got, tt.want)
 			}
 		})
-	}
-	if _, err := AddSpending(money.MaxAmount, 1); err == nil {
-		t.Fatal("AddSpending выше MaxAmount: нет ошибки")
-	}
-	// Решение SV-7 (docs/DECISIONS.md): AddSpending ограничен только money.MaxAmount; предел decimal(12,2)
-	// (999 999 999 999 тиынов) проверяет billing/service MaxTotalSpent, а не чистая арифметика.
-	const decimal12x2 money.Tiyn = 999_999_999_999
-	if got, err := AddSpending(decimal12x2, 1); err != nil || got != decimal12x2+1 {
-		t.Fatalf("AddSpending за пределом decimal(12,2) = %d, %v; want %d, nil", got, err, decimal12x2+1)
-	}
-	if got, err := AddSpending(money.MaxAmount-1, 1); err != nil || got != money.MaxAmount {
-		t.Fatalf("AddSpending до MaxAmount = %d, %v", got, err)
 	}
 }
 
@@ -478,4 +441,30 @@ func TestDecodeJSON(t *testing.T) {
 			t.Errorf("DecodeJSON(%q): нет ошибки", bad)
 		}
 	}
+}
+
+// TopUpFor — TopUpBonus::for(float $amount) в форме старого кода: сумма в тенге как float из запроса
+// ((float) $data['amount']), перевод в центы — (int) round($amount * 100) PHP 8.4+. Только для тестов (golden GS-002,
+// BR-041 и дифференциальный oracle_test.go): боевой код получает центы от кассы (cash.ParseTopUpAmount, решение
+// Q-002) и вызывает TopUpForCents — ту же единственную реализацию формулы.
+func TopUpFor(levels []Level, amount float64) (TopUpBonus, error) {
+	return TopUpForCents(levels, int64(money.FromTengeFloat(amount)))
+}
+
+// TopUpForTengeString — TopUpFor((float) $s): сумма пополнения строкой из запроса (как
+// (float) $data['amount'] в CashRegisterController::topUpBalance() и Api/Staff/CashController::topUp()).
+func TopUpForTengeString(levels []Level, amount string) (TopUpBonus, error) {
+	return TopUpFor(levels, money.PHPStringToFloat(amount))
+}
+
+// Keys — ключи массива в порядке PHP; int-ключи — десятичной строкой.
+func (v Value) Keys() []string {
+	if v.kind != KindArray {
+		return nil
+	}
+	out := make([]string, len(v.arr.keys))
+	for i, k := range v.arr.keys {
+		out[i] = k[2:]
+	}
+	return out
 }

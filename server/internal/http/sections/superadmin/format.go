@@ -20,20 +20,7 @@ func phpNum(v float64, places int) string {
 
 // numberFormat — number_format($n, 0, $dec, $sep) для целых.
 func numberFormat(n int64, sep string) string {
-	s := strconv.FormatInt(n, 10)
-	neg := strings.HasPrefix(s, "-")
-	s = strings.TrimPrefix(s, "-")
-	var b strings.Builder
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			b.WriteString(sep)
-		}
-		b.WriteRune(c)
-	}
-	if neg {
-		return "-" + b.String()
-	}
-	return b.String()
+	return money.GroupThousands(n, sep)
 }
 
 // intRound — (int) round($x) (PHP 8.4 round без знаков = math.Round).

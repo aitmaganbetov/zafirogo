@@ -87,6 +87,7 @@ type ListClubActivityLogsRow struct {
 	CreatedAt   time.Time       `json:"created_at"`
 }
 
+// Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
 // Новые сверху, keyset по (created_at, id); период — диапазоном [from, before). Пустой event — все события.
 func (q *Queries) ListClubActivityLogs(ctx context.Context, arg ListClubActivityLogsParams) ([]ListClubActivityLogsRow, error) {
 	rows, err := q.db.Query(ctx, listClubActivityLogs,

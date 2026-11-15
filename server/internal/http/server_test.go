@@ -24,7 +24,7 @@ func newTestServer(t *testing.T, o Options) *httptest.Server {
 
 func getJSON(t *testing.T, url string) (*http.Response, map[string]any) {
 	t.Helper()
-	resp, err := http.Get(url) //nolint:gosec,noctx // тестовый URL httptest
+	resp, err := http.Get(url) // тестовый URL httptest
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestFrontendFallback(t *testing.T) {
 	srv := newTestServer(t, Options{Frontend: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("spa"))
 	})})
-	resp, err := http.Get(srv.URL + "/clubs/1") //nolint:gosec,noctx // тестовый URL httptest
+	resp, err := http.Get(srv.URL + "/clubs/1") // тестовый URL httptest
 	if err != nil {
 		t.Fatal(err)
 	}

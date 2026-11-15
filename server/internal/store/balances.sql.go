@@ -54,6 +54,7 @@ type ListMemberBalanceDriftRow struct {
 	LedgerBonus  int64 `json:"ledger_bonus"`
 }
 
+// Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
 // Сверка проекции с журналом (ночная проверка): клиенты клуба, у которых balance/bonus_balance
 // не равны сумме проводок по их счетам. Агрегаты — в SQL.
 func (q *Queries) ListMemberBalanceDrift(ctx context.Context, clubID int64) ([]ListMemberBalanceDriftRow, error) {

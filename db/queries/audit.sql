@@ -8,6 +8,7 @@ VALUES (sqlc.arg(club_id), sqlc.narg(actor_user_id), sqlc.arg(actor_kind), sqlc.
         sqlc.narg(after), sqlc.narg(ip), sqlc.narg(request_id));
 
 -- name: ListClubAuditLog :many
+-- Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
 -- Новые сверху, keyset по (created_at, id); период — диапазоном [from, before).
 SELECT id, actor_user_id, actor_kind, category, action, subject_type, subject_id, ledger_transaction_id,
        before, after, created_at

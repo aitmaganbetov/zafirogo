@@ -199,13 +199,6 @@ SET first_used_at = now(), changed_at = now()
 WHERE club_id = sqlc.arg(club_id) AND serial = sqlc.arg(serial) AND first_used_at IS NULL
 RETURNING replaces_serial, club_computer_id;
 
--- name: CountRecentComputerCertificates :one
--- Сколько сертификатов выпущено карточке за период (лимит продлений).
-SELECT count(*) AS total
-FROM agent_certificates
-WHERE club_id = sqlc.arg(club_id) AND club_computer_id = sqlc.arg(club_computer_id)
-  AND not_after > sqlc.arg(since) AND issued_at >= sqlc.arg(since);
-
 -- name: ListValidAgentCertificates :many
 -- Платформенный запрос (роль zafiro_platform): полная загрузка кэша действующих сертификатов всех клубов.
 -- Keyset по serial. Индекс: agent_certificates_valid_index.

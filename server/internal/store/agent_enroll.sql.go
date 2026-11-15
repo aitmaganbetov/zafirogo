@@ -78,27 +78,6 @@ func (q *Queries) ConsumeEnrollmentCode(ctx context.Context, arg ConsumeEnrollme
 	return i, err
 }
 
-const countRecentComputerCertificates = `-- name: CountRecentComputerCertificates :one
-SELECT count(*) AS total
-FROM agent_certificates
-WHERE club_id = $1 AND club_computer_id = $2
-  AND not_after > $3 AND issued_at >= $3
-`
-
-type CountRecentComputerCertificatesParams struct {
-	ClubID         int64     `json:"club_id"`
-	ClubComputerID int64     `json:"club_computer_id"`
-	Since          time.Time `json:"since"`
-}
-
-// Сколько сертификатов выпущено карточке за период (лимит продлений).
-func (q *Queries) CountRecentComputerCertificates(ctx context.Context, arg CountRecentComputerCertificatesParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countRecentComputerCertificates, arg.ClubID, arg.ClubComputerID, arg.Since)
-	var total int64
-	err := row.Scan(&total)
-	return total, err
-}
-
 const countZoneComputers = `-- name: CountZoneComputers :one
 SELECT count(*) AS total
 FROM club_computers

@@ -24,6 +24,12 @@ linters:
     - errorlint
     - misspell
     - unconvert
+    # Аудит BC-20: устаревшие и безадресные //nolint, проглоченные ошибки, лишние присваивания, незакрытые rows.
+    - nolintlint
+    - nilerr
+    - wastedassign
+    - copyloopvar
+    - rowserrcheck
   settings:
     govet:
       enable-all: true

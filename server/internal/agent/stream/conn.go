@@ -203,7 +203,7 @@ func (c *conn) prepareLocked(cmd *agentv1.Command, fromNATS bool, now time.Time)
 func (c *conn) enqueueCommands(ctx context.Context, cmds []*agentv1.Command, fromNATS bool) {
 	now := c.svc.o.Now()
 	var unsupported []*agentv1.Command
-	overflow, queued, resync := false, false, false
+	overflow, queued := false, false
 	c.mu.Lock()
 	for _, cmd := range cmds {
 		send, unsup := c.prepareLocked(cmd, fromNATS, now)
@@ -219,7 +219,7 @@ func (c *conn) enqueueCommands(ctx context.Context, cmds []*agentv1.Command, fro
 		}
 		queued = true
 	}
-	resync = c.resync
+	resync := c.resync
 	c.mu.Unlock()
 	if overflow {
 		c.close(statusErr(codes.ResourceExhausted, agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED, "agent does not read the stream"))

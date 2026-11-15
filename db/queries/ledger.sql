@@ -113,6 +113,7 @@ ORDER BY e.created_at DESC, e.id DESC
 LIMIT sqlc.arg(page_size);
 
 -- name: SumClubAccountByPeriod :one
+-- Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
 -- Оборот счёта клуба за период [from, to) (SUM в SQL). Знак — как в проводках (> 0 кредит).
 SELECT COALESCE(sum(e.amount), 0)::bigint AS total, count(*) AS entries
 FROM ledger_accounts a

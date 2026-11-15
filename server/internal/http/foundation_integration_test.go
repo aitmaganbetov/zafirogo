@@ -249,7 +249,7 @@ func TestWsTicket(t *testing.T) {
 	}
 	ticket := r.body["ticket"].(string)
 	get := func(q string) (int, string) {
-		res, err := http.Get(e.url("/ws" + q)) //nolint:noctx // тест
+		res, err := http.Get(e.url("/ws" + q)) // тест
 		if err != nil {
 			t.Fatal(err)
 		}

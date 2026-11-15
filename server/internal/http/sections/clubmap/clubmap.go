@@ -12,6 +12,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/pricing"
 	"github.com/aitmaganbetov/zafirogo/server/internal/clubmap"
+	"github.com/aitmaganbetov/zafirogo/server/internal/clubtz"
 	clubmapapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/clubmap"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -342,10 +343,7 @@ func (h *handlers) GetClubMap(ctx context.Context, _ clubmapapi.GetClubMapReques
 	}); err != nil {
 		return nil, err
 	}
-	loc, err := time.LoadLocation(d.settings.Timezone)
-	if err != nil {
-		loc = time.UTC
-	}
+	loc := clubtz.Location(d.settings.Timezone)
 	settings := parseSettings(d.settings.Settings)
 	local := now.In(loc)
 	start := time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), 0, 0, 0, loc).Add(time.Hour)

@@ -33,23 +33,10 @@ type ExpireSubscriptions struct {
 
 // Run выполняет тики до отмены ctx (первый — сразу).
 func (w *ExpireSubscriptions) Run(ctx context.Context) error {
-	interval := w.Interval
-	if interval <= 0 {
-		interval = ExpireSubscriptionsInterval
-	}
-	t := time.NewTimer(0)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-t.C:
-			if _, _, err := w.Tick(ctx); err != nil && ctx.Err() == nil {
-				w.log().Error("expire subscriptions tick failed", "job", ExpireSubscriptionsJob, "err", err)
-			}
-			t.Reset(interval)
-		}
-	}
+	return loop{
+		job: ExpireSubscriptionsJob, failed: "expire subscriptions tick failed", log: w.Log,
+		interval: intervalOr(w.Interval, ExpireSubscriptionsInterval),
+	}.run(ctx, func(ctx context.Context) error { _, _, err := w.Tick(ctx); return err })
 }
 
 // Tick — один запуск: n — сколько подписок истекло.

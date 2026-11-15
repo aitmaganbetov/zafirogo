@@ -73,18 +73,6 @@ func List(items ...Value) Value {
 	return Value{kind: KindArray, arr: a}
 }
 
-// Object — PHP ассоциативный массив; pairs — ключ, значение, ключ, значение…
-// Ключи нормализуются как в PHP (см. phpArray).
-func Object(pairs ...any) Value {
-	a := &phpArray{vals: make(map[string]Value, len(pairs)/2)}
-	for i := 0; i+1 < len(pairs); i += 2 {
-		k, _ := pairs[i].(string)
-		v, _ := pairs[i+1].(Value)
-		a.set(phpKey(k), v)
-	}
-	return Value{kind: KindArray, arr: a}
-}
-
 // Kind — тип значения.
 func (v Value) Kind() Kind { return v.kind }
 
@@ -116,18 +104,6 @@ func (v Value) Items() []Value {
 	out := make([]Value, len(v.arr.keys))
 	for i, k := range v.arr.keys {
 		out[i] = v.arr.vals[k]
-	}
-	return out
-}
-
-// Keys — ключи массива в порядке PHP; int-ключи — десятичной строкой.
-func (v Value) Keys() []string {
-	if v.kind != KindArray {
-		return nil
-	}
-	out := make([]string, len(v.arr.keys))
-	for i, k := range v.arr.keys {
-		out[i] = k[2:]
 	}
 	return out
 }

@@ -86,20 +86,6 @@ func (p WeeklyPeriods) ContainsAt(at time.Time, loc *time.Location) bool {
 	return p.Contains(at.In(loc))
 }
 
-// IsAlways — периоды не ограничивают: их нет или есть период пн 00:00 – вс 23:59.
-// Laravel: app/Support/WeeklyPeriods.php isAlways() (стр. 42–46).
-func (p WeeklyPeriods) IsAlways() bool {
-	if len(p) == 0 {
-		return true
-	}
-	for _, period := range p {
-		if period.StartDay == "mon" && period.StartTime == "00:00" && period.EndDay == "sun" && period.EndTime == "23:59" {
-			return true
-		}
-	}
-	return false
-}
-
 // periodMinutes — WeeklyPeriods::minutes(): preg_match('/^(\d{2}):(\d{2})$/') ? HH*60+MM : 0.
 // Часы и минуты не проверяются на диапазон ("99:99" → 6039). PCRE `$` без модификатора D совпадает
 // и перед завершающим "\n", поэтому "12:30\n" тоже 750 — как в PHP.

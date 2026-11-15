@@ -1,8 +1,12 @@
 package service
 
 import (
+	"errors"
 	"slices"
 	"testing"
+	"time"
+
+	"github.com/aitmaganbetov/zafirogo/server/internal/billing/pricing"
 )
 
 // ComputerReservations::gapMinutes(): is_numeric ? max(0, (int) round((float) $value)) : 30.
@@ -79,5 +83,41 @@ func TestNewUUIDv4(t *testing.T) {
 	id := newUUIDv4()
 	if len(id) != 36 || id[14] != '4' || !slices.Contains([]byte("89ab"), id[19]) {
 		t.Fatalf("uuid = %s", id)
+	}
+}
+
+// BR-020, BR-030: ensureComputerFor() на строке club_computers — так, как её видит покупка (lockComputer →
+// computerRow.pricing(now) → CheckForCustomer). Laravel: AgentTariffPurchaseService::ensureComputerFor()
+// (стр. 212–221), ClubComputer::hasPaidSession() (стр. 97–102).
+func TestComputerRowCheckForCustomer(t *testing.T) {
+	now := time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC)
+	const customer = int64(7)
+	p64 := func(v int64) *int64 { return &v }
+	sid := "sess-1"
+	at := func(d time.Duration) *time.Time { v := now.Add(d); return &v }
+	cases := []struct {
+		name string
+		row  computerRow
+		now  time.Time
+		want error
+	}{
+		{"BR-020/резерв", computerRow{IsReserved: true}, now, pricing.ErrComputerReserved},
+		{"BR-020/чужая_сессия", computerRow{CurrentSessionID: &sid, CurrentSessionUserID: p64(99), SessionEndsAt: at(time.Hour)}, now, pricing.ErrComputerBusy},
+		{"BR-020/гостевая_сессия", computerRow{CurrentSessionID: &sid, SessionGuest: true, SessionEndsAt: at(time.Hour)}, now, pricing.ErrComputerBusy},
+		{"BR-020/своя_сессия", computerRow{CurrentSessionID: &sid, CurrentSessionUserID: p64(customer), SessionEndsAt: at(time.Hour)}, now, nil},
+		{"BR-020/чужая_истёкшая_не_мешает", computerRow{CurrentSessionID: &sid, CurrentSessionUserID: p64(99), SessionEndsAt: at(time.Hour)}, now.Add(time.Hour), nil},
+		{"BR-030/конец_ровно_сейчас", computerRow{CurrentSessionID: &sid, CurrentSessionUserID: p64(99), SessionEndsAt: at(0)}, now, nil},
+		{"BR-030/за_наносекунду_до_конца", computerRow{CurrentSessionID: &sid, CurrentSessionUserID: p64(99), SessionEndsAt: at(time.Nanosecond)}, now, pricing.ErrComputerBusy},
+		{"BR-030/без_клиента_и_не_гостевая", computerRow{CurrentSessionID: &sid, SessionEndsAt: at(time.Hour)}, now, nil},
+		{"BR-030/без_конца", computerRow{CurrentSessionID: &sid, CurrentSessionUserID: p64(99)}, now, nil},
+		{"BR-020/резерв_раньше_чужой_сессии", computerRow{IsReserved: true, CurrentSessionID: &sid, CurrentSessionUserID: p64(99), SessionEndsAt: at(time.Hour)}, now, pricing.ErrComputerReserved},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.row.pricing(c.now).CheckForCustomer(customer)
+			if (c.want == nil) != (err == nil) || (c.want != nil && !errors.Is(err, c.want)) {
+				t.Fatalf("err = %v, want %v", err, c.want)
+			}
+		})
 	}
 }

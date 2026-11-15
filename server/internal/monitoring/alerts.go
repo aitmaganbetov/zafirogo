@@ -87,12 +87,3 @@ func (a *Alerts) Update(ctx context.Context, key string, failing bool, problem, 
 	}
 	return true, nil
 }
-
-// IsOpen — Alerts::isOpen().
-func (a *Alerts) IsOpen(ctx context.Context, key string) (bool, error) {
-	if a == nil || a.Valkey == nil {
-		return false, nil
-	}
-	n, err := a.Valkey.Do(ctx, a.Valkey.B().Exists().Key(a.key(key)).Build()).AsInt64()
-	return n > 0, err
-}

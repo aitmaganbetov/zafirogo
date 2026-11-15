@@ -1,7 +1,6 @@
 package money
 
 import (
-	"math"
 	"strconv"
 	"strings"
 )
@@ -101,6 +100,9 @@ func allDigits(s string) bool {
 //
 // Результат вне MaxAmount не обрезается (как в PHP); проверка — Tiyn.Check() у вызывающего.
 // NaN/±Inf → 0, как (int) в PHP.
+//
+// Эталон: в бою суммы приходят строго разобранными (решение Q-002), а этой функцией тесты других пакетов
+// (cash, billing/bonus) и оракул PHP доказывают, что строгий разбор даёт те же центы, что float-путь старого кода.
 func FromTengeFloat(f float64) Tiyn {
 	return Tiyn(PHPIntCast(PHPRound(f*100, 0)))
 }
@@ -110,38 +112,6 @@ func FromTengeFloat(f float64) Tiyn {
 // представимо, а деление на 100 даёт ближайший double к десятичной записи — тот же,
 // что (float)"1234.50" в PHP.
 func (t Tiyn) Float() float64 { return float64(t) / 100 }
-
-// FormatFloat2 — PHP number_format((float) $amount, 2, '.', ”) для произвольного float
-// (Laravel: StaffApiController::money(), GuestHistory, CashRegisterService::sell() — webhook 'amount').
-// Округление — PHPRound(|x|, 2), печать "%.2F", «-0.00» не бывает (как в
-// ext/standard/math.c _php_math_number_format_ex()).
-// NaN/Inf печатаются как "nan"/"inf"/"-inf" (PHP: "nan", "inf", "-inf").
-func FormatFloat2(d float64) string {
-	neg := false
-	if d < 0 {
-		neg = true
-		d = -d
-	}
-	d = PHPRound(d, 2)
-	if d == 0 {
-		// PHP-шный "%.*F" (__cvt) печатает -0.0 без знака, а is_negative сбрасывается при d == 0.
-		return "0.00"
-	}
-	if math.IsNaN(d) {
-		return "nan"
-	}
-	if math.IsInf(d, 0) {
-		if neg {
-			return "-inf"
-		}
-		return "inf"
-	}
-	s := strconv.FormatFloat(d, 'f', 2, 64)
-	if neg {
-		return "-" + s
-	}
-	return s
-}
 
 // FromTengeFloatDecimal — сумма, которую MySQL записал бы в decimal(…,2), получив PHP-float из старого кода:
 // PHP превращает float в строку с precision = 14 (PHPFloatString), MySQL округляет эту строку по десятичной

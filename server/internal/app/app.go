@@ -149,14 +149,6 @@ func withoutWorkers(all []namedWorker, disable []string) ([]namedWorker, error) 
 // HTTPAddr — адрес, который слушает HTTP (полезно при ":0").
 func (a *App) HTTPAddr() string { return a.httpLis.Addr().String() }
 
-// MetricsAddr — адрес внутреннего порта /metrics ("" — выключен).
-func (a *App) MetricsAddr() string {
-	if a.metricsLis == nil {
-		return ""
-	}
-	return a.metricsLis.Addr().String()
-}
-
 // GRPCAddr — адрес gRPC агентов ("" в режиме без зависимостей).
 func (a *App) GRPCAddr() string {
 	if a.grpcLis == nil {
@@ -719,9 +711,6 @@ func newDataKeyring(cfg *config.Config) (*secretbox.Box, error) {
 	}
 	return box, nil
 }
-
-// Close освобождает ресурсы, если Run не вызывался (Run закрывает их сам).
-func (a *App) Close() { a.closeResources() }
 
 func (a *App) closeResources() {
 	a.closed.Do(func() {

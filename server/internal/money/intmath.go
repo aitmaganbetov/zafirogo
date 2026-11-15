@@ -26,18 +26,6 @@ func IntDiv(a, b int64) int64 {
 	return a / b
 }
 
-// PHPMod — PHP $a % $b: знак результата как у делимого (как в Go). b == 0 → panic(ErrDivisionByZero)
-// (PHP: DivisionByZeroError «Modulo by zero»). PHP для b == -1 всегда возвращает 0.
-func PHPMod(a, b int64) int64 {
-	if b == 0 {
-		panic(ErrDivisionByZero)
-	}
-	if b == -1 {
-		return 0
-	}
-	return a % b
-}
-
 // MulChecked — a*b с проверкой переполнения int64.
 func MulChecked(a, b int64) (int64, error) {
 	if a == 0 || b == 0 {
@@ -66,14 +54,6 @@ func Add(a, b Tiyn) (Tiyn, error) {
 		return 0, err
 	}
 	return Tiyn(c), Tiyn(c).Check()
-}
-
-// Sub вычитает суммы и проверяет, что результат в пределах MaxAmount.
-func Sub(a, b Tiyn) (Tiyn, error) {
-	if b == math.MinInt64 {
-		return 0, ErrOutOfRange
-	}
-	return Add(a, -b)
 }
 
 // MulDivRound — intdiv($a * $mul + $half, $div) с проверкой переполнения: общий вид

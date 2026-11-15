@@ -56,19 +56,6 @@ SET agent_state   = sqlc.arg(agent_state),
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(computer_id)
   AND agent_state IS DISTINCT FROM sqlc.arg(agent_state);
 
--- name: MarkAgentOffline :execrows
--- Стрим закрыт и не открылся снова за время ожидания (или истёк TTL после падения инстанса).
--- last_seen_at — когда ПК последний раз был на связи.
-UPDATE club_computers
-SET status = 'offline', last_seen_at = sqlc.arg(last_seen_at), updated_at = sqlc.arg(now)
-WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(computer_id) AND status = 'online';
-
--- name: MarkAgentOnline :execrows
--- Исправление гонки «фоновая проверка записала офлайн, а ПК уже переподключился» (presence.Sweeper).
-UPDATE club_computers
-SET status = 'online', last_seen_at = sqlc.arg(now), updated_at = sqlc.arg(now)
-WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(computer_id) AND status <> 'online';
-
 -- name: MarkAgentsOffline :many
 -- MarkAgentOffline пачкой (PB-14; платформенный пул, presence.Sweeper): обрыв сети клуба на 500 ПК — одна команда
 -- вместо 500. Возвращает ПК, у которых статус действительно сменился.

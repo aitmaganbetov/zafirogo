@@ -222,22 +222,6 @@ func computerEvent(computerID int64, sessionID string, userID int64, guest bool,
 	return ev
 }
 
-// clubCurrency — data_get(settings, 'finances.currency', 'KZT').
-func clubCurrency(settings []byte) string {
-	var root struct {
-		Finances struct {
-			Currency any `json:"currency"`
-		} `json:"finances"`
-	}
-	if json.Unmarshal(settings, &root) != nil {
-		return "KZT"
-	}
-	if c, ok := root.Finances.Currency.(string); ok && c != "" {
-		return c
-	}
-	return "KZT"
-}
-
 // RecordBalanceTransferred — журнал balance.transferred и события balance.changed обоих клиентов после
 // billing.FriendTransfer / billing.ConfirmFriendTransferCode, в той же транзакции q (вызывает слой гостя).
 // Laravel: app/Services/Friends.php transfer() (стр. 143–151): предмет — друг (перевод виден в истории обоих).

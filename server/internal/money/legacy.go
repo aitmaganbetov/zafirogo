@@ -6,56 +6,6 @@ import (
 	"strings"
 )
 
-// LegacyAmountToCents — буквальный перенос AgentTariffPurchaseService::amountToCents()
-// (Laravel: app/Services/AgentTariffPurchaseService.php amountToCents(), стр. 385–390; BR-001):
-//
-//	[$whole, $fraction] = array_pad(explode('.', $amount, 2), 2, '00');
-//	return ((int) $whole * 100) + (int) str_pad(substr($fraction, 0, 2), 2, '0');
-//
-// Сохранены все особенности: дробная часть усекается ("12.999" → 1299); знак целой части не
-// распространяется на дробную ("-1.50" → -50, BR-001 / §15.1 п. 1); (int)"строка" берёт ведущее
-// число по правилам PHP (пробелы в начале, знак; "abc" → 0; переполнение → насыщение до int64).
-// Нужен только для сверки с данными старой системы (миграция, оракул), а не для нового кода:
-// новые суммы хранятся в тиынах. Решение Q-004 (docs/DECISIONS.md).
-func LegacyAmountToCents(amount string) (int64, error) {
-	whole, fraction, ok := strings.Cut(amount, ".")
-	if !ok {
-		fraction = "00"
-	}
-	if len(fraction) > 2 {
-		fraction = fraction[:2]
-	}
-	for len(fraction) < 2 {
-		fraction += "0"
-	}
-	// PHP: при переполнении (int)$whole * 100 (или «+») даёт float, и функция `: int` бросает TypeError.
-	// Здесь это ErrOutOfRange. В данных такого не бывает (decimal(12,2)).
-	v, err := MulChecked(PHPStringToInt(whole), 100)
-	if err != nil {
-		return 0, err
-	}
-	return AddChecked(v, PHPStringToInt(fraction))
-}
-
-// LegacyFormatCents — буквальный перенос AgentTariffPurchaseService::formatCents()
-// (Laravel: app/Services/AgentTariffPurchaseService.php formatCents(), стр. 392–395):
-// sprintf('%d.%02d', intdiv($cents, 100), $cents % 100). Для отрицательных даёт "0.-50" и "-1.-50" —
-// старый баг (BR-001, §15.1 п. 1). Не используйте в новом коде (там Tiyn.Tenge()); функция — для
-// сверки со старыми ответами. Решение Q-004 (docs/DECISIONS.md).
-func LegacyFormatCents(cents int64) string {
-	return strconv.FormatInt(IntDiv(cents, 100), 10) + "." + phpSprintf02d(PHPMod(cents, 100))
-}
-
-// phpSprintf02d — PHP sprintf('%02d', $n): ширина 2, заполнение нулями; знак входит в ширину
-// ("-5" → "-5", "-50" → "-50", "5" → "05").
-func phpSprintf02d(n int64) string {
-	s := strconv.FormatInt(n, 10)
-	if len(s) < 2 {
-		s = "0" + s
-	}
-	return s
-}
-
 // ParseTransferAmount — Friends::amountToCents(): сумма перевода другу
 // (Laravel: app/Services/Friends.php amountToCents(), стр. 176–186; BR-002):
 // trim, запятая → точка, затем /^\d{1,10}(\.\d{1,2})?$/. Не подходит — 0 (как в старом коде;
@@ -70,12 +20,6 @@ func ParseTransferAmount(amount string) Tiyn {
 	// PCRE '$' совпадает и перед завершающим "\n", но trim() его уже убрал.
 	t, _ := fromDigits(false, whole, frac) // ≤ 10 цифр — всегда в пределах MaxAmount
 	return t
-}
-
-// StoredCents — Friends::storedCents(): (int) round((float) $amount * 100) для decimal-строки из БД
-// (Laravel: app/Services/Friends.php storedCents(), стр. 189–192; BR-002). Корректна для отрицательных.
-func StoredCents(amount string) Tiyn {
-	return FromTengeFloat(PHPStringToFloat(amount))
 }
 
 // PHPStringToInt — PHP (int)"строка" в PHP 8.3 и 8.4 (Zend/zend_operators.c zval_get_long_func(), ветка IS_STRING,

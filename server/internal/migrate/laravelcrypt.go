@@ -89,12 +89,6 @@ type laravelPayload struct {
 	Tag   *string `json:"tag"`
 }
 
-// LooksEncrypted — Encrypter::appearsEncrypted(): base64 строгий, JSON с iv, value, mac.
-func LooksEncrypted(v string) bool {
-	_, err := decodeLaravelPayload(v)
-	return err == nil
-}
-
 func decodeLaravelPayload(v string) (laravelPayload, error) {
 	var p laravelPayload
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(v))

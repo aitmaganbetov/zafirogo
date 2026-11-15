@@ -29,6 +29,7 @@ import (
 	chatsvc "github.com/aitmaganbetov/zafirogo/server/internal/chat"
 	"github.com/aitmaganbetov/zafirogo/server/internal/club"
 	"github.com/aitmaganbetov/zafirogo/server/internal/clubmap"
+	"github.com/aitmaganbetov/zafirogo/server/internal/clubtz"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 	"github.com/aitmaganbetov/zafirogo/server/internal/shop"
@@ -272,12 +273,7 @@ func (a *API) reportToday(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Currency = parseClubSetting(prof.Settings).currency()
 		// now($club->timezone ?: app.timezone)->startOfDay(): 7 дней до сегодня включительно.
-		loc := time.UTC
-		if prof.Timezone != "" {
-			if l, err := time.LoadLocation(prof.Timezone); err == nil {
-				loc = l
-			}
-		}
+		loc := clubtz.Location(prof.Timezone)
 		local := now.In(loc)
 		today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
 		starts := make([]time.Time, 7)
@@ -1239,10 +1235,11 @@ func (a *API) customers(w http.ResponseWriter, r *http.Request) {
 		var total int64
 		for _, c := range rows {
 			total = c.Total
-			cumulative := bonus.LoyaltyPercentFor(levels, money.Tiyn(c.TotalSpent))
-			discount := max(c.Discount, cumulative)
+			// Laravel: Api/Staff/CustomerController::index() — LoyaltyProgram::discountFor() и 'discount_cumulative' (BR-011).
+			spent := money.Tiyn(c.TotalSpent)
+			discount := bonus.LoyaltyDiscountFor(levels, c.Discount, spent)
 			out.Data = append(out.Data, customerJSON{UserID: c.UserID, Name: c.Name, Phone: c.Phone, Balance: moneyStr(c.Balance),
-				BonusBalance: moneyStr(c.BonusBalance), Discount: percentStr(discount), DiscountCumulative: cumulative > c.Discount,
+				BonusBalance: moneyStr(c.BonusBalance), Discount: percentStr(discount), DiscountCumulative: bonus.DiscountIsCumulative(levels, c.Discount, spent),
 				TotalSpent: moneyStr(c.TotalSpent)})
 		}
 		out.Meta = metaOf(cur, total, customersPage)

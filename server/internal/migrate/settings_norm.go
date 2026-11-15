@@ -86,7 +86,7 @@ func normalizeSettings(stored []byte) ([]byte, []settingsChange, error) {
 	}
 	var top map[string]json.RawMessage
 	if json.Unmarshal(stored, &top) != nil || top == nil {
-		return nil, nil, nil // не объект — как есть (Q-023 в отчёте ядра)
+		return nil, nil, nil //nolint:nilerr // не объект — как есть (Q-023 в отчёте ядра)
 	}
 	var changes []settingsChange
 	sections := map[string]map[string]json.RawMessage{}

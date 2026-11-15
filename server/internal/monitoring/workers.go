@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/clubtz"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 	"github.com/aitmaganbetov/zafirogo/server/internal/worker/leader"
@@ -188,12 +189,8 @@ func (w *Workers) SnapshotClubs(ctx context.Context, now time.Time) (bool, error
 			// Снимок всех клубов — одной командой (PB-14).
 			snap := store.MonitoringInsertLoadSnapshotsParams{CapturedAt: now}
 			for _, r := range rows {
-				loc, err := time.LoadLocation(r.Timezone)
-				if err != nil || r.Timezone == "" {
-					loc = time.UTC // config('app.timezone')
-				}
-				local := now.In(loc)
-				wd := int16(local.Weekday()) // #nosec G115 -- 0..6; isoWeekday(): воскресенье — 7
+				local := now.In(clubtz.Location(r.Timezone)) // пусто или неизвестный — UTC, config('app.timezone')
+				wd := int16(local.Weekday())                 // #nosec G115 -- 0..6; isoWeekday(): воскресенье — 7
 				if wd == 0 {
 					wd = 7
 				}

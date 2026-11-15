@@ -78,9 +78,6 @@ func TestPHPOracle(t *testing.T) {
 	for range 10000 * mult {
 		add(weeklyContainsCall(rng))
 	}
-	for range 1000 * mult {
-		add(weeklyIsAlwaysCall(rng))
-	}
 	for range 7000 * mult {
 		add(paymentRulesCall(rng))
 	}
@@ -258,13 +255,6 @@ func weeklyContainsCall(rng *rand.Rand) *oracleCall {
 	}
 	want := p.Contains(at)
 	return &oracleCall{Fn: "WeeklyPeriods.contains", Args: map[string]any{"periods": raw, "at": at.Format("2006-01-02 15:04:05")},
-		check: func(r oracleResult) string { return cmpJSON(r, want) }}
-}
-
-func weeklyIsAlwaysCall(rng *rand.Rand) *oracleCall {
-	raw, p := randPeriods(rng)
-	want := p.IsAlways()
-	return &oracleCall{Fn: "WeeklyPeriods.isAlways", Args: map[string]any{"periods": raw},
 		check: func(r oracleResult) string { return cmpJSON(r, want) }}
 }
 

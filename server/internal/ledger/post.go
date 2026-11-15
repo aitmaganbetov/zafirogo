@@ -33,9 +33,6 @@ type Pending struct {
 	posted    bool
 }
 
-// TransactionID — id будущей операции.
-func (p *Pending) TransactionID() int64 { return p.txID }
-
 // Begin захватывает ключ идемпотентности операции вида kind. request — тело запроса (то, что пришло от
 // клиента/кассы); его отпечаток (sha256 канонического JSON) хранится с ключом.
 //
@@ -234,11 +231,6 @@ func LockBalances(ctx context.Context, q *store.Queries, clubID int64, userIDs .
 		}
 	}
 	return out, nil
-}
-
-// Load читает записанную операцию клуба.
-func Load(ctx context.Context, q *store.Queries, clubID, transactionID int64, createdAt time.Time) (Result, error) {
-	return load(ctx, q, clubID, transactionID, createdAt)
 }
 
 func load(ctx context.Context, q *store.Queries, clubID, txID int64, createdAt time.Time) (Result, error) {

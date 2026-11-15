@@ -159,10 +159,6 @@ WHERE club_id = sqlc.arg(club_id) AND id = ANY(sqlc.arg(ids)::bigint[])
 ORDER BY number, id
 FOR UPDATE;
 
--- name: ApiV1CountComputers :one
--- Rule::exists('club_computers', 'id')->where('club_id', …) для computer_ids.*: сколько id из списка — ПК клуба.
-SELECT count(*)::bigint FROM club_computers WHERE club_id = sqlc.arg(club_id) AND id = ANY(sqlc.arg(ids)::bigint[]);
-
 -- name: ApiV1ComputerIDsOf :many
 SELECT id FROM club_computers WHERE club_id = sqlc.arg(club_id) AND id = ANY(sqlc.arg(ids)::bigint[]);
 

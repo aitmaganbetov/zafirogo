@@ -74,13 +74,14 @@ type customerRow struct {
 
 func (v viewCtx) customer(r customerRow) customersapi.Customer {
 	personal, _ := strconv.ParseFloat(strings.TrimSpace(r.Discount), 64)
-	loyalty := bonus.LoyaltyPercentFor(v.levels, money.Tiyn(r.TotalSpent))
+	spent := money.Tiyn(r.TotalSpent)
 	return customersapi.Customer{
 		UserId: r.UserID, Name: r.Name, Phone: r.Phone, Email: r.Email, Role: r.Role, Discount: r.Discount,
 		// users.blade.php: number_format(max((float) $membership->discount, $loyaltyPercent), 2, '.', ' ')
-		DiscountEffective: PercentFormat(math.Max(personal, loyalty)),
+		// (BR-011: bonus.LoyaltyDiscountFor — та же функция, что считает скидку в цене покупки)
+		DiscountEffective: PercentFormat(bonus.LoyaltyDiscountFor(v.levels, personal, spent)),
 		// @if ($loyaltyPercent > (float) $membership->discount) «накопительная»
-		DiscountCumulative: loyalty > personal,
+		DiscountCumulative: bonus.DiscountIsCumulative(v.levels, personal, spent),
 		AccountLocked:      v.locked[r.UserID],
 		TotalSpentTiyn:     r.TotalSpent, BalanceTiyn: r.Balance, BonusBalanceTiyn: r.BonusBalance,
 	}

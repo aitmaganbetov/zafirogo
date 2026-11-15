@@ -62,26 +62,6 @@ func (q *Queries) ClaimOutboxBatch(ctx context.Context, batchSize int32) ([]Clai
 	return items, nil
 }
 
-const countUnpublishedOutboxEvents = `-- name: CountUnpublishedOutboxEvents :one
-SELECT count(*)::bigint AS pending, COALESCE(EXTRACT(EPOCH FROM now() - min(created_at)), 0)::bigint AS oldest_age_seconds, count(DISTINCT club_id)::bigint AS clubs
-FROM outbox_events
-WHERE published_at IS NULL
-`
-
-type CountUnpublishedOutboxEventsRow struct {
-	Pending          int64 `json:"pending"`
-	OldestAgeSeconds int64 `json:"oldest_age_seconds"`
-	Clubs            int64 `json:"clubs"`
-}
-
-// Платформенный: размер очереди и возраст самого старого события (метрика/алерт).
-func (q *Queries) CountUnpublishedOutboxEvents(ctx context.Context) (CountUnpublishedOutboxEventsRow, error) {
-	row := q.db.QueryRow(ctx, countUnpublishedOutboxEvents)
-	var i CountUnpublishedOutboxEventsRow
-	err := row.Scan(&i.Pending, &i.OldestAgeSeconds, &i.Clubs)
-	return i, err
-}
-
 const deletePublishedOutboxEvents = `-- name: DeletePublishedOutboxEvents :execrows
 DELETE FROM outbox_events
 WHERE (club_id, id) IN (SELECT old.club_id, old.id FROM outbox_events AS old

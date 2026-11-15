@@ -291,7 +291,7 @@ func TestG5Settings(t *testing.T) {
 		if !strings.HasPrefix(u, fmt.Sprintf("/club-logos/%d/", e.club)) || !strings.HasSuffix(u, ".png") {
 			t.Fatalf("logo url: %q", u)
 		}
-		res, err := http.Get(e.srv.URL + u) //nolint:noctx // тест
+		res, err := http.Get(e.srv.URL + u) // тест
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -301,11 +301,11 @@ func TestG5Settings(t *testing.T) {
 			res.Header.Get("X-Content-Type-Options") != "nosniff" || !strings.Contains(res.Header.Get("Cache-Control"), "immutable") {
 			t.Fatalf("public logo: %d %v", res.StatusCode, res.Header)
 		}
-		if res, _ := http.Get(e.srv.URL + fmt.Sprintf("/club-logos/%d/other.png", e.club)); res.StatusCode != 404 { //nolint:noctx // тест
+		if res, _ := http.Get(e.srv.URL + fmt.Sprintf("/club-logos/%d/other.png", e.club)); res.StatusCode != 404 { // тест
 			t.Fatalf("other name: %d", res.StatusCode)
 		}
 		expect(t, e.send("DELETE", manager, "/api/settings/logo", nil), http.StatusOK, "logo delete")
-		if res, _ := http.Get(e.srv.URL + u); res.StatusCode != 404 { //nolint:noctx // тест
+		if res, _ := http.Get(e.srv.URL + u); res.StatusCode != 404 { // тест
 			t.Fatalf("deleted logo: %d", res.StatusCode)
 		}
 		if e.activityCount("club.logo_changed", 0) != 2 {

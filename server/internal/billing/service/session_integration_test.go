@@ -415,4 +415,37 @@ func TestExpireSessions(t *testing.T) {
 			t.Fatalf("tick after unlock: ran=%v err=%v", ran, err)
 		}
 	})
+	t.Run("GS-087/граница", func(t *testing.T) {
+		// BR-033: session_ends_at <= now, где now усечён до секунды (строка Y-m-d H:i:s старого кода): ровно в момент
+		// конца сессия снимается, за наносекунду и за секунду до него — нет; сессия без конца (старый агент) не истекает.
+		// Laravel: ClubComputerSessions::expireIfDue() (`! isFuture()`), expireAll() (SQL `session_ends_at <= now()`).
+		e := newEnv(t, "")
+		hall := e.zone("Hall", ptr(int64(60000)))
+		pc, legacy := e.computer(hall, 1), e.computer(hall, 2)
+		u := e.customer("Клиент", 1000*tenge, 0)
+		must[service.PurchaseResult](t)(e.buyMinutes(u, pc, 10, pricing.ChoiceMain))
+		exec(t, "UPDATE club_computers SET current_session_id = 'old-agent', current_session_user_id = $3 WHERE club_id = $1 AND id = $2", e.club, legacy, u)
+		ends := *e.pc(pc).EndsAt
+		tick := func(now time.Time) {
+			t.Helper()
+			w := &worker.ExpireSessions{Pool: fixDB.Platform, Now: func() time.Time { return now }}
+			if ran, _, err := w.Tick(context.Background()); err != nil || !ran {
+				t.Fatalf("tick: ran=%v err=%v", ran, err)
+			}
+		}
+		tick(ends.Add(-time.Second))
+		eq(t, "за секунду до конца", e.pc(pc).SessionID != nil, true)
+		tick(ends.Add(-time.Nanosecond))
+		eq(t, "за наносекунду до конца", e.pc(pc).SessionID != nil, true)
+		tick(ends)
+		eq(t, "ровно в конец (ends <= now)", e.pc(pc).SessionID == nil, true)
+		tick(ends.Add(24 * time.Hour))
+		eq(t, "без конца не истекает", e.pc(legacy).SessionID != nil, true)
+
+		// Доли секунды now отбрасываются: конец через 10 мин, now = конец + 0,9 с → снимается.
+		must[service.PurchaseResult](t)(e.buyMinutes(u, pc, 10, pricing.ChoiceMain))
+		ends = *e.pc(pc).EndsAt
+		tick(ends.Add(900 * time.Millisecond))
+		eq(t, "конец + 0,9 с", e.pc(pc).SessionID == nil, true)
+	})
 }

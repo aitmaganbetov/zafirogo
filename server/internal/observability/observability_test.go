@@ -201,7 +201,7 @@ func TestMetricsHandler(t *testing.T) {
 	exercise(t, o)
 	srv := httptest.NewServer(o.Handler())
 	defer srv.Close()
-	resp, err := http.Get(srv.URL + "/metrics") //nolint:noctx // тест
+	resp, err := http.Get(srv.URL + "/metrics") // тест
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,13 +212,13 @@ func TestMetricsHandler(t *testing.T) {
 		!strings.Contains(b.String(), "go_goroutines") {
 		t.Fatalf("/metrics = %d\n%s", resp.StatusCode, b.String())
 	}
-	if resp, err := http.Post(srv.URL+"/metrics", "text/plain", nil); err == nil { //nolint:noctx // тест
+	if resp, err := http.Post(srv.URL+"/metrics", "text/plain", nil); err == nil { // тест
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusMethodNotAllowed {
 			t.Errorf("POST /metrics = %d", resp.StatusCode)
 		}
 	}
-	if resp, err := http.Get(srv.URL + "/debug/pprof/"); err == nil { //nolint:noctx // тест
+	if resp, err := http.Get(srv.URL + "/debug/pprof/"); err == nil { // тест
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
 			t.Errorf("/debug/pprof = %d, want 404", resp.StatusCode)
@@ -278,7 +278,7 @@ func TestAutoBillingBacklogMetrics(t *testing.T) {
 	}})
 	srv := httptest.NewServer(o.Handler())
 	defer srv.Close()
-	resp, err := http.Get(srv.URL + "/metrics") //nolint:noctx // тест
+	resp, err := http.Get(srv.URL + "/metrics") // тест
 	if err != nil {
 		t.Fatal(err)
 	}

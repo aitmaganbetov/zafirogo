@@ -51,10 +51,10 @@ func (h *handlers) readSecret(ctx context.Context, q *store.Queries, key string)
 	}
 	var s secretSetting
 	if json.Unmarshal(raw, &s) != nil || s.Token == "" || h.d.Superadmin.Secrets == nil {
-		return nil, nil
+		return nil, nil //nolint:nilerr // нечитаемая или пустая настройка — «токен не задан»
 	}
 	if _, err := h.d.Superadmin.Secrets.Open(s.Token); err != nil {
-		return nil, nil
+		return nil, nil //nolint:nilerr // токен не расшифровывается текущими ключами — «токен не задан»
 	}
 	return &s, nil
 }

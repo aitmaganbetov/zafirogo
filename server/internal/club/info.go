@@ -8,6 +8,7 @@ import (
 	"time"
 
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
+	"github.com/aitmaganbetov/zafirogo/server/internal/clubtz"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -27,13 +28,7 @@ func Load(ctx context.Context, q *store.Queries, clubID int64) (Info, error) {
 	if err != nil {
 		return Info{}, fmt.Errorf("club: %w", err)
 	}
-	loc := time.UTC
-	if c.Timezone != "" {
-		if l, err := time.LoadLocation(c.Timezone); err == nil {
-			loc = l
-		}
-	}
-	info := Info{ID: c.ID, Name: c.Name, Settings: c.Settings, Loc: loc}
+	info := Info{ID: c.ID, Name: c.Name, Settings: c.Settings, Loc: clubtz.Location(c.Timezone)}
 	if c.Locale != nil {
 		info.Locale = *c.Locale
 	}

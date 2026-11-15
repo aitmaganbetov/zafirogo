@@ -42,25 +42,10 @@ type BurnPackages struct {
 
 // Run выполняет тики до отмены ctx. Первый тик — сразу (пакеты, просроченные за время простоя, сгорают при старте).
 func (w *BurnPackages) Run(ctx context.Context) error {
-	interval := w.Interval
-	if interval <= 0 {
-		interval = BurnPackagesInterval
-	}
-	t := time.NewTimer(0)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-t.C:
-			next := interval
-			if _, _, err := w.Tick(ctx); err != nil && ctx.Err() == nil {
-				w.log().Error("burn expired packages tick failed", "job", BurnPackagesJob, "err", err)
-				next = min(burnPackagesRetry, interval)
-			}
-			t.Reset(next)
-		}
-	}
+	return loop{
+		job: BurnPackagesJob, failed: "burn expired packages tick failed", log: w.Log,
+		interval: intervalOr(w.Interval, BurnPackagesInterval), retry: burnPackagesRetry,
+	}.run(ctx, func(ctx context.Context) error { _, _, err := w.Tick(ctx); return err })
 }
 
 // Tick — один запуск: ran = false, если лок держит другой исполнитель; n — сколько пакетов сгорело.

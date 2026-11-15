@@ -65,7 +65,8 @@ var validKinds = map[Kind]bool{
 // Valid сообщает, что вид операции известен схеме.
 func (k Kind) Valid() bool { return validKinds[k] }
 
-// Kinds — все виды операций, известные схеме (по алфавиту).
+// Kinds — все виды операций, известные схеме (по алфавиту). В бою не вызывается: по этому списку интеграционный
+// тест сверяет CHECK-ограничение ledger_transactions.kind в схеме с validKinds.
 func Kinds() []Kind {
 	out := make([]Kind, 0, len(validKinds))
 	for k := range validKinds {

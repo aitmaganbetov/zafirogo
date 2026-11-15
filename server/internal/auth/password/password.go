@@ -195,9 +195,6 @@ func (h *Hasher) NeedsRehash(encoded string) bool {
 	return err != nil || p != h.params
 }
 
-// IsLegacy — хэш старого формата (bcrypt из Laravel).
-func IsLegacy(encoded string) bool { return isBcrypt(encoded) }
-
 func isBcrypt(s string) bool {
 	return len(s) == 60 && (strings.HasPrefix(s, "$2y$") || strings.HasPrefix(s, "$2a$") || strings.HasPrefix(s, "$2b$"))
 }

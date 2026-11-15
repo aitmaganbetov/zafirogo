@@ -184,7 +184,7 @@ func TestLoadServerChild(t *testing.T) {
 		grpc.KeepaliveParams(keepalive.ServerParameters{Time: lim.KeepaliveTime, Timeout: lim.KeepaliveTimeout}),
 		grpc.InitialWindowSize(lim.WindowSize), grpc.InitialConnWindowSize(lim.WindowSize),
 		grpc.ReadBufferSize(lim.BufferSize), grpc.WriteBufferSize(lim.BufferSize))...)
-	Register(gs, svc)
+	agentv1.RegisterAgentServiceServer(gs, svc)
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

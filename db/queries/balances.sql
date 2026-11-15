@@ -16,6 +16,7 @@ VALUES (sqlc.arg(club_id), sqlc.arg(user_id), now(), now())
 ON CONFLICT (club_id, user_id) DO NOTHING;
 
 -- name: ListMemberBalanceDrift :many
+-- Только тесты (аудит BC-14): в бою не вызывается — сверка интеграционных тестов под ролью приложения и RLS.
 -- Сверка проекции с журналом (ночная проверка): клиенты клуба, у которых balance/bonus_balance
 -- не равны сумме проводок по их счетам. Агрегаты — в SQL.
 WITH sums AS (

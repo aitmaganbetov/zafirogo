@@ -377,7 +377,7 @@ func TestG4News(t *testing.T) {
 	}
 	id := num(obj(items[0])["id"])
 	url := obj(items[0])["image_url"].(string)
-	res, err := http.Get(e.srv.URL + url) //nolint:noctx // тест
+	res, err := http.Get(e.srv.URL + url) // тест
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +386,7 @@ func TestG4News(t *testing.T) {
 	if res.StatusCode != 200 || !bytes.Equal(got, img) || res.Header.Get("Content-Type") != "image/png" || !strings.Contains(res.Header.Get("Cache-Control"), "immutable") {
 		t.Fatalf("image: %d %s", res.StatusCode, res.Header)
 	}
-	if res, _ := http.Get(e.srv.URL + fmt.Sprintf("/news-images/%d/other.png", id)); res.StatusCode != 404 { //nolint:noctx // тест
+	if res, _ := http.Get(e.srv.URL + fmt.Sprintf("/news-images/%d/other.png", id)); res.StatusCode != 404 { // тест
 		t.Fatalf("wrong file name: %d", res.StatusCode)
 	}
 	// Без is_published при изменении — черновик (?? false), картинка убрана.

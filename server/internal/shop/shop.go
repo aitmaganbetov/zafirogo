@@ -65,7 +65,7 @@ const operation = "shop_order"
 const MaxIdempotencyKeyLen = 200
 
 // MaxTotalSpent — club_memberships.total_spent в старой схеме decimal(12,2) (как billing/service.MaxTotalSpent).
-const MaxTotalSpent money.Tiyn = 999_999_999_999
+const MaxTotalSpent = billing.MaxTotalSpent
 
 // subjectComputer — морф-класс предмета журнала shop.purchased (ПК).
 const subjectComputer = `App\Models\ClubComputer`
@@ -583,19 +583,13 @@ func displayName(display, device *string, number int64) string {
 	return fmt.Sprintf("PC-%02d", number)
 }
 
-// addSpending — LoyaltyProgram::addSpending(): club_memberships.total_spent += сумма (BR-042); нет членства — ничего.
+// addSpending — LoyaltyProgram::addSpending(): billing.AddSpending (BR-042); нет членства — ничего.
 func addSpending(ctx context.Context, q *store.Queries, clubID, userID int64, cents money.Tiyn, now time.Time) error {
-	total, err := q.IncrementTotalSpent(ctx, store.IncrementTotalSpentParams{ClubID: clubID, UserID: userID, Cents: int64(cents), Now: &now})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if money.Tiyn(total) > MaxTotalSpent {
+	err := billing.AddSpending(ctx, q, clubID, userID, cents, now)
+	if errors.Is(err, billing.ErrTotalSpentOverflow) {
 		return fmt.Errorf("%w: total_spent overflow", ErrInvalidInput)
 	}
-	return nil
+	return err
 }
 
 // claim — ключ идемпотентности заказа в billing_requests (как billing/service: тот же ключ и состав —

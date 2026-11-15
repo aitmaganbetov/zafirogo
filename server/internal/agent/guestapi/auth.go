@@ -237,13 +237,19 @@ func (s *Server) onlineWith(ctx context.Context, clubID, userID int64) func(int6
 
 func (s *Server) signedInElsewhere(ctx context.Context, clubID, computerID int64) error {
 	name := "—"
-	_ = db.InTenantTx(ctx, s.o.Pool, clubID, func(q *store.Queries) error {
+	// Имя ПК не прочиталось — в тексте остаётся «—» (как раньше), ошибка — в журнал (BC-18).
+	if err := db.InTenantTx(ctx, s.o.Pool, clubID, func(q *store.Queries) error {
 		row, err := q.GuestComputer(ctx, store.GuestComputerParams{ClubID: clubID, ID: computerID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
 		if err == nil {
 			name = displayName(row.DisplayName, row.DeviceName, row.Number)
 		}
-		return nil
-	})
+		return err
+	}); err != nil {
+		s.o.Log.WarnContext(ctx, "signed in elsewhere: computer name not read", "club_id", clubID, "computer_id", computerID, "err", err)
+	}
 	return rpcError(codes.FailedPrecondition, agentv1.ErrorCode_ERROR_CODE_SIGNED_IN_ELSEWHERE, msgSignedInElsewhere,
 		map[string]string{"computer": name}, "")
 }
