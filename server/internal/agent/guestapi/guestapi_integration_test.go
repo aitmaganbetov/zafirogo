@@ -4,6 +4,7 @@ package guestapi_test
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
@@ -283,6 +284,18 @@ func TestGS081OnePCAtATimeAndTokens(t *testing.T) {
 	pc1b := h.enrollPC()
 	pc1b.mustLogin(staff, "password")
 	h.enrollPC().mustLogin(staff, "password")
+
+	// Zafiro 1490462 (AgentShopTest): гость, вошедший в мобильном приложении (токен только что использован), может
+	// войти на ПК — токены приложений («mobile», «mobileclient», «Zafiro Staff») не ПК. В новом сервере токены
+	// приложений (mobile_api_tokens) и токены гостя на ПК (Valkey, по ПК) хранятся раздельно, и правило
+	// «один ПК на клиента» смотрит только на вторые.
+	mobile := uniqPhone()
+	mid := h.customer("С приложением", mobile, "password", 0, 0)
+	for i, name := range []string{"mobile", "mobileclient", "Zafiro Staff"} {
+		h.exec(`INSERT INTO mobile_api_tokens (club_id, user_id, name, token_hash, created_at, last_used_at, expires_at)
+			VALUES ($1, $2, $3, $4, now(), now(), now() + interval '30 days')`, h.club, mid, name, fmt.Sprintf("%063x%d", mid, i))
+	}
+	h.enrollPC().mustLogin(mobile, "password")
 }
 
 // Неверные данные входа, блокировка, не член клуба, неактивная подписка.

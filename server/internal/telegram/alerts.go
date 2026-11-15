@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
 )
@@ -139,6 +141,62 @@ func (a *Alerts) SendKey(ctx context.Context, prefix, key string, params map[str
 		text = i18n.Render(i18n.SourceLocale, key, params)
 	}
 	return a.deliver(ctx, s.Token, s.ChatID, prefix+text), nil
+}
+
+// Тексты TelegramAlerts::clubRegistered().
+const (
+	MsgNewClub      = "Новый клуб: :club"
+	MsgNewClubOwner = "Владелец: :owner, :phone"
+	MsgNewClubTrial = "Пробный период до :date"
+)
+
+// NewClub — клуб, только что зарегистрированный на сайте.
+type NewClub struct {
+	Name       string
+	OwnerName  string
+	OwnerPhone string
+	// TrialEndsAt — конец пробного периода (нулевое время — «—»).
+	TrialEndsAt time.Time
+	// URL — страница клуба в кабинете суперадмина (route('superadmin.clubs.show', $club)).
+	URL string
+}
+
+// ClubRegistered сообщает в чат оповещений платформы о клубе, зарегистрированном на сайте, на языке оповещений:
+//
+//	🎉 Новый клуб: :club
+//	Владелец: :owner, :phone
+//	Пробный период до :date        // trial_ends_at d.m.Y или «—»
+//	<ссылка на клуб в кабинете>
+//
+// Бот не настроен — ничего не отправляется (false). Дата — по UTC: в старом коде подписка читалась в
+// CurrentClub::timezone() только что созданного клуба, у модели которого часового пояса ещё нет → config('app.timezone').
+// Laravel: app/Services/Monitoring/TelegramAlerts.php clubRegistered() (Zafiro e872af0).
+func (a *Alerts) ClubRegistered(ctx context.Context, c NewClub) (bool, error) {
+	s, err := a.Settings(ctx)
+	if err != nil || s == nil {
+		return false, err
+	}
+	locale := s.Locale
+	if locale == "" {
+		locale = i18n.SourceLocale
+	}
+	t := func(key string, params map[string]string) string {
+		if a.I18n != nil {
+			return a.I18n.Translate(ctx, locale, key, params)
+		}
+		return i18n.Render(i18n.SourceLocale, key, params)
+	}
+	date := "—"
+	if !c.TrialEndsAt.IsZero() {
+		date = c.TrialEndsAt.UTC().Format("02.01.2006")
+	}
+	text := strings.Join([]string{
+		"🎉 " + t(MsgNewClub, map[string]string{"club": c.Name}),
+		t(MsgNewClubOwner, map[string]string{"owner": c.OwnerName, "phone": c.OwnerPhone}),
+		t(MsgNewClubTrial, map[string]string{"date": date}),
+		c.URL,
+	}, "\n")
+	return a.deliver(ctx, s.Token, s.ChatID, text), nil
 }
 
 // deliver — sendMessage без превью ссылок; описание ошибки Telegram — в лог (без токена).

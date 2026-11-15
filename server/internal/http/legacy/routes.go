@@ -23,15 +23,17 @@ func (a *API) routes() chi.Router {
 	r.Post("/api/auth/password/reset", a.passwordRoute(a.passwordReset))
 	r.Group(func(r chi.Router) {
 		r.Use(a.authenticate)
-		r.With(a.subscription).Get("/api/auth/me", a.me)
+		// Приложение гостя не зависит от подписки клуба (AuthController::needsSubscription(), Zafiro 1a0487a).
+		r.Get("/api/auth/me", a.me)
 		r.Post("/api/auth/logout", a.logout)
 		r.With(a.throttle("api.auth.clubs")).Get("/api/auth/clubs", a.clubs)
 		r.With(a.throttle("api.auth.switch-club")).Post("/api/auth/switch-club", a.switchClub)
 	})
 
-	// routes/api.php: гостевые маршруты mobileclient (auth:sanctum, current-club, subscription).
+	// routes/api.php: гостевые маршруты mobileclient (auth:sanctum, current-club). То, что гость видит в клубе
+	// (баланс, новости, история, друзья), от подписки клуба не зависит (Zafiro 1a0487a); вход на ПК по QR — зависит.
 	r.Route("/api/guest", func(r chi.Router) {
-		r.Use(a.authenticate, a.subscription)
+		r.Use(a.authenticate)
 		r.With(a.throttle("api.guest.friends.index")).Get("/friends", a.friendsIndex)
 		r.With(a.throttle("api.guest.friends.store")).Post("/friends", a.friendsStore)
 		r.With(a.throttle("api.guest.friends.accept")).Post("/friends/{friendship}/accept", a.friendsAccept)
@@ -40,8 +42,8 @@ func (a *API) routes() chi.Router {
 		r.With(a.throttle("api.guest.friends.transfer.confirm")).Post("/friends/{friendship}/transfer/confirm", a.transferConfirm)
 		r.With(a.throttle("api.guest.news")).Get("/news", a.news)
 		r.With(a.throttle("api.guest.history")).Get("/history", a.history)
-		r.With(a.throttle("api.guest.qr-login.show")).Get("/qr-login/{code:[A-Za-z0-9]{40}}", a.qrShow)
-		r.With(a.throttle("api.guest.qr-login.approve")).Post("/qr-login/{code:[A-Za-z0-9]{40}}", a.qrApprove)
+		r.With(a.subscription, a.throttle("api.guest.qr-login.show")).Get("/qr-login/{code:[A-Za-z0-9]{40}}", a.qrShow)
+		r.With(a.subscription, a.throttle("api.guest.qr-login.approve")).Post("/qr-login/{code:[A-Za-z0-9]{40}}", a.qrApprove)
 	})
 
 	// routes/api_staff.php (mobileemployee).

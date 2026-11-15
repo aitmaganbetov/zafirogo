@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
@@ -58,7 +59,7 @@ func newTelegramEnv(t *testing.T) (*adminEnv, *telegramtest.Server, *[]int64) {
 	srv := httptest.NewServer(NewRouter(Options{
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: svc, Limiter: lim,
 		Pool: d.App, PlatformPool: d.Platform, Presence: &fakePresence{states: map[int64][]presence.State{}},
-		PasswordRecovery: rec,
+		PasswordRecovery: rec, Passwords: h,
 		Superadmin: httpx.SuperadminDeps{Secrets: box, TelegramGateway: gw,
 			TelegramAlerts: &telegram.Alerts{API: &telegram.BotClient{URL: tg.BotURL()}, Store: st}},
 	}))
@@ -212,4 +213,72 @@ func TestTelegram_AlertsBot(t *testing.T) {
 		t.Fatalf("clear: %d", r.status)
 	}
 	wantField(t, e.send6("POST", sa, "/api/superadmin/telegram/alerts/test", nil), 422, "bot_token", "Не удалось отправить сообщение: проверьте бота и чат.")
+}
+
+// Zafiro e872af0 (SubscriptionTest «a new club is reported to the platform telegram chat»): о каждом клубе,
+// зарегистрированном на сайте, бот пишет в чат оповещений платформы; без бота — ничего не отправляется.
+func TestTelegram_NewClubReported(t *testing.T) {
+	e, tg, _ := newTelegramEnv(t)
+	_, saPhone := e.member("Супер Админ", "", "", true)
+	sa := e.login(saPhone)
+	n := adminSeq.Add(1)
+	register := func(phone string) int64 {
+		t.Helper()
+		r := do(t, "POST", e.srv.URL+"/api/auth/register", map[string]any{
+			"name": "Асель", "club_name": "Cyber Arena", "phone": phone, "password": "secret123", "password_confirmation": "secret123",
+		}, nil)
+		if r.status != 201 {
+			t.Fatalf("register: %d %v", r.status, r.body)
+		}
+		return int64(r.body["me"].(map[string]any)["club"].(map[string]any)["id"].(float64))
+	}
+	sent := func() []telegramtest.Request {
+		var out []telegramtest.Request
+		for _, r := range tg.Requests() {
+			if r.API == "bot" && r.Method == "sendMessage" {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+
+	// Бот не подключён: регистрация проходит, в Telegram ничего не уходит.
+	register(fmt.Sprintf("7001%06d", n%1000000))
+	time.Sleep(300 * time.Millisecond)
+	if got := sent(); len(got) != 0 {
+		t.Fatalf("без бота отправлено: %v", got)
+	}
+
+	tg.OnBot(func(r telegramtest.Request) telegramtest.Reply {
+		if r.Method == "getUpdates" {
+			return telegramtest.Reply{Body: map[string]any{"ok": true, "result": []any{
+				map[string]any{"update_id": 1, "message": map[string]any{"chat": map[string]any{"id": 42}}}}}}
+		}
+		return telegramtest.Reply{Body: map[string]any{"ok": true}}
+	})
+	if r := e.send6("POST", sa, "/api/superadmin/telegram/alerts", map[string]any{"bot_token": tgBotToken}); r.status != 200 {
+		t.Fatalf("set alerts: %d %v", r.status, r.body)
+	}
+	before := len(sent()) // проверочное сообщение подключения
+	phone := fmt.Sprintf("7002%06d", n%1000000)
+	clubID := register(phone)
+	var trial time.Time
+	if err := e.db.Owner.QueryRow(context.Background(), "SELECT trial_ends_at FROM club_subscriptions WHERE club_id = $1", clubID).Scan(&trial); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(sent()) == before && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	got := sent()
+	if len(got) != before+1 {
+		t.Fatalf("сообщений о клубе: %d", len(got)-before)
+	}
+	msg := got[len(got)-1]
+	host := strings.TrimPrefix(e.srv.URL, "http://")
+	want := "🎉 Новый клуб: Cyber Arena\nВладелец: Асель, +7" + phone + "\nПробный период до " + trial.UTC().Format("02.01.2006") +
+		fmt.Sprintf("\nhttps://%s/superadmin/clubs/%d", host, clubID)
+	if msg.Body["text"] != want || fmt.Sprint(msg.Body["chat_id"]) != "42" || msg.Token != tgBotToken || msg.Body["disable_web_page_preview"] != true {
+		t.Fatalf("сообщение:\n%v\nожидалось:\n%s", msg.Body, want)
+	}
 }

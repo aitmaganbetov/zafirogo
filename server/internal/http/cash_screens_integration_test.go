@@ -150,8 +150,15 @@ func TestWarehouseScreens(t *testing.T) {
 	if e.scalar("SELECT count(*) FROM products WHERE id = $1 AND deleted_at IS NOT NULL AND sku LIKE '%~deleted-%'", p) != 1 {
 		t.Fatal("soft delete")
 	}
-	if num(e.get(manager, "/api/warehouse/overview").body["products_total"]) != 1 || e.activityCount("product.deleted", p) != 1 {
+	after := e.get(manager, "/api/warehouse/overview")
+	if num(after.body["products_total"]) != 1 || e.activityCount("product.deleted", p) != 1 {
 		t.Fatal("deleted product counted")
+	}
+	// Zafiro ff3c6c5 (ProductDeleteTest): склад открывается и после удаления товара с историей движения —
+	// история хранит имя удалённого товара (StockMovement::product()->withTrashed()).
+	expect(t, after, 200, "overview after delete")
+	if mv, _ := after.body["movements"].([]any); len(mv) != 1 || obj(mv[0])["product_name"] != "Cola" {
+		t.Fatalf("movements after delete %v", after.body["movements"])
 	}
 }
 

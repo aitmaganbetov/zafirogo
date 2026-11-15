@@ -43,16 +43,62 @@ func (c Computer) SessionEnd(now time.Time, minutes int64) (time.Time, bool) {
 	return now.Add(time.Duration(minutes) * time.Minute), false
 }
 
+// SessionEndUntil — SessionEnd с концом периода действия тарифа until (nil — конца нет): время тарифа
+// останавливается в until, цена та же (куплен в 15:00 на 08:00–18:00 — до 18:00).
+//
+//	$startsAt = $hasActiveSession ? $computer->session_ends_at->copy() : now();
+//	$sessionEndsAt = $startsAt->copy()->addMinutes($minutes);
+//	if ($until !== null && $sessionEndsAt->greaterThan($until)) {
+//	    if ($until->lessThanOrEqualTo($startsAt)) throw … 'Тариф действует до :time, а время на ПК уже оплачено дальше.'
+//	    $sessionEndsAt = $until->copy();
+//	    $minutes = (int) ceil(($until->getTimestamp() - $startsAt->getTimestamp()) / 60);
+//	}
+//
+// Возвращает конец сессии, продлевается ли она, минуты части сессии (урезанные) и было ли урезание.
+// :time — until по часам клуба loc (H:i).
+// Laravel: app/Services/AgentTariffPurchaseService.php sell() (BR-020, BR-024; GS-529, GS-530).
+func (c Computer) SessionEndUntil(now time.Time, minutes int64, until *time.Time, loc *time.Location) (ends time.Time, extends bool, sold int64, cut bool, err error) {
+	ends, extends = c.SessionEnd(now, minutes)
+	if until == nil || !ends.After(*until) {
+		return ends, extends, minutes, false, nil
+	}
+	startsAt := now
+	if extends {
+		startsAt = c.SessionEndsAt
+	}
+	if !until.After(startsAt) {
+		if loc == nil {
+			loc = time.UTC
+		}
+		return time.Time{}, false, 0, false, ErrTariffValidUntil.with(map[string]string{"time": until.In(loc).Format("15:04")})
+	}
+	return *until, extends, ceilMinutes(until.Unix() - startsAt.Unix()), true, nil
+}
+
+// ceilMinutes — (int) ceil($seconds / 60): целые минуты с округлением вверх (getTimestamp() — целые секунды).
+func ceilMinutes(seconds int64) int64 {
+	m := seconds / 60
+	if seconds%60 > 0 {
+		m++
+	}
+	return m
+}
+
 // Purchase — расчёт покупки времени: что списать, сколько минут, до какого момента сессия.
 // Бронь на интервал [now, SessionEndsAt + интервал) проверяет вызывающий ПОСЛЕ Quote*
 // (в sell() она идёт после проверки денег, BR-082).
 type Purchase struct {
-	Price          money.Tiyn // цена со скидкой (amount журнала)
-	Payment        Payment
-	Minutes        int64      // минуты части сессии (minutes_added)
-	PartExpiresAt  *time.Time // expires_at части: только тариф с лимитом использования
-	SessionEndsAt  time.Time
-	ExtendsSession bool // true — тот же session_id, иначе новый
+	Price   money.Tiyn // цена со скидкой (amount журнала)
+	Payment Payment
+	Minutes int64 // минуты части сессии (minutes_added); урезаны концом периода действия тарифа
+	// FullMinutes — минуты до урезания концом периода действия (effectiveMinutes() тарифа / минуты пакета);
+	// равны Minutes, если урезания не было. Разница у тарифа с лимитом использования остаётся пакетом.
+	FullMinutes int64
+	// CutAtValidityEnd — время остановлено концом периода действия тарифа: SessionEndsAt = этот конец.
+	CutAtValidityEnd bool
+	PartExpiresAt    *time.Time // expires_at части: только тариф с лимитом использования
+	SessionEndsAt    time.Time
+	ExtendsSession   bool // true — тот же session_id, иначе новый
 }
 
 // TariffPurchaseInput — данные покупки тарифа в агенте.
@@ -71,9 +117,11 @@ type TariffPurchaseInput struct {
 }
 
 // QuoteTariffPurchase — расчётная часть покупки тарифа в порядке проверок старого кода:
-// доступность (isAvailable) → ПК (ensureComputerFor) → зона тарифа → цена (priceInCents) → оплата (sell).
-// Laravel: app/Services/AgentTariffPurchaseService.php purchase() (стр. 62–101), sell() (236–311)
-// (BR-013, BR-015, BR-016, BR-018, BR-020; GS-049, GS-050, GS-059, GAP-006…GAP-008, GAP-011, GAP-015, GAP-016).
+// доступность (isAvailable) → ПК (ensureComputerFor) → зона тарифа → цена (priceInCents) → конец периода
+// действия (sell(): время останавливается в нём, раньше раскладки по балансам) → оплата (sell).
+// Laravel: app/Services/AgentTariffPurchaseService.php purchase(), sell()
+// (BR-013, BR-015, BR-016, BR-018, BR-020; GS-049, GS-050, GS-059, GS-529, GS-530, GAP-006…GAP-008, GAP-011,
+// GAP-015, GAP-016).
 func QuoteTariffPurchase(in TariffPurchaseInput) (Purchase, error) {
 	// Решение SV-2 (docs/DECISIONS.md): выключенный тариф (is_active = false) не продаётся — «Тариф недоступен.», как
 	// тариф не в продаже. В старом purchase() is_active не проверялся: тариф скрывался только из списка агента,
@@ -91,14 +139,19 @@ func QuoteTariffPurchase(in TariffPurchaseInput) (Purchase, error) {
 	if err != nil {
 		return Purchase{}, err
 	}
+	// Laravel: purchase() — sell(…, $tariff->validityEndsAt()): проверка конца периода идёт в начале sell(),
+	// до блокировки баланса и раскладки оплаты.
+	full := in.Tariff.EffectiveMinutes()
+	ends, extends, minutes, cut, err := in.Computer.SessionEndUntil(in.Now, full, validityEnd(&in.Tariff, in.Now, in.Location), in.Location)
+	if err != nil {
+		return Purchase{}, err
+	}
 	pay, err := in.Rules.Pay(price, in.Tariff.PaymentMethod, in.Choice, in.Balances)
 	if err != nil {
 		return Purchase{}, err
 	}
-	minutes := in.Tariff.EffectiveMinutes()
-	ends, extends := in.Computer.SessionEnd(in.Now, minutes)
 	return Purchase{
-		Price: price, Payment: pay, Minutes: minutes,
+		Price: price, Payment: pay, Minutes: minutes, FullMinutes: full, CutAtValidityEnd: cut,
 		PartExpiresAt: in.Tariff.UsageExpiresAt(in.Now),
 		SessionEndsAt: ends, ExtendsSession: extends,
 	}, nil
@@ -145,7 +198,7 @@ func QuoteMinutesPurchase(in MinutesPurchaseInput) (Purchase, error) {
 		return Purchase{}, err
 	}
 	ends, extends := in.Computer.SessionEnd(in.Now, in.Minutes)
-	return Purchase{Price: price, Payment: pay, Minutes: in.Minutes, SessionEndsAt: ends, ExtendsSession: extends}, nil
+	return Purchase{Price: price, Payment: pay, Minutes: in.Minutes, FullMinutes: in.Minutes, SessionEndsAt: ends, ExtendsSession: extends}, nil
 }
 
 // PackageStartMinutes — сколько минут запускает сохранённый пакет: остаток, но не дальше срока.
@@ -176,9 +229,12 @@ type PackageStartInput struct {
 }
 
 // QuoteStartPackage — расчётная часть запуска пакета: минуты (PackageStartMinutes) → ПК → зоны тарифа →
-// период действия тарифа; оплата — sell(0, 'main_balance_only', 'main'), т. е. без списаний.
-// Часть сессии: kind=tariff, expires_at = срок пакета (тот же, а не новый).
-// Laravel: app/Services/AgentTariffPurchaseService.php startPackage() (стр. 171–203) (BR-024, GS-047, GAP-014).
+// период действия тарифа → конец периода действия (sell(): время дальше него остаётся в пакете); оплата —
+// sell(0, 'main_balance_only', 'main'), т. е. без списаний.
+// Часть сессии: kind=tariff, expires_at = срок пакета (тот же, а не новый). Purchase.FullMinutes — минуты после
+// ограничения сроком пакета, Purchase.Minutes — после конца периода действия; что остаётся в пакете — решает
+// вызывающий (service.StartPackage, UF-1).
+// Laravel: app/Services/AgentTariffPurchaseService.php startPackage() (BR-024, GS-047, GS-530, GAP-014).
 func QuoteStartPackage(in PackageStartInput) (Purchase, error) {
 	minutes, err := PackageStartMinutes(in.MinutesLeft, in.ExpiresAt, in.Now)
 	if err != nil {
@@ -193,11 +249,30 @@ func QuoteStartPackage(in PackageStartInput) (Purchase, error) {
 	if in.Tariff != nil && !in.Tariff.InValidityPeriod(in.Now, in.Location) {
 		return Purchase{}, ErrPackageOutOfPeriod
 	}
+	// Laravel: startPackage() — sell(…, $tariff?->validityEndsAt()).
+	ends, extends, sold, cut, err := in.Computer.SessionEndUntil(in.Now, minutes, validityEnd(in.Tariff, in.Now, in.Location), in.Location)
+	if err != nil {
+		return Purchase{}, err
+	}
 	pay, err := DefaultPaymentRules().Pay(0, MainBalanceOnly, ChoiceMain, in.Balances)
 	if err != nil {
 		return Purchase{}, err
 	}
-	ends, extends := in.Computer.SessionEnd(in.Now, minutes)
 	expires := in.ExpiresAt
-	return Purchase{Payment: pay, Minutes: minutes, PartExpiresAt: &expires, SessionEndsAt: ends, ExtendsSession: extends}, nil
+	return Purchase{
+		Payment: pay, Minutes: sold, FullMinutes: minutes, CutAtValidityEnd: cut,
+		PartExpiresAt: &expires, SessionEndsAt: ends, ExtendsSession: extends,
+	}, nil
+}
+
+// validityEnd — $tariff?->validityEndsAt(): конец текущего периода действия тарифа; nil — тарифа нет или конца нет.
+func validityEnd(t *Tariff, now time.Time, loc *time.Location) *time.Time {
+	if t == nil {
+		return nil
+	}
+	until, ok := t.ValidityEndsAt(now, loc)
+	if !ok {
+		return nil
+	}
+	return &until
 }

@@ -57,6 +57,9 @@ var (
 	ErrBonusNotEnough    = &Error{Code: "bonus_not_enough", Field: "balance", Message: "Бонусов не хватает на всю цену. Оплатите с основного баланса."}
 	// AgentTariffPurchaseService::sell(): не хватает основного или бонусного баланса.
 	ErrInsufficientFunds = &Error{Code: "insufficient_funds", Field: "balance", Message: "Недостаточно средств для покупки тарифа."}
+	// AgentTariffPurchaseService::sell(): период действия тарифа закончится не позже, чем уже оплаченное время на ПК
+	// (покупка тарифа и запуск абонемента). :time — конец периода по часам клуба, H:i.
+	ErrTariffValidUntil = &Error{Code: "tariff_valid_until", Field: "tariff", Message: "Тариф действует до :time, а время на ПК уже оплачено дальше."}
 	// AgentTariffPurchaseService::startPackage().
 	ErrPackageExpired     = &Error{Code: "package_expired", Field: "package", Message: "Срок абонемента истёк."}
 	ErrPackageNotForPC    = &Error{Code: "package_not_for_computer", Field: "package", Message: "Абонемент не действует на этом компьютере."}
@@ -64,6 +67,7 @@ var (
 	// GuestSessions::sell().
 	ErrGuestTariffUnavailable = &Error{Code: "guest_tariff_unavailable", Field: "tariff_id", Message: "Тариф недоступен."}
 	ErrGuestTariffZone        = &Error{Code: "guest_tariff_zone", Field: "tariff_id", Message: "Тариф не действует в зоне ПК :computer."}
+	ErrGuestTariffValidUntil  = &Error{Code: "guest_tariff_valid_until", Field: "tariff_id", Message: "Тариф действует до :time, а время на ПК :computer уже оплачено дальше."}
 	ErrGuestNoHourlyPrice     = &Error{Code: "guest_no_hourly_price", Field: "minutes", Message: "В зоне ПК :computer время поминутно не продаётся."}
 	ErrGuestComputerBusy      = &Error{Code: "guest_computer_busy", Field: "computer_ids", Message: "ПК :computer занят или забронирован."}
 	ErrGuestNoComputers       = &Error{Code: "guest_no_computers", Field: "computer_ids", Message: "Выберите ПК на карте клуба."}

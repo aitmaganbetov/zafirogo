@@ -23,7 +23,7 @@ type GuestComputerQuote struct {
 
 // GuestSessionQuote — итог гостевой продажи.
 type GuestSessionQuote struct {
-	Minutes   int64 // длительность на каждом ПК
+	Minutes   int64 // длительность на каждом ПК (тариф — не дальше конца его периода действия)
 	Computers []GuestComputerQuote
 	Total     money.Tiyn // одна запись прихода в кассу (formatCents($total))
 }
@@ -46,16 +46,30 @@ type GuestSessionInput struct {
 // QuoteGuestSession — итог гостевой сессии: тариф (его цена БЕЗ скидки, на каждом ПК) или минуты × цена часа
 // зоны каждого ПК; без лимита количества и ролей тарифа. Порядок проверок как в sell():
 // тариф (активен, в продаже, в периоде действия) → для каждого ПК: цена (зона тарифа / цена часа) →
-// занят (резерв или чужая не гостевая сессия) → бронь.
-// Laravel: app/Services/GuestSessions.php sell() (стр. 34–96), priceFor() (стр. 98–113) (BR-038; GS-091, GS-092,
-// GS-094, GS-063, GS-066, GAP-030, GAP-031).
+// занят (резерв или чужая не гостевая сессия) → конец периода действия тарифа → бронь.
+// Время тарифа останавливается с концом его периода действия, цена та же:
+//
+//	$until = $tariff?->validityEndsAt();
+//	if ($until !== null) $duration = min($duration, (int) ceil(max(0, $until->getTimestamp() - now()->getTimestamp()) / 60));
+//	…для каждого ПК:
+//	$startsAt = $extend ? $computer->session_ends_at->copy() : $now->copy();
+//	if ($until !== null && $until->lessThanOrEqualTo($startsAt)) throw … 'Тариф действует до :time, а время на ПК :computer уже оплачено дальше.'
+//	$endsAt = $startsAt->copy()->addMinutes($duration);
+//	if ($until !== null && $endsAt->greaterThan($until)) $endsAt = $until->copy();
+//
+// Laravel: app/Services/GuestSessions.php sell(), priceFor() (BR-038; GS-091, GS-092,
+// GS-094, GS-063, GS-066, GS-531, GAP-030, GAP-031).
 func QuoteGuestSession(in GuestSessionInput) (GuestSessionQuote, error) {
 	if in.TariffMissing || (in.Tariff != nil && (!in.Tariff.OnSale(in.Now, in.Location) || !in.Tariff.InValidityPeriod(in.Now, in.Location))) {
 		return GuestSessionQuote{}, ErrGuestTariffUnavailable
 	}
 	var duration int64
+	until := validityEnd(in.Tariff, in.Now, in.Location)
 	if in.Tariff != nil {
 		duration = in.Tariff.EffectiveMinutes()
+		if until != nil {
+			duration = min(duration, ceilMinutes(max(0, until.Unix()-in.Now.Unix())))
+		}
 	} else {
 		if in.Minutes < 1 || in.Minutes > MaxMinutes {
 			return GuestSessionQuote{}, fmt.Errorf("%w: минуты %d вне 1…%d", ErrInvalidInput, in.Minutes, MaxMinutes)
@@ -78,7 +92,21 @@ func QuoteGuestSession(in GuestSessionInput) (GuestSessionQuote, error) {
 		if c.Reserved || (extend && !c.SessionGuest) {
 			return GuestSessionQuote{}, ErrGuestComputerBusy.with(map[string]string{"computer": pc.Name})
 		}
+		startsAt := in.Now
+		if extend {
+			startsAt = c.SessionEndsAt
+		}
+		if until != nil && !until.After(startsAt) {
+			loc := in.Location
+			if loc == nil {
+				loc = time.UTC
+			}
+			return GuestSessionQuote{}, ErrGuestTariffValidUntil.with(map[string]string{"time": until.In(loc).Format("15:04"), "computer": pc.Name})
+		}
 		ends, _ := c.SessionEnd(in.Now, duration)
+		if until != nil && ends.After(*until) {
+			ends = *until
+		}
 		if in.CheckBooking != nil {
 			if err := in.CheckBooking(i, pc, ends); err != nil {
 				return GuestSessionQuote{}, err

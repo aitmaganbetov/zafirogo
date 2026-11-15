@@ -51,6 +51,10 @@ type PurchaseResult struct {
 	PurchaseID     int64      `json:"purchase_id"` // session_purchases.id
 	// LedgerTransactionID — операция ledger (0 — цена 0: денег не двигалось).
 	LedgerTransactionID int64 `json:"ledger_transaction_id"`
+	// KeptMinutes — минуты, оставшиеся пакетом (time_packages): время тарифа с лимитом использования дальше конца
+	// его периода действия (покупка) или остаток запущенного пакета. KeptPackageID — этот пакет (0 — нет).
+	KeptMinutes   int64 `json:"kept_minutes,omitempty"`
+	KeptPackageID int64 `json:"kept_package_id,omitempty"`
 	// Replayed — ответ на повтор запроса с тем же ключом идемпотентности (ничего не записано).
 	Replayed bool `json:"-"`
 }
@@ -68,7 +72,9 @@ type TariffPurchaseRequest struct {
 
 // PurchaseTariff — покупка тарифа в агенте.
 //
-// Laravel: app/Services/AgentTariffPurchaseService.php purchase() (стр. 62–101) и sell() (стр. 236–311).
+// Laravel: app/Services/AgentTariffPurchaseService.php purchase() и sell().
+// Время тарифа заканчивается вместе с периодом действия (куплен в 15:00 на пн 08:00–18:00 — до 18:00, цена та же);
+// у тарифа с лимитом использования урезанное время остаётся пакетом (keepCutTime). GS-529, GS-530.
 // Порядок как в старом коде: тариф FOR UPDATE → членство FOR UPDATE → ПК FOR UPDATE → (баланс FOR UPDATE) →
 // isAvailable (лимит количества — счётчик tariff_sales, Решение Q-007 (docs/DECISIONS.md)) → ensureComputerFor →
 // зоны тарифа → цена → раскладка по балансам → бронь → списание (ledger tariff_purchase) → траты лояльности →
@@ -141,14 +147,14 @@ func (s *Service) PurchaseTariff(ctx context.Context, req TariffPurchaseRequest)
 		}
 		tariffID := t.ID
 		zone := pc.ClubZoneID
+		// Laravel: purchase() — now()->addMinutes(usage_limit_minutes), хранится с точностью до секунды.
+		partExpires := session.TariffPartExpiresAt(session.TariffUsage{
+			DurationMinutes: t.DurationMinutes, UsageLimitEnabled: t.UsageLimitEnabled, UsageLimitMinutes: t.UsageLimitMinutes,
+		}, now)
 		out, err = s.sell(ctx, q, sale{
 			clubID: req.ClubID, userID: req.UserID, computer: pc, club: club, now: now, quote: quote,
 			part: part{
-				kind: session.KindTariff, tariffID: &tariffID, name: t.Name,
-				// Laravel: purchase() стр. 85 — now()->addMinutes(usage_limit_minutes), хранится с точностью до секунды.
-				expiresAt: session.TariffPartExpiresAt(session.TariffUsage{
-					DurationMinutes: t.DurationMinutes, UsageLimitEnabled: t.UsageLimitEnabled, UsageLimitMinutes: t.UsageLimitMinutes,
-				}, now),
+				kind: session.KindTariff, tariffID: &tariffID, name: t.Name, expiresAt: partExpires,
 				zoneID: &zone, source: sourceTariff,
 			},
 			ledgerKind: ledger.KindTariffPurchase, key: req.IdempotencyKey, actor: req.Actor,
@@ -174,6 +180,13 @@ func (s *Service) PurchaseTariff(ctx context.Context, req TariffPurchaseRequest)
 		}); err != nil {
 			return err
 		}
+		// Laravel: purchase() — «Cut short by the end of the validity period: a usage limit keeps the rest for later»:
+		//   if ($part['expires_at'] !== null && ($rest = $minutes - $result['minutes_added']) > 0) TimePackage::create(…)
+		if rest := quote.FullMinutes - out.MinutesAdded; partExpires != nil && rest > 0 {
+			if err := s.keepCutTime(ctx, q, req, t.ID, t.Name, rest, *partExpires, pc.ID, now, &out); err != nil {
+				return err
+			}
+		}
 		currencyOut = club.currency
 		// Счётчик лимита количества: только продажи в агенте (Решение Q-007 (docs/DECISIONS.md)).
 		if err := q.IncrementTariffSales(ctx, store.IncrementTariffSalesParams{ClubID: req.ClubID, TariffID: t.ID, Now: now}); err != nil {
@@ -185,6 +198,37 @@ func (s *Service) PurchaseTariff(ctx context.Context, req TariffPurchaseRequest)
 		s.notifyPurchase(ctx, req.ClubID, req.UserID, req.ComputerID, out, currencyOut, req.Actor.UserID)
 	}
 	return out, err
+}
+
+// keepCutTime — время тарифа с лимитом использования, не поместившееся до конца периода действия, остаётся
+// пакетом: TimePackage::create(['user_id', 'tariff_id', 'name', 'minutes_left' => $rest, 'expires_at' =>
+// $part['expires_at']]). Ledger минут — операция package_kept (как сохранение времени при завершении сессии).
+// Laravel: app/Services/AgentTariffPurchaseService.php purchase() (BR-020, GS-530).
+func (s *Service) keepCutTime(ctx context.Context, q *store.Queries, req TariffPurchaseRequest, tariffID int64, name string,
+	rest int64, expiresAt time.Time, computerID int64, now time.Time, out *PurchaseResult) error {
+	id, err := q.InsertTimePackage(ctx, store.InsertTimePackageParams{
+		ClubID: req.ClubID, UserID: req.UserID, TariffID: &tariffID, Name: name,
+		MinutesLeft: rest, ExpiresAt: expiresAt, Now: &now,
+	})
+	if err != nil {
+		return err
+	}
+	meta, err := json.Marshal(map[string]any{
+		"reason": "validity_period_end", "kept_minutes": rest, "started_minutes": out.MinutesAdded,
+		"computer_id": computerID, "session_id": out.SessionID, "purchase_id": out.PurchaseID,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := ledger.Post(ctx, q, ledger.Operation{
+		ClubID: req.ClubID, Kind: ledger.KindPackageKept, IdempotencyKey: ledgerKey("tariff_purchase_kept", req.IdempotencyKey),
+		Minutes: []ledger.MinuteEntry{{UserID: req.UserID, TimePackageID: id, TariffID: tariffID, Minutes: rest}},
+		Meta:    meta, ActorUserID: req.Actor.UserID, Refs: ledger.Refs{SessionID: out.SessionID},
+	}); err != nil {
+		return err
+	}
+	out.KeptMinutes, out.KeptPackageID = rest, id
+	return nil
 }
 
 // MinutesPurchaseRequest — покупка минут по цене часа зоны ПК (POST /api/guest/minutes/purchase).
@@ -326,13 +370,20 @@ type PackageStartRequest struct {
 
 // StartPackage — запуск сохранённого времени тарифа без оплаты.
 //
-// Laravel: app/Services/AgentTariffPurchaseService.php startPackage() (стр. 171–203): пакет клиента FOR UPDATE →
+// Laravel: app/Services/AgentTariffPurchaseService.php startPackage(): пакет клиента FOR UPDATE →
 // ПК FOR UPDATE → минуты min(остаток, целых минут до срока) (≤ 0 → «Срок абонемента истёк.»; удаление пакета
 // в старом коде откатывалось исключением — пакет оставался до суточной задачи, GAP-014. Решение Q-011
 // (docs/DECISIONS.md): после отката пакет сгорает в отдельной транзакции — ledger package_expired и журнал) →
-// ensureComputerFor → зоны тарифа (withTrashed) → период действия → sell(0, main_balance_only, main) →
-// удаление пакета. Ledger минут: операция package_start, минус весь остаток пакета (пакет удаляется
-// целиком, даже если срок урезал минуты; Решение Q-011 (docs/DECISIONS.md)).
+// ensureComputerFor → зоны тарифа (withTrashed) → период действия → sell(0, main_balance_only, main,
+// $tariff?->validityEndsAt()) — время не дальше конца периода действия тарифа; оно остаётся в пакете
+// (GS-530). До Zafiro b4f08f6 пакет удалялся целиком.
+//
+// Отличие от буквального кода (UF-1, docs/open-questions/upstream-fixes.md): в Laravel остаток —
+// $package->minutes_left - $result['minutes_added'], то есть в пакете остаются и минуты, урезанные СРОКОМ пакета,
+// и повторными запусками до срока их можно выбрать целиком (срок перестаёт ограничивать). Здесь в пакете
+// остаётся только урезанное концом периода действия: min(остаток, минут до срока) − запущено; минуты, не
+// помещающиеся до срока, сгорают при запуске, как и до b4f08f6 (Решение Q-011, GAP-014).
+// Ledger минут: операция package_start, минус запущенные и сгоревшие минуты.
 func (s *Service) StartPackage(ctx context.Context, req PackageStartRequest) (PurchaseResult, error) {
 	var out PurchaseResult
 	err := s.tx(ctx, req.ClubID, func(q *store.Queries) error {
@@ -409,9 +460,11 @@ func (s *Service) StartPackage(ctx context.Context, req PackageStartRequest) (Pu
 		if err != nil {
 			return err
 		}
-		// Ledger минут: пакет израсходован целиком (Q-011: сгоревшая из-за срока часть — тоже движение).
+		// Ledger минут: запущенные минуты и сгоревшие из-за срока (Q-011); урезанное концом периода действия
+		// остаётся в пакете.
+		rest := max(quote.FullMinutes-out.MinutesAdded, 0)
 		meta, err := json.Marshal(map[string]any{
-			"started_minutes": quote.Minutes, "lost_minutes": pkg.MinutesLeft - quote.Minutes,
+			"started_minutes": out.MinutesAdded, "lost_minutes": pkg.MinutesLeft - quote.FullMinutes, "left_minutes": rest,
 			"computer_id": pc.ID, "session_id": out.SessionID,
 		})
 		if err != nil {
@@ -421,10 +474,10 @@ func (s *Service) StartPackage(ctx context.Context, req PackageStartRequest) (Pu
 		if pkg.TariffID != nil {
 			tariffID = *pkg.TariffID
 		}
-		if pkg.MinutesLeft > 0 {
+		if spent := pkg.MinutesLeft - rest; spent > 0 {
 			res, err := ledger.Post(ctx, q, ledger.Operation{
 				ClubID: req.ClubID, Kind: ledger.KindPackageStart, IdempotencyKey: req.IdempotencyKey,
-				Minutes: []ledger.MinuteEntry{{UserID: req.UserID, TimePackageID: pkg.ID, TariffID: tariffID, Minutes: -pkg.MinutesLeft}},
+				Minutes: []ledger.MinuteEntry{{UserID: req.UserID, TimePackageID: pkg.ID, TariffID: tariffID, Minutes: -spent}},
 				Meta:    meta, ActorUserID: req.Actor.UserID, Refs: ledger.Refs{SessionID: out.SessionID},
 			})
 			if err != nil {
@@ -432,7 +485,12 @@ func (s *Service) StartPackage(ctx context.Context, req PackageStartRequest) (Pu
 			}
 			out.LedgerTransactionID = res.TransactionID
 		}
-		if err := q.DeleteTimePackage(ctx, store.DeleteTimePackageParams{ClubID: req.ClubID, ID: pkg.ID}); err != nil {
+		if rest > 0 {
+			if err := q.SetTimePackageMinutes(ctx, store.SetTimePackageMinutesParams{ClubID: req.ClubID, ID: pkg.ID, MinutesLeft: rest, Now: &now}); err != nil {
+				return err
+			}
+			out.KeptMinutes, out.KeptPackageID = rest, pkg.ID
+		} else if err := q.DeleteTimePackage(ctx, store.DeleteTimePackageParams{ClubID: req.ClubID, ID: pkg.ID}); err != nil {
 			return err
 		}
 		// Laravel: AgentTariffPurchaseService::startPackage() (стр. 193–197) — журнал time.package_started.
@@ -536,6 +594,11 @@ func (s *Service) sell(ctx context.Context, q *store.Queries, in sale) (Purchase
 	ext := session.Extend(in.computer.session(), in.quote.Minutes, in.now)
 	if ext.Extends != in.quote.ExtendsSession {
 		return PurchaseResult{}, fmt.Errorf("service: session extension mismatch on computer %d", in.computer.ID)
+	}
+	if in.quote.CutAtValidityEnd {
+		// Laravel: sell() — $sessionEndsAt = $until->copy(): время тарифа останавливается в конце периода действия
+		// (минуты части округлены вверх, конец сессии — ровно конец периода).
+		ext.EndsAt = session.StoredTime(in.quote.SessionEndsAt)
 	}
 	sessionID := ext.SessionID
 	if !ext.Extends {

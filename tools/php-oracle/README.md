@@ -153,3 +153,16 @@ GAP-014 (истёкший пакет при 422 **не удаляется**: у�
 ```
 
 `settle_oracle.json` (2026-10-30): 44 из 44 сценариев — ответ PHP совпал с Go (`go test ./internal/billing/session/ -run Oracle`).
+
+## WeeklyPeriods::endOf()
+
+`gen-weekly-fixture.php` — эталон конца недельного периода (Zafiro b4f08f6 «Tariffs: time ends with the validity
+period»): буквальные копии `contains()`, `isAlways()`, `minutes()` и `endOf()` из `../Zafiro/app/Support/WeeklyPeriods.php`,
+Carbon заменён тройкой (день недели ISO, час, минута), результат — минуты от понедельника 00:00 этой недели.
+2000 случайных наборов периодов и моментов (`mt_srand(20261115)`), половина моментов — на границах периодов ± минута.
+Арифметика целочисленная, от версии PHP не зависит (снято на PHP 8.3.6).
+
+```sh
+php tools/php-oracle/gen-weekly-fixture.php > server/internal/billing/pricing/testdata/php_weekly_endof.json
+cd server && go test ./internal/billing/pricing/ -run EndOfMatchesPHP
+```

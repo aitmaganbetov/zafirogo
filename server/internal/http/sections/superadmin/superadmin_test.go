@@ -178,3 +178,25 @@ func TestLedgerReconcileOf(t *testing.T) {
 		}
 	}
 }
+
+// Zafiro 29efab1 (SuperadminCabinetTest): строки возможностей тарифа платформы режутся как UTF-8 — кириллические
+// буквы с байтом 0x85 («х» = D1 85) не разрываются.
+func TestSplitFeatures_UTF8(t *testing.T) {
+	got := splitFeatures("До 20 ПК\r\n\nАгент Windows\nСклад и касса для всех ПК")
+	want := []string{"До 20 ПК", "Агент Windows", "Склад и касса для всех ПК"}
+	if len(got) != len(want) {
+		t.Fatalf("%q", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%d: %q, want %q", i, got[i], want[i])
+		}
+	}
+	// U+0085 (NEL), U+2028, U+2029 — переводы строк, как \R в режиме UTF-8.
+	if got := splitFeatures("а\u0085б в г"); len(got) != 4 {
+		t.Fatalf("%q", got)
+	}
+	if got := splitFeatures(" \n\t\n"); got != nil {
+		t.Fatalf("%q", got)
+	}
+}

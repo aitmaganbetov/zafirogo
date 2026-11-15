@@ -469,6 +469,28 @@ isAlways = периодов нет ИЛИ есть период mon 00:00 – su
 - Время берётся в часовом поясе клуба (`localTimezone`), см. BR-004.
 - [ ] Перенести с включительной правой границей и без секунд.
 
+**Конец периода** (Zafiro b4f08f6, `endOf()`; `Tariff::validityEndsAt()` — конец текущего периода действия тарифа):
+```
+endOf(periods, localNow):
+    if isAlways(periods) || !contains(periods, localNow) → null         // конца нет
+    ranges = []                                                          // минуты от пн 00:00 этой недели
+    for p in periods (неизвестный день → пропуск):
+        start = sd*1440 + minutes(p.start_time)
+        end   = ed*1440 + minutes(p.end_time) + (p.end_time === '23:59' ? 1 : 0)   // 23:59 — следующая полночь
+        if end < start: end += 10080                                     // через конец недели
+        ranges += [start-10080, end-10080], [start, end], [start+10080, end+10080]
+    end = (isoWeekday-1)*1440 + hour*60 + minute
+    do: для каждого диапазона с start <= end && rangeEnd > end → end = rangeEnd   // пересекающиеся и идущие подряд — один
+    while что-то выросло
+    return полночь понедельника этой недели (по часам клуба) + end минут
+```
+**Пример:** пн 15:00, «пн 08:00–18:00» → пн 18:00; с «пн 18:00–22:00» → пн 22:00; «пн 08:00–23:59» → вт 00:00;
+«сб 22:00 – пн 06:00» в вс 10:00 → пн 06:00. Нет периодов, вся неделя или вне периодов → конца нет.
+- Диапазон здесь `[start, end)`, а `contains()` включает последнюю минуту: в минуту конца («до 18:00» в 18:00:30)
+  `endOf()` возвращает её начало (18:00:00) — момент не позже «сейчас» (покупка тарифа тогда отклоняется, BR-020).
+- Go: `pricing.WeeklyPeriods.EndOf`, арифметика сверена с PHP на 2000 случайных наборах
+  (`tools/php-oracle/gen-weekly-fixture.php` → `pricing/testdata/php_weekly_endof.json`). GS-532, GS-533.
+
 <a id="br-018"></a>
 ### BR-018. Выбор баланса: бонусный лимит, смешанная оплата — P1
 
@@ -531,6 +553,15 @@ bonus_allowed = offered > 0
 4. `sell()`: расчёт оплаты (BR-018); затем
    - `hasActive = computer.hasPaidSession()`; `sessionId = hasActive ? current_session_id : uuid()`;
    - `sessionEndsAt = (hasActive ? session_ends_at : now) + minutes` (**продление складывается**);
+   - **время тарифа заканчивается вместе с периодом действия** (Zafiro b4f08f6; проверка — в начале `sell()`,
+     до блокировки баланса и расчёта оплаты; `until = tariff.validityEndsAt()`, BR-017):
+     ```
+     startsAt = hasActive ? session_ends_at : now
+     if until != null && sessionEndsAt > until:
+         if until <= startsAt → ошибка tariff «Тариф действует до :time, а время на ПК уже оплачено дальше.» (:time — H:i клуба)
+         sessionEndsAt = until
+         minutes = (int) ceil((until.timestamp - startsAt.timestamp) / 60)      // цена та же
+     ```
    - бронь другого клиента в `[now, sessionEndsAt + gap)` → ошибка «ПК забронирован с HH:MM…» (BR-082);
    - свои брони, пересекающиеся с этим интервалом, помечаются `arrived_at = now` (BR-083);
    - `member_balances` ← новые суммы (`formatCents`);
@@ -540,6 +571,10 @@ bonus_allowed = offered > 0
 5. Журнал `tariff.purchased` (subject = тариф): `amount`, `currency`, `main_balance_amount`, `bonus_balance_amount`, `duration_minutes`,
    `computer_id`, `session_id`, `session_ends_at` (ISO). **Этот журнал — источник лимита количества и зон пересадки** (BR-160).
 6. Ответ: `new_balance`, `new_bonus`, `minutes_added`, `session_id`, `session_ends_at`.
+7. Время урезано концом периода действия, а у тарифа лимит использования (`part.expires_at != null`):
+   `rest = effectiveMinutes − minutes_added > 0` → `time_packages` ← `{user_id, tariff_id, name, minutes_left = rest,
+   expires_at = part.expires_at}` (Zafiro b4f08f6). В Go — ещё и ledger минут `package_kept` (+rest).
+   Тариф без лимита использования урезанное время теряет (цена та же).
 
 **Граничные:** покупка на ПК с истёкшей, но ещё не очищенной сессией → `hasPaidSession=false` → новая сессия с `now`.
 Покупка поверх гостевой сессии на том же ПК: у гостевой `current_session_user_id = null`, проверка
@@ -548,6 +583,9 @@ bonus_allowed = offered > 0
 
 **Пример:** баланс 1500.00/0, тариф 60 мин 1000.00, скидка 10 %, scope `tariffs`, `discount_enabled` → цена 90000,
 `choice=main` → баланс 600.00, `total_spent += 900.00`, сессия `now+60`.
+**Пример (период действия):** пн 15:00, тариф «День» 600 мин, 1000.00, действует пн 08:00–18:00 → `minutes_added 180`,
+сессия до 18:00, списано 1000.00 (GS-529); тариф 120 мин с лимитом использования, куплен в 17:00 → 60 мин сейчас,
+60 — пакетом (GS-530).
 - [ ] Перенести; продление = к `session_ends_at`, а не к `now`.
 
 <a id="br-021"></a>
@@ -601,13 +639,21 @@ package = time_packages WHERE user_id = user FOR UPDATE (иначе 404)
 minutes = min(package.minutes_left, intdiv(max(0, expires_at - now (сек)), 60))
 if minutes <= 0: удалить пакет; ошибка «Срок абонемента истёк.»     // удаление коммитится? нет — исключение откатывает транзакцию
 ensureComputerFor; тариф пакета (withTrashed): если есть зоны и зона ПК не в них → ошибка; если тариф есть и вне периода действия → ошибка
-sell(price=0, 'main_balance_only', 'main', minutes, part{kind=tariff, tariff_id, name, expires_at=package.expires_at})
-удалить пакет (целиком, даже если minutes < minutes_left из-за срока)
+sell(price=0, 'main_balance_only', 'main', minutes, part{kind=tariff, tariff_id, name, expires_at=package.expires_at},
+     until = tariff?.validityEndsAt())                 // Zafiro b4f08f6: время не дальше конца периода действия (BR-020 п. 4)
+rest = package.minutes_left - minutes_added           // Zafiro b4f08f6
+rest > 0 ? package.minutes_left = rest : удалить пакет // до b4f08f6 — удалить пакет целиком
 журнал time.package_started (subject = ПК)
 ```
+- ⚙️ **Отличие Go (UF-1, `docs/open-questions/upstream-fixes.md`):** в пакете остаётся только время, урезанное концом
+  периода действия: `rest = min(minutes_left, минут до срока) − minutes_added`. Минуты, которые не помещаются до срока
+  пакета, сгорают при запуске, как до b4f08f6 (Решение Q-011, GAP-014). Буквальный `rest` Laravel оставляет их в
+  пакете, и повторными запусками до срока пакет выбирается целиком — срок перестаёт его ограничивать.
 - Список пакетов агенту: `expires_at > now`, по `expires_at` ↑; `expires_at` в UTC ISO.
 - Удалённый тариф: пакет работает в зонах и периодах удалённого тарифа (`withTrashed`); если тариф удалён физически (`tariff_id` null) — без ограничений.
 **Пример:** пакет 90 мин, до истечения 50 мин 30 с → `min(90, intdiv(3030,60)=50) = 50` мин; пакет удаляется, сессия +50 мин.
+**Пример (период действия):** пакет 60 мин, тариф действует вт 08:00–18:00, запуск во вт 17:30 → 30 мин до 18:00,
+в пакете остаётся 30 (GS-530).
 - [ ] Перенести; учесть, что исключение откатывает удаление просроченного пакета (OQ-BR-06 / §15).
   ⚙️ Решение Q-011 (DECISIONS.md): в новом коде просроченный пакет сгорает отдельной транзакцией (ledger `package_expired`, журнал `time.package_expired`).
 
@@ -806,12 +852,16 @@ transfer: оба ПК FOR UPDATE по id; target != from;
 транзакция; открытая смена FOR UPDATE (нет → «Сначала откройте смену в кассе.»)
 tariff: is_active, onSale, inValidityPeriod (иначе «Тариф недоступен.»)   // лимит количества и роли НЕ проверяются
 duration = tariff ? effectiveMinutes(tariff) : minutes
+until = tariff?.validityEndsAt()                                          // Zafiro b4f08f6 (BR-017)
+if until != null: duration = min(duration, (int) ceil(max(0, until.timestamp - now.timestamp) / 60))   // цена та же
 ПК FOR UPDATE по id; все должны найтись
 for ПК (по id):
     price = tariff ? amountToCents(tariff.price)   // БЕЗ скидки; зона тарифа должна совпасть
                    : minutesPriceInCents(zone.price_per_hour, duration)   // price_per_hour null → ошибка
     extend = hasPaidSession; if is_reserved || (extend && !session_guest) → «ПК … занят или забронирован.»
-    endsAt = (extend ? session_ends_at : now) + duration
+    startsAt = extend ? session_ends_at : now
+    if until != null && until <= startsAt → ошибка tariff_id «Тариф действует до :time, а время на ПК :computer уже оплачено дальше.»
+    endsAt = startsAt + duration; if until != null && endsAt > until: endsAt = until
     чужая бронь в [now, endsAt + gap) (userId=0 → любая бронь) → ошибка
     ПК: session_id = extend ? старый : uuid; user_id=null; session_guest=true; ends_at = endsAt
     total += price
@@ -821,6 +871,8 @@ cash_transactions: income, amount = formatCents(total), description «Госте
 - **Нет** `session_purchases` → при досрочном завершении возврата нет.
 - Способ оплаты хранится только в тексте описания и журнале (нет поля).
 **Пример:** 2 ПК, зона 500.00/ч, 90 мин: цена на ПК `intdiv(50000*90+30, 60) = 75000`; итог 1500.00 в смену.
+**Пример (период действия):** пн 15:00, тариф «День» 600 мин, 2000.00, действует пн 08:00–18:00 → сессия до 18:00,
+`minutes 180`, приход 2000.00 (GS-531).
 - [ ] Перенести; отметить, что продление гостевой сессии добавляет время к текущему концу.
 
 <a id="br-039"></a>

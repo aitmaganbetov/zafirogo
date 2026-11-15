@@ -55,6 +55,19 @@ func (h *handlers) SaListPlans(ctx context.Context, _ superadminapi.SaListPlansR
 	return superadminapi.SaListPlans200JSONResponse(out), nil
 }
 
+// splitFeatures — по одному пункту в строке: preg_split('/\R/u'), trim, без пустых (пусто — NULL у вызывающего).
+// Строки режутся по символам, а не по байтам: без модификатора u (до Zafiro 29efab1) PHP считал байт 0x85 переводом
+// строки и разрывал кириллические буквы («х» = D1 85). Go разбирает UTF-8, U+0085 здесь — только сам символ NEL.
+func splitFeatures(s string) []string {
+	var out []string
+	for _, line := range lineSplitRe.Split(s, -1) {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
 type planData struct {
 	slug, name string
 	price      *int64
@@ -109,12 +122,7 @@ func validatePlan(ctx context.Context, q *store.Queries, f superadminapi.PlanFor
 		if utf8.RuneCountInString(*f.Features) > 2000 {
 			fe.Add("features", httpx.RuleMessage("features", "max_string", "2000"))
 		}
-		// По одному пункту в строке: preg_split('/\R/'), trim, без пустых; пусто — NULL.
-		for _, line := range lineSplitRe.Split(*f.Features, -1) {
-			if line = strings.TrimSpace(line); line != "" {
-				d.featList = append(d.featList, line)
-			}
-		}
+		d.featList = splitFeatures(*f.Features)
 	}
 	if len(d.featList) > 0 {
 		d.features, _ = json.Marshal(d.featList)

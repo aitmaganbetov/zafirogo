@@ -2925,3 +2925,56 @@
 - **Дано:** 60 мин поминутно 600 ₸/час (600.00), пересадка на другой ПК через 10 мин.
 - **Ожидается:** `session_id` тот же; завершение на новом ПК ещё через 20 мин → возврат за 30 мин = **300.00** (части сессии переносятся вместе с `session_id`).
 - ⚙️ Изменено решением Q-016: было — `session_guest` не трогался; стало — `false` на обоих ПК.
+
+## Обновление старого проекта: ноябрь 2026 (`zafirogo-base` e3c8d25 → main a680bab)
+
+Сценарии из Pest-тестов коммитов старого проекта после тега `zafirogo-base`, затрагивающих уже перенесённый код.
+В сводку и таблицы выше не входят (там — состояние на тег). Сценарии новых функций (брони из приложения, реселлеры,
+счета Kaspi, каталог клубов, лендинг) добавляют их исполнители.
+
+### b4f08f6 «Tariffs: time ends with the validity period»
+
+#### GS-529 · P1 · `billing` · `TestTariffPurchase_EndsWithValidityPeriod`
+**Тест:** `SessionTimeTest.php` — «tariff time ends with its validity period: bought at 15:00 for Mon 08:00–18:00, it ends at 18:00»
+- **Дано:** понедельник 2026-10-26 15:00 по часам клуба; 1000.00 / 0; тариф «День» 600 мин, 1000 ₸, `validity_periods = [пн 08:00 – пн 18:00]`.
+- **Действие:** покупка `balance = main`; затем `session_ends_at` ПК ← 18:30, баланс ← 1000.00, покупка ещё раз.
+- **Ожидается:** `minutes_added 180` (`ceil((18:00 − 15:00) с / 60)`), `session_ends_at` = 18:00 по часам клуба; балансы **0.00 / 0.00** (цена та же); `time_packages` пусто. Вторая покупка → ошибка `tariff` «Тариф действует до 18:00, а время на ПК уже оплачено дальше.»; балансы **1000.00 / 0.00**.
+- **Go:** `pricing/validity_end_test.go` (расчёт, включая продление своей сессии, доли секунды, порядок «отказ раньше проверки денег»), `billing/service/validity_end_integration_test.go` (БД, ledger, счётчик продаж).
+
+#### GS-530 · P1 · `billing` · `TestTariffPurchase_UsageLimitKeepsTimePastValidity`
+**Тест:** `SessionTimeTest.php` — «a usage limit keeps the time past the validity period; the package starts again only up to its end»
+- **Дано:** понедельник 17:00; тариф 120 мин с `usage_limit_minutes = 43200` (30 дней), `validity_periods = [пн 08:00–18:00, вт 08:00–18:00]`.
+- **Действие:** покупка; во вторник 17:30 (сессии на ПК нет) — `POST /api/guest/packages/{p}/start`.
+- **Ожидается:** покупка → `minutes_added 60`, `time_packages`: одна запись `minutes_left 60`, `expires_at` = покупка + 30 дней. Запуск → `minutes_added 30`, в пакете `minutes_left 30`, `session_ends_at` = вт 18:00.
+- **Go:** ledger минут пакета: `package_kept +60` при покупке, `package_start −30` при запуске (остаток пакета = сумме движений); запуск, когда сессия уже оплачена до конца периода, → ошибка `tariff` «Тариф действует до …».
+- ⚙️ Отличие UF-1 (`docs/open-questions/upstream-fixes.md`): минуты, урезанные **сроком** пакета (а не периодом действия), в пакете не остаются — сгорают при запуске, как до b4f08f6 (GAP-014 без изменений).
+
+#### GS-531 · P1 · `cash` · `TestGuestSession_TariffEndsWithValidityPeriod`
+**Тест:** `GuestSessionTest.php` — «a guest tariff ends with its validity period, at the same price»
+- **Дано:** понедельник 15:00; смена открыта; ПК №1 в Hall; тариф «День» 600 мин, 2000 ₸, `validity_periods = [пн 08:00 – пн 18:00]`.
+- **Действие:** гостевая продажа `{computer_ids [1], tariff_id, payment_method cash}`.
+- **Ожидается:** 200, `amount "2000.00"`; `session_ends_at` ПК = 18:00 по часам клуба (`minutes 180`).
+- **Go (по коду):** продление гостевой сессии — конец не дальше конца периода; сессия ПК уже до 18:00 или дальше → ошибка `tariff_id` «Тариф действует до 18:00, а время на ПК PC-01 уже оплачено дальше.», касса не меняется; продажа минут (без тарифа) периодом не ограничена.
+
+#### GS-532 · P1 · `billing` · `TestWeeklyPeriods_EndOf`
+**Тест:** `Unit/WeeklyPeriodsTest.php` — «the end of the period now is in; periods following each other run on as one»
+- **Дано:** понедельник 2026-10-26 15:00.
+- **Ожидается:** `[пн 08:00–18:00]` → 2026-10-26 18:00; `[пн 08:00–18:00, пн 18:00–22:00]` → 22:00; `[пн 08:00–23:59]` → 2026-10-27 00:00; `[сб 22:00 – пн 06:00]` в вс 2026-10-25 10:00 → 2026-10-26 06:00, в пн 05:00 → 2026-10-26 06:00.
+
+#### GS-533 · P1 · `billing` · `TestWeeklyPeriods_EndOf`
+**Тест:** `Unit/WeeklyPeriodsTest.php` — «no end without a limit or outside the periods»
+- **Ожидается:** `endOf(null)`, `[пн 00:00 – вс 23:59]` и `[вт 08:00–18:00]` в понедельник 15:00 → `null`.
+- **Оракул:** арифметика `endOf()`/`contains()` сверена с PHP 8.3.6 на 2000 случайных наборах периодов и моментов (`tools/php-oracle/gen-weekly-fixture.php`, целочисленная арифметика — от версии PHP не зависит).
+
+### Прочие исправления (без денег)
+
+| Коммит | Тест Pest | Go-тест |
+|---|---|---|
+| fcd5d41 | `ApiAuthTest.php` — «mobile login without a club picks a club of the account with an active subscription» | `http/legacy` `TestAuth/login_without_a_club_picks_a_club_with_an_active_subscription` |
+| 1a0487a (часть: гость не зависит от подписки) | `ClubCatalogTest.php` (часть про подписку) | `http/legacy` `TestAuth/GS-230_inactive_subscription` |
+| 1490462 | `AgentShopTest.php` — «…Signed in in the mobile app (just used): that is not a PC» | `agent/guestapi` `TestGS081OnePCAtATimeAndTokens` |
+| ff3c6c5 | `ProductDeleteTest.php` — «The warehouse still opens and its history names the deleted product» | `http` `TestWarehouseScreens` |
+| 29efab1 | `SuperadminCabinetTest.php` — строки возможностей с кириллицей | `http/sections/superadmin` `TestSplitFeatures_UTF8` |
+| e872af0 | `SubscriptionTest.php` — «a new club is reported to the platform telegram chat» | `http` `TestTelegram_NewClubReported` |
+| 75d1174 | `SuperadminCabinetTest.php` — `days` строкой | не нужен: `days` в REST — целое JSON (`stage3_g6` — продление) |
+

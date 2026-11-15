@@ -63,6 +63,13 @@ func (t Tariff) InValidityPeriod(now time.Time, loc *time.Location) bool {
 	return t.ValidityPeriods.ContainsAt(now, loc)
 }
 
+// ValidityEndsAt — когда заканчивается текущий период действия: время тарифа останавливается в этот момент;
+// false — конца нет (нет ограничения или сейчас вне периодов).
+// Laravel: app/Models/Tariff.php validityEndsAt() (BR-016, BR-017).
+func (t Tariff) ValidityEndsAt(now time.Time, loc *time.Location) (time.Time, bool) {
+	return t.ValidityPeriods.EndOfAt(now, loc)
+}
+
 // InZone — тариф действует в зоне: у тарифа нет зон или зона в списке. zoneID nil — ПК без зоны
 // (club_zone_id NULL): только тарифы без зон (whereKey(null) ничего не находит).
 // Laravel: AgentTariffPurchaseService::availableFor() (фильтр), purchase() (стр. 75–77), GuestSessions::priceFor().

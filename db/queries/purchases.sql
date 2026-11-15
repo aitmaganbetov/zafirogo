@@ -150,6 +150,13 @@ FOR UPDATE;
 DELETE FROM time_packages
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);
 
+-- name: SetTimePackageMinutes :exec
+-- AgentTariffPurchaseService::startPackage(): $package->update(['minutes_left' => $rest]) — время дальше конца
+-- периода действия тарифа остаётся в пакете. Строка заблокирована LockTimePackage.
+UPDATE time_packages
+SET minutes_left = sqlc.arg(minutes_left), updated_at = sqlc.arg(now)
+WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);
+
 -- name: ClaimBillingRequest :one
 -- Захват ключа идемпотентности до блокировок: параллельный запрос с тем же ключом ждёт COMMIT первого.
 INSERT INTO billing_requests (club_id, idempotency_key, operation, fingerprint, created_at)

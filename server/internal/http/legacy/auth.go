@@ -290,6 +290,12 @@ func (a *API) clubActive(ctx context.Context, clubID int64) (bool, error) {
 	return active, err
 }
 
+// needsSubscription — гость приложения не зависит от подписки клуба (баланс, новости, друзья); сотрудники работают
+// в клубе, им подписка нужна. Вход с ПК клуба ($agentContract) в новом сервере — gRPC агента (guestapi), там
+// подписка проверяется всегда.
+// Laravel: app/Http/Controllers/Api/AuthController.php needsSubscription() (Zafiro 1a0487a).
+func needsSubscription(role string) bool { return permissions.IsStaff(role) }
+
 // subscription — RequireActiveSubscription: 402 {"message": "Подписка клуба не активна."}.
 func (a *API) subscription(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -622,12 +628,30 @@ func (a *API) doLogin(w http.ResponseWriter, r *http.Request, b body, user store
 		writeMessage(w, http.StatusUnauthorized, a.t(r, msgBadClubKey, nil))
 		return
 	}
-	// ClubMembership::where('user_id')->when($clubId)->first(): первое членство (по id) или выбранного клуба.
+	// ClubMembership::where('user_id')->when($clubId)->first(): членство выбранного клуба; без выбранного клуба —
+	// сначала клуб с активной подпиской, затем по id членства, чтобы клуб аккаунта с истёкшей подпиской не мешал
+	// войти в остальные:
+	//   ->when(! $requestedClubId, fn ($query) => $query
+	//       ->orderByDesc(ClubSubscription::query()->active()->whereColumn(…club_id…)->selectRaw('1'))->orderBy('id'))
+	// Laravel: app/Http/Controllers/Api/AuthController.php issueUserLoginResponse() (Zafiro fcd5d41).
 	var membership *store.MobileUserClubsRow
+	var active bool
 	for i := range clubs {
 		c := clubs[i]
-		if (requested == 0 || c.ClubID == requested) && (membership == nil || c.MembershipID < membership.MembershipID) {
-			membership = &c
+		if requested != 0 && c.ClubID != requested {
+			continue
+		}
+		on, err := a.clubActive(ctx, c.ClubID)
+		if err != nil {
+			a.fail(w, r, "subscription", err)
+			return
+		}
+		better := membership == nil || c.MembershipID < membership.MembershipID
+		if requested == 0 && membership != nil && on != active {
+			better = on
+		}
+		if better {
+			membership, active = &c, on
 		}
 	}
 	if membership == nil {
@@ -635,12 +659,7 @@ func (a *API) doLogin(w http.ResponseWriter, r *http.Request, b body, user store
 		writeCode(w, http.StatusForbidden, a.t(r, msgNoClubAccess, nil), "not_club_member")
 		return
 	}
-	active, err := a.clubActive(ctx, membership.ClubID)
-	if err != nil {
-		a.fail(w, r, "subscription", err)
-		return
-	}
-	if !active {
+	if needsSubscription(membership.Role) && !active {
 		failed("subscription_inactive")
 		writeMessage(w, http.StatusPaymentRequired, a.tc(ctx, membership.ClubID, msgSubscription, nil))
 		return
@@ -739,7 +758,8 @@ func (a *API) switchClub(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "subscription", err)
 		return
 	}
-	if !active {
+	role := rows[slices.IndexFunc(rows, func(c store.MobileUserClubsRow) bool { return c.ClubID == clubID })].Role
+	if needsSubscription(role) && !active {
 		writeMessage(w, http.StatusPaymentRequired, a.tc(ctx, clubID, msgSubscription, nil))
 		return
 	}

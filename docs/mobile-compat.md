@@ -40,9 +40,20 @@
 | `passwordCode` (employee) | `POST /api/auth/password/code` | `PasswordRecoveryController::code()` | `verifycode.PasswordRecovery.SendCode` (H2) | `password-recovery` |
 | `passwordReset` (employee) | `POST /api/auth/password/reset` | `PasswordRecoveryController::reset()` | `verifycode.PasswordRecovery.Reset` + отзыв всех токенов аккаунта | `password-recovery` |
 
+Подписка клуба и вход (обновление старого проекта, ноябрь 2026):
+
+- **Вход без выбранного клуба** (`club_id` не передан): клуб аккаунта с активной подпиской, затем по id членства —
+  клуб с истёкшей подпиской не мешает войти в остальные (Zafiro fcd5d41). С выбранным клубом — как раньше.
+- **Гость приложения не зависит от подписки клуба** (Zafiro 1a0487a, `AuthController::needsSubscription()`): вход и
+  смена клуба проверяют подписку только у сотрудников (роли `owner, admin, manager, cashier, operator`);
+  `GET /api/auth/me` — без `subscription`. Вход по списку клубов города (вступление в клуб из приложения) —
+  новая функция «каталог клубов», в этом слое её нет.
+
 ### 1.2. mobileclient (гостевые маршруты `routes/api.php`)
 
-Группа: `auth:sanctum`, `current-club`, `subscription` (402 «Подписка клуба не активна.»).
+Группа: `auth:sanctum`, `current-club`. То, что гость видит в клубе (новости, журнал, друзья и перевод другу), от
+подписки клуба не зависит (Zafiro 1a0487a); `subscription` (402 «Подписка клуба не активна.») — только у входа на
+ПК по QR (`qr-login`).
 
 | Вызов | Маршрут | Laravel | Новый код | Лимит |
 |---|---|---|---|---|

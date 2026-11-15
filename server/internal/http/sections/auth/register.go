@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -27,7 +28,9 @@ import (
 	authapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/auth"
 	apicommon "github.com/aitmaganbetov/zafirogo/server/internal/http/api/common"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
+	"github.com/aitmaganbetov/zafirogo/server/internal/safego"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
+	"github.com/aitmaganbetov/zafirogo/server/internal/telegram"
 )
 
 // Тексты AuthController::register() (ключи перевода) и ClubInvitationController.
@@ -115,6 +118,7 @@ func (h *handlers) Register(ctx context.Context, req authapi.RegisterRequestObje
 	}
 	now := h.d.NowFunc()
 	var userID, clubID int64
+	var trialEnds time.Time
 	err = db.InPlatformTx(ctx, pool, func(q *store.Queries) error {
 		var err error
 		if userID, err = q.RegisterCreateUser(ctx, store.RegisterCreateUserParams{Name: name, Phone: phone, Password: hash, Now: &now}); err != nil {
@@ -138,6 +142,7 @@ func (h *handlers) Register(ctx context.Context, req authapi.RegisterRequestObje
 			days = trialDays
 		}
 		ends := now.AddDate(0, 0, days)
+		trialEnds = ends
 		if err := q.RegisterCreateSubscription(ctx, store.RegisterCreateSubscriptionParams{
 			ClubID: clubID, SaasPlanID: plan.ID, Now: now, TrialEndsAt: &ends,
 		}); err != nil {
@@ -155,11 +160,45 @@ func (h *handlers) Register(ctx context.Context, req authapi.RegisterRequestObje
 	if err != nil {
 		return nil, err
 	}
+	h.reportNewClub(ctx, r, telegram.NewClub{Name: clubName, OwnerName: name, OwnerPhone: phone, TrialEndsAt: trialEnds}, clubID)
 	body2, err := h.startSession(ctx, w, userID, clubID)
 	if err != nil {
 		return nil, err
 	}
 	return authapi.Register201JSONResponse(body2), nil
+}
+
+// reportNewClub — сообщение о новом клубе в чат оповещений платформы, в фоне: медленный Telegram не должен
+// задерживать нового владельца (app()->terminating(fn () => $alerts->clubRegistered($club, $user))).
+// Laravel: app/Http/Controllers/AuthController.php register() (Zafiro e872af0).
+func (h *handlers) reportNewClub(ctx context.Context, r *http.Request, c telegram.NewClub, clubID int64) {
+	alerts := h.d.Superadmin.TelegramAlerts
+	if alerts == nil {
+		return
+	}
+	var host string
+	if r != nil {
+		host = r.Host
+	}
+	c.URL = cabinetClubURL(h.d.Superadmin.Domain, host, clubID)
+	log := h.d.Log()
+	(*safego.Group)(nil).Go("club-registered-alert", func() { // паника отправки не роняет процесс (BC-04)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if _, err := alerts.ClubRegistered(ctx, c); err != nil {
+			log.WarnContext(ctx, "new club was not reported to the alerts chat", "club_id", clubID, "err", err)
+		}
+	})
+}
+
+// cabinetClubURL — route('superadmin.clubs.show', $club): на хосте кабинета (SUPERADMIN_DOMAIN) — /clubs/{id},
+// иначе /superadmin/clubs/{id} на хосте запроса. Схема — https (панель работает только по HTTPS: cookie Secure).
+func cabinetClubURL(domain, requestHost string, clubID int64) string {
+	id := strconv.FormatInt(clubID, 10)
+	if domain != "" {
+		return "https://" + domain + "/clubs/" + id
+	}
+	return "https://" + requestHost + "/superadmin/clubs/" + id
 }
 
 // validatePhone — 'phone' => ['required', 'regex:/^\+7\d{10}$/', 'unique:users'].

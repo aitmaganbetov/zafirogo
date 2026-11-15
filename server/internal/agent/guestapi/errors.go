@@ -158,7 +158,8 @@ func notFoundStatus(err error) error {
 func pricingStatus(e *pricing.Error) error {
 	code, reason := codes.FailedPrecondition, agentv1.ErrorCode_ERROR_CODE_VALIDATION_FAILED
 	switch e.Code {
-	case pricing.ErrTariffUnavailable.Code, pricing.ErrTariffNotForComputer.Code, pricing.ErrNoHourlyPrice.Code:
+	case pricing.ErrTariffUnavailable.Code, pricing.ErrTariffNotForComputer.Code, pricing.ErrNoHourlyPrice.Code,
+		pricing.ErrTariffValidUntil.Code: // период действия тарифа закончится раньше оплаченного времени
 		reason = agentv1.ErrorCode_ERROR_CODE_TARIFF_UNAVAILABLE
 	case pricing.ErrComputerReserved.Code:
 		reason = agentv1.ErrorCode_ERROR_CODE_COMPUTER_RESERVED

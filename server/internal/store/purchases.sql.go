@@ -811,6 +811,31 @@ func (q *Queries) SetComputerSession(ctx context.Context, arg SetComputerSession
 	return err
 }
 
+const setTimePackageMinutes = `-- name: SetTimePackageMinutes :exec
+UPDATE time_packages
+SET minutes_left = $1, updated_at = $2
+WHERE club_id = $3 AND id = $4
+`
+
+type SetTimePackageMinutesParams struct {
+	MinutesLeft int64      `json:"minutes_left"`
+	Now         *time.Time `json:"now"`
+	ClubID      int64      `json:"club_id"`
+	ID          int64      `json:"id"`
+}
+
+// AgentTariffPurchaseService::startPackage(): $package->update(['minutes_left' => $rest]) — время дальше конца
+// периода действия тарифа остаётся в пакете. Строка заблокирована LockTimePackage.
+func (q *Queries) SetTimePackageMinutes(ctx context.Context, arg SetTimePackageMinutesParams) error {
+	_, err := q.db.Exec(ctx, setTimePackageMinutes,
+		arg.MinutesLeft,
+		arg.Now,
+		arg.ClubID,
+		arg.ID,
+	)
+	return err
+}
+
 const setTotalSpent = `-- name: SetTotalSpent :exec
 UPDATE club_memberships
 SET total_spent = $1, updated_at = $2

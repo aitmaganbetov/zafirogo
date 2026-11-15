@@ -306,9 +306,56 @@ func TestAuth(t *testing.T) {
 	})
 
 	t.Run("GS-230 inactive subscription", func(t *testing.T) {
+		// Сотруднику подписка клуба нужна: вход и профиль — 402.
 		other := e.newClub(false)
-		_, p2 := e.user(other, "Б", "client", 0)
-		expect(t, e.login(p2, "mobileclient"), 402, map[string]any{"message": "Подписка клуба не активна."})
+		_, p2 := e.user(other, "Б", "operator", 0)
+		expect(t, e.login(p2, "Zafiro Staff"), 402, map[string]any{"message": "Подписка клуба не активна."})
+
+		// Zafiro 1a0487a: гость приложения от подписки клуба не зависит — вход, профиль, новости, история, друзья;
+		// вход на ПК по QR — зависит.
+		_, p3 := e.user(other, "Гость", "client", 0)
+		r := e.login(p3, "mobileclient")
+		expect(t, r, 200, map[string]any{"club_id": other})
+		tok := r.body["access_token"].(string)
+		for _, path := range []string{"/api/auth/me", "/api/guest/news", "/api/guest/history", "/api/guest/friends"} {
+			expect(t, e.do("GET", path, tok, nil), 200, nil)
+		}
+		expect(t, e.do("GET", "/api/guest/qr-login/"+strings.Repeat("A", 40), tok, nil), 402, map[string]any{"message": "Подписка клуба не активна."})
+
+		// Подписка истекла после входа сотрудника: его маршруты — 402, профиль /api/auth/me открыт (маршрут без
+		// middleware subscription), смена клуба на клуб с истёкшей подпиской — 402 сотруднику и 200 гостю.
+		third := e.newClub(true)
+		sid, p4 := e.user(third, "Оператор", "operator", 0)
+		e.join(other, sid, "cashier", 0)
+		st := e.token(p4, "Zafiro Staff")
+		expect(t, e.do("POST", "/api/auth/switch-club", st, map[string]any{"club_id": other}), 402, map[string]any{"message": "Подписка клуба не активна."})
+		e.exec("UPDATE club_subscriptions SET status = 'expired' WHERE club_id = $1", third)
+		expect(t, e.do("GET", "/api/staff/me", st, nil), 402, map[string]any{"message": "Подписка клуба не активна."})
+		expect(t, e.do("GET", "/api/auth/me", st, nil), 200, nil)
+		gid, p5 := e.user(e.club, "Гость 2", "client", 0)
+		e.join(other, gid, "client", 0)
+		expect(t, e.do("POST", "/api/auth/switch-club", e.token(p5, "mobileclient"), map[string]any{"club_id": other}), 200, map[string]any{"club_id": other})
+	})
+
+	t.Run("login without a club picks a club with an active subscription", func(t *testing.T) {
+		// Zafiro fcd5d41 (ApiAuthTest «mobile login without a club picks a club of the account with an active
+		// subscription»): первое членство — в клубе с истёкшей подпиской, второе — в активном.
+		lapsed := e.newClub(false)
+		id, p := e.user(lapsed, "В", "operator", 0)
+		active := e.newClub(true)
+		e.join(active, id, "client", 0)
+		expect(t, e.login(p, "mobileclient"), 200, map[string]any{"club_id": active})
+		// Выбранный клуб не подменяется.
+		expect(t, e.do("POST", "/api/auth/login", "", map[string]any{"phone": p, "password": "pw", "device_name": "mobileclient", "club_id": lapsed}), 402,
+			map[string]any{"message": "Подписка клуба не активна."})
+		// Два активных клуба — первое членство (по id), как раньше.
+		older := e.newClub(true)
+		id2, p2 := e.user(older, "Г", "client", 0)
+		e.join(e.newClub(true), id2, "client", 0)
+		expect(t, e.login(p2, "mobileclient"), 200, map[string]any{"club_id": older})
+		// Ни один клуб аккаунта не активен — ответ прежний: первое членство, сотруднику 402.
+		e.exec("UPDATE club_subscriptions SET status = 'expired' WHERE club_id = $1", active)
+		expect(t, e.login(p, "mobileclient"), 402, map[string]any{"message": "Подписка клуба не активна."})
 	})
 
 	t.Run("GS-520 switch club and club list", func(t *testing.T) {
