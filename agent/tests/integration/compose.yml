@@ -41,7 +41,7 @@ services:
       retries: 30
 
   nats:
-    image: mirror.gcr.io/library/nats:2.15.2-alpine
+    image: mirror.gcr.io/library/nats:2.15.3-alpine
     command: ["-js", "-m", "8222"]
     ports:
       - "127.0.0.1:${AGENT_IT_NATS_PORT:-54322}:4222"
