@@ -64,6 +64,22 @@ func (q *Queries) AdminCountCustomers(ctx context.Context, arg AdminCountCustome
 	return column_1, err
 }
 
+const adminCountCustomersAll = `-- name: AdminCountCustomersAll :one
+SELECT count(*)::bigint
+FROM club_memberships m
+WHERE m.club_id = $1
+  AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator')
+`
+
+// «Всего: :count» без поиска (PB-07): то же число, что AdminCountCustomers с пустым search, но без соединения с
+// users (у каждого членства пользователь есть — FK) — только индекс club_memberships (club_id, role, user_id).
+func (q *Queries) AdminCountCustomersAll(ctx context.Context, clubID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, adminCountCustomersAll, clubID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const adminCreateCustomer = `-- name: AdminCreateCustomer :one
 WITH new_user AS (
     INSERT INTO users (name, phone, email, password, created_at, updated_at)

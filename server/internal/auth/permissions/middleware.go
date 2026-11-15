@@ -2,9 +2,7 @@ package permissions
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"slices"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
 )
@@ -21,8 +19,6 @@ const (
 	MsgReadOnly = "Режим просмотра: суперадмин не может ничего менять в клубе."
 	// MsgNoRight — Laravel: RequireClubArea::handle() (право маршрута панели).
 	MsgNoRight = "Нет права на это действие. Его даёт владелец клуба в «Настройки → Права»."
-	// MsgNoSectionRight — Laravel: RequireClubPermission::handle() (club-can:… в API сотрудника).
-	MsgNoSectionRight = "Нет права на этот раздел. Его даёт владелец клуба в «Настройки → Права»."
 )
 
 // Коды ошибок в теле ответа.
@@ -105,51 +101,9 @@ func RequireClub(next http.Handler) http.Handler {
 	})
 }
 
-// RequirePermission — право «section.action» в выбранном клубе (RequireClub + ClubPermissions::allows).
-// Laravel: RequireClubArea (маршруты панели) — текст MsgNoRight. Несуществующее право — паника при
-// сборке роутера: в старом такой маршрут отклонялся всегда (GS-254), здесь ошибка видна сразу.
-func RequirePermission(right string) func(http.Handler) http.Handler {
-	return requirePermission(right, MsgNoRight)
-}
-
-// RequireSectionPermission — то же с текстом RequireClubPermission (club-can:… — API сотрудника).
-func RequireSectionPermission(right string) func(http.Handler) http.Handler {
-	return requirePermission(right, MsgNoSectionRight)
-}
-
-func requirePermission(right, message string) func(http.Handler) http.Handler {
-	if !Exists(right) {
-		panic(fmt.Sprintf("permissions: unknown right %q", right))
-	}
-	return func(next http.Handler) http.Handler {
-		return RequireClub(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			p, _ := principal.FromContext(r.Context())
-			if !p.Can(right) {
-				Forbidden(w, message)
-				return
-			}
-			next.ServeHTTP(w, r)
-		}))
-	}
-}
-
-// RequireRole — роль в клубе: владелец всегда, иначе одна из roles. Laravel: RequireClubRole
-// (club-role:owner,admin,… ; отказ — abort(403) без текста).
-func RequireRole(roles ...string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return RequireClub(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			p, _ := principal.FromContext(r.Context())
-			if p.Role == "" || (p.Role != RoleOwner && !slices.Contains(roles, p.Role)) {
-				Forbidden(w, "")
-				return
-			}
-			next.ServeHTTP(w, r)
-		}))
-	}
-}
-
-// RequireStaff — любая роль сотрудника (club-role:owner,admin,manager,cashier,operator).
-func RequireStaff(next http.Handler) http.Handler { return RequireRole(StaffRoles...)(next) }
+// Права разделов панели проверяет httpx.Access (server/internal/http/httpx/strict.go) по таблице RouteRights —
+// отдельных middleware «право»/«роль» нет (удалены как недостижимые из cmd/zafiro, аудит BC-11); роль там, где
+// Laravel ставил club-role:…, проверяет обработчик раздела.
 
 // RequireSuperadmin — кабинет суперадмина. Laravel: RequireSuperadmin — флаг суперадмина и не заблокирован
 // (заблокированный пользователь Principal не получает вовсе — auth/session).

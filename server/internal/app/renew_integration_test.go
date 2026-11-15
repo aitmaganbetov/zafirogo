@@ -111,7 +111,7 @@ func TestRenewedStreamSurvivesSupersede(t *testing.T) {
 
 	// Событие отзыва прежнего сертификата приходит (ещё раз) уже при открытом новом потоке — как из NATS
 	// другого инстанса или CertCache.Refresh: новый поток жив.
-	kickRevoked(ctx, a.Stream, slog.New(slog.NewTextHandler(io.Discard, nil)))(
+	kickRevoked(ctx, nil, a.Stream, slog.New(slog.NewTextHandler(io.Discard, nil)))(
 		enroll.RevokedCert{Serial: oldSerial, ClubID: clubID, ComputerID: pcID})
 	select {
 	case err := <-errc2:

@@ -91,17 +91,29 @@ func (h *handlers) load(ctx context.Context, q *store.Queries, clubID int64, ids
 	if d.settings, err = q.ClubMapSettings(ctx, clubID); err != nil {
 		return d, err
 	}
+	if ids != nil {
+		// Выбранные ПК — одним запросом по id (PB-08): фронт спрашивает 1–несколько ПК на каждое событие
+		// computer.state, и весь клуб (сотни ПК, 34 колонки, два соединения) для этого читать не нужно.
+		list := make([]int64, 0, len(ids))
+		for id := range ids {
+			list = append(list, id)
+		}
+		rows, err := q.ClubMapStateComputers(ctx, store.ClubMapStateComputersParams{ClubID: clubID, Ids: list})
+		if err != nil {
+			return d, err
+		}
+		d.rows = make([]store.ClubMapComputersRow, 0, len(rows))
+		for _, r := range rows {
+			d.rows = append(d.rows, store.ClubMapComputersRow(r))
+		}
+	}
 	var after int64
-	for {
+	for ids == nil {
 		rows, err := q.ClubMapComputers(ctx, store.ClubMapComputersParams{ClubID: clubID, AfterID: after, PageSize: 500})
 		if err != nil {
 			return d, err
 		}
-		for _, r := range rows {
-			if ids == nil || ids[r.ID] {
-				d.rows = append(d.rows, r)
-			}
-		}
+		d.rows = append(d.rows, rows...)
 		if len(rows) < 500 {
 			break
 		}
@@ -173,6 +185,30 @@ func (h *handlers) presenceByID(ctx context.Context, clubID int64) map[int64]pre
 	}
 	return clubmap.PresenceByID(states)
 }
+
+// presenceOf — присутствие выбранных ПК: для нескольких (≤ presenceGetMax) — снимки по одному (presence.Store.Get),
+// без чтения хеша всего клуба (PB-08, PB-21); иначе — как presenceByID.
+func (h *handlers) presenceOf(ctx context.Context, clubID int64, ids map[int64]bool) map[int64]presence.State {
+	g, ok := h.d.Presence.(presenceGetter)
+	if ids == nil || len(ids) > presenceGetMax || !ok {
+		return h.presenceByID(ctx, clubID)
+	}
+	out := make(map[int64]presence.State, len(ids))
+	for id := range ids {
+		st, found, err := g.Get(ctx, clubID, id)
+		if err != nil {
+			h.d.Log().WarnContext(ctx, "club map: presence", "err", err)
+			return out
+		}
+		if found && st.Online {
+			out[id] = st
+		}
+	}
+	return out
+}
+
+// presenceGetMax — до скольких ПК присутствие читается по одному (обращение к Valkey на ПК), а не хешем клуба.
+const presenceGetMax = 8
 
 // state — элемент ClubZoneController::computerStates() (классы подсветки — поле light).
 func (h *handlers) state(ctx context.Context, r store.ClubMapComputersRow, d mapData, pres map[int64]presence.State, now time.Time) clubmapapi.ComputerState {
@@ -273,7 +309,7 @@ func (h *handlers) GetClubMapState(ctx context.Context, req clubmapapi.GetClubMa
 	}); err != nil {
 		return nil, err
 	}
-	pres := h.presenceByID(ctx, clubID)
+	pres := h.presenceOf(ctx, clubID, ids)
 	out := clubmapapi.ClubMapState{Computers: make([]clubmapapi.ComputerState, 0, len(d.rows))}
 	for _, r := range d.rows {
 		out.Computers = append(out.Computers, h.state(ctx, r, d, pres, now))

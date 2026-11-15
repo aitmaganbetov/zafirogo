@@ -1,5 +1,4 @@
 using System.IO;
-using System.Threading;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -22,7 +21,6 @@ namespace Zafiro.Agent.UI;
 /// </summary>
 internal sealed class UiApp : Application
 {
-    private readonly LaunchOptions _options;
     private readonly CancellationTokenSource _stop = new();
     private readonly UiController _ui;
     private readonly IpcClient _ipc;
@@ -38,7 +36,6 @@ internal sealed class UiApp : Application
 
     public UiApp(LaunchOptions options)
     {
-        _options = options;
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         _ui = new UiController(options.Launcher);
         _ipc = new IpcClient(IpcClient.NamedPipe(options.PipeName));

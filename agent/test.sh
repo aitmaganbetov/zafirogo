@@ -9,15 +9,16 @@
 #   agent/test.sh aot           # проверка Native AOT: publish консольного хоста службы (linux-x64) → agent/.work/aot
 #   agent/test.sh dotnet <args> # произвольная команда dotnet в контейнере (например: restore --force-evaluate)
 #
-# Переменные: DOTNET_IMAGE (mcr.microsoft.com/dotnet/sdk:10.0), AGENT_NUGET_VOLUME (zafirogo-agent-nuget),
+# Переменные: DOTNET_IMAGE (закреплённый образ dotnet/sdk — см. ниже), AGENT_NUGET_VOLUME (zafirogo-agent-nuget),
 # KEEP_SERVER=1 — не останавливать сервер после integration.
-# Сеть контейнера — сеть хоста (прокси/CA окружения прокидываются, как в tools/proto-csharp-check.sh), поэтому
+# Сеть контейнера — сеть хоста (прокси/CA окружения прокидываются), поэтому
 # интеграционные тесты видят Go-сервер на 127.0.0.1.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
-DOTNET_IMAGE="${DOTNET_IMAGE:-mcr.microsoft.com/dotnet/sdk:10.0}"
+# Точный тег и digest (PD-4): плавающий 10.0 менял ILLink и ломал restore --locked-mode.
+DOTNET_IMAGE="${DOTNET_IMAGE:-mcr.microsoft.com/dotnet/sdk:10.0.403@sha256:212fe4cb74627d5adf9817a4088906ae3edff1bd853bb27565d4b46731efe61e}"
 NUGET_VOLUME="${AGENT_NUGET_VOLUME:-zafirogo-agent-nuget}"
 MODE="${1:-unit}"
 shift || true

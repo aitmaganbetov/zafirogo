@@ -9,7 +9,6 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/guestapi"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/password"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/legacy"
-	"github.com/aitmaganbetov/zafirogo/server/internal/i18n"
 	"github.com/aitmaganbetov/zafirogo/server/internal/monitoring"
 	"github.com/aitmaganbetov/zafirogo/server/internal/telegram"
 	"github.com/aitmaganbetov/zafirogo/server/internal/verifycode"
@@ -30,7 +29,7 @@ func newTelegram(a *App, hasher *password.Hasher, guestTokenTTL time.Duration, n
 	st := &telegram.Store{Pool: a.PlatformPool}
 	t := &telegramSet{store: st}
 	t.gateway = &telegram.Gateway{API: &telegram.GatewayClient{Log: log}, Store: st, Log: log}
-	t.alerts = &telegram.Alerts{API: &telegram.BotClient{Log: log}, Store: st, I18n: i18n.NewCatalog(a.AppPool), Log: log}
+	t.alerts = &telegram.Alerts{API: &telegram.BotClient{Log: log}, Store: st, I18n: a.I18n, Log: log}
 	t.recovery = &verifycode.PasswordRecovery{Platform: a.PlatformPool, Gateway: t.gateway, Hasher: hasher, Now: now, Log: log,
 		SignOut: passwordResetSignOut(a, guestTokenTTL, log)}
 	t.transfers = &verifycode.TransferCodes{App: a.AppPool, Platform: a.PlatformPool, Gateway: t.gateway, Hasher: hasher, Now: now, Log: log}

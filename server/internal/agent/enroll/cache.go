@@ -11,6 +11,7 @@ import (
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	grpcserver "github.com/aitmaganbetov/zafirogo/server/internal/grpc"
+	"github.com/aitmaganbetov/zafirogo/server/internal/safego"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -346,18 +347,23 @@ func (c *CertCache) triggerFirstUse(serial string, clubID int64) {
 	}
 	c.inFlight[serial] = true
 	c.mu.Unlock()
-	go func() {
+	// Паника отметки не роняет процесс (BC-04); serial снимается с inFlight в любом случае — иначе отметка этого
+	// сертификата больше не повторилась бы.
+	(*safego.Group)(nil).Go("cert-first-use", func() {
+		err := errors.New("first use: panic")
+		defer func() {
+			c.mu.Lock()
+			delete(c.inFlight, serial)
+			if e, ok := c.valid[serial]; ok && err == nil {
+				e.pendingFirstUse = false
+				c.valid[serial] = e
+			}
+			c.mu.Unlock()
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		err := fn(ctx, clubID, serial)
-		c.mu.Lock()
-		delete(c.inFlight, serial)
-		if e, ok := c.valid[serial]; ok && err == nil {
-			e.pendingFirstUse = false
-			c.valid[serial] = e
-		}
-		c.mu.Unlock()
-	}()
+		err = fn(ctx, clubID, serial)
+	})
 }
 
 // Len — число действующих сертификатов в кэше (метрики, тесты).

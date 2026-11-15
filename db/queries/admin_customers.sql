@@ -54,6 +54,14 @@ WHERE m.club_id = sqlc.arg(club_id)
   AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator')
   AND (sqlc.arg(search)::text = '' OR u.name ILIKE sqlc.arg(search)::text OR u.phone ILIKE sqlc.arg(search)::text);
 
+-- name: AdminCountCustomersAll :one
+-- «Всего: :count» без поиска (PB-07): то же число, что AdminCountCustomers с пустым search, но без соединения с
+-- users (у каждого членства пользователь есть — FK) — только индекс club_memberships (club_id, role, user_id).
+SELECT count(*)::bigint
+FROM club_memberships m
+WHERE m.club_id = sqlc.arg(club_id)
+  AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator');
+
 -- name: AdminAccountsLocked :many
 -- UserController::index() $staffElsewhere / isAccountLocked(): аккаунты, которые открывают панель какого-либо
 -- клуба (сотрудник в любом клубе, withoutGlobalScope('club')) или суперадминку. Пул zafiro_platform (все клубы);

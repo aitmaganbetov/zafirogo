@@ -1,4 +1,3 @@
-using System.Threading;
 using Zafiro.Agent.UI.Screens;
 
 namespace Zafiro.Agent.UI;

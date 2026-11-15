@@ -69,6 +69,23 @@ UPDATE club_computers
 SET status = 'online', last_seen_at = sqlc.arg(now), updated_at = sqlc.arg(now)
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(computer_id) AND status <> 'online';
 
+-- name: MarkAgentsOffline :many
+-- MarkAgentOffline пачкой (PB-14; платформенный пул, presence.Sweeper): обрыв сети клуба на 500 ПК — одна команда
+-- вместо 500. Возвращает ПК, у которых статус действительно сменился.
+UPDATE club_computers c
+SET status = 'offline', last_seen_at = u.seen, updated_at = sqlc.arg(now)
+FROM (SELECT unnest(sqlc.arg(club_ids)::bigint[]) AS club_id, unnest(sqlc.arg(computer_ids)::bigint[]) AS computer_id,
+             unnest(sqlc.arg(seen)::timestamptz[]) AS seen) AS u
+WHERE c.club_id = u.club_id AND c.id = u.computer_id AND c.status = 'online'
+RETURNING c.club_id, c.id;
+
+-- name: MarkAgentsOnline :execrows
+-- MarkAgentOnline пачкой (исправление гонки «офлайн записан, а ПК уже переподключился»).
+UPDATE club_computers c
+SET status = 'online', last_seen_at = sqlc.arg(now), updated_at = sqlc.arg(now)
+FROM (SELECT unnest(sqlc.arg(club_ids)::bigint[]) AS club_id, unnest(sqlc.arg(computer_ids)::bigint[]) AS computer_id) AS u
+WHERE c.club_id = u.club_id AND c.id = u.computer_id AND c.status <> 'online';
+
 -- name: ListOnlineComputers :many
 -- Платформенный запрос (пул zafiro_platform): ПК со status = 'online' для сверки с Valkey.
 -- Keyset по (club_id, id); индекс club_computers_online_index.

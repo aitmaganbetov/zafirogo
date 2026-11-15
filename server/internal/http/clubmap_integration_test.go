@@ -372,6 +372,13 @@ func TestErrorMessagesInClubLocale(t *testing.T) {
 			lang, row[0], row[1], row[2])
 	}
 	e.exec("UPDATE clubs SET locale = 'kk' WHERE id = $1", e.club)
+	// Правки сделаны мимо API, прямо в базе: каталог переводов (снимок в памяти, PB-01) увидит их фоновой сверкой —
+	// не позже 5 с.
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if fieldError(e.post(manager, "/api/club-map", zoneBody("", nil)), "name") == "«атауы» өрісі міндетті." {
+			break
+		}
+	}
 	expectField(t, e.post(manager, "/api/club-map", zoneBody("", nil)), "name", "«атауы» өрісі міндетті.")
 	z := num(e.post(manager, "/api/club-map", zoneBody("Зал", nil)).body["id"])
 	pc := num(e.post(manager, fmt.Sprintf("/api/club-map/%d/computers", z), nil).body["id"])

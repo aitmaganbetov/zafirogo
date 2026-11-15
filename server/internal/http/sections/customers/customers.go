@@ -105,7 +105,16 @@ func (h *handlers) ListCustomers(ctx context.Context, req customersapi.ListCusto
 				out.PrevBeforeId = httpx.Ptr(rows[0].UserID)
 			}
 		}
-		total, err := q.AdminCountCustomers(ctx, store.AdminCountCustomersParams{ClubID: clubID, Search: search})
+		// Без поиска счётчик не соединяется с users (PB-07): число то же, читается только индекс членств.
+		var (
+			total int64
+			err   error
+		)
+		if search == "" {
+			total, err = q.AdminCountCustomersAll(ctx, clubID)
+		} else {
+			total, err = q.AdminCountCustomers(ctx, store.AdminCountCustomersParams{ClubID: clubID, Search: search})
+		}
 		if err != nil {
 			return err
 		}

@@ -238,16 +238,21 @@ func (h *handlers) CreateReservationsMany(ctx context.Context, req reservationsa
 			for _, id := range in.ComputerIds {
 				seen[id]++
 			}
+			// Все ПК формы — одним запросом (PB-14), а не запросом на каждый.
+			found, err := q.ReservationExistingComputerIDs(ctx, store.ReservationExistingComputerIDsParams{ClubID: p.ClubID, Ids: in.ComputerIds})
+			if err != nil {
+				return err
+			}
+			exists := make(map[int64]bool, len(found))
+			for _, id := range found {
+				exists[id] = true
+			}
 			for i, id := range in.ComputerIds {
 				field := "computer_ids." + strconv.Itoa(i)
 				if seen[id] > 1 {
 					fe.Add(field, httpx.RuleMessage(field, "distinct", ""))
 				}
-				n, err := q.ReservationComputersExist(ctx, store.ReservationComputersExistParams{ClubID: p.ClubID, Ids: []int64{id}})
-				if err != nil {
-					return err
-				}
-				if n == 0 {
+				if !exists[id] {
 					fe.Add(field, httpx.RuleMessage(field, "exists", ""))
 				}
 			}

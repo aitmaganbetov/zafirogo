@@ -20,7 +20,7 @@ func BearerToken(r *http.Request) string {
 }
 
 // Middleware кладёт Principal в контекст, если запрос несёт access-токен. Без токена запрос идёт дальше
-// анонимным (права проверяют permissions.Require*). Неверный/отозванный токен — 401, заблокированный
+// анонимным (вход, клуб и права проверяют permissions.RequireAuth/RequireClub и httpx.Access разделов). Неверный/отозванный токен — 401, заблокированный
 // пользователь — 403 «Аккаунт заблокирован.» (SetCurrentClub, ветка api/*).
 func (s *Service) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

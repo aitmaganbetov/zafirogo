@@ -29,6 +29,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/commands"
 	superadminapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/superadmin"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
+	"github.com/aitmaganbetov/zafirogo/server/internal/safego"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -292,7 +293,7 @@ func (h *handlers) sendUpdate(ctx context.Context, u *agentv1.UpdateAvailable, t
 		return
 	}
 	cmd := &agentv1.Command{Kind: &agentv1.Command_UpdateAvailable{UpdateAvailable: u}}
-	go func() {
+	(*safego.Group)(nil).Go("agent-release-send", func() { // паника рассылки не роняет процесс (BC-04)
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 		defer cancel()
 		for _, t := range targets {
@@ -300,7 +301,7 @@ func (h *handlers) sendUpdate(ctx context.Context, u *agentv1.UpdateAvailable, t
 				h.d.Log().WarnContext(ctx, "agent release: send", "club_id", t[0], "computer_id", t[1], "err", err)
 			}
 		}
-	}()
+	})
 }
 
 // SaClearAgentRelease — AgentReleaseController::destroy().

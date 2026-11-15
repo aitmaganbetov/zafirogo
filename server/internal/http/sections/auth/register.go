@@ -453,15 +453,20 @@ func (h *handlers) AcceptInvitation(ctx context.Context, req authapi.AcceptInvit
 
 // IssueWsTicket — POST /api/ws-ticket: одноразовый билет для /ws (EV-3).
 func (h *handlers) IssueWsTicket(ctx context.Context, _ authapi.IssueWsTicketRequestObject) (authapi.IssueWsTicketResponseObject, error) {
-	if h.d.WSTickets == nil {
-		return nil, httpx.ErrNotConfigured
-	}
 	p, ok := principal.FromContext(ctx)
 	if !ok {
 		return nil, httpx.NewAPIError(http.StatusUnauthorized, permissions.CodeUnauthenticated, permissions.MsgUnauthenticated)
 	}
 	if status, code, msg, ok := permissions.CheckClub(p, http.MethodGet); !ok {
 		return nil, httpx.NewAPIError(status, code, msg)
+	}
+	// Сокет панели — только персоналу клуба (realtime.Handler проверяет то же): клиенту с сессией QR-входа билет
+	// не выдаётся (аудит безопасности A-07).
+	if !permissions.IsStaff(p.Role) {
+		return nil, httpx.NewAPIError(http.StatusForbidden, permissions.CodeForbidden, "")
+	}
+	if h.d.WSTickets == nil {
+		return nil, httpx.ErrNotConfigured
 	}
 	_, r := httpx.HTTPFrom(ctx)
 	ticket, err := h.d.WSTickets.Issue(ctx, auth.BearerToken(r))

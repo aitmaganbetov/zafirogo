@@ -299,24 +299,12 @@ func TestMiddleware(t *testing.T) {
 		status int
 		msg    string
 	}{
-		{"anon", RequirePermission("cash.view")(ok200), "GET", nil, 401, MsgUnauthenticated},
-		{"cashier cash.view", RequirePermission("cash.view")(ok200), "GET", &cashier, 200, ""},
-		{"cashier refund", RequirePermission("cash.delete")(ok200), "POST", &cashier, 403, MsgNoRight},
-		{"cashier tariffs", RequirePermission("tariffs.update")(ok200), "POST", &cashier, 403, MsgNoRight},
-		{"manager tariffs", RequirePermission("tariffs.update")(ok200), "POST", &manager, 200, ""},
-		{"manager tariffs delete", RequirePermission("tariffs.delete")(ok200), "DELETE", &manager, 403, MsgNoRight},
-		{"manager customer money", RequirePermission("customer_money.update")(ok200), "PATCH", &manager, 200, ""},
-		{"cashier customer money", RequireSectionPermission("customer_money.update")(ok200), "PATCH", &cashier, 403, MsgNoSectionRight},
+		{"anon club", RequireClub(ok200), "GET", nil, 401, MsgUnauthenticated},
+		{"cashier club", RequireClub(ok200), "POST", &cashier, 200, ""},
+		{"client club", RequireClub(ok200), "GET", &client, 200, ""}, // права и роль проверяет httpx.Access / раздел
 		{"no club", RequireClub(ok200), "GET", &noClub, 403, MsgNoClubs},
-		{"viewing GET", RequirePermission("tariffs.view")(ok200), "GET", &viewing, 200, ""},
 		{"viewing HEAD", RequireClub(ok200), "HEAD", &viewing, 200, ""},
-		{"viewing POST", RequirePermission("cash.create")(ok200), "POST", &viewing, 403, MsgReadOnly},
 		{"viewing DELETE", RequireClub(ok200), "DELETE", &viewing, 403, MsgReadOnly},
-		{"client reservations", RequirePermission("reservations.view")(ok200), "GET", &client, 403, MsgNoRight},
-		{"client staff", RequireStaff(ok200), "GET", &client, 403, ""},
-		{"cashier staff", RequireStaff(ok200), "GET", &cashier, 200, ""},
-		{"role owner,admin: manager", RequireRole(RoleAdmin)(ok200), "GET", &manager, 403, ""},
-		{"role admin: owner passes", RequireRole(RoleAdmin)(ok200), "GET", &viewing, 200, ""},
 		{"superadmin", RequireSuperadmin(ok200), "POST", &noClub, 200, ""},
 		{"not superadmin", RequireSuperadmin(ok200), "GET", &manager, 403, ""},
 		{"superadmin anon", RequireSuperadmin(ok200), "GET", nil, 401, MsgUnauthenticated},
@@ -332,15 +320,6 @@ func TestMiddleware(t *testing.T) {
 			t.Errorf("%s: body %s, want %q", c.name, w.Body.String(), c.msg)
 		}
 	}
-}
-
-func TestRequirePermissionUnknownPanics(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic")
-		}
-	}()
-	RequirePermission("cash.update")
 }
 
 func TestPrincipalCan(t *testing.T) {

@@ -3,6 +3,7 @@ package realtime
 import (
 	"strings"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
 )
 
@@ -26,7 +27,7 @@ var SectionRights = map[string]string{
 	"stock":         "stock.view",
 }
 
-// Allowed — может ли сотрудник p получить событие типа eventType. Нужна роль в выбранном клубе;
+// Allowed — может ли сотрудник p получить событие типа eventType. Нужна роль персонала в выбранном клубе (A-07);
 // суперадмин сам по себе прав в клубе не имеет — в режиме просмотра клуба Principal собирается как
 // владелец (auth/principal, Can).
 func Allowed(p principal.Principal, eventType string) bool {
@@ -35,7 +36,7 @@ func Allowed(p principal.Principal, eventType string) bool {
 	if !ok {
 		return false
 	}
-	if p.ClubID <= 0 || p.Role == "" {
+	if p.ClubID <= 0 || !permissions.IsStaff(p.Role) {
 		return false
 	}
 	if right == "" {

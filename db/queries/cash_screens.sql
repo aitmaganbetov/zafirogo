@@ -41,15 +41,21 @@ LIMIT sqlc.arg(max_services);
 -- name: CashSearchCustomers :many
 -- index(): пользователи клуба (join club_memberships, left join member_balances) по имени — поиск по имени или
 -- телефону (search — экранированный шаблон ILIKE, пусто — первые по имени).
-SELECT u.id, u.name, u.phone,
+-- Балансы соединяются после LIMIT (PB-05): строка member_balances на пару (club_id, user_id) одна, результат тот же.
+-- Поиск идёт по индексам pg_trgm users(name), users(phone) (0032) — план с подставленным значением (db.customPlan).
+SELECT s.id, s.name, s.phone,
        COALESCE(b.balance, 0)::bigint AS balance, COALESCE(b.bonus_balance, 0)::bigint AS bonus_balance
-FROM club_memberships m
-JOIN users u ON u.id = m.user_id
-LEFT JOIN member_balances b ON b.club_id = m.club_id AND b.user_id = m.user_id
-WHERE m.club_id = sqlc.arg(club_id)
-  AND (sqlc.arg(search)::text = '' OR u.name ILIKE sqlc.arg(search)::text OR u.phone ILIKE sqlc.arg(search)::text)
-ORDER BY u.name, u.id
-LIMIT sqlc.arg(page_size);
+FROM (
+    SELECT u.id, u.name, u.phone, m.club_id
+    FROM club_memberships m
+    JOIN users u ON u.id = m.user_id
+    WHERE m.club_id = sqlc.arg(club_id)
+      AND (sqlc.arg(search)::text = '' OR u.name ILIKE sqlc.arg(search)::text OR u.phone ILIKE sqlc.arg(search)::text)
+    ORDER BY u.name, u.id
+    LIMIT sqlc.arg(page_size)
+) s
+LEFT JOIN member_balances b ON b.club_id = s.club_id AND b.user_id = s.id
+ORDER BY s.name, s.id;
 
 -- name: CashListShiftIncomesPage :many
 -- operations(): приходы смены, новые сверху, с возвратом — paginate(25) (номер страницы, как ->links()).

@@ -543,5 +543,15 @@ INSERT INTO translations (language_id, "group", key, key_hash, value, created_at
 VALUES (sqlc.arg(language_id), sqlc.arg(grp), sqlc.arg(key), sqlc.arg(key_hash), sqlc.arg(value), sqlc.arg(now), sqlc.arg(now))
 ON CONFLICT (language_id, "group", key_hash) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
 
+-- name: SuperadminUpsertTranslations :exec
+-- SuperadminUpsertTranslation пачкой (PB-14): сохранение страницы/импорт переводов — одна команда. Хеши в пачке
+-- не повторяются (ключ карты значений).
+INSERT INTO translations (language_id, "group", key, key_hash, value, created_at, updated_at)
+SELECT sqlc.arg(language_id)::bigint, u.grp, u.key, u.key_hash, u.value, sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
+FROM (SELECT unnest(sqlc.arg(grps)::text[]) AS grp, unnest(sqlc.arg(keys)::text[]) AS key,
+             unnest(sqlc.arg(key_hashes)::text[]) AS key_hash, unnest(sqlc.arg(vals)::text[]) AS value) AS u
+ORDER BY u.key_hash
+ON CONFLICT (language_id, "group", key_hash) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
+
 -- name: SuperadminDeleteTranslations :exec
 DELETE FROM translations WHERE language_id = sqlc.arg(language_id) AND id = ANY(sqlc.arg(ids)::bigint[]);

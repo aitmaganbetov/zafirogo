@@ -437,6 +437,76 @@ func (q *Queries) MarkAgentOnline(ctx context.Context, arg MarkAgentOnlineParams
 	return result.RowsAffected(), nil
 }
 
+const markAgentsOffline = `-- name: MarkAgentsOffline :many
+UPDATE club_computers c
+SET status = 'offline', last_seen_at = u.seen, updated_at = $1
+FROM (SELECT unnest($2::bigint[]) AS club_id, unnest($3::bigint[]) AS computer_id,
+             unnest($4::timestamptz[]) AS seen) AS u
+WHERE c.club_id = u.club_id AND c.id = u.computer_id AND c.status = 'online'
+RETURNING c.club_id, c.id
+`
+
+type MarkAgentsOfflineParams struct {
+	Now         *time.Time  `json:"now"`
+	ClubIds     []int64     `json:"club_ids"`
+	ComputerIds []int64     `json:"computer_ids"`
+	Seen        []time.Time `json:"seen"`
+}
+
+type MarkAgentsOfflineRow struct {
+	ClubID int64 `json:"club_id"`
+	ID     int64 `json:"id"`
+}
+
+// MarkAgentOffline пачкой (PB-14; платформенный пул, presence.Sweeper): обрыв сети клуба на 500 ПК — одна команда
+// вместо 500. Возвращает ПК, у которых статус действительно сменился.
+func (q *Queries) MarkAgentsOffline(ctx context.Context, arg MarkAgentsOfflineParams) ([]MarkAgentsOfflineRow, error) {
+	rows, err := q.db.Query(ctx, markAgentsOffline,
+		arg.Now,
+		arg.ClubIds,
+		arg.ComputerIds,
+		arg.Seen,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MarkAgentsOfflineRow
+	for rows.Next() {
+		var i MarkAgentsOfflineRow
+		if err := rows.Scan(&i.ClubID, &i.ID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markAgentsOnline = `-- name: MarkAgentsOnline :execrows
+UPDATE club_computers c
+SET status = 'online', last_seen_at = $1, updated_at = $1
+FROM (SELECT unnest($2::bigint[]) AS club_id, unnest($3::bigint[]) AS computer_id) AS u
+WHERE c.club_id = u.club_id AND c.id = u.computer_id AND c.status <> 'online'
+`
+
+type MarkAgentsOnlineParams struct {
+	Now         *time.Time `json:"now"`
+	ClubIds     []int64    `json:"club_ids"`
+	ComputerIds []int64    `json:"computer_ids"`
+}
+
+// MarkAgentOnline пачкой (исправление гонки «офлайн записан, а ПК уже переподключился»).
+func (q *Queries) MarkAgentsOnline(ctx context.Context, arg MarkAgentsOnlineParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markAgentsOnline, arg.Now, arg.ClubIds, arg.ComputerIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const nextAgentCommandSeq = `-- name: NextAgentCommandSeq :one
 INSERT INTO agent_command_counters (club_id, computer_id, last_seq)
 VALUES ($1, $2, 1)

@@ -70,6 +70,8 @@ SELECT d.day::int AS day, ct.type,
 FROM unnest($1::timestamptz[]) WITH ORDINALITY AS d(start_at, day)
 JOIN cash_transactions ct ON ct.club_id = $2
      AND ct.created_at >= d.start_at AND ct.created_at < d.start_at + interval '1 day'
+WHERE ct.created_at >= (SELECT min(s) FROM unnest($1::timestamptz[]) AS s)
+  AND ct.created_at < (SELECT max(s) FROM unnest($1::timestamptz[]) AS s) + interval '1 day'
 GROUP BY d.day, ct.type
 `
 
@@ -87,6 +89,7 @@ type MobileStaffCashDaysRow struct {
 
 // MeController::today(): приход/расход и число операций по местным дням клуба (одним запросом; границы дней —
 // диапазоны в UTC, индекс cash_transactions (club_id, created_at)). day — номер дня 0..6 (6 — сегодня).
+// Общий диапазон всех дней (PB-04): без него читалась вся касса клуба; строки и суммы — те же.
 func (q *Queries) MobileStaffCashDays(ctx context.Context, arg MobileStaffCashDaysParams) ([]MobileStaffCashDaysRow, error) {
 	rows, err := q.db.Query(ctx, mobileStaffCashDays, arg.Starts, arg.ClubID)
 	if err != nil {

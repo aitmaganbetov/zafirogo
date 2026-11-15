@@ -99,3 +99,7 @@ LIMIT 10;
 -- name: ReservationComputersExist :one
 -- Rule::exists('club_computers', 'id')->where('club_id'): сколько из выбранных ПК есть в клубе.
 SELECT count(*)::bigint FROM club_computers WHERE club_id = sqlc.arg(club_id) AND id = ANY(sqlc.arg(ids)::bigint[]);
+
+-- name: ReservationExistingComputerIDs :many
+-- Какие из выбранных ПК есть в клубе — одним запросом на всю форму (PB-14), а не запросом на каждый ПК.
+SELECT id FROM club_computers WHERE club_id = sqlc.arg(club_id) AND id = ANY(sqlc.arg(ids)::bigint[]);

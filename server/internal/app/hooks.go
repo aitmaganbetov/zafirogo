@@ -28,6 +28,7 @@ import (
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	grpcserver "github.com/aitmaganbetov/zafirogo/server/internal/grpc"
+	"github.com/aitmaganbetov/zafirogo/server/internal/safego"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -387,16 +388,16 @@ func subscribeRevoked(nc *nats.Conn, subject string, cache *enroll.CertCache, lo
 // kickRevoked — CertCache.OnRevoked: закрыть поток ПК, открытый отозванным сертификатом (на любом инстансе —
 // Kick маршрутизирует через NATS). По серийному номеру, а не по ПК: отзыв прежнего сертификата при продлении
 // (superseded, после первого использования нового) приходит, когда агент уже переподключился с новым.
-func kickRevoked(base context.Context, svc *stream.Service, log *slog.Logger) func(enroll.RevokedCert) {
+func kickRevoked(base context.Context, bg *safego.Group, svc *stream.Service, log *slog.Logger) func(enroll.RevokedCert) {
 	return func(r enroll.RevokedCert) {
-		go func() {
+		bg.Go("kick-revoked", func() { // recover и учёт при остановке (BC-04)
 			ctx, cancel := context.WithTimeout(base, 5*time.Second)
 			defer cancel()
 			if err := svc.Kick(ctx, r.ClubID, r.ComputerID, r.Serial, codes.Unauthenticated,
 				agentv1.ErrorCode_ERROR_CODE_CERTIFICATE_REVOKED, "certificate revoked"); err != nil {
 				log.Warn("kick revoked agent failed", "club_id", r.ClubID, "computer_id", r.ComputerID, "err", err)
 			}
-		}()
+		})
 	}
 }
 

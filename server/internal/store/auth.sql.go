@@ -134,6 +134,45 @@ func (q *Queries) ListClubUserIDsByRole(ctx context.Context, arg ListClubUserIDs
 	return items, nil
 }
 
+const listClubUserIDsByRoles = `-- name: ListClubUserIDsByRoles :many
+SELECT role, user_id
+FROM club_memberships
+WHERE club_id = $1 AND role = ANY($2::text[]) AND user_id <> $3
+ORDER BY role, user_id
+`
+
+type ListClubUserIDsByRolesParams struct {
+	ClubID       int64    `json:"club_id"`
+	Roles        []string `json:"roles"`
+	ExceptUserID int64    `json:"except_user_id"`
+}
+
+type ListClubUserIDsByRolesRow struct {
+	Role   string `json:"role"`
+	UserID int64  `json:"user_id"`
+}
+
+// То же для нескольких ролей одним запросом (PB-09; индекс club_memberships (club_id, role, user_id)).
+func (q *Queries) ListClubUserIDsByRoles(ctx context.Context, arg ListClubUserIDsByRolesParams) ([]ListClubUserIDsByRolesRow, error) {
+	rows, err := q.db.Query(ctx, listClubUserIDsByRoles, arg.ClubID, arg.Roles, arg.ExceptUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListClubUserIDsByRolesRow
+	for rows.Next() {
+		var i ListClubUserIDsByRolesRow
+		if err := rows.Scan(&i.Role, &i.UserID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserMemberships = `-- name: ListUserMemberships :many
 SELECT m.id, m.club_id, m.role, c.name AS club_name
 FROM club_memberships m

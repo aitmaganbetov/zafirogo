@@ -23,6 +23,19 @@ public sealed class ServiceTests : IDisposable
         _dir.Dispose();
     }
 
+    /// <summary>
+    /// Аудит безопасности A-08: P/Invoke службы ищет библиотеки только в System32 — DLL, подложенная в папку
+    /// программы, в процесс службы (LocalSystem) не загрузится.
+    /// </summary>
+    [Fact]
+    public void PInvoke_службы_ищет_библиотеки_только_в_System32()
+    {
+        var attr = (System.Runtime.InteropServices.DefaultDllImportSearchPathsAttribute?)Attribute.GetCustomAttribute(
+            typeof(WindowsPlatform).Assembly, typeof(System.Runtime.InteropServices.DefaultDllImportSearchPathsAttribute));
+        Assert.NotNull(attr);
+        Assert.Equal(System.Runtime.InteropServices.DllImportSearchPath.System32, attr!.Paths);
+    }
+
     [Fact]
     public async Task Кадр_IPC_туда_и_обратно()
     {

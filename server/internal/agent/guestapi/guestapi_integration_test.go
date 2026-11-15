@@ -43,7 +43,7 @@ func TestGuestEndToEnd(t *testing.T) {
 	p := h.enrollPC()
 
 	// Стрим: Welcome с ClubConfig из настроек клуба, сроком продления сертификата.
-	as := p.connect("boot-1", user)
+	as := p.connect("boot-1", 0)
 	w := as.welcome
 	cfg := w.GetConfig()
 	if cfg.GetAfterSessionAction() != agentv1.AfterSessionAction_AFTER_SESSION_ACTION_RESTART || cfg.GetAfterSessionDelay().AsDuration() != 90*time.Second ||
@@ -71,6 +71,9 @@ func TestGuestEndToEnd(t *testing.T) {
 		t.Fatalf("password not rehashed: %.10s", hash)
 	}
 	ctx := withToken(token)
+	// Гость вошёл — агент сообщает его в Status; сервер верит только после входа (токен гостя этого ПК, A-01).
+	as.status(user)
+	h.waitPresence(p.id, user)
 
 	tariffs, err := p.guest().ListTariffs(ctx, &agentv1.ListTariffsRequest{})
 	if err != nil {

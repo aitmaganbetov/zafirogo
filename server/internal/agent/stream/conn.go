@@ -76,6 +76,9 @@ type conn struct {
 	pingID       string    // command_id неотвеченного Ping
 	pingSent     time.Time // когда отправлен последний Ping
 	hourlyAt     time.Time // последний Status, учтённый в почасовой истории (health.go recordHourly)
+
+	// limit — потолок частоты Status этого потока (limit.go); только горутина чтения.
+	limit statusLimit
 }
 
 func (c *conn) close(err error) {
@@ -342,6 +345,7 @@ func (s *Service) Connect(st agentv1.AgentService_ConnectServer) error {
 	}
 	if hs := hello.GetStatus(); hs != nil {
 		c.dropInvalidHealth(hs)
+		c.verifyGuest(ctx, hs)
 		c.applyStatus(hs, now)
 		c.tracker.Observe(c.st.AgentState)
 		c.observeHealth(ctx, c.st.Health, now)
@@ -631,6 +635,11 @@ func (c *conn) recvLoop(st agentv1.AgentService_ConnectServer) {
 			c.close(nil) // EOF / отмена: обработчик завершит стрим
 			return
 		}
+		select {
+		case <-c.done:
+			return // поток уже закрыт (вытеснен, отозван, превышение частоты): хвост буфера не обрабатывается
+		default:
+		}
 		switch p := m.GetPayload().(type) {
 		case *agentv1.AgentMessage_Hello:
 			c.close(validationErr("hello", "Hello must be sent once"))
@@ -650,13 +659,25 @@ func (c *conn) onStatus(ctx context.Context, s *agentv1.Status) {
 		c.svc.o.Log.Debug("agent status ignored", "computer_id", c.id.ComputerID, "err", err)
 		return
 	}
-	c.dropInvalidHealth(s)
 	now := c.svc.o.Now()
+	// Потолок частоты — до любой обработки (A-02): чередование состояния, периферии или гостя его не обходит.
+	if !c.limit.allow(now, c.svc.o.StatusBurst, c.svc.o.MinStatusGap) {
+		c.svc.statusDropped.Add(1)
+		if c.limit.flooding(now, c.svc.o.StatusFloodDrops) {
+			c.svc.o.Log.Warn("agent stream closed: status flood", "club_id", c.id.ClubID, "computer_id", c.id.ComputerID)
+			c.svc.statusFloods.Add(1)
+			c.close(statusErr(codes.ResourceExhausted, agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED, "too many Status messages"))
+		}
+		return
+	}
+	c.dropInvalidHealth(s)
+	c.verifyGuest(ctx, s)
 	c.mu.Lock()
 	prev := c.st
 	significant := c.applyStatus(s, now)
-	// Смена периферии или SMART (агент шлёт её сразу, agent.proto Status.health) не отбрасывается ограничением частоты:
-	// она нужна панели сразу, а не со следующим плановым Status (S7-HA-2).
+	// Смена периферии или SMART (агент шлёт её сразу, agent.proto Status.health) не отбрасывается ограничением
+	// «1 Status в 2 с»: она нужна панели сразу, а не со следующим плановым Status (S7-HA-2). Общий потолок потока
+	// (limit.go) действует и на неё.
 	if !significant && !presence.HealthChanged(prev.Health, c.st.Health) && now.Sub(c.lastStatusAt) < c.svc.o.MinStatusGap {
 		// Не чаще 1 Status в 2 с (agent.proto п. 7): лишний отбрасывается, стрим не закрывается.
 		c.st = prev

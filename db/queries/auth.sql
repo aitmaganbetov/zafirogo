@@ -44,3 +44,10 @@ SELECT user_id
 FROM club_memberships
 WHERE club_id = sqlc.arg(club_id) AND role = sqlc.arg(role) AND user_id <> sqlc.arg(except_user_id)
 ORDER BY user_id;
+
+-- name: ListClubUserIDsByRoles :many
+-- То же для нескольких ролей одним запросом (PB-09; индекс club_memberships (club_id, role, user_id)).
+SELECT role, user_id
+FROM club_memberships
+WHERE club_id = sqlc.arg(club_id) AND role = ANY(sqlc.arg(roles)::text[]) AND user_id <> sqlc.arg(except_user_id)
+ORDER BY role, user_id;

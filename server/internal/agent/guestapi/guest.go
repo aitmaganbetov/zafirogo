@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
@@ -563,13 +562,38 @@ func (gs *guestService) EndSession(ctx context.Context, req *agentv1.EndSessionR
 		})
 }
 
-// GetSeatMap — TODO: карта пересадки (SeatTransfers::map()) зависит от «ПК в сети» по last_seen_at, которого
-// больше нет (open-questions/stage2-agent-stream.md AS-2) — перенос вместе с решением GG-7.
+// GetSeatMap — карта клуба для пересадки (GET /api/guest/seats, GuestSeatController::index() →
+// SeatTransfers::map()): зоны и все ПК с местом на карте; available — свободные ПК, где действует покупка сессии.
+// «В сети» — из присутствия агента, как в TransferSeat (решение GG-6).
 func (gs *guestService) GetSeatMap(ctx context.Context, _ *agentv1.GetSeatMapRequest) (*agentv1.GetSeatMapResponse, error) {
-	if _, _, _, err := gs.s.guestCall(ctx, "api.guest.seats.index"); err != nil {
+	s := gs.s
+	ctx, id, g, err := s.guestCall(ctx, "api.guest.seats.index")
+	if err != nil {
 		return nil, err
 	}
-	return nil, status.Error(codes.Unimplemented, "seat map is not implemented yet")
+	if err := s.requireFeature(ctx, id, featureSelfTransfer); err != nil {
+		return nil, err
+	}
+	m, err := s.o.Billing.SeatMap(ctx, id.ClubID, g.UserID, id.ComputerID)
+	if err != nil {
+		return nil, s.fail(ctx, "GetSeatMap", err)
+	}
+	out := &agentv1.GetSeatMapResponse{CurrentComputerId: m.CurrentComputerID,
+		Zones: make([]*agentv1.SeatZone, 0, len(m.Zones)), Seats: make([]*agentv1.Seat, 0, len(m.Seats))}
+	for _, z := range m.Zones {
+		out.Zones = append(out.Zones, &agentv1.SeatZone{ZoneId: z.ID, Name: z.Name, Icon: z.Icon, Theme: z.Theme,
+			X: clampInt32(z.X), Y: clampInt32(z.Y), Width: clampInt32(z.Width), Height: clampInt32(z.Height)})
+	}
+	for _, c := range m.Seats {
+		out.Seats = append(out.Seats, &agentv1.Seat{Computer: computerRef(c.ID, c.Number, c.Name, c.ZoneName),
+			ZoneId: c.ZoneID, X: clampInt32(c.X), Y: clampInt32(c.Y), Available: c.Available})
+	}
+	return out, nil
+}
+
+// clampInt32 — координата карты в int32 контракта (в базе bigint).
+func clampInt32(v int64) int32 {
+	return int32(max(min(v, 1<<31-1), -(1 << 31))) // #nosec G115 -- ограничено
 }
 
 // TransferSeat — пересадка остатка сессии на другой ПК (POST /api/guest/seat-transfer, SeatTransfers::transfer()).

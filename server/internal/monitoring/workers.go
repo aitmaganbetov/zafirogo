@@ -102,19 +102,23 @@ func (w *Workers) Flush(ctx context.Context, now time.Time) error {
 				}
 			}
 		}
+		// Счётчики клубов — одной командой (PB-14): строка на клуб и минуту давала сотни запросов в транзакции
+		// раз в минуту на каждом инстансе. Порядок (минута, клуб) задаёт сам запрос (ORDER BY).
+		var b store.MonitoringAddClubRequestsBatchParams
 		for _, minute := range sortedKeys(d.Clubs) {
 			clubs := d.Clubs[minute]
 			for _, club := range sortedKeys(clubs) {
 				t := clubs[club]
-				if err := q.MonitoringAddClubRequests(ctx, store.MonitoringAddClubRequestsParams{
-					ClubID: club, Minute: minute, AgentRequests: t.Agent, ApiRequests: t.API, PanelRequests: t.Panel,
-					GuestRequests: t.Guest, Errors: t.Errors, DurationMs: t.DurationMs,
-				}); err != nil {
-					return err
-				}
+				b.ClubIds, b.Minutes = append(b.ClubIds, club), append(b.Minutes, minute)
+				b.AgentRequests, b.ApiRequests = append(b.AgentRequests, t.Agent), append(b.ApiRequests, t.API)
+				b.PanelRequests, b.GuestRequests = append(b.PanelRequests, t.Panel), append(b.GuestRequests, t.Guest)
+				b.Errors, b.DurationMs = append(b.Errors, t.Errors), append(b.DurationMs, t.DurationMs)
 			}
 		}
-		return nil
+		if len(b.ClubIds) == 0 {
+			return nil
+		}
+		return q.MonitoringAddClubRequestsBatch(ctx, b)
 	})
 	if err != nil {
 		w.Recorder.Restore(d)
@@ -181,6 +185,8 @@ func (w *Workers) SnapshotClubs(ctx context.Context, now time.Time) (bool, error
 			if err != nil {
 				return err
 			}
+			// Снимок всех клубов — одной командой (PB-14).
+			snap := store.MonitoringInsertLoadSnapshotsParams{CapturedAt: now}
 			for _, r := range rows {
 				loc, err := time.LoadLocation(r.Timezone)
 				if err != nil || r.Timezone == "" {
@@ -191,15 +197,16 @@ func (w *Workers) SnapshotClubs(ctx context.Context, now time.Time) (bool, error
 				if wd == 0 {
 					wd = 7
 				}
-				if err := q.MonitoringInsertLoadSnapshot(ctx, store.MonitoringInsertLoadSnapshotParams{
-					ClubID: r.ClubID, CapturedAt: now, Weekday: wd, Hour: int16(local.Hour()), // #nosec G115 -- 0..23
-					Computers: r.Computers, Online: min(online[r.ClubID], r.Computers), Busy: r.Busy,
-				}); err != nil {
-					return err
-				}
+				snap.ClubIds, snap.Weekdays = append(snap.ClubIds, r.ClubID), append(snap.Weekdays, wd)
+				snap.Hours = append(snap.Hours, int16(local.Hour())) // #nosec G115 -- 0..23
+				snap.Computers, snap.Busy = append(snap.Computers, r.Computers), append(snap.Busy, r.Busy)
+				snap.Online = append(snap.Online, min(online[r.ClubID], r.Computers))
 				current[r.ClubID] = min(online[r.ClubID], r.Computers)
 			}
-			return nil
+			if len(snap.ClubIds) == 0 {
+				return nil
+			}
+			return q.MonitoringInsertLoadSnapshots(ctx, snap)
 		}); err != nil {
 			return err
 		}

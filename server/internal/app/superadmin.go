@@ -8,16 +8,17 @@ import (
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/commands"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
+	"github.com/aitmaganbetov/zafirogo/server/internal/safego"
 )
 
 // broadcastOnline — команда всем ПК на связи по всей платформе (суперадминка: TranslationsChanged после правки
 // переводов, PD-12). В фоне, после коммита: ответ суперадмину не ждёт рассылку.
-func broadcastOnline(sender *commands.Sender, store *presence.Store, log *slog.Logger) func(ctx context.Context, cmd *agentv1.Command) {
+func broadcastOnline(bg *safego.Group, sender *commands.Sender, store *presence.Store, log *slog.Logger) func(ctx context.Context, cmd *agentv1.Command) {
 	return func(ctx context.Context, cmd *agentv1.Command) {
 		if sender == nil || store == nil {
 			return
 		}
-		go func() {
+		bg.Go("broadcast-online", func() { // recover и учёт при остановке (BC-04)
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 			defer cancel()
 			pcs, err := store.OnlineComputers(ctx, time.Now())
@@ -30,6 +31,6 @@ func broadcastOnline(sender *commands.Sender, store *presence.Store, log *slog.L
 					log.WarnContext(ctx, "broadcast: send", "club_id", pc[0], "computer_id", pc[1], "err", err)
 				}
 			}
-		}()
+		})
 	}
 }

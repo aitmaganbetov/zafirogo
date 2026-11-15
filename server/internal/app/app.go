@@ -57,6 +57,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/pki"
 	"github.com/aitmaganbetov/zafirogo/server/internal/realtime"
+	"github.com/aitmaganbetov/zafirogo/server/internal/safego"
 	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/webhook"
 	"github.com/aitmaganbetov/zafirogo/server/internal/webui"
@@ -71,9 +72,11 @@ type App struct {
 	// Подключения.
 	AppPool      *pgxpool.Pool // логин роли zafiro_app (RLS по клубу)
 	PlatformPool *pgxpool.Pool // логин роли zafiro_platform (все клубы)
-	Valkey       valkey.Client
-	NATS         *nats.Conn
-	JS           jetstream.JetStream
+	// I18n — один каталог переводов на приложение (HTTP, gRPC гостя, бот): одна фоновая сверка на платформенном пуле.
+	I18n   *i18n.Catalog
+	Valkey valkey.Client
+	NATS   *nats.Conn
+	JS     jetstream.JetStream
 
 	// Сервисы.
 	CA        *pki.CA
@@ -101,9 +104,12 @@ type App struct {
 	closers  []func() // в обратном порядке при Close
 	draining atomic.Bool
 	baseCtx  context.Context
-	cancel   context.CancelFunc
-	runOnce  sync.Once
-	closed   sync.Once
+	// bg — разовые фоновые задачи (рассылки после ответа панели, отключение отозванного ПК): recover и ожидание
+	// при остановке (BC-04).
+	bg      *safego.Group
+	cancel  context.CancelFunc
+	runOnce sync.Once
+	closed  sync.Once
 }
 
 type namedWorker struct {
@@ -168,7 +174,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (_ *App, e
 	baseCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	// a — локальная переменная, а не именованный результат: `return nil, err` не обнуляет её, и замыкания
 	// closers при ошибке Build видят собранное (OBS-9). Ресурсы замыкания всё равно захватывают локально.
-	a := &App{cfg: cfg, log: log, baseCtx: baseCtx, cancel: cancel}
+	a := &App{cfg: cfg, log: log, baseCtx: baseCtx, cancel: cancel, bg: safego.NewGroup(log)}
 	a.closers = append(a.closers, cancel)
 	defer func() {
 		if err != nil {
@@ -278,6 +284,8 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		return errors.New("database.platform_url: не удалось подключиться (проверьте DSN логина zafiro_platform)")
 	}
 	a.closers = append(a.closers, a.PlatformPool.Close)
+	a.I18n = i18n.NewCatalog(a.PlatformPool)
+	a.closers = append(a.closers, a.I18n.Close) // закрывается раньше пула (closers — в обратном порядке)
 	if err := checkRoles(ctx, a.AppPool, a.PlatformPool); err != nil {
 		return err
 	}
@@ -427,7 +435,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		PresenceTTL: cfg.Agent.Stream.PresenceTTL, OfflineGrace: cfg.Agent.Stream.OfflineGrace,
 		HelloTimeout: cfg.Agent.Stream.HelloTimeout, StatusInterval: cfg.Agent.Stream.StatusInterval,
 		StateDebounce: cfg.Agent.Stream.StateDebounce, AckTimeout: cfg.Agent.Stream.AckTimeout,
-		Events: hooks, Welcome: hooks, UpdateKeys: updateKeys,
+		Events: hooks, Welcome: hooks, Guests: hooks, UpdateKeys: updateKeys,
 		// S6-O4-12: потоки после перезапуска/добавления инстанса выравниваются сами (docs/agent-protocol.md §13.6).
 		Rebalance: stream.RebalanceOptions{
 			Enabled: cfg.Agent.Stream.RebalanceEnabled, Interval: cfg.Agent.Stream.RebalanceInterval,
@@ -439,9 +447,9 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		// Этап 7: загрузка и здоровье ПК → computer.load (core NATS, без outbox), проблемы — agent/health.
 		Live:   &clubmap.LiveEvents{NATS: a.NATS, Now: ro.Now, Log: log},
 		Health: healthOptions(cfg.Agent.Health),
-		// TODO(B2): Results (stream.ResultHandler) —
-		// реализаций пока нет (docs/open-questions/stage2-wiring.md W-1).
-		Log: log,
+		// Итог команды агента → событие computer.command панели (решение W-1, command_results.go).
+		Results: &commandResults{nats: a.NATS, now: ro.Now, log: log},
+		Log:     log,
 	})
 	if err != nil {
 		return fmt.Errorf("agent stream: %w", err)
@@ -456,7 +464,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	if a.revSub, err = subscribeRevoked(a.NATS, revSubject, a.CertCache, log); err != nil {
 		return fmt.Errorf("nats: subscribe %s: %w", revSubject, err)
 	}
-	a.CertCache.OnRevoked(kickRevoked(a.baseCtx, a.Stream, log))
+	a.CertCache.OnRevoked(kickRevoked(a.baseCtx, a.bg, a.Stream, log))
 
 	if a.Enroll, err = enroll.New(enroll.Options{
 		Pool: a.AppPool, CA: a.CA, CodePepper: []byte(cfg.Agent.Enroll.CodePepper.Reveal()),
@@ -479,7 +487,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	metrics := monitoring.NewRecorder(nil)
 	if a.grpcSrv, err = grpcserver.NewServer(grpcserver.Options{
 		// AG-16: тексты ошибок агента — на языке гостя (zafiro-locale) или клуба.
-		ExtraUnary:  []grpc.UnaryServerInterceptor{metrics.UnaryInterceptor(), guestapi.LocalizeErrors(i18n.NewCatalog(a.AppPool))},
+		ExtraUnary:  []grpc.UnaryServerInterceptor{metrics.UnaryInterceptor(), guestapi.LocalizeErrors(a.I18n)},
 		ExtraStream: []grpc.StreamServerInterceptor{metrics.StreamInterceptor()},
 		// Prometheus и спаны — внешними: отказы проверки сертификата и паники тоже считаются (Этап 6 O3).
 		OuterUnary:        []grpc.UnaryServerInterceptor{a.Obs.UnaryServerInterceptor()},
@@ -621,11 +629,12 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	ro.Limiter = a.Limiter
 	ro.Pool = a.AppPool
 	ro.PlatformPool = a.PlatformPool
+	ro.I18n = a.I18n
 	ro.Valkey = a.Valkey
 	ro.Passwords = hasher
 	ro.SignOutGuest = guestSignOut(a.Valkey, cfg.Agent.Guest.TokenTTL, a.Stream.Commands(), log)
 	ro.ChatToGuest = chatToGuest(a.Stream.Commands(), a.Stream.Presence(), log)
-	ro.ClubConfigChanged = clubConfigChanged(hooks, a.Stream.Commands(), a.Stream.Presence(), log)
+	ro.ClubConfigChanged = clubConfigChanged(a.bg, hooks, a.Stream.Commands(), a.Stream.Presence(), log)
 	webhookGuard := webhook.Guard{RequireHTTPS: cfg.Webhooks.RequireHTTPS, AllowPrivate: cfg.Webhooks.AllowPrivateHosts}
 	ro.WebhookURLCheck = func(ctx context.Context, rawURL string) string {
 		_, reason := webhookGuard.Check(ctx, rawURL)
@@ -687,7 +696,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	ro.Superadmin = httpx.SuperadminDeps{
 		Domain: cfg.Superadmin.Domain, BackupPath: cfg.Superadmin.BackupPath, SSLHosts: cfg.Superadmin.SSLHosts,
 		Secrets: box, UpdateKeys: updateKeys, TelegramGateway: tg.gateway, TelegramAlerts: tg.alerts,
-		BroadcastOnline: broadcastOnline(a.Stream.Commands(), a.Stream.Presence(), log),
+		BroadcastOnline: broadcastOnline(a.bg, a.Stream.Commands(), a.Stream.Presence(), log),
 	}
 	ro.Checkers = append(ro.Checkers,
 		httpserver.CheckFunc{CheckName: "postgres", Fn: a.AppPool.Ping},

@@ -35,6 +35,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 )
@@ -234,7 +235,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusUnauthorized, "Unauthenticated.")
 		return
 	}
-	if p.ClubID <= 0 || p.Role == "" {
+	// Панель — только персоналу клуба (ClubRoles::isStaff()); клиент с сессией QR-входа сокет не открывает (A-07).
+	if p.ClubID <= 0 || !permissions.IsStaff(p.Role) {
 		writeJSONError(w, http.StatusForbidden, "Доступ запрещён.")
 		return
 	}

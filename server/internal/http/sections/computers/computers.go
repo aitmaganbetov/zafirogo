@@ -154,13 +154,14 @@ func parseRelease(raw json.RawMessage) (string, *string) {
 	return latest, download
 }
 
-// staff — вошедший сотрудник с выбранным клубом (401/403 как у разделов с правами).
+// staff — вошедший сотрудник с выбранным клубом (401/403 как у разделов с правами). Сотрудник — роль персонала
+// (ClubRoles::isStaff()), а не «роль не пустая»: клиент клуба с сессией QR-входа список зон не получает (A-07).
 func staff(ctx context.Context) (principal.Principal, error) {
 	p, ok := principal.FromContext(ctx)
 	switch {
 	case !ok:
 		return p, httpx.NewAPIError(http.StatusUnauthorized, "unauthenticated", "Unauthenticated.")
-	case p.ClubID <= 0 || p.Role == "":
+	case p.ClubID <= 0 || !permissions.IsStaff(p.Role):
 		return p, httpx.NewAPIError(http.StatusForbidden, permissions.CodeForbidden, permissions.MsgNoClubs)
 	}
 	return p, nil

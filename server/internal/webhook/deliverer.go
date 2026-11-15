@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
+	"github.com/aitmaganbetov/zafirogo/server/internal/safego"
 	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
@@ -156,7 +157,8 @@ func (d *Deliverer) RunOnce(ctx context.Context) (int, error) {
 		wg.Add(1)
 		go func() {
 			defer func() { <-sem; wg.Done() }()
-			if err := d.Deliver(ctx, row.ClubID, row.ID); err != nil {
+			// Паника одной доставки — ошибка этой доставки, а не падение процесса (BC-04).
+			if err := safego.Call(func() error { return d.Deliver(ctx, row.ClubID, row.ID) }); err != nil {
 				mu.Lock()
 				errs = append(errs, err)
 				mu.Unlock()

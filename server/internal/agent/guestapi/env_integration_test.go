@@ -226,7 +226,7 @@ func newHarness(t *testing.T, o harnessOpts) *harness {
 	t.Cleanup(nc.Close)
 	h.stream, err = stream.New(stream.Options{Instance: "i" + hex.EncodeToString([]byte(h.prefix))[:12] + strconv.FormatInt(seq.Add(1), 10),
 		Pool: d.App, Valkey: env.valkey, NATS: nc, KeyPrefix: h.prefix + "agent:", SubjectPrefix: "t" + strconv.FormatInt(seq.Add(1), 10),
-		Welcome: hooks, Events: hooks, MinStatusGap: time.Millisecond, StateDebounce: 10 * time.Millisecond,
+		Welcome: hooks, Events: hooks, Guests: hooks, MinStatusGap: time.Millisecond, StateDebounce: 10 * time.Millisecond,
 		TickEvery: 100 * time.Millisecond, Now: h.clock.Now})
 	if err != nil {
 		t.Fatal(err)

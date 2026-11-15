@@ -212,3 +212,35 @@ func resetUser(ctx context.Context, userID int64) error {
 	}
 	return tx.Commit(ctx)
 }
+
+// Аудит безопасности A-11: один полувход выдаёт новый ключ TOTP не больше MaxSetups раз (по умолчанию 5); следующий
+// вызов сжигает полувход — настройку нужно начинать с входа (а он ограничен лимитами входа).
+func TestSetupIsLimitedPerChallenge(t *testing.T) {
+	m := newManager(t, nil)
+	ctx := context.Background()
+	p := superadmin(t)
+	ch, err := m.Begin(ctx, p)
+	if err != nil || !ch.SetupRequired {
+		t.Fatalf("begin: %+v %v", ch, err)
+	}
+	var last string
+	for i := 1; i <= 5; i++ {
+		st, err := m.Setup(ctx, ch.Token)
+		if err != nil || st.Secret == "" || st.Secret == last {
+			t.Fatalf("setup %d: %+v %v", i, st, err)
+		}
+		last = st.Secret // повторный вызов заменяет ключ (первый не отсканировали)
+	}
+	if _, err := m.Setup(ctx, ch.Token); !errors.Is(err, ErrChallenge) {
+		t.Fatalf("6th setup: %v, want ErrChallenge", err)
+	}
+	// Полувход сгорел: ни настройка, ни код по нему больше не проходят.
+	if _, err := m.Setup(ctx, ch.Token); !errors.Is(err, ErrChallenge) {
+		t.Fatalf("setup after the limit: %v", err)
+	}
+	if _, err := m.Verify(ctx, ch.Token, code(t, last, totp.Step(time.Now()))); !errors.Is(err, ErrChallenge) {
+		t.Fatalf("verify after the limit: %v", err)
+	}
+	// Новый вход — настройка снова доступна и завершается.
+	enroll(t, m, p)
+}

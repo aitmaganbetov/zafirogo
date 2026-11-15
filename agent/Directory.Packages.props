@@ -1,7 +1,7 @@
 <Project>
   <!--
     Версии закреплены точно (CLAUDE.md «Стек»). Обновления — Dependabot (.github/dependabot.yml, nuget, /agent).
-    Grpc.* и Google.Protobuf — те же версии, что проверяет tools/proto-csharp-check.sh.
+    Grpc.* и Google.Protobuf — контракт проверяется сборкой Zafiro.Agent.Protocol (agent.yml).
   -->
   <ItemGroup>
     <PackageVersion Include="Google.Protobuf" Version="3.36.2" />

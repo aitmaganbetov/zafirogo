@@ -29,15 +29,20 @@ func (q *Queries) MarkNotificationsSeen(ctx context.Context, arg MarkNotificatio
 }
 
 const notificationActivity = `-- name: NotificationActivity :many
-SELECT l.id, l.event, l.description, l.details, l.created_at, u.name AS user_name
-FROM activity_logs l
-LEFT JOIN users u ON u.id = l.user_id
-WHERE l.club_id = $1
-  AND l.created_at >= $2
-  AND l.event = ANY($3::text[])
-  AND l.user_id <> $4
-ORDER BY l.id DESC
-LIMIT 15
+WITH m AS MATERIALIZED (
+    SELECT l.id, l.event, l.description, l.details, l.created_at, l.user_id
+    FROM activity_logs l
+    WHERE l.club_id = $1
+      AND l.created_at >= $2
+      AND l.event = ANY($3::text[])
+      AND l.user_id <> $4
+), top AS (
+    SELECT id, event, description, details, created_at, user_id FROM m ORDER BY id DESC LIMIT 15
+)
+SELECT t.id, t.event, t.description, t.details, t.created_at, u.name AS user_name
+FROM top t
+LEFT JOIN users u ON u.id = t.user_id
+ORDER BY t.id DESC
 `
 
 type NotificationActivityParams struct {
@@ -57,6 +62,9 @@ type NotificationActivityRow struct {
 }
 
 // activity(): события из списка за ACTIVITY_DAYS дней, не свои, новые сверху (latest('id')), не больше 15.
+// Выборка — в MATERIALIZED CTE (PB-06): событий из списка у клуба за неделю единицы, и без CTE планировщик ради
+// ORDER BY id DESC LIMIT 15 шёл назад по первичному ключу партиции, отбрасывая строки ВСЕХ клубов платформы.
+// Так — индекс activity_logs (club_id, event, created_at), затем сортировка найденного.
 func (q *Queries) NotificationActivity(ctx context.Context, arg NotificationActivityParams) ([]NotificationActivityRow, error) {
 	rows, err := q.db.Query(ctx, notificationActivity,
 		arg.ClubID,

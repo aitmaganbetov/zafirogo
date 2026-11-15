@@ -154,6 +154,9 @@ SELECT d.day::int AS day, ct.type,
 FROM unnest(sqlc.arg(starts)::timestamptz[]) WITH ORDINALITY AS d(start_at, day)
 JOIN cash_transactions ct ON ct.club_id = sqlc.arg(club_id)
      AND ct.created_at >= d.start_at AND ct.created_at < d.start_at + interval '1 day'
+-- Общий диапазон всех дней (PB-04): без него читалась вся касса клуба; строки и суммы — те же.
+WHERE ct.created_at >= (SELECT min(s) FROM unnest(sqlc.arg(starts)::timestamptz[]) AS s)
+  AND ct.created_at < (SELECT max(s) FROM unnest(sqlc.arg(starts)::timestamptz[]) AS s) + interval '1 day'
 GROUP BY d.day, ct.type;
 
 -- name: MobileStaffLowStock :many

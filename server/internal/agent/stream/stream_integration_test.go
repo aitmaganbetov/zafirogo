@@ -567,7 +567,8 @@ func TestBalanceNotifierFindsSignedInGuest(t *testing.T) {
 	ctx := context.Background()
 	club := testEnv.club(t)
 	pc1, pc2 := testEnv.computer(t, club, 13), testEnv.computer(t, club, 14)
-	in := testEnv.instance(t, "a", nil)
+	// Гость 42 вошёл на pc1 по записи сервера (токен гостя) — иначе заявление ПК не принимается (A-01).
+	in := testEnv.instance(t, "a", func(o *Options) { o.Guests = fakeGuests{pc1: 42} })
 	h := defaultHello()
 	h.Status = &agentv1.Status{State: agentv1.ComputerState_COMPUTER_STATE_LOCKED, SignedInUserId: 42}
 	a1, _ := in.connect(t, club, pc1, h)

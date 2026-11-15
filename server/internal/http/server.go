@@ -72,6 +72,8 @@ type Options struct {
 	Pool db.Beginner
 	// PlatformPool — пул логина zafiro_platform (нетенантные таблицы: переводы и т. п.).
 	PlatformPool db.Beginner
+	// I18n — общий каталог переводов приложения (его же закрывает приложение). nil — сервер создаёт свой.
+	I18n *i18n.Catalog
 	// Billing — покупки и сессии ПК (billing/service.New(pool, clock, cash)).
 	Billing *billingsvc.Service
 	// Cash — касса (cash/service.Service; Notifier — уведомления агента о балансе).
@@ -291,7 +293,18 @@ func NewRouter(o Options) http.Handler {
 		deps.WSTickets = wsticket.New(o.Valkey, "", 0)
 	}
 	if o.Pool != nil {
-		deps.I18n = i18n.NewCatalog(o.Pool) // переводы интерфейса и текстов ответов (F1-5)
+		// Переводы интерфейса и текстов ответов (F1-5). Каталог — снимок в памяти, который обновляет фоновая горутина;
+		// ей — платформенный пул (если задан): сверка версии не занимает соединения пула клубов (PB-01).
+		catalogPool := o.Pool
+		if o.PlatformPool != nil {
+			catalogPool = o.PlatformPool
+		}
+		if o.I18n != nil {
+			deps.I18n = o.I18n
+		} else {
+			deps.I18n = i18n.NewCatalog(catalogPool)
+		}
+		deps.I18n.Warm()
 	}
 
 	r := chi.NewRouter()
@@ -303,6 +316,7 @@ func NewRouter(o Options) http.Handler {
 		RequestLogger(o.Logger),
 		Recoverer(o.Logger),
 		SecurityHeaders,
+		compress, // gzip ответов API (PB-11); вшитый фронт сжимает себя сам (webui)
 		bodyLimit,
 	)
 	if o.Legacy != nil {

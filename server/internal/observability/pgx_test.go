@@ -64,6 +64,8 @@ func TestQueryName(t *testing.T) {
 		{"-- name: 1bad :one", qRaw},
 		{"begin", qBegin},
 		{"begin isolation level serializable", qBegin},
+		// db.InTenantTx: BEGIN и set_config одной строкой (PB-10).
+		{"BEGIN; SELECT set_config('app.club_id', '7', true), set_config('app.user_id', '', true)", qBegin},
 		{"commit", qCommit},
 		{"rollback", qRollback},
 		{"SELECT pg_try_advisory_lock(hashtext($1))", qLock},

@@ -618,6 +618,16 @@ func (h *handlers) ResetCustomerPassword(ctx context.Context, req customersapi.R
 	if err != nil {
 		return nil, err
 	}
+	// Веб-сессии клиента (access и refresh) закрываются, как при восстановлении пароля самим клиентом
+	// (app.passwordResetSignOut): сессией с pc_login подтверждается QR-вход на ПК — угнавший аккаунт не должен
+	// пережить сброс пароля. Осознанное усиление: в Laravel UserController::resetPassword() удалял только токены
+	// ($user->tokens()->delete()), веб-сессии жили (docs/open-questions/audit-security.md, A-04). Пароль уже
+	// сменён: при сбое Valkey — 500, сотрудник повторит сброс.
+	if h.d.Auth != nil {
+		if err := h.d.Auth.Sessions().RevokeUser(ctx, req.UserId); err != nil {
+			return nil, err
+		}
+	}
 	// $user->tokens()->delete() — и токены мобильных приложений (Sanctum, mobile_api_tokens) аккаунта во всех
 	// клубах, как при восстановлении пароля (app.passwordResetSignOut). Отдельная транзакция с app.user_id
 	// клиента (политики mobile_token_owner_*); при ошибке — 500, сотрудник повторит сброс.

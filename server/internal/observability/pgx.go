@@ -64,7 +64,8 @@ func queryName(sql string) string {
 		return qRaw
 	}
 	word, _, _ := strings.Cut(s, " ")
-	switch strings.ToLower(word) {
+	// db.InTenantTx начинает транзакцию одной строкой «BEGIN; SELECT set_config(…)» (PB-10) — это тоже begin.
+	switch strings.ToLower(strings.TrimRight(word, ";")) {
 	case "begin", "start":
 		return qBegin
 	case "commit", "end":

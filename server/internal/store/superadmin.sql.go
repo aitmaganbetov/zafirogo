@@ -2192,6 +2192,38 @@ func (q *Queries) SuperadminUpsertTranslation(ctx context.Context, arg Superadmi
 	return err
 }
 
+const superadminUpsertTranslations = `-- name: SuperadminUpsertTranslations :exec
+INSERT INTO translations (language_id, "group", key, key_hash, value, created_at, updated_at)
+SELECT $1::bigint, u.grp, u.key, u.key_hash, u.value, $2::timestamptz, $2::timestamptz
+FROM (SELECT unnest($3::text[]) AS grp, unnest($4::text[]) AS key,
+             unnest($5::text[]) AS key_hash, unnest($6::text[]) AS value) AS u
+ORDER BY u.key_hash
+ON CONFLICT (language_id, "group", key_hash) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+`
+
+type SuperadminUpsertTranslationsParams struct {
+	LanguageID int64     `json:"language_id"`
+	Now        time.Time `json:"now"`
+	Grps       []string  `json:"grps"`
+	Keys       []string  `json:"keys"`
+	KeyHashes  []string  `json:"key_hashes"`
+	Vals       []string  `json:"vals"`
+}
+
+// SuperadminUpsertTranslation пачкой (PB-14): сохранение страницы/импорт переводов — одна команда. Хеши в пачке
+// не повторяются (ключ карты значений).
+func (q *Queries) SuperadminUpsertTranslations(ctx context.Context, arg SuperadminUpsertTranslationsParams) error {
+	_, err := q.db.Exec(ctx, superadminUpsertTranslations,
+		arg.LanguageID,
+		arg.Now,
+		arg.Grps,
+		arg.Keys,
+		arg.KeyHashes,
+		arg.Vals,
+	)
+	return err
+}
+
 const superadminUserHasMembership = `-- name: SuperadminUserHasMembership :one
 SELECT EXISTS (SELECT 1 FROM club_memberships WHERE user_id = $1)
 `

@@ -405,6 +405,36 @@ func (q *Queries) ReservationComputersExist(ctx context.Context, arg Reservation
 	return column_1, err
 }
 
+const reservationExistingComputerIDs = `-- name: ReservationExistingComputerIDs :many
+SELECT id FROM club_computers WHERE club_id = $1 AND id = ANY($2::bigint[])
+`
+
+type ReservationExistingComputerIDsParams struct {
+	ClubID int64   `json:"club_id"`
+	Ids    []int64 `json:"ids"`
+}
+
+// Какие из выбранных ПК есть в клубе — одним запросом на всю форму (PB-14), а не запросом на каждый ПК.
+func (q *Queries) ReservationExistingComputerIDs(ctx context.Context, arg ReservationExistingComputerIDsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, reservationExistingComputerIDs, arg.ClubID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchReservationCustomers = `-- name: SearchReservationCustomers :many
 SELECT u.id, u.name, u.phone
 FROM club_memberships m

@@ -6,7 +6,11 @@
 //
 // Правила отдачи:
 //   - существующий файл отдаётся как есть; /assets/* (имена с хешем от Vite) —
-//     Cache-Control: public, max-age=31536000, immutable; index.html — no-cache;
+//     Cache-Control: public, max-age=31536000, immutable; index.html и sw.js — no-cache (перепроверка по ETag);
+//   - текстовые файлы (JS, CSS, HTML, SVG, JSON …) от minCompress байт клиенту с Accept-Encoding: gzip отдаются
+//     сжатыми: файл сжимается один раз при первом запросе и хранится в памяти процесса (PB-11); ответ несёт
+//     Vary: Accept-Encoding и свой ETag;
+//   - ETag — хеш содержимого (одинаков у всех инстансов и между перезапусками, PB-23), Last-Modified нет;
 //   - /api/* сюда не доходит (роутер отвечает JSON 404), но на всякий случай — 404;
 //   - путь с расширением, которого нет, — 404 (не прячем битые ссылки на ассеты);
 //   - всё остальное — index.html (SPA fallback для клиентского роутера).
@@ -14,12 +18,18 @@ package webui
 
 import (
 	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -51,6 +61,101 @@ type options struct{ cabinetDomain string }
 // <html data-superadmin-host>: SPA показывает кабинет с корня хоста (как Route::domain() старого кода).
 func WithSuperadminDomain(domain string) Option { return func(o *options) { o.cabinetDomain = domain } }
 
+// minCompress — файлы меньше этого не сжимаются (выигрыш меньше заголовков и работы).
+const minCompress = 1024
+
+// compressible — расширения текстовых файлов сборки; картинки, шрифты woff2 и архивы уже сжаты.
+var compressible = map[string]bool{
+	".js": true, ".mjs": true, ".css": true, ".html": true, ".svg": true, ".json": true, ".map": true,
+	".txt": true, ".xml": true, ".webmanifest": true, ".wasm": true, ".md": true,
+}
+
+// variant — готовый к отдаче файл: ETag исходного содержимого и (если есть смысл) сжатая копия.
+type variant struct {
+	etag   string
+	gz     []byte
+	gzETag string
+}
+
+func newVariant(name string, data []byte) *variant {
+	sum := sha256.Sum256(data)
+	tag := base64.RawURLEncoding.EncodeToString(sum[:12])
+	v := &variant{etag: `"` + tag + `"`}
+	if len(data) < minCompress || !compressible[strings.ToLower(path.Ext(name))] {
+		return v
+	}
+	var buf bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	if err != nil {
+		return v
+	}
+	if _, err := zw.Write(data); err != nil || zw.Close() != nil {
+		return v
+	}
+	if buf.Len() < len(data)-len(data)/10 { // выигрыш меньше 10 % — не стоит распаковки на клиенте
+		v.gz, v.gzETag = buf.Bytes(), `"`+tag+`-gz"`
+	}
+	return v
+}
+
+// acceptsGzip — клиент принимает gzip (Accept-Encoding: gzip без q=0).
+func acceptsGzip(r *http.Request) bool {
+	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+		enc, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+		if !strings.EqualFold(strings.TrimSpace(enc), "gzip") {
+			continue
+		}
+		q := strings.TrimSpace(params)
+		if v, ok := strings.CutPrefix(q, "q="); ok {
+			if f, err := strconv.ParseFloat(v, 64); err == nil && f == 0 {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// serveGzip отдаёт сжатую копию целиком, с Content-Length (http.ServeContent для ответа с Content-Encoding длину не
+// ставит — ответ шёл бы кусками) и условным запросом по ETag сжатого варианта. Range не поддерживается (не объявлен):
+// файлы сборки — сотни килобайт.
+func serveGzip(w http.ResponseWriter, r *http.Request, name string, v *variant) {
+	h := w.Header()
+	if h.Get("Content-Type") == "" {
+		ct := mime.TypeByExtension(path.Ext(name))
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		h.Set("Content-Type", ct)
+	}
+	h.Set("Content-Encoding", "gzip")
+	h.Set("ETag", v.gzETag)
+	if etagMatch(r.Header.Get("If-None-Match"), v.gzETag) {
+		h.Del("Content-Type")
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	h.Set("Content-Length", strconv.Itoa(len(v.gz)))
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(v.gz)
+	}
+}
+
+// etagMatch — If-None-Match: список тегов через запятую или «*» (слабое сравнение: W/ не учитывается).
+func etagMatch(header, etag string) bool {
+	if header == "" {
+		return false
+	}
+	for _, t := range strings.Split(header, ",") {
+		t = strings.TrimPrefix(strings.TrimSpace(t), "W/")
+		if t == "*" || t == etag {
+			return true
+		}
+	}
+	return false
+}
+
 // Handler возвращает http.Handler, отдающий SPA из fsys.
 func Handler(fsys fs.FS, opts ...Option) http.Handler {
 	var o options
@@ -62,20 +167,52 @@ func Handler(fsys fs.FS, opts ...Option) http.Handler {
 		index = []byte(placeholder)
 	}
 	cabinetIndex := bytes.Replace(index, []byte("<html"), []byte("<html data-superadmin-host"), 1)
+	indexVariant, cabinetVariant := newVariant("index.html", index), newVariant("index.html", cabinetIndex)
 	fileServer := http.FileServerFS(fsys)
-	modTime := time.Now()
+
+	// variants — файлы сборки по имени: набор конечен (вшитая ФС), сжатие — один раз на файл.
+	var (
+		mu       sync.RWMutex
+		variants = map[string]*variant{}
+	)
+	variantOf := func(name string) *variant {
+		mu.RLock()
+		v, ok := variants[name]
+		mu.RUnlock()
+		if ok {
+			return v
+		}
+		data, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			return nil
+		}
+		v = newVariant(name, data) // вне блокировки: сжатие большого файла — десятки миллисекунд
+		mu.Lock()
+		defer mu.Unlock()
+		if prev, ok := variants[name]; ok {
+			return prev
+		}
+		variants[name] = v
+		return v
+	}
 
 	serveIndex := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		body := index
+		w.Header().Add("Vary", "Accept-Encoding")
+		body, v := index, indexVariant
 		if o.cabinetDomain != "" {
 			w.Header().Add("Vary", "Host")
 			if sameHost(r.Host, o.cabinetDomain) {
-				body = cabinetIndex
+				body, v = cabinetIndex, cabinetVariant
 			}
 		}
-		http.ServeContent(w, r, "index.html", modTime, bytes.NewReader(body))
+		if v.gz != nil && acceptsGzip(r) {
+			serveGzip(w, r, "index.html", v)
+			return
+		}
+		w.Header().Set("ETag", v.etag)
+		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(body))
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,10 +236,24 @@ func Handler(fsys fs.FS, opts ...Option) http.Handler {
 			return
 		}
 		if st, err := fs.Stat(fsys, name); err == nil && !st.IsDir() {
-			if strings.HasPrefix(name, "assets/") {
+			switch {
+			case strings.HasPrefix(name, "assets/"):
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-			} else {
+			case name == "sw.js":
+				// Сервис-воркер: новая версия должна подхватываться сразу (перепроверка по ETag — 304 без тела).
+				w.Header().Set("Cache-Control", "no-cache")
+			default:
 				w.Header().Set("Cache-Control", "public, max-age=3600")
+			}
+			if v := variantOf(name); v != nil {
+				if v.gz != nil {
+					w.Header().Add("Vary", "Accept-Encoding")
+					if acceptsGzip(r) {
+						serveGzip(w, r, name, v)
+						return
+					}
+				}
+				w.Header().Set("ETag", v.etag)
 			}
 			fileServer.ServeHTTP(w, r)
 			return

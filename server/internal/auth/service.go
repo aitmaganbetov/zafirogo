@@ -431,6 +431,7 @@ func clubSetting(raw []byte, section, key string) any {
 
 // Authenticate — Principal по access-токену: сессия в Valkey, пользователь и членство в Postgres
 // (блокировка и изменения прав действуют сразу, как в старом, где членство читалось на каждом запросе).
+// Обращений к Postgres на запрос панели — одно (PB-10).
 func (s *Service) Authenticate(ctx context.Context, accessToken string) (principal.Principal, error) {
 	sess, err := s.sessions.Authenticate(ctx, accessToken)
 	if err != nil {
@@ -439,30 +440,61 @@ func (s *Service) Authenticate(ctx context.Context, accessToken string) (princip
 		}
 		return principal.Principal{}, err
 	}
-	user, err := store.New(s.pool).GetUserAuth(ctx, sess.UserID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		_ = s.sessions.RevokeUser(ctx, sess.UserID)
-		return principal.Principal{}, ErrUnauthenticated
+	// Обычный запрос панели (клуб выбран, не режим просмотра суперадмина): пользователь и его членство — одной
+	// строкой и одним обращением к Postgres (PB-10; было пять: GetUserAuth и отдельная транзакция ради
+	// GetMembershipAuth). Проверки те же и так же на каждом запросе — ничего не кэшируется.
+	if sess.ClubID > 0 && sess.ViewingClubID == 0 {
+		row, err := store.New(db.TenantRow(s.pool, sess.ClubID, db.Options{UserID: sess.UserID})).
+			GetPrincipalAuth(ctx, store.GetPrincipalAuthParams{ClubID: sess.ClubID, UserID: sess.UserID})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return principal.Principal{}, fmt.Errorf("auth: principal: %w", err)
+		}
+		found := err == nil
+		if err := s.checkUser(ctx, sess, found, row.BlockedAt != nil, row.IsSuperadmin); err != nil {
+			return principal.Principal{}, err
+		}
+		p := principal.Principal{UserID: sess.UserID, Superadmin: row.IsSuperadmin, SessionID: sess.ID, Permissions: []string{}}
+		if row.MemberRole == nil {
+			// Членства больше нет: клуб не выбран (RequireClub ответит 403), выбрать можно другой.
+			return p, nil
+		}
+		mem := &permissions.Membership{Role: *row.MemberRole, Given: permissions.ParseGiven(row.MemberPermissions)}
+		p.ClubID, p.Role, p.Permissions = sess.ClubID, mem.Role, permissions.For(mem)
+		return p, nil
 	}
-	if err != nil {
+	user, err := store.New(s.pool).GetUserAuth(ctx, sess.UserID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return principal.Principal{}, fmt.Errorf("auth: user: %w", err)
 	}
+	if err := s.checkUser(ctx, sess, err == nil, user.BlockedAt != nil, user.IsSuperadmin); err != nil {
+		return principal.Principal{}, err
+	}
+	return s.principalFor(ctx, sess, user.IsSuperadmin)
+}
+
+// checkUser — проверки пользователя на каждом запросе: аккаунт существует, не заблокирован, суперадмин — только
+// с сессией после второго фактора.
+func (s *Service) checkUser(ctx context.Context, sess session.Session, found, blocked, superadmin bool) error {
+	if !found {
+		_ = s.sessions.RevokeUser(ctx, sess.UserID)
+		return ErrUnauthenticated
+	}
 	// A blocked account loses access at once, even with a live session (SetCurrentClub).
-	if user.BlockedAt != nil {
-		if err := s.sessions.RevokeUser(ctx, user.ID); err != nil {
+	if blocked {
+		if err := s.sessions.RevokeUser(ctx, sess.UserID); err != nil {
 			s.log.WarnContext(ctx, "revoke blocked user sessions", slog.String("err", err.Error()))
 		}
-		return principal.Principal{}, ErrBlocked
+		return ErrBlocked
 	}
 	// Суперадмин — только с сессией после второго фактора (Этап 7): сессии до включения TOTP и сессия
 	// пользователя, которому только что выдали права суперадмина, требуют нового входа с кодом.
-	if user.IsSuperadmin && !sess.SecondFactor {
+	if superadmin && !sess.SecondFactor {
 		if err := s.sessions.Revoke(ctx, sess.ID); err != nil {
 			s.log.WarnContext(ctx, "revoke superadmin session without second factor", slog.String("err", err.Error()))
 		}
-		return principal.Principal{}, ErrUnauthenticated
+		return ErrUnauthenticated
 	}
-	return s.principalFor(ctx, sess, user.IsSuperadmin)
+	return nil
 }
 
 // principalFor собирает Principal сессии.

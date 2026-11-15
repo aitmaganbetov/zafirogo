@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/observability"
+	"github.com/aitmaganbetov/zafirogo/server/internal/safego"
 )
 
 // errShutdownTimeout — бюджет остановки исчерпан: часть воркеров не завершилась.
@@ -33,7 +34,9 @@ func (a *App) Run(ctx context.Context) error {
 	for _, w := range a.workers {
 		g.Go(func() error {
 			a.log.Debug("worker started", "worker", w.name)
-			err := w.run(wctx)
+			// Паника задачи (например, nil в данных одного клуба) не роняет инстанс для всех клубов: запись в журнал
+			// со стеком (worker_errors_total) и перезапуск задачи с растущей задержкой (BC-04).
+			err := safego.Run(wctx, a.log, w.name, safego.Backoff{}, w.run)
 			if err != nil && wctx.Err() == nil {
 				a.log.Error("worker failed", "worker", w.name, "err", err)
 				return fmt.Errorf("%s: %w", w.name, err)
@@ -96,6 +99,13 @@ func (a *App) Run(ctx context.Context) error {
 		// Пулы pgx при Close ждут возврата соединений — с зависшим воркером это заблокирует выход.
 		return errors.Join(errShutdownTimeout, firstErr(done))
 	}
+	// Разовые фоновые задачи (рассылки агентам после ответа панели) — дождаться в пределах бюджета остановки:
+	// пулы и NATS закрываются после них (BC-04).
+	bgCtx, bgCancel := context.WithDeadline(context.Background(), deadline)
+	if !a.bg.Wait(bgCtx) {
+		a.log.Warn("shutdown: background tasks did not finish in time")
+	}
+	bgCancel()
 	a.closeResources()
 	if runErr != nil {
 		return runErr

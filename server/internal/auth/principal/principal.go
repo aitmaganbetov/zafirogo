@@ -44,7 +44,7 @@ func FromContext(ctx context.Context) (Principal, bool) {
 // Суперадмин платформы сам по себе прав в клубе НЕ имеет (Laravel: ClubPermissions::allows смотрит только
 // на членство). В режиме просмотра клуба суперадмином Principal собирается как владелец (Role "owner",
 // все права) с ReadOnly = true — как SetCurrentClub::viewAsSuperadmin(); запрет изменений в этом режиме
-// проверяет middleware (permissions.RequireClub/RequirePermission), не Can.
+// проверяют permissions.CheckClub (RequireClub, httpx.Access) и middleware readOnly роутера, не Can.
 func (p Principal) Can(permission string) bool {
 	if p.ClubID <= 0 {
 		return false

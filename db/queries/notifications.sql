@@ -12,15 +12,23 @@ WHERE club_id = sqlc.arg(club_id) AND user_id = sqlc.arg(user_id);
 
 -- name: NotificationActivity :many
 -- activity(): события из списка за ACTIVITY_DAYS дней, не свои, новые сверху (latest('id')), не больше 15.
-SELECT l.id, l.event, l.description, l.details, l.created_at, u.name AS user_name
-FROM activity_logs l
-LEFT JOIN users u ON u.id = l.user_id
-WHERE l.club_id = sqlc.arg(club_id)
-  AND l.created_at >= sqlc.arg(since)
-  AND l.event = ANY(sqlc.arg(events)::text[])
-  AND l.user_id <> sqlc.arg(user_id)
-ORDER BY l.id DESC
-LIMIT 15;
+-- Выборка — в MATERIALIZED CTE (PB-06): событий из списка у клуба за неделю единицы, и без CTE планировщик ради
+-- ORDER BY id DESC LIMIT 15 шёл назад по первичному ключу партиции, отбрасывая строки ВСЕХ клубов платформы.
+-- Так — индекс activity_logs (club_id, event, created_at), затем сортировка найденного.
+WITH m AS MATERIALIZED (
+    SELECT l.id, l.event, l.description, l.details, l.created_at, l.user_id
+    FROM activity_logs l
+    WHERE l.club_id = sqlc.arg(club_id)
+      AND l.created_at >= sqlc.arg(since)
+      AND l.event = ANY(sqlc.arg(events)::text[])
+      AND l.user_id <> sqlc.arg(user_id)
+), top AS (
+    SELECT id, event, description, details, created_at, user_id FROM m ORDER BY id DESC LIMIT 15
+)
+SELECT t.id, t.event, t.description, t.details, t.created_at, u.name AS user_name
+FROM top t
+LEFT JOIN users u ON u.id = t.user_id
+ORDER BY t.id DESC;
 
 -- name: NotificationChat :one
 -- chat(): число непрочитанных сообщений гостей и последнее из них.

@@ -15,7 +15,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
@@ -34,7 +33,6 @@ type authEnv struct {
 	db     *dbtest.DB
 	svc    *auth.Service
 	srv    *httptest.Server
-	stubs  *httptest.Server
 	clubID int64
 }
 
@@ -61,24 +59,11 @@ func newAuthEnv(t *testing.T, enable ...string) *authEnv {
 	}
 	svc.SetSecondFactor(testSecondFactor(t, d.Platform, vk, lim))
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(NewRouter(Options{Logger: logger, Auth: svc, Limiter: lim}))
+	// Pool — боевые маршруты разделов доходят до обработчиков (тест прав идёт по ним, а не по заглушкам, BC-11).
+	srv := httptest.NewServer(NewRouter(Options{Logger: logger, Auth: svc, Limiter: lim, Pool: d.App, PlatformPool: d.Platform}))
 	t.Cleanup(srv.Close)
 
-	// Эндпоинты-заглушки с правами (касса, баланс клиента, тарифы, права, работники).
-	r := chi.NewRouter()
-	r.Use(svc.Middleware)
-	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	for _, right := range []string{"cash.view", "cash.create", "cash.delete", "customer_money.update", "tariffs.view",
-		"tariffs.update", "tariffs.delete", "workers.update", "warehouse.delete", "chat.create"} {
-		r.With(permissions.RequirePermission(right)).Get("/stub/"+right, ok)
-		r.With(permissions.RequirePermission(right)).Post("/stub/"+right, ok)
-	}
-	r.With(permissions.RequireRole(permissions.RoleAdmin)).Get("/stub/settings.permissions", ok)
-	r.With(permissions.RequireSuperadmin).Get("/stub/superadmin", ok)
-	stubs := httptest.NewServer(r)
-	t.Cleanup(stubs.Close)
-
-	return &authEnv{t: t, db: d, svc: svc, srv: srv, stubs: stubs, clubID: d.Club(t, fmt.Sprintf("c%d", authSeq.Add(1)))}
+	return &authEnv{t: t, db: d, svc: svc, srv: srv, clubID: d.Club(t, fmt.Sprintf("c%d", authSeq.Add(1)))}
 }
 
 func (e *authEnv) staff(role, perms string, superadmin bool) (phone string) {
@@ -238,8 +223,49 @@ func TestAuthHTTPFlow(t *testing.T) {
 	}
 }
 
-// Права по матрице на эндпоинтах-заглушках: касса, баланс клиента, тарифы, права, работники.
-func TestPermissionStubs(t *testing.T) {
+// rightRoute — боевой маршрут раздела, который открывает право (httpx.Access по таблице RequireClubArea::ROUTES).
+type rightRoute struct {
+	method, path string
+	// denied — текст отказа в праве (у возврата и ответа в чате — свой, как в Laravel).
+	denied string
+}
+
+var rightRoutes = map[string]rightRoute{
+	"tariffs.view":     {"GET", "/api/tariffs", permissions.MsgNoRight},
+	"tariffs.update":   {"PATCH", "/api/tariffs/1", permissions.MsgNoRight},
+	"tariffs.delete":   {"DELETE", "/api/tariffs/1", permissions.MsgNoRight},
+	"cash.view":        {"GET", "/api/cash/shift", permissions.MsgNoRight},
+	"cash.create":      {"POST", "/api/cash/sales", permissions.MsgNoRight},
+	"cash.delete":      {"POST", "/api/cash/receipts/1/refund", "Нет права на возвраты. Его даёт владелец клуба в «Настройки → Права»."},
+	"chat.create":      {"POST", "/api/chat/1/messages", "Нет права отвечать в чате. Его даёт владелец клуба в «Настройки → Права»."},
+	"customers.update": {"POST", "/api/customers/1/balance-adjustments", permissions.MsgNoRight},
+	"workers.update":   {"PATCH", "/api/workers/1", permissions.MsgNoRight},
+	"warehouse.delete": {"DELETE", "/api/warehouse/products/1", permissions.MsgNoRight},
+}
+
+// callRight — запрос к боевому маршруту права. passed — проверку прав httpx.Access запрос прошёл (дальше обработчик
+// отвечает своё: 404 несуществующего объекта, 422 пустого тела, 503 неподключённого сервиса — но не отказ в праве).
+func (e *authEnv) callRight(right, token string) (r resp, passed bool) {
+	e.t.Helper()
+	rt, ok := rightRoutes[right]
+	if !ok {
+		e.t.Fatalf("no route for right %q", right)
+	}
+	var body any
+	if rt.method != "GET" && rt.method != "DELETE" {
+		body = map[string]any{}
+	}
+	hdr := map[string]string{"Idempotency-Key": fmt.Sprintf("k-%d", authSeq.Add(1))}
+	if token != "" {
+		hdr["Authorization"] = "Bearer " + token
+	}
+	r = do(e.t, rt.method, e.srv.URL+rt.path, body, hdr)
+	return r, r.status != 401 && r.status != 403
+}
+
+// Права по матрице на БОЕВЫХ маршрутах разделов (httpx.Access → permissions.RightFor), а не на заглушках с
+// отдельными middleware (BC-11): касса, возвраты, тарифы, чат, клиенты, работники, склад, страница «Права».
+func TestPermissionMatrixOnRealRoutes(t *testing.T) {
 	e := newAuthEnv(t)
 	tokens := map[string]string{}
 	for _, role := range []string{"owner", "admin", "manager", "cashier", "operator", "client"} {
@@ -252,38 +278,42 @@ func TestPermissionStubs(t *testing.T) {
 		tokens[role], _ = e.login(ph)
 	}
 	// Кассир с правом возвратов от владельца (GS-006) и менеджер без тарифов.
-	cashierRefund, _ := e.login(e.staff("cashier", `{"cash.delete": true}`, false))
-	managerNoTariffs, _ := e.login(e.staff("manager", `{"tariffs.update": false}`, false))
+	tokens["cashierRefund"], _ = e.login(e.staff("cashier", `{"cash.delete": true}`, false))
+	tokens["managerNoTariffs"], _ = e.login(e.staff("manager", `{"tariffs.update": false}`, false))
+	// Кассир, у которого владелец отнял право менять клиентов.
+	tokens["cashierNoCustomers"], _ = e.login(e.staff("cashier", `{"customers.update": false}`, false))
 
 	cases := []struct {
 		who, right string
-		want       int
+		allowed    bool
 	}{
-		{"owner", "tariffs.delete", 204}, {"admin", "tariffs.delete", 403}, {"manager", "tariffs.update", 204},
-		{"cashier", "tariffs.view", 403}, {"cashier", "cash.create", 204}, {"cashier", "cash.delete", 403},
-		{"operator", "cash.view", 403}, {"operator", "chat.create", 204}, {"manager", "chat.create", 403},
-		{"manager", "customer_money.update", 204}, {"cashier", "customer_money.update", 403},
-		{"admin", "workers.update", 204}, {"manager", "workers.update", 403}, {"manager", "warehouse.delete", 403},
-		{"client", "cash.view", 403}, {"client", "tariffs.view", 403},
-		{"cashierRefund", "cash.delete", 204}, {"managerNoTariffs", "tariffs.update", 403}, {"managerNoTariffs", "tariffs.view", 204},
+		{"owner", "tariffs.delete", true}, {"admin", "tariffs.delete", false}, {"manager", "tariffs.update", true},
+		{"cashier", "tariffs.view", false}, {"cashier", "cash.create", true}, {"cashier", "cash.delete", false},
+		{"operator", "cash.view", false}, {"operator", "chat.create", true}, {"manager", "chat.create", false},
+		{"manager", "customers.update", true}, {"cashierNoCustomers", "customers.update", false}, {"client", "customers.update", false},
+		{"admin", "workers.update", true}, {"manager", "workers.update", false}, {"manager", "warehouse.delete", false},
+		{"owner", "warehouse.delete", true},
+		{"client", "cash.view", false}, {"client", "tariffs.view", false}, {"client", "chat.create", false},
+		{"cashierRefund", "cash.delete", true}, {"managerNoTariffs", "tariffs.update", false}, {"managerNoTariffs", "tariffs.view", true},
 	}
-	tokens["cashierRefund"], tokens["managerNoTariffs"] = cashierRefund, managerNoTariffs
 	for _, c := range cases {
-		r := do(t, "POST", e.stubs.URL+"/stub/"+c.right, nil, bearer(tokens[c.who]))
-		if r.status != c.want {
-			t.Errorf("%s %s: %d, want %d", c.who, c.right, r.status, c.want)
+		// Таблица ролей — та же, что отдаёт permissions.For (матрица ClubPermissions): случай теста не расходится с ней.
+		r, passed := e.callRight(c.right, tokens[c.who])
+		if passed != c.allowed {
+			t.Errorf("%s %s: status %d %v, allowed = %v, want %v", c.who, c.right, r.status, r.body, passed, c.allowed)
 		}
-		if c.want == 403 && r.body["message"] != permissions.MsgNoRight {
-			t.Errorf("%s %s: message %v", c.who, c.right, r.body["message"])
+		if !c.allowed && (r.status != 403 || r.body["message"] != rightRoutes[c.right].denied) {
+			t.Errorf("%s %s: %d message %v", c.who, c.right, r.status, r.body["message"])
 		}
 	}
 	// Страница «Права» — club-role:owner,admin (GS-251/252).
-	for who, want := range map[string]int{"owner": 204, "admin": 204, "manager": 403, "cashier": 403} {
-		if r := do(t, "GET", e.stubs.URL+"/stub/settings.permissions", nil, bearer(tokens[who])); r.status != want {
-			t.Errorf("permissions page %s: %d, want %d", who, r.status, want)
+	for who, allowed := range map[string]bool{"owner": true, "admin": true, "manager": false, "cashier": false, "client": false} {
+		r := do(t, "GET", e.srv.URL+"/api/settings/permissions", nil, bearer(tokens[who]))
+		if (r.status == 200) != allowed || (!allowed && r.status != 403) {
+			t.Errorf("permissions page %s: %d, allowed want %v", who, r.status, allowed)
 		}
 	}
-	if r := do(t, "GET", e.stubs.URL+"/stub/cash.view", nil, nil); r.status != 401 {
+	if r, _ := e.callRight("cash.view", ""); r.status != 401 {
 		t.Errorf("anon: %d", r.status)
 	}
 }
@@ -295,20 +325,20 @@ func TestSuperadminViewHTTP(t *testing.T) {
 	if lr.body["me"].(map[string]any)["club"] != nil {
 		t.Fatalf("cabinet: %v", lr.body["me"])
 	}
-	if r := do(t, "GET", e.stubs.URL+"/stub/superadmin", nil, bearer(tok)); r.status != 204 {
-		t.Fatalf("superadmin stub: %d", r.status)
+	if r := do(t, "GET", e.srv.URL+"/api/superadmin/plans", nil, bearer(tok)); r.status != 200 {
+		t.Fatalf("superadmin cabinet: %d %v", r.status, r.body)
 	}
-	if r := do(t, "GET", e.stubs.URL+"/stub/cash.view", nil, bearer(tok)); r.status != 403 || r.body["message"] != permissions.MsgNoClubs {
+	if r, _ := e.callRight("cash.view", tok); r.status != 403 || r.body["message"] != permissions.MsgNoClubs {
 		t.Fatalf("no club: %d %v", r.status, r.body)
 	}
 	v := do(t, "POST", fmt.Sprintf("%s/api/superadmin/clubs/%d/view", e.srv.URL, e.clubID), nil, bearer(tok))
 	if v.status != 200 || v.body["read_only"] != true || v.body["role"] != "owner" {
 		t.Fatalf("view: %d %v", v.status, v.body)
 	}
-	if r := do(t, "GET", e.stubs.URL+"/stub/tariffs.view", nil, bearer(tok)); r.status != 204 {
-		t.Fatalf("view GET: %d", r.status)
+	if r, passed := e.callRight("tariffs.view", tok); !passed || r.status != 200 {
+		t.Fatalf("view GET: %d %v", r.status, r.body)
 	}
-	if r := do(t, "POST", e.stubs.URL+"/stub/cash.create", nil, bearer(tok)); r.status != 403 || r.body["message"] != permissions.MsgReadOnly {
+	if r, _ := e.callRight("cash.create", tok); r.status != 403 || r.body["message"] != permissions.MsgReadOnly {
 		t.Fatalf("view POST: %d %v", r.status, r.body)
 	}
 	if r := do(t, "PUT", e.srv.URL+"/api/auth/club", map[string]any{"club_id": e.clubID}, bearer(tok)); r.status != 403 || r.body["error"] != "read_only" {

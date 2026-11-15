@@ -129,16 +129,28 @@ func (h *handlers) onShift(ctx context.Context, q *store.Queries, clubID int64) 
 	}
 	sessions := h.d.Auth.Sessions()
 	since := h.d.NowFunc().Add(-sessions.IdleTTL())
+	// Все роли смены — одним запросом по индексу (club_id, role, user_id) и одним обращением к сессиям (PB-09):
+	// раньше — запрос и обращение на каждую роль, каждый читал все членства клуба.
+	rows, err := q.ListClubUserIDsByRoles(ctx, store.ListClubUserIDsByRolesParams{ClubID: clubID, Roles: permissions.ShiftRoles, ExceptUserID: 0})
+	if err != nil {
+		return nil, err
+	}
+	roleOf := make(map[int64]string, len(rows))
+	ids := make([]int64, 0, len(rows))
+	for _, r := range rows {
+		roleOf[r.UserID] = r.Role // членство в клубе одно: у пользователя одна роль
+		ids = append(ids, r.UserID)
+	}
+	slices.Sort(ids)
+	active, err := sessions.ActiveUsers(ctx, ids, since)
+	if err != nil {
+		return nil, err
+	}
 	for _, role := range permissions.ShiftRoles {
-		ids, err := q.ListClubUserIDsByRole(ctx, store.ListClubUserIDsByRoleParams{ClubID: clubID, Role: role, ExceptUserID: 0})
-		if err != nil {
-			return nil, err
-		}
-		active, err := sessions.ActiveUsers(ctx, ids, since)
-		if err != nil {
-			return nil, err
-		}
-		out[role] = active
+		out[role] = nil
+	}
+	for _, id := range active {
+		out[roleOf[id]] = append(out[roleOf[id]], id)
 	}
 	return out, nil
 }

@@ -443,3 +443,32 @@ func TestPermissionsScreen(t *testing.T) {
 		t.Fatalf("customers after reset: %d", r.status)
 	}
 }
+
+// Аудит безопасности A-04: сброс пароля клиента сотрудником закрывает веб-сессии клиента (access и refresh), как
+// восстановление пароля самим клиентом. Сессией с pc_login подтверждается QR-вход на ПК.
+func TestCustomerPasswordResetRevokesSessions(t *testing.T) {
+	e := newStaffEnv(t)
+	_, owner := e.staff("Владелец", "owner")
+	client, phone := e.member("Клиент с сессией", "client", "", false)
+	r := do(t, "POST", e.srv.URL+"/api/auth/login", map[string]any{"phone": phone, "password": "pw", "pc_login": true}, nil)
+	if r.status != 200 {
+		t.Fatalf("client login: %d %v", r.status, r.body)
+	}
+	tok := r.body["access_token"].(string)
+	if r := e.send("GET", tok, "/api/auth/me", "", nil); r.status != 200 {
+		t.Fatalf("me before reset: %d", r.status)
+	}
+	_, bystander := e.staff("Оператор рядом", "operator")
+	if r := e.send("POST", owner, fmt.Sprintf("/api/customers/%d/password", client), "", nil); r.status != 200 {
+		t.Fatalf("reset: %d %v", r.status, r.body)
+	}
+	if r := e.send("GET", tok, "/api/auth/me", "", nil); r.status != 401 {
+		t.Fatalf("client session survived the password reset: %d", r.status)
+	}
+	// Чужие сессии не тронуты.
+	for name, other := range map[string]string{"owner": owner, "operator": bystander} {
+		if r := e.send("GET", other, "/api/auth/me", "", nil); r.status != 200 {
+			t.Fatalf("%s session: %d", name, r.status)
+		}
+	}
+}

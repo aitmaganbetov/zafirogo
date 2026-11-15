@@ -371,7 +371,7 @@ func (h *handlers) SaveClubLanguage(ctx context.Context, req settingsapi.SaveClu
 	if err != nil {
 		return nil, err
 	}
-	h.d.I18n.ForgetClubLocale(p.ClubID)
+	h.d.I18n.SetClubLocale(p.ClubID, locale) // этот инстанс — сразу; остальные — фоновой сверкой каталога
 	h.configChanged(ctx, p.ClubID)
 	msg := msgLanguageSaved
 	if h.d.I18n != nil {

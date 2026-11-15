@@ -136,20 +136,33 @@ func (w *Sweeper) Tick(ctx context.Context) (int, error) {
 
 func (w *Sweeper) markOffline(ctx context.Context, gone []Gone) (int, error) {
 	now := w.now().UTC()
+	if len(gone) == 0 {
+		return 0, nil
+	}
+	// Одна команда на пачку (PB-14): обрыв сети клуба на 500 ПК — не 500 UPDATE в транзакции.
+	off := store.MarkAgentsOfflineParams{Now: &now}
+	for _, g := range gone {
+		seen := g.Last.LastSeenAt.UTC()
+		if seen.IsZero() || seen.After(now) {
+			seen = now
+		}
+		off.ClubIds, off.ComputerIds, off.Seen = append(off.ClubIds, g.ClubID), append(off.ComputerIds, g.ComputerID), append(off.Seen, seen)
+	}
 	var changed []Gone
 	err := db.InPlatformTx(ctx, w.Pool, func(q *store.Queries) error {
 		changed = changed[:0]
-		for _, g := range gone {
-			seen := g.Last.LastSeenAt.UTC()
-			if seen.IsZero() || seen.After(now) {
-				seen = now
-			}
-			n, err := q.MarkAgentOffline(ctx, store.MarkAgentOfflineParams{LastSeenAt: &seen, Now: &now, ClubID: g.ClubID, ComputerID: g.ComputerID})
-			if err != nil {
-				return err
-			}
-			if n > 0 {
+		rows, err := q.MarkAgentsOffline(ctx, off)
+		if err != nil {
+			return err
+		}
+		done := make(map[[2]int64]bool, len(rows))
+		for _, r := range rows {
+			done[[2]int64{r.ClubID, r.ID}] = true
+		}
+		for _, g := range gone { // порядок — как в gone (OnOffline)
+			if key := [2]int64{g.ClubID, g.ComputerID}; done[key] {
 				changed = append(changed, g)
+				delete(done, key) // один ПК дважды в пачке — одно событие
 			}
 		}
 		return nil
@@ -169,19 +182,20 @@ func (w *Sweeper) markOffline(ctx context.Context, gone []Gone) (int, error) {
 		return len(changed), err
 	}
 	repaired := map[[2]int64]bool{}
-	if err := db.InPlatformTx(ctx, w.Pool, func(q *store.Queries) error {
-		for i, k := range known {
-			if !k {
-				continue
-			}
-			if _, err := q.MarkAgentOnline(ctx, store.MarkAgentOnlineParams{Now: &now, ClubID: pcs[i][0], ComputerID: pcs[i][1]}); err != nil {
-				return err
-			}
+	on := store.MarkAgentsOnlineParams{Now: &now}
+	for i, k := range known {
+		if k {
+			on.ClubIds, on.ComputerIds = append(on.ClubIds, pcs[i][0]), append(on.ComputerIds, pcs[i][1])
 			repaired[pcs[i]] = true
 		}
-		return nil
-	}); err != nil {
-		return len(changed), err
+	}
+	if len(on.ClubIds) > 0 {
+		if err := db.InPlatformTx(ctx, w.Pool, func(q *store.Queries) error {
+			_, err := q.MarkAgentsOnline(ctx, on)
+			return err
+		}); err != nil {
+			return len(changed), err
+		}
 	}
 	if w.OnOffline != nil {
 		for _, g := range changed {

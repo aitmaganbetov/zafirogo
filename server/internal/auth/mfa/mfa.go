@@ -92,6 +92,9 @@ type Options struct {
 	ChallengeTTL time.Duration
 	// MaxAttempts — попыток кода на один полувход; по умолчанию 5.
 	MaxAttempts int
+	// MaxSetups — сколько раз один полувход может выдать новый ключ TOTP (настройка); по умолчанию 5. Сверх —
+	// полувход сгорает (аудит безопасности A-11: раньше вызовов было сколько угодно, каждый — запись в базу).
+	MaxSetups int
 	// AllowReplay — принимать повтор шага TOTP (только dev/test: стенд визуального сравнения входит суперадмином на
 	// каждый снимок; config dev.totp_allow_replay, в prod запрещено). Окно ±1 шаг и сам код проверяются всегда.
 	AllowReplay bool
@@ -118,6 +121,9 @@ func New(o Options) (*Manager, error) {
 	}
 	if o.MaxAttempts <= 0 {
 		o.MaxAttempts = 5
+	}
+	if o.MaxSetups <= 0 {
+		o.MaxSetups = 5
 	}
 	if o.Prefix == "" {
 		o.Prefix = "auth:mfa:"
@@ -240,6 +246,15 @@ func (m *Manager) Setup(ctx context.Context, token string) (Setup, error) {
 	if !ch.setup {
 		return Setup{}, ErrConfigured
 	}
+	// Не больше MaxSetups ключей на полувход (A-11): сверх — полувход сгорает, вход начинается заново (и упирается
+	// в лимиты входа по IP и телефону).
+	n, err := setupScript.Exec(ctx, m.o.Valkey, []string{m.key(token)}, []string{strconv.Itoa(m.o.MaxSetups)}).AsInt64()
+	if err != nil {
+		return Setup{}, fmt.Errorf("mfa: setup counter: %w", err)
+	}
+	if n == 0 {
+		return Setup{}, ErrChallenge
+	}
 	secret, err := totp.NewSecret()
 	if err != nil {
 		return Setup{}, err
@@ -249,7 +264,6 @@ func (m *Manager) Setup(ctx context.Context, token string) (Setup, error) {
 		return Setup{}, fmt.Errorf("mfa: seal: %w", err)
 	}
 	now := m.o.Now()
-	var n int64
 	if err := db.InPlatformTx(ctx, m.o.Platform, func(q *store.Queries) error {
 		n, err = q.SuperadminTotpBegin(ctx, store.SuperadminTotpBeginParams{UserID: ch.UserID, Secret: sealed, Now: now})
 		return err
@@ -276,6 +290,18 @@ type Result struct {
 	RecoveryUsed bool
 	RecoveryLeft int64
 }
+
+// setupScript: KEYS[1] — полувход; ARGV[1] — максимум выдач ключа. Ответ: номер выдачи или 0 (полувхода нет; при
+// превышении он удаляется).
+var setupScript = valkey.NewLuaScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+local n = redis.call('HINCRBY', KEYS[1], 'setups', 1)
+if n > tonumber(ARGV[1]) then
+  redis.call('DEL', KEYS[1])
+  return 0
+end
+return n
+`)
 
 // attemptScript: KEYS[1] — полувход; ARGV[1] — максимум попыток. Ответ: номер попытки или 0 (полувхода нет;
 // при превышении он удаляется).

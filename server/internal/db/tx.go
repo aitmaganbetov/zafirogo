@@ -16,7 +16,6 @@ package db
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -40,6 +39,19 @@ const MaxAttempts = 3
 // LockTimeout — сколько транзакция ждёт блокировку строки, прежде чем упасть (а не висеть).
 const LockTimeout = 5 * time.Second
 
+// Таймауты транзакции клуба на стороне Postgres (PB-17) — страховка там, где у контекста нет дедлайна (воркеры,
+// агентские пути) или соединение «забыто» в открытой транзакции (PB-01: все соединения пула «idle in transaction»
+// до таймаута запроса). Значения с запасом: HTTP-запрос ограничен 30 с, самые долгие запросы панели — секунды.
+// Ставятся через set_config(…, true) в той же команде, что app.club_id, — только до конца транзакции, без лишнего
+// обращения к серверу. Транзакции без клуба (InPlatformTx: суперадминка, воркеры по всем клубам, перенос данных,
+// миграции) не ограничиваются — там бывают долгие законные операции.
+const (
+	// StatementTimeout — предел одной команды в транзакции клуба.
+	StatementTimeout = 2 * time.Minute
+	// IdleInTxTimeout — сколько транзакция клуба может простаивать между командами (сервер рвёт соединение).
+	IdleInTxTimeout = time.Minute
+)
+
 // ErrInvalidClub — клуб не задан (0 или отрицательный id).
 var ErrInvalidClub = errors.New("db: club id is required for a tenant transaction")
 
@@ -47,6 +59,8 @@ var ErrInvalidClub = errors.New("db: club id is required for a tenant transactio
 type Options struct {
 	// UserID ставит app.user_id (свои членства во всех клубах и свои коды переводов — политики 0004).
 	UserID int64
+	// NoTimeouts — не ставить StatementTimeout / IdleInTxTimeout (долгая законная операция в транзакции клуба).
+	NoTimeouts bool
 }
 
 // InTenantTx выполняет fn в транзакции клуба clubID: BEGIN; set_config('app.club_id', …, true); fn; COMMIT.
@@ -65,15 +79,23 @@ func InTenantTxWith(ctx context.Context, pool Beginner, clubID int64, opts Optio
 	if opts.UserID > 0 {
 		user = strconv.FormatInt(opts.UserID, 10)
 	}
+	// BEGIN и set_config — одним обращением к Postgres (PB-10: было два на каждую тенантную транзакцию). pgx
+	// отправляет запрос начала транзакции без аргументов простым протоколом, который принимает несколько команд в
+	// одной строке. В строку попадают только десятичные числа из strconv.FormatInt (id клуба и пользователя) и
+	// константа LockTimeout — данных из запроса клиента здесь нет, внедрить в неё нечего. is_local = true: только
+	// до конца транзакции. Сбой любой из команд — pgx закрывает соединение (оно не возвращается в пул с открытой
+	// транзакцией).
+	begin := "BEGIN; SELECT set_config('app.club_id', '" + club + "', true), set_config('app.user_id', '" + user +
+		"', true), set_config('lock_timeout', '" + strconv.FormatInt(LockTimeout.Milliseconds(), 10) + "ms', true)"
+	if !opts.NoTimeouts {
+		// PB-17: таймауты команды и простоя транзакции клуба (константы; см. StatementTimeout) — той же командой.
+		begin += ", set_config('statement_timeout', '" + strconv.FormatInt(StatementTimeout.Milliseconds(), 10) +
+			"ms', true), set_config('idle_in_transaction_session_timeout', '" +
+			strconv.FormatInt(IdleInTxTimeout.Milliseconds(), 10) + "ms', true)"
+	}
 	return withRetry(ctx, func() error {
-		return pgx.BeginTxFunc(ctx, pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
-			// Параметры — аргументами, не склейкой строки. is_local = true: только до конца транзакции.
-			if _, err := tx.Exec(ctx,
-				"SELECT set_config('app.club_id', $1, true), set_config('app.user_id', $2, true), set_config('lock_timeout', $3, true)",
-				club, user, strconv.FormatInt(LockTimeout.Milliseconds(), 10)+"ms"); err != nil {
-				return fmt.Errorf("db: set tenant: %w", err)
-			}
-			return fn(store.New(tx))
+		return pgx.BeginTxFunc(ctx, pool, pgx.TxOptions{BeginQuery: begin}, func(tx pgx.Tx) error {
+			return fn(NewQueries(tx)) // запросы с необязательными фильтрами — с планом под значения (plan.go, PB-02)
 		})
 	})
 }
@@ -84,7 +106,7 @@ func InTenantTxWith(ctx context.Context, pool Beginner, clubID int64, opts Optio
 func InPlatformTx(ctx context.Context, pool Beginner, fn func(q *store.Queries) error) error {
 	return withRetry(ctx, func() error {
 		return pgx.BeginTxFunc(ctx, pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
-			return fn(store.New(tx))
+			return fn(NewQueries(tx))
 		})
 	})
 }

@@ -50,6 +50,53 @@ func (q *Queries) MonitoringAddClubRequests(ctx context.Context, arg MonitoringA
 	return err
 }
 
+const monitoringAddClubRequestsBatch = `-- name: MonitoringAddClubRequestsBatch :exec
+INSERT INTO club_request_metrics (club_id, minute, agent_requests, api_requests, panel_requests, guest_requests, errors, duration_ms)
+SELECT c.id, u.minute, u.agent_requests, u.api_requests, u.panel_requests, u.guest_requests, u.errors, u.duration_ms
+FROM (SELECT unnest($1::bigint[]) AS club_id, unnest($2::bigint[]) AS minute,
+             unnest($3::bigint[]) AS agent_requests, unnest($4::bigint[]) AS api_requests,
+             unnest($5::bigint[]) AS panel_requests, unnest($6::bigint[]) AS guest_requests,
+             unnest($7::bigint[]) AS errors, unnest($8::bigint[]) AS duration_ms) AS u
+JOIN clubs c ON c.id = u.club_id
+ORDER BY u.minute, u.club_id
+ON CONFLICT (club_id, minute) DO UPDATE SET
+    agent_requests = club_request_metrics.agent_requests + EXCLUDED.agent_requests,
+    api_requests = club_request_metrics.api_requests + EXCLUDED.api_requests,
+    panel_requests = club_request_metrics.panel_requests + EXCLUDED.panel_requests,
+    guest_requests = club_request_metrics.guest_requests + EXCLUDED.guest_requests,
+    errors = club_request_metrics.errors + EXCLUDED.errors,
+    duration_ms = club_request_metrics.duration_ms + EXCLUDED.duration_ms
+`
+
+type MonitoringAddClubRequestsBatchParams struct {
+	ClubIds       []int64 `json:"club_ids"`
+	Minutes       []int64 `json:"minutes"`
+	AgentRequests []int64 `json:"agent_requests"`
+	ApiRequests   []int64 `json:"api_requests"`
+	PanelRequests []int64 `json:"panel_requests"`
+	GuestRequests []int64 `json:"guest_requests"`
+	Errors        []int64 `json:"errors"`
+	DurationMs    []int64 `json:"duration_ms"`
+}
+
+// MonitoringAddClubRequests пачкой (PB-14): одна команда на сброс счётчиков вместо строки на клуб и минуту (сотни
+// запросов в транзакции раз в минуту на каждом инстансе). Строки вставляются в порядке (минута, клуб) — тот же
+// порядок блокировок на всех инстансах (нагрузочный тест O4: UPSERT одних строк в разном порядке давал deadlock).
+// Пары (клуб, минута) в пачке не повторяются (счётчики Recorder — по ключу).
+func (q *Queries) MonitoringAddClubRequestsBatch(ctx context.Context, arg MonitoringAddClubRequestsBatchParams) error {
+	_, err := q.db.Exec(ctx, monitoringAddClubRequestsBatch,
+		arg.ClubIds,
+		arg.Minutes,
+		arg.AgentRequests,
+		arg.ApiRequests,
+		arg.PanelRequests,
+		arg.GuestRequests,
+		arg.Errors,
+		arg.DurationMs,
+	)
+	return err
+}
+
 const monitoringAddRequests = `-- name: MonitoringAddRequests :exec
 INSERT INTO request_metrics (minute, channel, requests, errors, duration_ms)
 VALUES ($1, $2, $3, $4, $5)
@@ -166,6 +213,39 @@ func (q *Queries) MonitoringInsertLoadSnapshot(ctx context.Context, arg Monitori
 		arg.CapturedAt,
 		arg.Weekday,
 		arg.Hour,
+		arg.Computers,
+		arg.Online,
+		arg.Busy,
+	)
+	return err
+}
+
+const monitoringInsertLoadSnapshots = `-- name: MonitoringInsertLoadSnapshots :exec
+INSERT INTO club_load_snapshots (club_id, captured_at, weekday, hour, computers, online, busy)
+SELECT u.club_id, $1::timestamptz, u.weekday, u.hour, u.computers, u.online, u.busy
+FROM (SELECT unnest($2::bigint[]) AS club_id, unnest($3::smallint[]) AS weekday,
+             unnest($4::smallint[]) AS hour, unnest($5::bigint[]) AS computers,
+             unnest($6::bigint[]) AS online, unnest($7::bigint[]) AS busy) AS u
+ORDER BY u.club_id
+`
+
+type MonitoringInsertLoadSnapshotsParams struct {
+	CapturedAt time.Time `json:"captured_at"`
+	ClubIds    []int64   `json:"club_ids"`
+	Weekdays   []int16   `json:"weekdays"`
+	Hours      []int16   `json:"hours"`
+	Computers  []int64   `json:"computers"`
+	Online     []int64   `json:"online"`
+	Busy       []int64   `json:"busy"`
+}
+
+// MonitoringInsertLoadSnapshot пачкой (PB-14): снимок загрузки всех клубов одной командой.
+func (q *Queries) MonitoringInsertLoadSnapshots(ctx context.Context, arg MonitoringInsertLoadSnapshotsParams) error {
+	_, err := q.db.Exec(ctx, monitoringInsertLoadSnapshots,
+		arg.CapturedAt,
+		arg.ClubIds,
+		arg.Weekdays,
+		arg.Hours,
 		arg.Computers,
 		arg.Online,
 		arg.Busy,

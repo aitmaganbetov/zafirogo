@@ -80,11 +80,18 @@ func FreeForTransfer(target Computer, blockedByBooking bool, now time.Time) bool
 // Laravel: SeatTransfers::freeSeatsFor() стр. 31–42. Условие слегка отличается от transfer():
 // сессия проверяется только по session_ends_at (null или <= now), а не hasPaidSession; онлайн —
 // SQL `last_seen_at >= now() - 90 c` с now, усечённым до секунды. Повторяем как есть.
+//
+// Решение GG-6 / AS-2: при Connected != nil «в сети» берётся из присутствия агента (как в Online() и
+// TransferSeat) — last_seen_at теперь пишется только при смене состояния.
 func ListedAsFree(c Computer, fromID int64, zones []int64, blockedByBooking bool, now time.Time) bool {
 	floorNow := StoredTime(now)
+	online := c.LastSeenAt != nil && !c.LastSeenAt.Before(floorNow.Add(-HeartbeatTimeout))
+	if c.Connected != nil {
+		online = *c.Connected
+	}
 	return c.ID != fromID &&
 		!c.IsReserved &&
-		c.LastSeenAt != nil && !c.LastSeenAt.Before(floorNow.Add(-HeartbeatTimeout)) &&
+		online &&
 		(c.SessionEndsAt == nil || !c.SessionEndsAt.After(floorNow)) &&
 		(c.StaffUntil == nil || !c.StaffUntil.After(floorNow)) &&
 		(zones == nil || slices.Contains(zones, c.ZoneID)) &&

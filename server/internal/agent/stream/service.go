@@ -68,11 +68,20 @@ type Options struct {
 	AckTimeout     time.Duration
 	MinStatusGap   time.Duration
 	TickEvery      time.Duration
+	// StatusBurst — сколько Status подряд поток принимает сверх ровного темпа «1 за MinStatusGap» (limit.go);
+	// 0 — DefaultStatusBurst.
+	StatusBurst int
+	// StatusFloodDrops — сколько отброшенных за минуту Status закрывает поток (RESOURCE_EXHAUSTED);
+	// 0 — DefaultStatusFloodDrops.
+	StatusFloodDrops int
 
 	Events   EventHandler
 	Welcome  WelcomeProvider
 	Results  ResultHandler
 	Presence PresenceListener
+	// Guests — кто вошёл на ПК по записи сервера (токен гостя): Status.signed_in_user_id принимается, только если
+	// совпадает с ней (A-01). nil — заявлению ПК о госте не верить никогда.
+	Guests GuestVerifier
 	// Live — живые обновления загрузки и здоровья для карты клуба (без outbox, с ограничением частоты, health.go).
 	Live LiveListener
 
@@ -100,6 +109,12 @@ func (o *Options) defaults() {
 	set(&o.AckTimeout, DefaultAckTimeout)
 	set(&o.MinStatusGap, DefaultMinStatusGap)
 	set(&o.TickEvery, DefaultTickEvery)
+	if o.StatusBurst <= 0 {
+		o.StatusBurst = DefaultStatusBurst
+	}
+	if o.StatusFloodDrops <= 0 {
+		o.StatusFloodDrops = DefaultStatusFloodDrops
+	}
 	o.Rebalance.defaults()
 	o.Health.defaults()
 	if o.SubjectPrefix == "" {
@@ -135,8 +150,11 @@ type Service struct {
 	rebalanced atomic.Uint64 // ПК, которых попросили переподключиться ради перебалансировки
 	// livePublished — живых обновлений карты отправлено; healthDropped — Status с отброшенным неверным health.
 	livePublished, healthDropped atomic.Uint64
-	stop                         chan struct{}
-	wg                           sync.WaitGroup
+	// statusDropped — Status сверх потолка частоты; statusFloods — потоков закрыто за это; guestRejected — Status,
+	// где заявленный гость не совпал с записью сервера (limit.go, guest.go).
+	statusDropped, statusFloods, guestRejected atomic.Uint64
+	stop                                       chan struct{}
+	wg                                         sync.WaitGroup
 }
 
 // New создаёт сервис, подписывается на subject инстанса в NATS и запускает тикер присутствия.
@@ -211,6 +229,15 @@ func (s *Service) LivePublished() uint64 { return s.livePublished.Load() }
 
 // HealthDropped — сколько Status пришло с неверным health (health отброшен, Status принят).
 func (s *Service) HealthDropped() uint64 { return s.healthDropped.Load() }
+
+// StatusDropped — сколько Status отброшено потолком частоты потока (A-02).
+func (s *Service) StatusDropped() uint64 { return s.statusDropped.Load() }
+
+// StatusFloods — сколько потоков закрыто за устойчивое превышение частоты Status.
+func (s *Service) StatusFloods() uint64 { return s.statusFloods.Load() }
+
+// GuestRejected — сколько раз ПК заявил гостя, которого сервер на этом ПК не подтверждает (A-01).
+func (s *Service) GuestRejected() uint64 { return s.guestRejected.Load() }
 
 // LocalStreams — сколько стримов открыто на этом инстансе.
 func (s *Service) LocalStreams() int {

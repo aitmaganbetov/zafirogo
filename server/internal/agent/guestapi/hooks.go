@@ -186,3 +186,13 @@ func (h *Hooks) ConfigChanged(ctx context.Context, id identity.Identity) (*agent
 	}
 	return &agentv1.Command{Kind: &agentv1.Command_ConfigChanged{ConfigChanged: &agentv1.ConfigChanged{Config: w.GetConfig()}}}, nil
 }
+
+// ComputerGuest — stream.GuestVerifier: гость, вошедший на ПК по живому токену гостя этого ПК и клуба (0 — никто).
+// По нему стрим проверяет Status.signed_in_user_id (аудит безопасности A-01).
+func (h *Hooks) ComputerGuest(ctx context.Context, clubID, computerID int64) (int64, error) {
+	g, err := h.s.tokens.ComputerUser(ctx, computerID)
+	if err != nil || g.ClubID != clubID {
+		return 0, err
+	}
+	return g.UserID, nil
+}

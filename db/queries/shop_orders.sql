@@ -21,9 +21,9 @@ WHERE club_id = sqlc.arg(club_id) AND (sqlc.arg(status)::text = '' OR status = s
 
 -- name: ShopOrdersState :one
 -- state(): ShopOrder::newCount() и max(id) — бейдж и «появился новый заказ».
-SELECT count(*) FILTER (WHERE status = 'new')::bigint AS new_count, COALESCE(max(id), 0)::bigint AS latest
-FROM shop_orders
-WHERE club_id = sqlc.arg(club_id);
+-- Два подзапроса по индексам (club_id, status, id) и (club_id, id) вместо прохода по всем заказам клуба (PB-07).
+SELECT (SELECT count(*) FROM shop_orders n WHERE n.club_id = sqlc.arg(club_id) AND n.status = 'new')::bigint AS new_count,
+       COALESCE((SELECT o.id FROM shop_orders o WHERE o.club_id = sqlc.arg(club_id) ORDER BY o.id DESC LIMIT 1), 0)::bigint AS latest;
 
 -- name: ShopLockOrder :one
 -- lockNew(): ShopOrder::lockForUpdate()->findOrFail($id).

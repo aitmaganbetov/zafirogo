@@ -40,7 +40,9 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/config"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db/dbtest"
+	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/pki"
+	"github.com/aitmaganbetov/zafirogo/server/internal/realtime"
 )
 
 // Образы — как в docker-compose.dev.yml (при 429 Docker Hub — ZAFIRO_TEST_*_IMAGE с mirror.gcr.io/library/...).
@@ -418,6 +420,46 @@ func TestAppEndToEnd(t *testing.T) {
 	if err := e.db.Owner.QueryRow(ctx, `SELECT status FROM club_computers WHERE id = $1`, pcID).Scan(&dbStatus); err != nil || dbStatus != "online" {
 		t.Errorf("club_computers.status = %q (%v), want online", dbStatus, err)
 	}
+
+	// Решение W-1 (BC-03): итог команды агента → событие computer.command для панели (core NATS, как computer.load).
+	liveSub, err := a.NATS.SubscribeSync(realtime.LiveSubject(clubID, CommandResultEvent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmdID, err := a.Stream.Commands().Send(ctx, clubID, pcID, &agentv1.Command{Kind: &agentv1.Command_Reboot{Reboot: &agentv1.Reboot{}}})
+	if err != nil {
+		t.Fatalf("send reboot: %v", err)
+	}
+	var reboot *agentv1.Command
+	for reboot == nil {
+		select {
+		case m := <-msgs:
+			if c := m.GetCommand(); c != nil && c.GetReboot() != nil {
+				reboot = c
+			}
+		case err := <-errc:
+			t.Fatalf("stream closed before the command: %v", err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("no Reboot command")
+		}
+	}
+	if err := st.Send(&agentv1.AgentMessage{Payload: &agentv1.AgentMessage_CommandResult{CommandResult: &agentv1.CommandResult{
+		CommandId: reboot.GetCommandId(), Seq: reboot.GetSeq(), Status: agentv1.CommandStatus_COMMAND_STATUS_SUCCEEDED}}}); err != nil {
+		t.Fatalf("send result: %v", err)
+	}
+	ev, err := liveSub.NextMsg(10 * time.Second)
+	if err != nil {
+		t.Fatalf("no computer.command event after the command result: %v", err)
+	}
+	env, err := outbox.DecodeEnvelope(ev.Data)
+	if err != nil || env.Type != CommandResultEvent || env.ClubID != clubID {
+		t.Fatalf("event envelope: %+v, %v", env, err)
+	}
+	var got commandResultData
+	if err := json.Unmarshal(env.Data, &got); err != nil || got != (commandResultData{ComputerID: pcID, CommandID: cmdID, Kind: "reboot", Status: "succeeded"}) {
+		t.Fatalf("computer.command data = %+v, %v", got, err)
+	}
+	_ = liveSub.Unsubscribe()
 
 	// Отзыв: RevokeComputer → OnRevoked → NATS → CertCache.MarkRevoked → Kick → поток закрыт.
 	if n, err := a.Enroll.RevokeComputer(ctx, staff, pcID, netip.MustParseAddr("127.0.0.1")); err != nil || n != 1 {

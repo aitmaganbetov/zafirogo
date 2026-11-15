@@ -37,3 +37,9 @@ SELECT id FROM languages WHERE code = sqlc.arg(code);
 INSERT INTO translations (language_id, "group", key, key_hash, value, created_at, updated_at)
 VALUES (sqlc.arg(language_id), sqlc.arg(grp), sqlc.arg(key), sqlc.arg(key_hash), sqlc.arg(value), now(), now())
 ON CONFLICT (language_id, "group", key_hash) DO NOTHING;
+
+-- name: I18nClubLocales :many
+-- Языки клубов, отличные от языка-источника (clubs.locale; пусто/NULL — ru, LocaleResolver::DEFAULT_CLUB_LOCALE):
+-- снимок каталога в памяти (i18n.Catalog) — язык клуба на пути запроса берётся без похода в базу (PB-01).
+-- clubs — платформенная таблица (читают обе роли, 0028).
+SELECT id, locale::text AS locale FROM clubs WHERE locale IS NOT NULL AND locale <> '' AND locale <> 'ru';

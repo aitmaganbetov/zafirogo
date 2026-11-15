@@ -977,6 +977,28 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
     {
         State.Changed -= OnStateChanged;
         _health.Urgent -= OnHealthUrgent;
+        // Стрим ещё открыт (освобождение без остановки RunAsync): закрыть его и канал gRPC. Обычно оба уже сняты —
+        // RunStreamAsync освобождает их в finally (канал — Dispose, streamCts — using), поэтому CTS здесь только
+        // отменяется: его освободит владелец, а повторный Dispose канала безопасен.
+        AgentChannel? channel;
+        CancellationTokenSource? streamCts;
+        lock (_gate)
+        {
+            channel = _channel;
+            streamCts = _streamCts;
+            _channel = null;
+            _streamCts = null;
+        }
+
+        try
+        {
+            streamCts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        channel?.Dispose();
         Credentials?.Dispose();
         _wake.Dispose();
         _enrollGate.Dispose();

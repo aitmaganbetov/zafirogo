@@ -34,6 +34,36 @@ ON CONFLICT (club_id, minute) DO UPDATE SET
     errors = club_request_metrics.errors + EXCLUDED.errors,
     duration_ms = club_request_metrics.duration_ms + EXCLUDED.duration_ms;
 
+-- name: MonitoringAddClubRequestsBatch :exec
+-- MonitoringAddClubRequests пачкой (PB-14): одна команда на сброс счётчиков вместо строки на клуб и минуту (сотни
+-- запросов в транзакции раз в минуту на каждом инстансе). Строки вставляются в порядке (минута, клуб) — тот же
+-- порядок блокировок на всех инстансах (нагрузочный тест O4: UPSERT одних строк в разном порядке давал deadlock).
+-- Пары (клуб, минута) в пачке не повторяются (счётчики Recorder — по ключу).
+INSERT INTO club_request_metrics (club_id, minute, agent_requests, api_requests, panel_requests, guest_requests, errors, duration_ms)
+SELECT c.id, u.minute, u.agent_requests, u.api_requests, u.panel_requests, u.guest_requests, u.errors, u.duration_ms
+FROM (SELECT unnest(sqlc.arg(club_ids)::bigint[]) AS club_id, unnest(sqlc.arg(minutes)::bigint[]) AS minute,
+             unnest(sqlc.arg(agent_requests)::bigint[]) AS agent_requests, unnest(sqlc.arg(api_requests)::bigint[]) AS api_requests,
+             unnest(sqlc.arg(panel_requests)::bigint[]) AS panel_requests, unnest(sqlc.arg(guest_requests)::bigint[]) AS guest_requests,
+             unnest(sqlc.arg(errors)::bigint[]) AS errors, unnest(sqlc.arg(duration_ms)::bigint[]) AS duration_ms) AS u
+JOIN clubs c ON c.id = u.club_id
+ORDER BY u.minute, u.club_id
+ON CONFLICT (club_id, minute) DO UPDATE SET
+    agent_requests = club_request_metrics.agent_requests + EXCLUDED.agent_requests,
+    api_requests = club_request_metrics.api_requests + EXCLUDED.api_requests,
+    panel_requests = club_request_metrics.panel_requests + EXCLUDED.panel_requests,
+    guest_requests = club_request_metrics.guest_requests + EXCLUDED.guest_requests,
+    errors = club_request_metrics.errors + EXCLUDED.errors,
+    duration_ms = club_request_metrics.duration_ms + EXCLUDED.duration_ms;
+
+-- name: MonitoringInsertLoadSnapshots :exec
+-- MonitoringInsertLoadSnapshot пачкой (PB-14): снимок загрузки всех клубов одной командой.
+INSERT INTO club_load_snapshots (club_id, captured_at, weekday, hour, computers, online, busy)
+SELECT u.club_id, sqlc.arg(captured_at)::timestamptz, u.weekday, u.hour, u.computers, u.online, u.busy
+FROM (SELECT unnest(sqlc.arg(club_ids)::bigint[]) AS club_id, unnest(sqlc.arg(weekdays)::smallint[]) AS weekday,
+             unnest(sqlc.arg(hours)::smallint[]) AS hour, unnest(sqlc.arg(computers)::bigint[]) AS computers,
+             unnest(sqlc.arg(online)::bigint[]) AS online, unnest(sqlc.arg(busy)::bigint[]) AS busy) AS u
+ORDER BY u.club_id;
+
 -- name: MonitoringClubCounts :many
 -- SnapshotClubLoad: ПК каждого клуба (всего и занято) и часовой пояс клуба. «В сети» — из присутствия (Valkey).
 SELECT c.id AS club_id, c.timezone::text AS timezone,

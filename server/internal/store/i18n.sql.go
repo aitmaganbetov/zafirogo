@@ -9,6 +9,38 @@ import (
 	"context"
 )
 
+const i18nClubLocales = `-- name: I18nClubLocales :many
+SELECT id, locale::text AS locale FROM clubs WHERE locale IS NOT NULL AND locale <> '' AND locale <> 'ru'
+`
+
+type I18nClubLocalesRow struct {
+	ID     int64  `json:"id"`
+	Locale string `json:"locale"`
+}
+
+// Языки клубов, отличные от языка-источника (clubs.locale; пусто/NULL — ru, LocaleResolver::DEFAULT_CLUB_LOCALE):
+// снимок каталога в памяти (i18n.Catalog) — язык клуба на пути запроса берётся без похода в базу (PB-01).
+// clubs — платформенная таблица (читают обе роли, 0028).
+func (q *Queries) I18nClubLocales(ctx context.Context) ([]I18nClubLocalesRow, error) {
+	rows, err := q.db.Query(ctx, i18nClubLocales)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []I18nClubLocalesRow
+	for rows.Next() {
+		var i I18nClubLocalesRow
+		if err := rows.Scan(&i.ID, &i.Locale); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const i18nEnabledLanguages = `-- name: I18nEnabledLanguages :many
 
 SELECT code, name FROM languages WHERE is_enabled ORDER BY sort_order, id

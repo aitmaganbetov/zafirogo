@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,5 +140,71 @@ func TestBuildErrorClosesResources(t *testing.T) {
 				_ = l.Close()
 			}
 		})
+	}
+}
+
+// BC-04: паника воркера не роняет процесс — HTTP продолжает отвечать, воркер перезапускается; при остановке
+// приложение ждёт разовые фоновые задачи (рассылки после ответа панели).
+func TestPanickingWorkerDoesNotStopApp(t *testing.T) {
+	cfg, err := config.Load("", func() []string { return []string{"ZAFIRO_ENV=test", "ZAFIRO_HTTP_ADDR=127.0.0.1:0"} })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a, err := Build(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runs atomic.Int32
+	a.workers = append(a.workers, namedWorker{"panicking", func(ctx context.Context) error {
+		if runs.Add(1) == 1 {
+			panic("nil in the data of one club")
+		}
+		<-ctx.Done()
+		return nil
+	}})
+	bgDone := make(chan struct{})
+	var bgFinished atomic.Bool
+	a.bg.Go("panicking-broadcast", func() { panic("broadcast") })
+	a.bg.Go("slow-broadcast", func() { <-bgDone; bgFinished.Store(true) })
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for runs.Load() < 2 { // перезапущен после паники (задержка 1 с)
+		if time.Now().After(deadline) {
+			t.Fatalf("worker was not restarted after the panic: runs = %d", runs.Load())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("app stopped after a worker panic: %v", err)
+	default:
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+a.HTTPAddr()+"/healthz", nil)
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/healthz after a worker panic = %d", resp.StatusCode)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		t.Fatalf("Run returned before the background task finished: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(bgDone)
+	select {
+	case err := <-done:
+		if err != nil || !bgFinished.Load() {
+			t.Fatalf("Run: %v, background finished: %v", err, bgFinished.Load())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not stop")
 	}
 }

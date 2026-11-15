@@ -89,8 +89,8 @@ func RequestMeta(apiKeyPrefix func(*http.Request) string) func(http.Handler) htt
 	}
 }
 
-// RequestLogger пишет одну запись на запрос: метод, путь (без query — там могут быть токены),
-// статус, размер ответа, длительность, request id, IP. Тела и заголовки не логируются.
+// RequestLogger пишет одну запись на запрос: метод, путь (без query — там могут быть токены; секретные сегменты
+// пути скрыты — logPath), статус, размер ответа, длительность, request id, IP. Тела и заголовки не логируются.
 func RequestLogger(l *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +113,7 @@ func RequestLogger(l *slog.Logger) func(http.Handler) http.Handler {
 			}
 			l.LogAttrs(r.Context(), level, "http request",
 				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
+				slog.String("path", logPath(r)),
 				slog.Int("status", status),
 				slog.Int("bytes", ww.BytesWritten()),
 				slog.Duration("duration", time.Since(start)),

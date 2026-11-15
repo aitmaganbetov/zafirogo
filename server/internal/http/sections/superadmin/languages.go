@@ -344,6 +344,8 @@ func apply(ctx context.Context, q *store.Queries, languageID int64, values map[s
 	sort.Strings(hashes)
 	var deletes []int64
 	changed := 0
+	// Изменённые строки — одной командой (PB-14): страница переводов или импорт файла — не запрос на строку.
+	up := store.SuperadminUpsertTranslationsParams{LanguageID: languageID, Now: *now}
 	for _, hash := range hashes {
 		s, ok := src[hash]
 		if !ok {
@@ -357,11 +359,14 @@ func apply(ctx context.Context, q *store.Queries, languageID int64, values map[s
 				deletes = append(deletes, row.ID)
 			}
 		case !has || row.Value != v:
-			if err := q.SuperadminUpsertTranslation(ctx, store.SuperadminUpsertTranslationParams{LanguageID: languageID, Grp: s.group,
-				Key: s.key, KeyHash: hash, Value: v, Now: now}); err != nil {
-				return 0, err
-			}
+			up.Grps, up.Keys = append(up.Grps, s.group), append(up.Keys, s.key)
+			up.KeyHashes, up.Vals = append(up.KeyHashes, hash), append(up.Vals, v)
 			changed++
+		}
+	}
+	if len(up.KeyHashes) > 0 {
+		if err := q.SuperadminUpsertTranslations(ctx, up); err != nil {
+			return 0, err
 		}
 	}
 	if len(deletes) > 0 {

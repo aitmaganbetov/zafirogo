@@ -271,15 +271,19 @@ func (q *Queries) CashListShiftIncomesPage(ctx context.Context, arg CashListShif
 }
 
 const cashSearchCustomers = `-- name: CashSearchCustomers :many
-SELECT u.id, u.name, u.phone,
+SELECT s.id, s.name, s.phone,
        COALESCE(b.balance, 0)::bigint AS balance, COALESCE(b.bonus_balance, 0)::bigint AS bonus_balance
-FROM club_memberships m
-JOIN users u ON u.id = m.user_id
-LEFT JOIN member_balances b ON b.club_id = m.club_id AND b.user_id = m.user_id
-WHERE m.club_id = $1
-  AND ($2::text = '' OR u.name ILIKE $2::text OR u.phone ILIKE $2::text)
-ORDER BY u.name, u.id
-LIMIT $3
+FROM (
+    SELECT u.id, u.name, u.phone, m.club_id
+    FROM club_memberships m
+    JOIN users u ON u.id = m.user_id
+    WHERE m.club_id = $1
+      AND ($2::text = '' OR u.name ILIKE $2::text OR u.phone ILIKE $2::text)
+    ORDER BY u.name, u.id
+    LIMIT $3
+) s
+LEFT JOIN member_balances b ON b.club_id = s.club_id AND b.user_id = s.id
+ORDER BY s.name, s.id
 `
 
 type CashSearchCustomersParams struct {
@@ -298,6 +302,8 @@ type CashSearchCustomersRow struct {
 
 // index(): пользователи клуба (join club_memberships, left join member_balances) по имени — поиск по имени или
 // телефону (search — экранированный шаблон ILIKE, пусто — первые по имени).
+// Балансы соединяются после LIMIT (PB-05): строка member_balances на пару (club_id, user_id) одна, результат тот же.
+// Поиск идёт по индексам pg_trgm users(name), users(phone) (0032) — план с подставленным значением (db.customPlan).
 func (q *Queries) CashSearchCustomers(ctx context.Context, arg CashSearchCustomersParams) ([]CashSearchCustomersRow, error) {
 	rows, err := q.db.Query(ctx, cashSearchCustomers, arg.ClubID, arg.Search, arg.PageSize)
 	if err != nil {

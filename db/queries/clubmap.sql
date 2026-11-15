@@ -32,6 +32,22 @@ WHERE c.club_id = sqlc.arg(club_id) AND c.id > sqlc.arg(after_id)
 ORDER BY c.id
 LIMIT sqlc.arg(page_size);
 
+-- name: ClubMapStateComputers :many
+-- Те же колонки, что ClubMapComputers, для выбранных ПК (GET /api/club-map/state?ids=…, PB-08): фронт запрашивает
+-- 1–несколько ПК на каждое событие computer.state — весь клуб для этого не читается.
+SELECT c.id, c.club_zone_id, c.number, c.display_name, c.device_name, c.device_id, c.status, c.is_reserved,
+       c.position_x, c.position_y, c.agent_state, c.agent_version, c.last_seen_at,
+       c.current_session_id, c.current_session_user_id, c.session_guest, c.session_ends_at,
+       c.staff_user_id, c.staff_kind, c.staff_until,
+       c.mac_address, c.local_ip, c.remote_ip, c.cpu_model, c.cpu_cores, c.ram_total_mb, c.gpu_model, c.os_version,
+       c.hardware_reported_at, c.created_at, c.updated_at,
+       su.name AS session_user_name, su.phone AS session_user_phone, st.name AS staff_name
+FROM club_computers c
+LEFT JOIN users su ON su.id = c.current_session_user_id
+LEFT JOIN users st ON st.id = c.staff_user_id
+WHERE c.club_id = sqlc.arg(club_id) AND c.id = ANY(sqlc.arg(ids)::bigint[])
+ORDER BY c.id;
+
 -- name: ClubMapSessionPurchases :many
 -- ClubZoneController::computerStates(): что куплено в идущих сессиях — тарифы и минуты, по id.
 SELECT session_id, kind, name, minutes
@@ -256,6 +272,8 @@ SELECT value FROM platform_settings WHERE key = 'agent_release' AND sqlc.arg(clu
 -- name: DashboardCash :many
 -- DashboardController: суммы и число операций кассы по типу за 7 локальных дней клуба одним запросом
 -- (SUM(CASE…) по диапазонам дней в UTC). bounds — 8 границ дней (начало первого … конец последнего).
+-- Внешний диапазон [bounds[1], bounds[8]) повторяет условие соединения (PB-04): без него диапазон был виден только
+-- соединению с generate_series, и читалась вся касса клуба. Строки и суммы — те же (дни идут подряд).
 SELECT t.type, d.i::int AS day,
        COALESCE(sum(t.amount), 0)::bigint AS total, count(t.id)::bigint AS cnt
 FROM generate_series(1, 7) AS d(i)
@@ -263,6 +281,7 @@ JOIN cash_transactions t
   ON t.club_id = sqlc.arg(club_id)
  AND t.created_at >= (sqlc.arg(bounds)::timestamptz[])[d.i] AND t.created_at < (sqlc.arg(bounds)::timestamptz[])[d.i + 1]
 WHERE t.type IN ('income', 'expense')
+  AND t.created_at >= (sqlc.arg(bounds)::timestamptz[])[1] AND t.created_at < (sqlc.arg(bounds)::timestamptz[])[8]
 GROUP BY t.type, d.i
 ORDER BY d.i, t.type;
 

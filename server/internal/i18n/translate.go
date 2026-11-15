@@ -10,110 +10,73 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
-
-	"github.com/aitmaganbetov/zafirogo/server/internal/db"
-	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
-// clubLocaleTTL — сколько держать язык клуба в памяти (смена языка в «Настройки → Языки» видна в сообщениях
-// API не позже чем через это время; интерфейс берёт язык из /api/auth/me сразу).
-const clubLocaleTTL = 30 * time.Second
-
-// lookupVersionTTL — сколько Lookup доверяет сверенной версии переводов без похода в базу (правка в суперадминке
-// видна в сообщениях API сервера не позже чем через это время; пакеты i18next — Pack — сверяются на каждый запрос).
-const lookupVersionTTL = 5 * time.Second
-
-type clubLocale struct {
-	locale string
-	at     time.Time
-}
-
-type clubLocales struct {
-	mu sync.Mutex
-	m  map[int64]clubLocale
-}
-
-// ForgetClubLocale — сбросить язык клуба из кэша этого инстанса (после смены языка в «Настройки → Языки»;
-// другие инстансы увидят новый язык не позже clubLocaleTTL).
-func (c *Catalog) ForgetClubLocale(clubID int64) {
-	if c == nil {
+// SetClubLocale — язык клуба только что изменён этим инстансом («Настройки → Языки»): виден в сообщениях API
+// сразу, не дожидаясь фоновой сверки (другие инстансы увидят не позже refreshEvery).
+func (c *Catalog) SetClubLocale(clubID int64, locale string) {
+	if c == nil || clubID <= 0 {
 		return
 	}
-	c.clubs.mu.Lock()
-	delete(c.clubs.m, clubID)
-	c.clubs.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.overrides == nil {
+		c.overrides = map[int64]localeOverride{}
+	}
+	c.overrides[clubID] = localeOverride{locale: locale, at: time.Now()}
+	if old := c.snap.Load(); old != nil {
+		next := *old
+		next.clubs = make(map[int64]string, len(old.clubs)+1)
+		for id, l := range old.clubs {
+			next.clubs[id] = l
+		}
+		setClub(next.clubs, clubID, locale)
+		c.snap.Store(&next)
+	}
 }
 
-// ClubLocale — язык клуба (clubs.locale; пусто — ru, LocaleResolver::DEFAULT_CLUB_LOCALE). Кэш в памяти на
-// clubLocaleTTL. Ошибка БД — ru (сообщение на языке-источнике лучше, чем ошибка вместо сообщения).
+// ForgetClubLocale — язык клуба мог измениться: перечитать языки клубов сейчас (фоновой загрузкой, без ожидания).
+func (c *Catalog) ForgetClubLocale(clubID int64) {
+	if c == nil || c.pool == nil {
+		return
+	}
+	c.mu.Lock()
+	delete(c.overrides, clubID)
+	c.mu.Unlock()
+	c.touch()
+	c.startLoad()
+}
+
+// ClubLocale — язык клуба (clubs.locale; пусто — ru, LocaleResolver::DEFAULT_CLUB_LOCALE) из снимка каталога:
+// в базу на пути запроса не ходит (PB-01). Снимка нет (база недоступна при старте) — ru: сообщение на
+// языке-источнике лучше, чем ошибка вместо сообщения.
 func (c *Catalog) ClubLocale(ctx context.Context, clubID int64) string {
 	if clubID <= 0 || c == nil || c.pool == nil {
 		return SourceLocale
 	}
-	now := time.Now()
-	c.clubs.mu.Lock()
-	if v, ok := c.clubs.m[clubID]; ok && now.Sub(v.at) < clubLocaleTTL {
-		c.clubs.mu.Unlock()
-		return v.locale
-	}
-	c.clubs.mu.Unlock()
-	locale := SourceLocale
-	err := db.InPlatformTx(ctx, c.pool, func(q *store.Queries) error {
-		row, err := q.ClubLocaleTimezone(ctx, clubID)
-		if err != nil {
-			return err
-		}
-		if row.Locale != nil && *row.Locale != "" {
-			locale = *row.Locale
-		}
-		return nil
-	})
-	if err != nil {
+	s := c.current(ctx)
+	if s == nil {
 		return SourceLocale
 	}
-	c.clubs.mu.Lock()
-	if c.clubs.m == nil || len(c.clubs.m) > 10000 {
-		c.clubs.m = map[int64]clubLocale{}
+	if l, ok := s.clubs[clubID]; ok {
+		return l
 	}
-	c.clubs.m[clubID] = clubLocale{locale: locale, at: now}
-	c.clubs.mu.Unlock()
-	return locale
+	return SourceLocale
 }
 
 // Lookup — перевод строки key (формат Laravel) на язык locale: язык → запасной en → нет (как Translator::get()
 // для JSON-фраз). Группы — ключом «группа.ключ» (validation.required). Язык не включён — нет перевода.
+// Только память: см. Catalog.
 func (c *Catalog) Lookup(ctx context.Context, locale, key string) (string, bool) {
 	if c == nil || c.pool == nil {
 		return "", false
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.enabled != nil && time.Since(c.checkedAt) < lookupVersionTTL {
-		if raw, cached := c.raw[locale]; cached {
-			v, ok := raw[key]
-			return v, ok
-		}
-	}
-	var (
-		v  string
-		ok bool
-	)
-	err := db.InPlatformTx(ctx, c.pool, func(q *store.Queries) error {
-		if err := c.refresh(ctx, q); err != nil {
-			return err
-		}
-		raw, err := c.rawLocked(ctx, q, locale)
-		if err != nil {
-			return err
-		}
-		v, ok = raw[key]
-		return nil
-	})
-	if err != nil {
+	s := c.current(ctx)
+	if s == nil {
 		return "", false
 	}
+	v, ok := s.raw[locale][key]
 	return v, ok
 }
 

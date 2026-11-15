@@ -1008,6 +1008,120 @@ func (q *Queries) ClubMapStartStaffVisit(ctx context.Context, arg ClubMapStartSt
 	return err
 }
 
+const clubMapStateComputers = `-- name: ClubMapStateComputers :many
+SELECT c.id, c.club_zone_id, c.number, c.display_name, c.device_name, c.device_id, c.status, c.is_reserved,
+       c.position_x, c.position_y, c.agent_state, c.agent_version, c.last_seen_at,
+       c.current_session_id, c.current_session_user_id, c.session_guest, c.session_ends_at,
+       c.staff_user_id, c.staff_kind, c.staff_until,
+       c.mac_address, c.local_ip, c.remote_ip, c.cpu_model, c.cpu_cores, c.ram_total_mb, c.gpu_model, c.os_version,
+       c.hardware_reported_at, c.created_at, c.updated_at,
+       su.name AS session_user_name, su.phone AS session_user_phone, st.name AS staff_name
+FROM club_computers c
+LEFT JOIN users su ON su.id = c.current_session_user_id
+LEFT JOIN users st ON st.id = c.staff_user_id
+WHERE c.club_id = $1 AND c.id = ANY($2::bigint[])
+ORDER BY c.id
+`
+
+type ClubMapStateComputersParams struct {
+	ClubID int64   `json:"club_id"`
+	Ids    []int64 `json:"ids"`
+}
+
+type ClubMapStateComputersRow struct {
+	ID                   int64      `json:"id"`
+	ClubZoneID           int64      `json:"club_zone_id"`
+	Number               int64      `json:"number"`
+	DisplayName          *string    `json:"display_name"`
+	DeviceName           *string    `json:"device_name"`
+	DeviceID             *string    `json:"device_id"`
+	Status               string     `json:"status"`
+	IsReserved           bool       `json:"is_reserved"`
+	PositionX            int64      `json:"position_x"`
+	PositionY            int64      `json:"position_y"`
+	AgentState           *string    `json:"agent_state"`
+	AgentVersion         *string    `json:"agent_version"`
+	LastSeenAt           *time.Time `json:"last_seen_at"`
+	CurrentSessionID     *string    `json:"current_session_id"`
+	CurrentSessionUserID *int64     `json:"current_session_user_id"`
+	SessionGuest         bool       `json:"session_guest"`
+	SessionEndsAt        *time.Time `json:"session_ends_at"`
+	StaffUserID          *int64     `json:"staff_user_id"`
+	StaffKind            *string    `json:"staff_kind"`
+	StaffUntil           *time.Time `json:"staff_until"`
+	MacAddress           *string    `json:"mac_address"`
+	LocalIp              *string    `json:"local_ip"`
+	RemoteIp             *string    `json:"remote_ip"`
+	CpuModel             *string    `json:"cpu_model"`
+	CpuCores             *int32     `json:"cpu_cores"`
+	RamTotalMb           *int64     `json:"ram_total_mb"`
+	GpuModel             *string    `json:"gpu_model"`
+	OsVersion            *string    `json:"os_version"`
+	HardwareReportedAt   *time.Time `json:"hardware_reported_at"`
+	CreatedAt            *time.Time `json:"created_at"`
+	UpdatedAt            *time.Time `json:"updated_at"`
+	SessionUserName      *string    `json:"session_user_name"`
+	SessionUserPhone     *string    `json:"session_user_phone"`
+	StaffName            *string    `json:"staff_name"`
+}
+
+// Те же колонки, что ClubMapComputers, для выбранных ПК (GET /api/club-map/state?ids=…, PB-08): фронт запрашивает
+// 1–несколько ПК на каждое событие computer.state — весь клуб для этого не читается.
+func (q *Queries) ClubMapStateComputers(ctx context.Context, arg ClubMapStateComputersParams) ([]ClubMapStateComputersRow, error) {
+	rows, err := q.db.Query(ctx, clubMapStateComputers, arg.ClubID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClubMapStateComputersRow
+	for rows.Next() {
+		var i ClubMapStateComputersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ClubZoneID,
+			&i.Number,
+			&i.DisplayName,
+			&i.DeviceName,
+			&i.DeviceID,
+			&i.Status,
+			&i.IsReserved,
+			&i.PositionX,
+			&i.PositionY,
+			&i.AgentState,
+			&i.AgentVersion,
+			&i.LastSeenAt,
+			&i.CurrentSessionID,
+			&i.CurrentSessionUserID,
+			&i.SessionGuest,
+			&i.SessionEndsAt,
+			&i.StaffUserID,
+			&i.StaffKind,
+			&i.StaffUntil,
+			&i.MacAddress,
+			&i.LocalIp,
+			&i.RemoteIp,
+			&i.CpuModel,
+			&i.CpuCores,
+			&i.RamTotalMb,
+			&i.GpuModel,
+			&i.OsVersion,
+			&i.HardwareReportedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SessionUserName,
+			&i.SessionUserPhone,
+			&i.StaffName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const clubMapTariffs = `-- name: ClubMapTariffs :many
 SELECT id, name, duration_minutes, price, currency, is_active, sale_periods, validity_periods
 FROM tariffs
@@ -1409,6 +1523,7 @@ JOIN cash_transactions t
   ON t.club_id = $1
  AND t.created_at >= ($2::timestamptz[])[d.i] AND t.created_at < ($2::timestamptz[])[d.i + 1]
 WHERE t.type IN ('income', 'expense')
+  AND t.created_at >= ($2::timestamptz[])[1] AND t.created_at < ($2::timestamptz[])[8]
 GROUP BY t.type, d.i
 ORDER BY d.i, t.type
 `
@@ -1427,6 +1542,8 @@ type DashboardCashRow struct {
 
 // DashboardController: суммы и число операций кассы по типу за 7 локальных дней клуба одним запросом
 // (SUM(CASE…) по диапазонам дней в UTC). bounds — 8 границ дней (начало первого … конец последнего).
+// Внешний диапазон [bounds[1], bounds[8]) повторяет условие соединения (PB-04): без него диапазон был виден только
+// соединению с generate_series, и читалась вся касса клуба. Строки и суммы — те же (дни идут подряд).
 func (q *Queries) DashboardCash(ctx context.Context, arg DashboardCashParams) ([]DashboardCashRow, error) {
 	rows, err := q.db.Query(ctx, dashboardCash, arg.ClubID, arg.Bounds)
 	if err != nil {

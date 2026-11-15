@@ -235,9 +235,8 @@ func (q *Queries) ShopOrdersPage(ctx context.Context, arg ShopOrdersPageParams) 
 }
 
 const shopOrdersState = `-- name: ShopOrdersState :one
-SELECT count(*) FILTER (WHERE status = 'new')::bigint AS new_count, COALESCE(max(id), 0)::bigint AS latest
-FROM shop_orders
-WHERE club_id = $1
+SELECT (SELECT count(*) FROM shop_orders n WHERE n.club_id = $1 AND n.status = 'new')::bigint AS new_count,
+       COALESCE((SELECT o.id FROM shop_orders o WHERE o.club_id = $1 ORDER BY o.id DESC LIMIT 1), 0)::bigint AS latest
 `
 
 type ShopOrdersStateRow struct {
@@ -246,6 +245,7 @@ type ShopOrdersStateRow struct {
 }
 
 // state(): ShopOrder::newCount() и max(id) — бейдж и «появился новый заказ».
+// Два подзапроса по индексам (club_id, status, id) и (club_id, id) вместо прохода по всем заказам клуба (PB-07).
 func (q *Queries) ShopOrdersState(ctx context.Context, clubID int64) (ShopOrdersStateRow, error) {
 	row := q.db.QueryRow(ctx, shopOrdersState, clubID)
 	var i ShopOrdersStateRow
