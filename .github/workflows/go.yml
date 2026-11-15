@@ -12,12 +12,8 @@ concurrency:
   group: go-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  GOLANGCI_LINT_VERSION: v2.15.0
-  GOVULNCHECK_VERSION: v1.9.0
-  GOSEC_VERSION: v2.30.0
-  GOOSE_VERSION: v3.29.0
-  OAPI_CODEGEN_VERSION: v2.8.1
+# Версии инструментов (golangci-lint, govulncheck, gosec, goose, sqlc, buf, oapi-codegen, task) — tools/versions.env;
+# шаг «versions» кладёт их в окружение задачи.
 
 defaults:
   run:
@@ -28,10 +24,14 @@ jobs:
     name: vet, lint, security
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - name: versions (tools/versions.env — единственное место версий инструментов)
+        working-directory: .
+        shell: bash
+        run: grep -E '^[A-Z_]+=' tools/versions.env | tr -d '\r' >> "$GITHUB_ENV"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
@@ -39,19 +39,15 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
-      - name: REST code matches api/*.yaml (oapi-codegen по разделам)
+      - name: versions are defined once (tools/check-versions.sh)
         working-directory: .
-        run: |
-          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@${OAPI_CODEGEN_VERSION}
-          sh api/gen.sh
-          git diff --exit-code -- server/internal/http/api
-          test -z "$(git status --porcelain -- server/internal/http/api)"
+        run: sh tools/check-versions.sh
       - name: go vet
         run: |
           go vet ./...
           go vet -tags=integration ./...
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
           working-directory: server
@@ -65,14 +61,60 @@ jobs:
           go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
           gosec -quiet -exclude-generated -exclude-dir=gen -exclude-dir=store ./...
 
+  # Сгенерированный код и правила над исходниками (аудит BC-02): правило тенантности tenant-filter (sqlc vet),
+  # sqlc / oapi-codegen / buf generate не меняют дерево, buf lint, buf breaking против базовой ветки PR.
+  # Типы API фронта (openapi-typescript) сверяет web.yml.
+  generated:
+    name: sqlc vet, buf lint/breaking, generated code is up to date
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: versions (tools/versions.env — единственное место версий инструментов)
+        working-directory: .
+        shell: bash
+        run: grep -E '^[A-Z_]+=' tools/versions.env | tr -d '\r' >> "$GITHUB_ENV"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: генераторы (версии — tools/versions.env)
+        run: |
+          go install github.com/go-task/task/v3/cmd/task@${TASK_VERSION}
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@${SQLC_VERSION}
+          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@${OAPI_CODEGEN_VERSION}
+          go install github.com/bufbuild/buf/cmd/buf@${BUF_VERSION}
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION}
+      - name: sqlc vet (tenant-filter), buf lint, sqlc / oapi-codegen / buf generate без диффа
+        working-directory: .
+        run: task gen:check:go
+      # Контракт агента: несовместимое изменение proto ломает уже установленных агентов. Осознанное изменение
+      # (до первого выпуска агента, решение 3 в CLAUDE.md) — метка PR «proto-breaking».
+      - name: базовая ветка (proto) для buf breaking
+        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'proto-breaking')
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.base_ref }}
+          path: .buf-base
+          persist-credentials: false
+          sparse-checkout: |
+            proto
+            buf.yaml
+      - name: buf breaking (против базовой ветки PR)
+        if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'proto-breaking')
+        working-directory: .
+        run: task proto:breaking AGAINST=.buf-base
+
   test:
     name: unit tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
@@ -84,17 +126,17 @@ jobs:
     name: translations ru/kk/en
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: aitmaganbetov/Zafiro
           path: legacy/Zafiro
           token: ${{ secrets.ZAFIRO_LEGACY_TOKEN || github.token }}
           persist-credentials: false
           sparse-checkout: database/translations
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
@@ -124,13 +166,17 @@ jobs:
     env:
       ZAFIRO_TEST_DATABASE_URL: postgres://zafiro:zafiro_ci@localhost:5432/zafiro_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
+      - name: versions (tools/versions.env — единственное место версий инструментов)
+        working-directory: .
+        shell: bash
+        run: grep -E '^[A-Z_]+=' tools/versions.env | tr -d '\r' >> "$GITHUB_ENV"
       - name: goose up (db/migrations)
         working-directory: .
         run: |
@@ -153,10 +199,10 @@ jobs:
     name: build binary
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum

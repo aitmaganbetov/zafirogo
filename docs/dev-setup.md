@@ -7,7 +7,7 @@
 | Go | 1.27.3 (`server/go.mod`) | при `GOTOOLCHAIN=auto` (по умолчанию) нужная версия скачается сама |
 | Node.js | ≥ 22.22.2, npm 10 | jsdom 30 требует 22.22.2+ |
 | Docker + Compose v2 | любой актуальный | Postgres, Valkey, NATS |
-| go-task | v3.54.0 | `go install github.com/go-task/task/v3/cmd/task@v3.54.0` |
+| go-task | v3.54.0 (`TASK_VERSION` в `tools/versions.env`) | `go install github.com/go-task/task/v3/cmd/task@v3.54.0` |
 
 `$(go env GOPATH)/bin` должен быть в `PATH` **раньше** системных каталогов: иначе может подхватиться
 старый `golangci-lint` (собранный Go < 1.27 он откажется работать: «Go language version … is lower than the targeted»).
@@ -108,18 +108,26 @@ NATS и gRPC. Нужен для смоук-теста собранного би�
 
 ## Генерация кода
 
-Сгенерированный код **коммитится**, CI его не генерирует (но проверяет, что TS-типы API актуальны).
+Сгенерированный код **коммитится**. CI генерирует его заново и падает, если дерево изменилось: Go — задача `generated`
+в `.github/workflows/go.yml` (`task gen:check:go`: `sqlc vet` с правилом `tenant-filter`, `sqlc diff`, `buf lint`,
+`sqlc generate`, `api/gen.sh`, `buf generate`; на PR ещё `buf breaking` против базовой ветки — осознанное несовместимое
+изменение proto помечается меткой PR `proto-breaking`), TS-типы API — `.github/workflows/web.yml`.
+Локально то же: `task gen:check` (Go + web), `task proto:breaking`.
 
 ```bash
 task gen            # всё сразу
 task gen:sqlc       # db/queries + db/migrations → server/internal/store
-task gen:api        # api/openapi.yaml → server/internal/http/api/api.gen.go (oapi-codegen, chi strict server)
+task gen:api        # api/<раздел>.yaml → server/internal/http/api/<раздел>/<раздел>.gen.go (api/gen.sh: oapi-codegen, chi strict server)
 task gen:proto      # proto/ → server/gen (buf)
-task gen:web        # api/openapi.yaml → web/src/api/schema.d.ts (openapi-typescript)
+task gen:web        # api/<раздел>.yaml → web/src/api/gen/<раздел>.d.ts (openapi-typescript)
 ```
 
-Новый REST-эндпоинт: описать в `api/openapi.yaml` → `task gen:api gen:web` → реализовать метод
-сгенерированного `api.StrictServerInterface` в `server/internal/http`.
+Новый REST-эндпоинт: описать в `api/<раздел>.yaml` (конвенции — `api/README.md`) → `task gen:api gen:web` → реализовать
+метод сгенерированного `StrictServerInterface` раздела в `server/internal/http/sections/<раздел>`.
+
+Версии генераторов и линтеров (и Node.js для CI) записаны в одном месте — `tools/versions.env`: его читают Taskfile
+(`task tools`), все workflow (шаг «versions») и Dockerfile (goose). `task versions:check` (`tools/check-versions.sh`,
+в CI — задача `lint`) падает, если версия продублирована где-то ещё или расходится с образом node в Dockerfile.
 
 ## Тесты и линтеры
 

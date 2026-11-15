@@ -1,23 +1,12 @@
 # go-task v3 — https://taskfile.dev
-# Установка task: go install github.com/go-task/task/v3/cmd/task@v3.54.0
+# Установка task: go install github.com/go-task/task/v3/cmd/task@<TASK_VERSION из tools/versions.env>
 # Список задач: task --list
 version: "3"
 
-dotenv: [".env"]
+# tools/versions.env — закреплённые версии инструментов ({{.GOOSE_VERSION}} и т.д.): одно место для Taskfile, CI и Dockerfile.
+dotenv: [".env", "tools/versions.env"]
 
 vars:
-  # Закреплённые версии инструментов (обновлять осознанно, синхронно с CI).
-  TASK_VERSION: v3.54.0
-  SQLC_VERSION: v1.31.1
-  GOOSE_VERSION: v3.29.0
-  OAPI_CODEGEN_VERSION: v2.8.1
-  BUF_VERSION: v1.75.0
-  PROTOC_GEN_GO_VERSION: v1.36.12
-  PROTOC_GEN_GO_GRPC_VERSION: v1.6.2
-  GOLANGCI_LINT_VERSION: v2.15.0
-  GOVULNCHECK_VERSION: v1.9.0
-  GOSEC_VERSION: v2.30.0
-
   COMPOSE: docker compose -f docker-compose.dev.yml --env-file .env
   STAGING_COMPOSE: docker compose -f deploy/staging/compose.yaml --env-file deploy/staging/.env.staging
   # Бэкап (O2): образ Postgres + WAL-G и staging с подключённым deploy/backup/compose.backup.yml.
@@ -208,11 +197,36 @@ tasks:
       - sh api/gen.sh
 
   gen:check:
-    desc: Сгенерированный код совпадает с исходниками (CI)
+    desc: Сгенерированный код совпадает с исходниками — Go и web (локально перед PR)
     cmds:
-      - task: gen
-      - git diff --exit-code -- server/internal/store server/internal/http/api server/gen web/src/api/gen
-      - test -z "$(git status --porcelain -- server/internal/store server/internal/http/api server/gen web/src/api/gen)"
+      - task: gen:check:go
+      - task: gen:web
+      - git diff --exit-code -- web/src/api/gen
+      - test -z "$(git status --porcelain -- web/src/api/gen)"
+
+  gen:check:go:
+    desc: "CI (go.yml): правило tenant-filter (sqlc vet), buf lint, а sqlc / oapi-codegen / buf generate не меняют дерево"
+    cmds:
+      - sqlc vet
+      - sqlc diff
+      - buf lint
+      - task: gen:sqlc
+      - task: gen:api
+      - task: gen:proto
+      - git diff --exit-code -- server/internal/store server/internal/http/api server/internal/http/sections/public/openapi-v1.yaml server/gen
+      - test -z "$(git status --porcelain -- server/internal/store server/internal/http/api server/internal/http/sections/public/openapi-v1.yaml server/gen)"
+
+  proto:breaking:
+    desc: "buf breaking против ветки или каталога: task proto:breaking [AGAINST='.git#ref=origin/main']"
+    vars:
+      AGAINST: '{{.AGAINST | default ".git#ref=origin/main"}}'
+    cmds:
+      - buf breaking --against '{{.AGAINST}}'
+
+  versions:check:
+    desc: Версии инструментов записаны только в tools/versions.env (tools/check-versions.sh)
+    cmds:
+      - sh tools/check-versions.sh
 
   gen:proto:
     cmds:
@@ -310,6 +324,11 @@ tasks:
     desc: Повторить job миграций (goose up под владельцем схемы) — перед выкладкой новых инстансов
     cmds:
       - "{{.STAGING_COMPOSE}} run --rm migrate up"
+
+  staging:nginx-test:
+    desc: "Конфигурация nginx staging в закреплённом образе, без поднятого staging: nginx -t, gzip без двойного сжатия, журнал без токенов"
+    cmds:
+      - deploy/staging/nginx-test.sh
 
   staging:reload-lb:
     desc: Проверить и перечитать конфигурацию nginx без разрыва соединений

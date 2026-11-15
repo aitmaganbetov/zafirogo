@@ -1,4 +1,4 @@
-# Выпуск агента ПК: сборка (windows-latest: служба Native AOT + UI WPF/WebView2) → Authenticode (если есть сертификат)
+# Выпуск агента ПК: сборка (windows-2025: служба Native AOT + UI WPF/WebView2) → Authenticode (если есть сертификат)
 # → установщик Inno Setup → sha256 и размер → манифест <установщик>.update.json с подписью Ed25519 (решение «Обновления
 # агента», docs/agent-protocol.md §6 и §14). Манифест читает кабинет суперадмина
 # (server/internal/http/sections/superadmin/release.go) и проверяет подпись открытым ключом agent.update.public_keys;
@@ -44,7 +44,7 @@ env:
 jobs:
   build:
     name: build installer (windows)
-    runs-on: windows-latest
+    runs-on: windows-2025
     environment: agent-release
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -59,15 +59,19 @@ jobs:
       REF_NAME: ${{ github.ref_name }}
       ROOT_CA_PEM: ${{ vars.AGENT_ROOT_CA_PEM }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-dotnet@v6
+      - name: versions (tools/versions.env — единственное место версий инструментов)
+        working-directory: .
+        shell: bash
+        run: grep -E '^[A-Z_]+=' tools/versions.env | tr -d '\r' >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: agent/global.json
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
 
       - name: Версия и канал
         id: version
@@ -164,7 +168,7 @@ jobs:
           Remove-Item $pfx -Force
           exit $code
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: agent-installer
           path: ${{ env.INSTALLER }}
@@ -183,10 +187,10 @@ jobs:
       KEY_ID: ${{ vars.AGENT_UPDATE_KEY_ID }}
       EXPECT_PUBLIC_KEY: ${{ vars.AGENT_UPDATE_PUBLIC_KEY }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
@@ -198,7 +202,7 @@ jobs:
           fi
           echo "INSTALLER=$RUNNER_TEMP/release/ZafiroAgentSetup-$VERSION.exe" >> "$GITHUB_ENV"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: agent-installer
           path: ${{ runner.temp }}/release
@@ -215,7 +219,7 @@ jobs:
           fi
           go run ./cmd/sign-update "${args[@]}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: agent-${{ env.VERSION }}
           path: |

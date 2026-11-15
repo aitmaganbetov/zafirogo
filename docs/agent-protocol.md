@@ -317,17 +317,15 @@ CI-секретах, открытый ключ вшит в агента.
 
 ```bash
 # инструменты (версии закреплены)
-go install github.com/bufbuild/buf/cmd/buf@v1.75.0
-go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+task tools                     # buf, protoc-gen-go, protoc-gen-go-grpc — версии в tools/versions.env
 
 buf lint                       # стиль STANDARD (кроме PACKAGE_DIRECTORY_MATCH, см. buf.yaml)
 buf generate                   # → server/gen/agent/v1/*.pb.go
-cd server && go build ./gen/...   # google.golang.org/grpc v1.85.0, google.golang.org/protobuf v1.36.12
+cd server && go build ./gen/...   # google.golang.org/grpc v1.84.0 (PD-4), google.golang.org/protobuf v1.36.12
+task proto:breaking            # buf breaking против origin/main (CI — на каждом PR, .github/workflows/go.yml)
 
-tools/proto-csharp-check.sh    # C#: Grpc.Tools 2.85.0 → генерация во временный каталог,
-                               # сборка net10.0 с Google.Protobuf 3.36.2 + Grpc.Net.Client 2.85.0
-                               # (локальный dotnet SDK 10 или Docker mcr.microsoft.com/dotnet/sdk:10.0)
+agent/test.sh build            # C#: Grpc.Tools 2.85.0 генерирует код из proto/ при сборке Zafiro.Agent.Protocol
+                               # (Google.Protobuf 3.36.2, Grpc.Net.Client 2.85.0); CI — .github/workflows/agent.yml
 ```
 
 В агенте (C#) рекомендуется подключать `.proto` через `Grpc.Tools` в csproj (`<Protobuf Include=… GrpcServices="Client" />`),
@@ -700,7 +698,7 @@ L4-балансировщик (`least_conn`, `deploy/staging/nginx/stream.d/agen
 
 | Проект | Что внутри |
 |---|---|
-| `Zafiro.Agent.Protocol` | C# из `proto/agent/v1/*.proto` (Grpc.Tools 2.85.0 при сборке, в репозиторий не кладётся; Google.Protobuf 3.36.2, Grpc.Net.Client 2.85.0 — как `tools/proto-csharp-check.sh`) + локальные контракты: IPC служба ↔ UI (`Proto/zafiro/agent/ipc/v1/ipc.proto`) и файлы состояния службы (`Proto/zafiro/agent/local/v1/state.proto`) |
+| `Zafiro.Agent.Protocol` | C# из `proto/agent/v1/*.proto` (Grpc.Tools 2.85.0 при сборке, в репозиторий не кладётся; Google.Protobuf 3.36.2, Grpc.Net.Client 2.85.0 — `agent/Directory.Packages.props`) + локальные контракты: IPC служба ↔ UI (`Proto/zafiro/agent/ipc/v1/ipc.proto`) и файлы состояния службы (`Proto/zafiro/agent/local/v1/state.proto`) |
 | `Zafiro.Agent.Core` | библиотека связи без UI и хостинга: регистрация и продление (`Enrollment/Enroller.cs`), хранилища ключа (`Credentials/`), канал mTLS (`Transport/AgentChannelFactory.cs`, `TrustAnchors.cs`, `Backoff.cs`), стрим и команды (`Runtime/AgentRuntime.cs`, `AgentState.cs`), журналы команд и событий (`Journal/`), клиенты гостя (`Guest/GuestApi.cs`), ошибки (`Errors/AgentRpcException.cs`), обновления (`Updates/`) |
 | `Zafiro.Agent.Service` | хост службы (`Microsoft.Extensions.Hosting`; Windows — служба `ZafiroAgent`, Linux — консоль для тестов), платформа (`Platform/WindowsPlatform.cs`, `LinuxPlatform.cs`), IPC (`Ipc/`), запуск UI и уведомления для него (`Ui/UiCoordinator.cs`), ключ образа (`ImageKeyStore.cs`, AG-10) |
 | `Zafiro.Agent.UI.Core` | логика процесса UI без WPF (проверяется на Linux): клиент IPC (`Ipc/IpcClient.cs`), мост страницы ↔ служба (`Bridge/BridgeRouter.cs`), QR-код (`Bridge/QrCodes.cs`), выбор экрана (`Screens/UiController.cs`), тексты уведомлений (`Screens/UiTranslations.cs`), правила киоска (`Kiosk/KioskRules.cs`) |
@@ -859,7 +857,7 @@ HealthStatus, форм-фактора аудио, XPath журнала. Стра
 за ≤ 10 с (а не через 60 с), стрим не рвётся (уведомление из панели доходит), `GET /api/club-computers/{id}/health`
 отдаёт те же измерения.
 
-CI — `.github/workflows/agent.yml`: сборка, unit-тесты и Native AOT publish на `windows-latest` и `ubuntu-latest`,
+CI — `.github/workflows/agent.yml`: сборка, unit-тесты и Native AOT publish на `windows-2025` и `ubuntu-24.04`,
 интеграционные — на ubuntu с тем же `server.sh`.
 
 **Не проверено (нет Windows-машины):** служба Windows, SChannel с ключом CNG/TPM, именованный канал и проверка SID,
@@ -925,7 +923,7 @@ CI — `.github/workflows/agent.yml`: сборка, unit-тесты и Native AO
 ### 14.8. Установщик и выпуск
 
 - **Inno Setup 6.5.4** (`agent/installer/ZafiroAgent.iss`; в CI — установщик с GitHub jrsoftware/issrc, SHA-256
-  закреплён в `.github/workflows/agent-release.yml`). Выбран вместо WiX: собирается на `windows-latest` без лишних
+  закреплён в `.github/workflows/agent-release.yml`). Выбран вместо WiX: собирается на раннере Windows (`windows-2025`) без лишних
   инструментов, старый установщик был на нём же (задачи, страницы обновления, `/MERGETASKS="!protect"` тихого обновления
   службой) — AG-14.
 - Содержимое (`{app}` = `Program Files\Zafiro Agent`): `Zafiro.Agent.Service.exe` (Native AOT, служба `ZafiroAgent`,
@@ -938,7 +936,7 @@ CI — `.github/workflows/agent.yml`: сборка, unit-тесты и Native AO
   --set-image-key` (ключ — через stdin) → DPAPI LocalMachine в `ProgramData\Zafiro\Agent\image-key.bin` (папка только
   SYSTEM и администраторы). Ключ, оставшийся в `appsettings.json` (`Agent:ImageKey`), служба при старте переносит туда же
   и стирает из файла. Делать в режиме правки образа (супер-рабочая станция), иначе запись пропадёт при перезагрузке.
-- **Выпуск** (`agent-release.yml`): job `build` (windows-latest) — unit-тесты .NET и страницы, `dotnet publish`
+- **Выпуск** (`agent-release.yml`): job `build` (windows-2025) — unit-тесты .NET и страницы, `dotnet publish`
   службы (`win-x64`, Native AOT, без предупреждений trim/AOT) и UI (`win-x64`, self-contained), `root-ca.pem`,
   Authenticode exe (секреты `AGENT_CODESIGN_PFX`/`AGENT_CODESIGN_PASSWORD`; нет — предупреждение, AG-15), установщик,
   Authenticode установщика; job `sign` (ubuntu) — `server/cmd/sign-update` (sha256, размер, Ed25519, проверка ключом
@@ -1061,7 +1059,7 @@ SSD под кэш игр) нет — решение S7-HA-13 `open-questions/sta
 `DriveInfo`, SetupAPI, MMDevice), SMART — раз в 5 мин, журнал — раз в 10 мин, периферия — раз в 5 с (SetupAPI ×3 +
 MMDevice). Цель — < 1 % CPU в среднем и < 5 МБ дополнительной памяти; на Windows не замерено (нет машины) — пункт §14.9.
 Проверка AOT: `agent/test.sh aot` (linux-x64, без предупреждений) и ILLink-публикация `-r win-x64 -p:PublishTrimmed=true`
-на Linux — без предупреждений; полная Native AOT публикация под win-x64 — job `build + unit (windows-latest)` в
+на Linux — без предупреждений; полная Native AOT публикация под win-x64 — job `build + unit (windows-2025)` в
 `.github/workflows/agent.yml` (шаг «Native AOT publish (служба)», предупреждения IL/SYSLIB — ошибка).
 
 ## 15. Закрытие пробелов протокола агента (Этап 5, A3)

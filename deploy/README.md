@@ -7,6 +7,7 @@
 |---|---|---|
 | `../Dockerfile`, `../.dockerignore` | образ: `zafiro` + `goose` + `migrate-from-mysql`, distroless, nonroot | O1 |
 | `staging/` | staging на docker compose: 2 инстанса, Postgres, Valkey, NATS, job миграций, nginx | O1 |
+| `staging/nginx-test.sh` | проверка конфигурации nginx в закреплённом образе: `nginx -t`, gzip, журнал без токенов (`task staging:nginx-test`, CI `deploy.yml`) | O1 |
 | `trivy-ignore.yaml` | исключения скана образа (CI `release.yml`) — с обоснованием и сроком | O1 |
 | `backup/` | резервные копии Postgres (базовые + WAL), проверка восстановления | O2 |
 | `observability/` | Prometheus, алерты, дашборды | O3 |

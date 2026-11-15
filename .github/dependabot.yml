@@ -42,12 +42,23 @@ updates:
     cooldown:
       default-days: 14
     groups:
-      # Grpc.* и Google.Protobuf обновляются вместе (версии сверяет tools/proto-csharp-check.sh).
+      # Grpc.* и Google.Protobuf обновляются вместе (Grpc.Tools генерирует C# из proto/ при каждой сборке агента).
       grpc:
         patterns: ["Grpc.*", "Google.Protobuf"]
       dotnet-minor:
         update-types: [minor, patch]
 
+  # .NET SDK агента (agent/global.json).
+  - package-ecosystem: dotnet-sdk
+    directory: /agent
+    schedule:
+      interval: weekly
+    # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
+    cooldown:
+      default-days: 14
+
+  # Действия закреплены SHA коммита с комментарием версии (`uses: owner/action@<sha> # vX.Y.Z`, аудит A-03):
+  # Dependabot обновляет и SHA, и комментарий. Тег вместо SHA в workflow не ставить.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -56,17 +67,28 @@ updates:
     cooldown:
       default-days: 14
 
+  # Все compose-файлы репозитория (аудит BC-10): dev-окружение, staging, бэкап, наблюдаемость, стенды тестов.
   - package-ecosystem: docker-compose
-    directory: /
+    directories:
+      - /
+      - /deploy/staging
+      - /deploy/backup
+      - /deploy/observability
+      - /tools/visual
+      - /tools/loadgen
+      - /agent/tests/integration
     schedule:
       interval: weekly
     # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.
     cooldown:
       default-days: 14
 
-  # Dockerfile образа сервера (node, golang, distroless — тег + digest).
+  # Dockerfile образа сервера (node, golang, distroless — тег + digest) и образа Postgres + WAL-G
+  # (deploy/backup/Dockerfile: golang, postgres).
   - package-ecosystem: docker
-    directory: /
+    directories:
+      - /
+      - /deploy/backup
     schedule:
       interval: weekly
     # Решение PD-4 (docs/DECISIONS.md): только версии старше 14 дней.

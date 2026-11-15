@@ -1,0 +1,32 @@
+name: deploy
+
+# Конфигурация выкладки: балансировщик staging (deploy/staging/nginx) в закреплённом образе nginx из compose.yaml —
+# `nginx -t`, сжатие без двойного gzip, журнал доступа без токенов (deploy/staging/nginx-test.sh; docs/deploy.md §2).
+on:
+  push:
+    branches: [main]
+    paths:
+      - deploy/staging/**
+      - .github/workflows/deploy.yml
+  pull_request:
+    paths:
+      - deploy/staging/**
+      - .github/workflows/deploy.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nginx:
+    name: nginx staging (nginx -t, gzip, журнал без секретов)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: deploy/staging/nginx-test.sh

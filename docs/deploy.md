@@ -12,7 +12,7 @@
 | Стадия | База (тег + digest, PD-4) | Что делает |
 |---|---|---|
 | `web` | `node:22.23.3-alpine3.24` | `npm ci --ignore-scripts` → `npm run build` (Vite) |
-| `go` | `golang:1.27.3-alpine3.24` | `CGO_ENABLED=0 go build -trimpath -tags timetzdata -ldflags "-s -w -X main.buildVersion=…"` со вшитым фронтом (`internal/webui/dist`); `goose` v3.29.0 только с драйвером Postgres; `migrate-from-mysql` |
+| `go` | `golang:1.27.3-alpine3.24` | `CGO_ENABLED=0 go build -trimpath -tags timetzdata -ldflags "-s -w -X main.buildVersion=…"` со вшитым фронтом (`internal/webui/dist`); `goose` v3.29.0 (`GOOSE_VERSION` из `tools/versions.env`) только с драйвером Postgres; `migrate-from-mysql` |
 | итог | `gcr.io/distroless/static-debian13:nonroot` | без shell и пакетного менеджера, пользователь `65532:65532`, CA-сертификаты и tzdata из distroless (tzdata ещё и вшит в бинарники) |
 
 Содержимое: `/usr/local/bin/zafiro` (ENTRYPOINT), `/usr/local/bin/goose`, `/usr/local/bin/migrate-from-mysql`,
@@ -79,6 +79,26 @@ Go-live клуба не меняет балансировщик: `/api/(auth|gue
 по IP для проксируемых ключей считает Laravel. Когда переведены все клубы — `mobile.upstream` и
 `integrations.legacy_upstream` очистить (прокси выключится). Откат клуба до первой операции —
 `tools/migrate-from-mysql/README.md`, п. 10.
+
+### Балансировщик: сжатие и журнал доступа
+
+Конфигурация — `deploy/staging/nginx/nginx.conf` (блок `http`); проверка без поднятого staging —
+`task staging:nginx-test` (`deploy/staging/nginx-test.sh`, в CI — `.github/workflows/deploy.yml`): `nginx -t` в
+закреплённом образе nginx из `compose.yaml`, заглушка вместо инстансов.
+
+- **Сжатие** (аудит PB-11): `gzip on`, уровень 5, ответы от 1 КБ, типы — JSON, JS, CSS, текст, XML, SVG, манифест
+  (HTML — всегда). `Accept-Encoding` клиента уходит в инстанс как есть: ответ, который сервер сжал сам (есть
+  `Content-Encoding`), nginx передаёт без изменений — **дважды не сжимается**; несжатый — сжимает nginx.
+  `gzip_proxied any` (запросы через прокси/CDN), `gzip_vary on` (`Vary: Accept-Encoding`). `gzip_static` не включён:
+  статику отдаёт инстанс из `embed.FS`, файлов на диске балансировщика нет. Замер на заглушке: JSON 21 298 байт →
+  2 549 байт. WebSocket `/ws` и gRPC агентов (`stream`) сжатие не затрагивает.
+- **Журнал доступа без секретов** (аудит A-05): формат `zafiro` — путь **без строки запроса** (билет `/ws?ticket=…` и
+  любые параметры не пишутся), сегмент после `/invitations/`, `/api/invitations/`, `/pc-login/`, `/api/pc-login/`,
+  `/api/guest/qr-login/` заменён на `***` (токен приглашения сотрудника, код входа на ПК по QR), `Referer` не пишется
+  (страница приглашения шлёт его с токеном). Сервер маскирует те же сегменты в своём журнале
+  (`server/internal/http/logpath.go`). Новый маршрут с секретом в пути — добавить в `map $request_uri $log_uri` и в
+  проверку. `error_log` nginx (уровень `warn`) печатает строку запроса как есть — во внешние системы сбора логов его
+  отдавать только с фильтром.
 
 ## 4. TLS
 
@@ -265,7 +285,16 @@ zafirogo (401); `/api/v1` с префиксом из карты → zafirogo, б
   Проверка перед выкладкой:
   `cosign verify ghcr.io/aitmaganbetov/zafirogo@sha256:… --certificate-identity-regexp '^https://github.com/aitmaganbetov/zafirogo/.github/workflows/release.yml@refs/tags/v' --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
   В k8s — политика admission (Kyverno/Sigstore policy-controller) на те же identity/issuer.
-- Dependabot: ecosystem `docker` для `Dockerfile` (cooldown 14 дней, PD-4).
+- Dependabot (`.github/dependabot.yml`, cooldown 14 дней, PD-4): `docker` — `Dockerfile` и `deploy/backup/Dockerfile`;
+  `docker-compose` — все compose-файлы (корень, `deploy/staging`, `deploy/backup`, `deploy/observability`,
+  `tools/visual`, `tools/loadgen`, `agent/tests/integration`); `github-actions`; `dotnet-sdk` — `agent/global.json`.
+- **Действия GitHub закреплены SHA коммита** с комментарием версии (`uses: owner/action@<40 символов> # vX.Y.Z`,
+  аудит A-03) во всех workflow — тег действия можно передвинуть, а задачи выпуска держат ключи подписи. Dependabot
+  обновляет SHA и комментарий вместе. Версия — последняя в мажорной ветке, выпущенная ≥ 14 дней назад.
+- **Версии инструментов** (goose, sqlc, buf, oapi-codegen, линтеры, task, Node.js для CI) — один файл
+  `tools/versions.env`: Taskfile (dotenv), workflow (шаг «versions» → `$GITHUB_ENV`), Dockerfile (стадия `go` читает
+  `GOOSE_VERSION`). `tools/check-versions.sh` (CI, задача `lint` в `go.yml`) ловит дубли и расхождение с образом node.
+  Раннеры — конкретные образы (`ubuntu-24.04`, `windows-2025`), не `*-latest`.
 
 ## 11. Масштабирование
 

@@ -43,10 +43,12 @@ COPY server/go.mod server/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=secret,id=build_ca \
     if [ -s /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi && \
     go mod download
-# goose — та же версия, что `task tools` (Taskfile GOOSE_VERSION); только драйвер Postgres.
-ARG GOOSE_VERSION=v3.29.0
+# goose — та же версия, что `task tools` и CI: GOOSE_VERSION из tools/versions.env (единственное место); только
+# драйвер Postgres.
+COPY tools/versions.env /tmp/versions.env
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build --mount=type=secret,id=build_ca \
     if [ -s /run/secrets/build_ca ]; then export SSL_CERT_FILE=/run/secrets/build_ca; fi && \
+    . /tmp/versions.env && test -n "${GOOSE_VERSION}" && \
     GOBIN=/out go install -trimpath -ldflags="-s -w" \
       -tags 'no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_vertica no_ydb' \
       github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}

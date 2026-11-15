@@ -5,6 +5,10 @@
 !server/
 !db/migrations/
 !db/seed/
+# Версии инструментов (goose) — tools/versions.env; остальное в tools/ сборке не нужно.
+!tools/
+tools/*
+!tools/versions.env
 
 # Локальные артефакты внутри разрешённых каталогов
 web/node_modules

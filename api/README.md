@@ -37,7 +37,7 @@
    (`listTodos`, не `list`): по ним строятся имена методов и типов на фронте и в логах.
    Пути разделов не пересекаются (chi паникует при дубле метода и пути).
 2. `task gen:api` (или `sh api/gen.sh`) → `server/internal/http/api/todos/todos.gen.go` (пакет `todosapi`).
-3. `server/internal/http/sections/todos/section.go` — по образцу `sections/tariffs/section.go`:
+3. `server/internal/http/sections/todos/todos.go` — по образцу `sections/tariffs/section.go`:
    ```go
    var access = httpx.Access{Routes: map[string]string{
        "ListTodos": "todos.index",          // операция → имя маршрута Laravel (RequireClubArea::ROUTES)

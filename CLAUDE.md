@@ -18,7 +18,7 @@
 
 ## Стек
 
-- Go (версия в `server/go.mod`): chi, slog, koanf; REST по OpenAPI (`api/openapi.yaml`, oapi-codegen strict server);
+- Go (версия в `server/go.mod`): chi, slog, koanf; REST по OpenAPI (`api/<раздел>.yaml`, `api/gen.sh`, oapi-codegen strict server);
   WebSocket для real-time в браузер; gRPC (bidirectional stream + mTLS) для агента, контракт в `proto/`.
 - PostgreSQL + pgx + sqlc (никаких ORM), миграции goose (`db/migrations`), запросы `db/queries`.
 - Valkey (кэш, сессии, rate limit), NATS JetStream (события между инстансами, фоновые задачи).
@@ -31,12 +31,14 @@
 - Тесты: Go `testing` + testcontainers (реальный Postgres), Vitest, Playwright (включая визуальное
   сравнение скриншотов старых и новых страниц).
 - Версии закреплены точно (без `^`/`~`, без `@latest` в CI). Обновления приходят через Dependabot.
+  Инструменты Go и Node для CI — в одном файле `tools/versions.env`; действия GitHub — по SHA коммита.
 
 ## Команды (Taskfile)
 
 - `task tools` — установить закреплённые версии генераторов и линтеров.
 - `task dev` — docker-compose (Postgres, Valkey, NATS) + сервер + Vite.
-- `task gen` — sqlc, oapi-codegen, buf (Go), openapi-typescript. Сгенерированный код коммитится.
+- `task gen` — sqlc, oapi-codegen, buf (Go), openapi-typescript. Сгенерированный код коммитится
+  (`task gen:check` — что он совпадает с исходниками; CI проверяет то же и `sqlc vet`).
 - `task test` — `go test ./...` + Vitest. Интеграционные: `go test -tags=integration ./...` (нужен Docker).
 - `task lint` — go vet, golangci-lint, govulncheck, gosec, eslint, tsc.
 - `task build` — один бинарник `bin/zafiro` со вшитым фронтом.
