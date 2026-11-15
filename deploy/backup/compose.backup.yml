@@ -80,7 +80,7 @@ services:
         condition: service_healthy
 
   s3:
-    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
     restart: unless-stopped
     command: ["server", "-dir=/data", "-ip.bind=0.0.0.0", "-master.volumeSizeLimitMB=1024", "-volume.minFreeSpace=${S3_MIN_FREE_SPACE:-1}",
               "-s3", "-s3.port=8333", "-s3.config=/run/secrets/s3_config"]
@@ -95,7 +95,7 @@ services:
       start_period: 10s
 
   s3-init:
-    image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
