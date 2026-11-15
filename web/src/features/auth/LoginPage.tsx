@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { peekIntended, takeIntended } from '../../auth/intended';
 import { session, type Me, type SecondFactorChallenge } from '../../auth/session';
+import { isResellerHost } from '../reseller/host';
 import { isCabinetHost } from '../superadmin/host';
 import { PhoneLocalInput } from '../../components/PhoneLocalInput';
 import { AuthLayout } from '../../layouts/AuthLayout';
@@ -41,8 +42,8 @@ export function LoginPage() {
 
   const enter = useCallback(
     async (me: Me) => {
-      // Хост кабинета (Q-069) и суперадмин без клуба — в кабинет.
-      const fallback = isCabinetHost() || (me.club == null && me.user.is_superadmin) ? '/superadmin' : '/dashboard';
+      // Хост реселлера (UQ-21) — в кабинет реселлера; хост кабинета (Q-069) и суперадмин без клуба — в кабинет.
+      const fallback = isResellerHost() ? '/reseller' : isCabinetHost() || (me.club == null && me.user.is_superadmin) ? '/superadmin' : '/dashboard';
       await navigate({ href: takeIntended(fallback) });
     },
     [navigate],
@@ -114,9 +115,13 @@ export function LoginPage() {
           {t('Войти в систему')}
         </button>
       </form>
-      <p className="auth-footer">
-        {t('Нет аккаунта?')} <a href="/register">{t('Зарегистрироваться')}</a>
-      </p>
+      {isResellerHost() ? (
+        <p className="auth-footer">{t('Кабинет реселлера Zafiro. Аккаунт реселлера создаёт Zafiro.')}</p>
+      ) : (
+        <p className="auth-footer">
+          {t('Нет аккаунта?')} <a href="/register">{t('Зарегистрироваться')}</a>
+        </p>
+      )}
     </AuthLayout>
   );
 }

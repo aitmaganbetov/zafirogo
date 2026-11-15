@@ -72,6 +72,8 @@ func TestReadOnlyCannotWriteAnywhere(t *testing.T) {
 		// режиме просмотра запрещены.
 		resetSecondFactor := strings.HasPrefix(path, "/api/superadmin/accounts/") &&
 			(strings.HasSuffix(path, "/second-factor") || strings.HasSuffix(path, "/superadmin"))
+		// Реселлеры (тема Д): в режиме просмотра раздел только читается.
+		resetSecondFactor = resetSecondFactor || strings.HasPrefix(path, "/api/superadmin/resellers")
 		if !resetSecondFactor && (strings.HasPrefix(path, "/api/v1") || strings.HasPrefix(path, "/api/superadmin/") || !strings.HasPrefix(path, "/api/")) {
 			// /api/v1 — API-ключ, не сессия; кабинет суперадмина — RequireSuperadmin (не клуб).
 			continue

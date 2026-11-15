@@ -6,7 +6,7 @@
  */
 
 /** Пути кабинета на его хосте (GET-маршруты superadmin.* и languages.* старого routes/web.php). */
-const CABINET_PATHS = ['/clubs', '/accounts', '/plans', '/invoices', '/logs', '/languages', '/telegram', '/platform-news'];
+const CABINET_PATHS = ['/clubs', '/accounts', '/plans', '/resellers', '/invoices', '/logs', '/languages', '/telegram', '/platform-news'];
 
 export function isCabinetHost(): boolean {
   return typeof document !== 'undefined' && document.documentElement.hasAttribute('data-superadmin-host');

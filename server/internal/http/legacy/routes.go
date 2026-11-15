@@ -47,6 +47,14 @@ func (a *API) routes() chi.Router {
 		r.With(a.throttle("api.guest.friends.transfer.confirm")).Post("/friends/{friendship}/transfer/confirm", a.transferConfirm)
 		r.With(a.throttle("api.guest.news")).Get("/news", a.news)
 		r.With(a.throttle("api.guest.history")).Get("/history", a.history)
+		// Брони ПК из приложения (GuestBookingController, тема Г): список и отмена с возвратом от подписки не зависят;
+		// выбор ПК, тарифов, времени и сама бронь — зависят (группа subscription старого routes/api.php).
+		r.With(a.throttle("api.guest.bookings")).Get("/bookings", a.bookingsIndex)
+		r.With(a.throttle("api.guest.bookings.cancel")).Post("/bookings/{reservation:[0-9]+}/cancel", a.bookingsCancel)
+		r.With(a.subscription, a.throttle("api.guest.bookings.computers")).Get("/bookings/computers", a.bookingsComputers)
+		r.With(a.subscription, a.throttle("api.guest.bookings.tariffs")).Get("/bookings/tariffs", a.bookingsTariffs)
+		r.With(a.subscription, a.throttle("api.guest.bookings.options")).Get("/bookings/options", a.bookingsOptions)
+		r.With(a.subscription, a.throttle("api.guest.bookings.store")).Post("/bookings", a.bookingsStore)
 		r.With(a.subscription, a.throttle("api.guest.qr-login.show")).Get("/qr-login/{code:[A-Za-z0-9]{40}}", a.qrShow)
 		r.With(a.subscription, a.throttle("api.guest.qr-login.approve")).Post("/qr-login/{code:[A-Za-z0-9]{40}}", a.qrApprove)
 	})

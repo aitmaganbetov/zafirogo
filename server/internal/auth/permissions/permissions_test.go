@@ -207,9 +207,10 @@ func TestGS254_EveryRouteRightExists(t *testing.T) {
 			seen[r] = rr.Right
 		}
 	}
-	// 95 маршрутов до ноября 2026 + 7 темы В (settings.location, settings.profile*, settings.photos.*).
-	if len(seen) != 95+7 || len(RouteRights) != 52 {
-		t.Errorf("routes = %d, rights = %d, want 102 and 52 (RequireClubArea::ROUTES)", len(seen), len(RouteRights))
+	// 95 маршрутов до ноября 2026 + 7 темы В (settings.location, settings.profile*, settings.photos.*)
+	// + 1 темы Д (settings.reseller).
+	if len(seen) != 95+7+1 || len(RouteRights) != 52 {
+		t.Errorf("routes = %d, rights = %d, want 103 and 52 (RequireClubArea::ROUTES)", len(seen), len(RouteRights))
 	}
 	for _, r := range All() {
 		// customer_money.update проверяется в UserController::update() напрямую (ClubPermissions::allows), не маршрутом.

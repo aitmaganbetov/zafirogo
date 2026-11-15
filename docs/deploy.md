@@ -67,6 +67,7 @@ job миграций (goose, роль-владелец схемы) ──► Pos
 | `app.zafiro.kz` / `app.staging.zafiro.test` | zafirogo: панель клуба (по общему адресу балансировщик не знает клуба сотрудника до входа — README переноса, п. 8) | — |
 | `superadmin.zafiro.kz` | zafirogo: кабинет суперадмина с корня | `superadmin.domain` (Q-069) |
 | `wiki.zafiro.kz` | zafirogo: wiki с корня | `http.wiki_host` (Q-069) |
+| `resseler.zafiro.kz` / `resseler.staging.zafiro.test` | zafirogo: кабинет реселлера с корня (написание — как `RESELLER_DOMAIN` в `config/app.php` старого проекта, UQ-21); входят только реселлеры, панели клуба и регистрации на нём нет. Нужны запись DNS и сертификат на это имя; добавить хост в `superadmin.ssl_hosts` (экран «Сервер» следит за сроком сертификата). До переноса последнего клуба кабинет на новом сервере не открывать (UQ-3): реселлеры, счета и выплаты — данные платформы, источник правды — старый сервер | `reseller.domain` (`ZAFIRO_RESELLER_DOMAIN`) |
 | `zafiro.kz` | старый Laravel, пока не переведены все клубы, кроме путей ниже | — |
 | `zafiro.kz/api/(auth\|guest\|staff)/` | zafirogo; чужие токены и телефоны он сам проксирует в Laravel | `mobile.upstream`, `mobile.upstream_host` (`docs/mobile-compat.md` §3) |
 | `zafiro.kz/api/v1/` | zafirogo; ключи, которых нет в его базе, он сам проксирует в Laravel | `integrations.legacy_upstream`, `integrations.legacy_upstream_host` (пусто — `mobile.upstream`, `mobile.upstream_host`; S6-O1-4) |

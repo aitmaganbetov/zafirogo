@@ -24,7 +24,7 @@ task staging:smoke   # вход, WebSocket между инстансами, аг
 ```
 
 Открыть панель: в `/etc/hosts` — `127.0.0.1 app.staging.zafiro.test superadmin.staging.zafiro.test
-wiki.staging.zafiro.test staging.zafiro.test agent.staging.zafiro.test`, доверить `staging/secrets/web/ca.pem`,
+wiki.staging.zafiro.test resseler.staging.zafiro.test staging.zafiro.test agent.staging.zafiro.test`, доверить `staging/secrets/web/ca.pem`,
 затем <https://app.staging.zafiro.test>. Агенту — корень `staging/secrets/pki/root-ca.pem`, адрес
 `agent.staging.zafiro.test:8443`.
 

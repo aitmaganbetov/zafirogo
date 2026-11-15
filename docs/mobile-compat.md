@@ -150,6 +150,34 @@ API отдаёт строку («-150.00») — суммы в журнале п�
 - **Кэш**: ответ хранится 45 с в памяти инстанса (ключ — город + язык, клуб + язык), решение UQ-20.
 - Адреса `logo_url`, `photo_url`, `photos` — `agent.guest.public_base_url` + `/club-logos/…`, `/club-photos/…`.
 
+### 1.6. Брони ПК из приложения (mobileclient, тема Г)
+
+Маршруты гостя (`routes/api.php`, `Api\GuestBookingController`): токен клуба, клуб — из токена. Код —
+`legacy/bookings.go`, сервис — `server/internal/reservations`, запросы — `db/queries/app_bookings.sql`.
+
+| Вызов | Маршрут | Laravel | Новый код | Подписка | Лимит |
+|---|---|---|---|---|---|
+| `bookings` | `GET /api/guest/bookings` | `index()` | `reservations.ListForGuest` | не нужна | `api.guest.bookings` 60/мин |
+| `cancelBooking` | `POST /api/guest/bookings/{id}/cancel` | `cancel()` | `reservations.CancelByGuest` (ledger `reservation_refund`) | не нужна | `api.guest.bookings.cancel` 10/мин |
+| `bookingComputers` | `GET /api/guest/bookings/computers` | `computers()` | `reservations.AppComputers` | нужна | 60/мин |
+| `bookingTariffs` | `GET /api/guest/bookings/tariffs?starts_at=&computer_id=&computer_ids[]=` | `tariffs()` | `reservations.AppTariffs` | нужна | 60/мин |
+| `bookingOptions` | `GET /api/guest/bookings/options?starts_at=&duration_minutes=\|tariff_id=` | `options()` | `reservations.AppOptions` | нужна | 60/мин |
+| `book` | `POST /api/guest/bookings` | `store()` | `reservations.Book` (ledger `reservation_payment`) | нужна | `api.guest.bookings.store` 10/мин |
+
+- Ответы — как в `docs/upstream-2026-11.md` §2 «Г»: суммы — строки «900.00», времена — ISO 8601 в UTC
+  («2026-11-16T07:00:00+00:00»), ПК, забронированные вместе, — одна запись с одним кодом. Значения, типы, `null`,
+  порядок ключей и тексты ошибок (с временем клуба) сверены с ответами стенда старого проекта на 34 запросах —
+  `TestBookingsMatchLaravel` (эталон `legacy/testdata/bookings.laravel.json`, данные `bookings-seed.php`).
+- Ошибки: выключено в клубе — 403 `{message}`; правило — 422 `{message, errors}` (поля `starts_at`, `duration_minutes`,
+  `tariff_id`, `club_computer_ids`, `balance`, `reservation`); чужая бронь — 404 «No query results for model
+  [App\Models\ComputerReservation] N». Правило `required_without` старый сервер отдаёт ключом
+  `validation.required_without` (перевода в его каталоге нет) — сохранено.
+- `Idempotency-Key` приложение не шлёт; если пришлёт — повтор с тем же ключом и телом вернёт первую бронь без второго
+  списания, с другим телом — 409. Без ключа повтор запроса отклоняет проверка пересечения броней (как в старом).
+- История гостя (`GET /api/guest/history`): `reservation.paid` — `purchase` «Бронь ПК …» с временем начала,
+  `reservation.refunded` — `refund` «Возврат за отменённую бронь».
+- Клуб, ещё живущий на Laravel: токен не найден на новом сервере — запрос уходит на старый (как остальные маршруты гостя).
+
 ## 2. Аутентификация (Sanctum)
 
 ### 2.1. Формат

@@ -117,6 +117,29 @@ DB::transaction(function () use ($data, $created, $hash): void {
         ]);
     }
 
+    // Реселлеры (тема Д): реселлер, его клубы, снимок реселлера и начисление в счетах, выплаты.
+    foreach ($data['resellers'] ?? [] as $r) {
+        DB::table('resellers')->insert([
+            'id' => $r['id'], 'user_id' => $r['user_id'], 'code' => $r['code'], 'name' => $r['name'],
+            'commission_percent' => $r['commission_percent'], 'discount_percent' => $r['discount_percent'],
+            'is_active' => $r['is_active'], 'created_at' => $created($r), 'updated_at' => $created($r),
+        ]);
+        foreach ($r['clubs'] ?? [] as $c) {
+            DB::table('clubs')->where('id', $c['club_id'])->update(['reseller_id' => $r['id'], 'reseller_attached_at' => utc($c['attached_at'])]);
+        }
+        foreach ($r['invoices'] ?? [] as $i) {
+            DB::table('subscription_invoices')->where('id', $i['invoice_id'])->update([
+                'reseller_id' => $r['id'], 'reseller_percent' => $i['percent'], 'reseller_amount' => $i['amount'] ?? null,
+            ]);
+        }
+        foreach ($r['payouts'] ?? [] as $p) {
+            DB::table('reseller_payouts')->insert([
+                'id' => $p['id'], 'reseller_id' => $r['id'], 'amount' => $p['amount'], 'note' => $p['note'] ?? null,
+                'created_by' => $p['created_by'] ?? null, 'created_at' => $created($p), 'updated_at' => $created($p),
+            ]);
+        }
+    }
+
     foreach ($data['memberships'] as $m) {
         $u = collect($data['users'])->firstWhere('id', $m['user_id']);
         DB::table('club_memberships')->insert([
@@ -248,6 +271,9 @@ DB::transaction(function () use ($data, $created): void {
             'customer_name' => $r['customer_name'] ?? null, 'customer_phone' => $r['customer_phone'] ?? null, 'note' => $r['note'] ?? null,
             'starts_at' => utc($r['starts_at']), 'ends_at' => utc($r['ends_at']),
             'arrived_at' => utc($r['arrived_at'] ?? null), 'cancelled_at' => utc($r['cancelled_at'] ?? null),
+            // Бронь из гостевого приложения (тема Г): оплата в тиынах («центы» старого кода) и код брони.
+            'from_app' => $r['from_app'] ?? false, 'paid_main_cents' => $r['paid_main_cents'] ?? 0,
+            'paid_bonus_cents' => $r['paid_bonus_cents'] ?? 0, 'code' => $r['code'] ?? null,
             'created_by' => $r['created_by'] ?? null, 'created_at' => $created($r), 'updated_at' => $created($r),
         ]);
     }

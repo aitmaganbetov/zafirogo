@@ -625,6 +625,7 @@ Telegram в `platform_settings` — `Crypt::encryptString` (`app/Services/Telegr
 | `0037_app_bookings.sql` | `2026_11_15_…add_app_payment…`, `2026_11_16_…add_tariff…`, `2026_11_17_…add_code…` | `computer_reservations` +5 колонок; виды ledger `reservation_payment`, `reservation_refund`; `ledger_transactions.reservation_id` |
 | `0038_platform_money_log.sql` | — (новая) | `platform_money_log` — журнал денег платформы, только добавление (UQ-6) |
 | `0039_club_subscriptions_read_only.sql` | — (новая, тема Б) | права: пул клуба только читает `club_subscriptions` (замечание Ш0 к 0035) |
+| `0040_app_booking_guards.sql` | — (новая, тема Г) | ограничение `computer_reservations_pending_no_overlap`: ожидающие брони одного ПК не пересекаются по времени (второй рубеж к блокировке строки ПК; `EXCLUDE USING gist` по `int8range(id ПК)` и `tstzrange`, расширение `btree_gist` не нужно); частичный индекс `computer_reservations_app_pending_starts_at_index` — ожидающие брони из приложения по началу (воркер `app-bookings:start`). Проверено `up → down → up`; на перенесённых данных нарушений нет (`migrate` — интеграционные тесты). Решения — `docs/open-questions/upstream-bookings.md` UB-2, UB-3 |
 
 ### 17.1. Таблицы и колонки
 

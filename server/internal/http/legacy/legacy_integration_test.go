@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/valkey-io/valkey-go"
 	"golang.org/x/crypto/bcrypt"
@@ -78,6 +79,8 @@ type env struct {
 	notifier *recNotifier
 	// presence — присутствие агентов ПК (каталог: «свободные ПК»); nil — все ПК не в сети.
 	presence httpserver.Presence
+	// now — часы сервера (nil — системные): брони из приложения сверяются с эталоном при фиксированном «сейчас».
+	now func() time.Time
 }
 
 type option func(*legacy.Options)
@@ -120,7 +123,7 @@ func newEnv(t *testing.T, opts ...func(*env) option) *env {
 	}
 	e.srv = httptest.NewServer(httpserver.NewRouter(httpserver.Options{
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: svc, Limiter: lim,
-		Pool: tdb.App, PlatformPool: tdb.Platform, Billing: bill, Cash: cash, Passwords: h, Presence: e.presence,
+		Pool: tdb.App, PlatformPool: tdb.Platform, Billing: bill, Cash: cash, Passwords: h, Presence: e.presence, Now: e.now,
 		Legacy: func(d *httpx.Deps, root http.Handler) func(http.Handler) http.Handler {
 			return legacy.New(lo, d, root).Middleware
 		},

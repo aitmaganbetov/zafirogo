@@ -101,26 +101,35 @@ func (q *Queries) FirstOverlappingReservation(ctx context.Context, arg FirstOver
 
 const insertReservation = `-- name: InsertReservation :one
 INSERT INTO computer_reservations (club_id, club_computer_id, user_id, customer_name, customer_phone, note, starts_at,
-                                   ends_at, created_by, created_at, updated_at)
+                                   ends_at, created_by, created_at, updated_at, from_app, paid_main_cents,
+                                   paid_bonus_cents, tariff_id, code)
 VALUES ($1, $2, $3, $4,
         $5, $6, $7, $8, $9,
-        $10, $10)
+        $10, $10, $11, $12, $13,
+        $14, $15)
 RETURNING id
 `
 
 type InsertReservationParams struct {
-	ClubID        int64      `json:"club_id"`
-	ComputerID    int64      `json:"computer_id"`
-	UserID        *int64     `json:"user_id"`
-	CustomerName  *string    `json:"customer_name"`
-	CustomerPhone *string    `json:"customer_phone"`
-	Note          *string    `json:"note"`
-	StartsAt      time.Time  `json:"starts_at"`
-	EndsAt        time.Time  `json:"ends_at"`
-	CreatedBy     *int64     `json:"created_by"`
-	Now           *time.Time `json:"now"`
+	ClubID         int64      `json:"club_id"`
+	ComputerID     int64      `json:"computer_id"`
+	UserID         *int64     `json:"user_id"`
+	CustomerName   *string    `json:"customer_name"`
+	CustomerPhone  *string    `json:"customer_phone"`
+	Note           *string    `json:"note"`
+	StartsAt       time.Time  `json:"starts_at"`
+	EndsAt         time.Time  `json:"ends_at"`
+	CreatedBy      *int64     `json:"created_by"`
+	Now            *time.Time `json:"now"`
+	FromApp        bool       `json:"from_app"`
+	PaidMainCents  int64      `json:"paid_main_cents"`
+	PaidBonusCents int64      `json:"paid_bonus_cents"`
+	TariffID       *int64     `json:"tariff_id"`
+	Code           *string    `json:"code"`
 }
 
+// Бронь с кассы — from_app = false, оплаты, тарифа и кода нет (CHECK computer_reservations_app_only_check);
+// бронь из приложения (GuestBookings::book()) — from_app, доля оплаты этого ПК, тариф, код группы.
 func (q *Queries) InsertReservation(ctx context.Context, arg InsertReservationParams) (int64, error) {
 	row := q.db.QueryRow(ctx, insertReservation,
 		arg.ClubID,
@@ -133,6 +142,11 @@ func (q *Queries) InsertReservation(ctx context.Context, arg InsertReservationPa
 		arg.EndsAt,
 		arg.CreatedBy,
 		arg.Now,
+		arg.FromApp,
+		arg.PaidMainCents,
+		arg.PaidBonusCents,
+		arg.TariffID,
+		arg.Code,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -142,7 +156,7 @@ func (q *Queries) InsertReservation(ctx context.Context, arg InsertReservationPa
 const listDayReservations = `-- name: ListDayReservations :many
 
 SELECT r.id, r.club_computer_id, r.user_id, r.customer_name, r.customer_phone, r.note, r.starts_at, r.ends_at,
-       r.arrived_at, r.cancelled_at,
+       r.arrived_at, r.cancelled_at, r.from_app, r.paid_main_cents, r.paid_bonus_cents, r.code,
        c.number AS computer_number, c.display_name AS computer_display_name, c.device_name AS computer_device_name,
        z.name AS zone_name, u.name AS user_name, u.phone AS user_phone
 FROM computer_reservations r
@@ -174,6 +188,10 @@ type ListDayReservationsRow struct {
 	EndsAt              time.Time  `json:"ends_at"`
 	ArrivedAt           *time.Time `json:"arrived_at"`
 	CancelledAt         *time.Time `json:"cancelled_at"`
+	FromApp             bool       `json:"from_app"`
+	PaidMainCents       int64      `json:"paid_main_cents"`
+	PaidBonusCents      int64      `json:"paid_bonus_cents"`
+	Code                *string    `json:"code"`
 	ComputerNumber      *int64     `json:"computer_number"`
 	ComputerDisplayName *string    `json:"computer_display_name"`
 	ComputerDeviceName  *string    `json:"computer_device_name"`
@@ -213,6 +231,10 @@ func (q *Queries) ListDayReservations(ctx context.Context, arg ListDayReservatio
 			&i.EndsAt,
 			&i.ArrivedAt,
 			&i.CancelledAt,
+			&i.FromApp,
+			&i.PaidMainCents,
+			&i.PaidBonusCents,
+			&i.Code,
 			&i.ComputerNumber,
 			&i.ComputerDisplayName,
 			&i.ComputerDeviceName,
@@ -276,7 +298,8 @@ func (q *Queries) ListReservationComputers(ctx context.Context, clubID int64) ([
 }
 
 const lockReservation = `-- name: LockReservation :one
-SELECT r.id, r.club_computer_id, r.starts_at, r.ends_at, r.arrived_at, r.cancelled_at,
+SELECT r.id, r.club_computer_id, r.user_id, r.starts_at, r.ends_at, r.arrived_at, r.cancelled_at,
+       r.from_app, r.paid_main_cents, r.paid_bonus_cents, r.tariff_id, r.code,
        c.number AS computer_number, c.display_name AS computer_display_name, c.device_name AS computer_device_name
 FROM computer_reservations r
 LEFT JOIN club_computers c ON c.club_id = r.club_id AND c.id = r.club_computer_id
@@ -292,10 +315,16 @@ type LockReservationParams struct {
 type LockReservationRow struct {
 	ID                  int64      `json:"id"`
 	ClubComputerID      int64      `json:"club_computer_id"`
+	UserID              *int64     `json:"user_id"`
 	StartsAt            time.Time  `json:"starts_at"`
 	EndsAt              time.Time  `json:"ends_at"`
 	ArrivedAt           *time.Time `json:"arrived_at"`
 	CancelledAt         *time.Time `json:"cancelled_at"`
+	FromApp             bool       `json:"from_app"`
+	PaidMainCents       int64      `json:"paid_main_cents"`
+	PaidBonusCents      int64      `json:"paid_bonus_cents"`
+	TariffID            *int64     `json:"tariff_id"`
+	Code                *string    `json:"code"`
 	ComputerNumber      *int64     `json:"computer_number"`
 	ComputerDisplayName *string    `json:"computer_display_name"`
 	ComputerDeviceName  *string    `json:"computer_device_name"`
@@ -308,10 +337,16 @@ func (q *Queries) LockReservation(ctx context.Context, arg LockReservationParams
 	err := row.Scan(
 		&i.ID,
 		&i.ClubComputerID,
+		&i.UserID,
 		&i.StartsAt,
 		&i.EndsAt,
 		&i.ArrivedAt,
 		&i.CancelledAt,
+		&i.FromApp,
+		&i.PaidMainCents,
+		&i.PaidBonusCents,
+		&i.TariffID,
+		&i.Code,
 		&i.ComputerNumber,
 		&i.ComputerDisplayName,
 		&i.ComputerDeviceName,
@@ -386,6 +421,24 @@ func (q *Queries) ReservationClubCustomer(ctx context.Context, arg ReservationCl
 	var i ReservationClubCustomerRow
 	err := row.Scan(&i.ID, &i.Name, &i.Phone)
 	return i, err
+}
+
+const reservationComputerID = `-- name: ReservationComputerID :one
+SELECT club_computer_id FROM computer_reservations WHERE club_id = $1 AND id = $2
+`
+
+type ReservationComputerIDParams struct {
+	ClubID int64 `json:"club_id"`
+	ID     int64 `json:"id"`
+}
+
+// close(): ПК брони — его строка блокируется раньше строки брони («The PC first, as bookings and purchases on it
+// lock it»).
+func (q *Queries) ReservationComputerID(ctx context.Context, arg ReservationComputerIDParams) (int64, error) {
+	row := q.db.QueryRow(ctx, reservationComputerID, arg.ClubID, arg.ID)
+	var club_computer_id int64
+	err := row.Scan(&club_computer_id)
+	return club_computer_id, err
 }
 
 const reservationComputersExist = `-- name: ReservationComputersExist :one

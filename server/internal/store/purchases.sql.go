@@ -198,7 +198,9 @@ func (q *Queries) GetMembershipForPricing(ctx context.Context, arg GetMembership
 }
 
 const getTariffSales = `-- name: GetTariffSales :one
-SELECT COALESCE((SELECT sold FROM tariff_sales WHERE club_id = $1 AND tariff_id = $2), 0)::bigint AS sold
+SELECT (COALESCE((SELECT s.sold FROM tariff_sales s WHERE s.club_id = $1 AND s.tariff_id = $2), 0)
+        + (SELECT count(*) FROM computer_reservations r
+           WHERE r.club_id = $1 AND r.tariff_id = $2 AND r.cancelled_at IS NULL))::bigint AS sold
 `
 
 type GetTariffSalesParams struct {
@@ -206,7 +208,9 @@ type GetTariffSalesParams struct {
 	TariffID int64 `json:"tariff_id"`
 }
 
-// Продаж тарифа в агенте (Решение Q-007 (docs/DECISIONS.md); вызывать под блокировкой тарифа).
+// Покупок тарифа для лимита количества: продажи в агенте (Решение Q-007 (docs/DECISIONS.md)) + брони из приложения
+// этим тарифом, кроме отменённых, — по одной на ПК (BR-190; Laravel: AgentTariffPurchaseService::purchaseCounts()).
+// Вызывать под блокировкой тарифа.
 func (q *Queries) GetTariffSales(ctx context.Context, arg GetTariffSalesParams) (int64, error) {
 	row := q.db.QueryRow(ctx, getTariffSales, arg.ClubID, arg.TariffID)
 	var sold int64
@@ -735,6 +739,7 @@ WHERE club_id = $2
   AND club_computer_id = $3
   AND user_id = $4
   AND cancelled_at IS NULL AND arrived_at IS NULL
+  AND paid_main_cents = 0 AND paid_bonus_cents = 0
   AND starts_at < $5 AND ends_at > $6
 `
 
@@ -747,7 +752,8 @@ type MarkReservationsArrivedParams struct {
 	FromAt     time.Time  `json:"from_at"`
 }
 
-// ComputerReservations::markArrivedBy(): своя бронь клиента на это время выполнена.
+// ComputerReservations::markArrivedBy(): своя бронь клиента на это время выполнена. Только неоплаченная
+// (->unpaid()): оплаченную бронь из приложения покупка времени не закрывает — её время начнётся само (BR-178, GS-546).
 func (q *Queries) MarkReservationsArrived(ctx context.Context, arg MarkReservationsArrivedParams) error {
 	_, err := q.db.Exec(ctx, markReservationsArrived,
 		arg.Now,

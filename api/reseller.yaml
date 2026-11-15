@@ -1,0 +1,177 @@
+openapi: 3.0.3
+info:
+  title: zafirogo API — reseller
+  version: 0.1.0
+  description: |
+    Кабинет реселлера (ResellerController, reseller/dashboard.blade.php; тема Д, docs/upstream-2026-11.md): код и
+    условия реселлера, клубы, которые ввели его код, начисления с оплаченных счетов этих клубов и выплаты.
+    Доступ — вошедший аккаунт с записью реселлера (иначе 403 «Этот аккаунт не реселлер Zafiro.»); реселлер видит
+    только свои клубы и суммы. С заданным reseller.domain маршруты отвечают только на хосте реселлера (на другом —
+    404), без него — на любом. Реселлеров создаёт суперадмин (api/superadmin.yaml). Суммы — целые тиыны, процент —
+    базисные пункты. Конвенции — api/README.md.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/reseller/dashboard:
+    get:
+      operationId: getResellerDashboard
+      tags: [reseller]
+      summary: Мои клубы и доход
+      description: |
+        Laravel: ResellerController::dashboard() (reseller.dashboard). Клубы — по 30 (недавно привязанные первыми),
+        начисления — по 20 (новые первыми), выплаты — 20 последних. Даты — дд.мм.гггг по UTC (кабинет вне клуба).
+      parameters:
+        - name: clubs_page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+        - name: earnings_page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Кабинет реселлера.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResellerCabinet"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Access-токен из ответа login/refresh (~10 мин).
+  schemas:
+    ResellerCabinet:
+      type: object
+      required: [code, commission_bp, discount_percent, is_active, earned_tiyn, paid_out_tiyn, balance_tiyn, clubs, earnings, payouts]
+      properties:
+        code:
+          type: string
+          description: Код, который клуб вводит в «Настройки → Настройка клуба → Реселлер».
+        commission_bp:
+          type: integer
+          description: Процент реселлера с оплат в базисных пунктах (1235 = 12,35 %).
+        discount_percent:
+          type: integer
+          description: Скидка клубам реселлера, целые проценты.
+        is_active:
+          type: boolean
+          description: Код действует; false — код приостановлен (новые клубы не могут его ввести, оплаты идут без скидки и процента).
+        earned_tiyn:
+          type: integer
+          format: int64
+          description: Заработано всего — начисления с оплаченных счетов.
+        paid_out_tiyn:
+          type: integer
+          format: int64
+        balance_tiyn:
+          type: integer
+          format: int64
+          description: К выплате — заработано минус выплачено; может быть отрицательным.
+        clubs:
+          $ref: "#/components/schemas/ResellerClubPage"
+        earnings:
+          $ref: "#/components/schemas/ResellerEarningPage"
+        payouts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResellerPayout"
+    ResellerClubPage:
+      type: object
+      required: [items, page, per_page, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResellerClubRow"
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+          format: int64
+    ResellerClubRow:
+      type: object
+      required: [name, subscription]
+      properties:
+        name:
+          type: string
+        city:
+          type: string
+          description: Город клуба — русское название из списка городов (ключ перевода); нет города — поля нет.
+        subscription:
+          type: string
+          enum: [active, trial, unpaid]
+          description: |
+            active — оплачена до subscription_until (тариф plan_name); trial — пробный период до subscription_until;
+            unpaid — «Не оплачена» (нет подписки, приостановлена или без даты окончания).
+        plan_name:
+          type: string
+        subscription_until:
+          type: string
+          description: дд.мм.гггг
+        attached:
+          type: string
+          description: С какого дня клуб с реселлером, дд.мм.гггг.
+    ResellerEarningPage:
+      type: object
+      required: [items, page, per_page, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResellerEarning"
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+          format: int64
+    ResellerEarning:
+      type: object
+      required: [club_name, months, amount_tiyn, reseller_amount_tiyn, reseller_bp]
+      properties:
+        paid:
+          type: string
+          description: Дата оплаты счёта, дд.мм.гггг.
+        club_name:
+          type: string
+        months:
+          type: integer
+        amount_tiyn:
+          type: integer
+          format: int64
+          description: Оплата клуба (сумма счёта).
+        reseller_amount_tiyn:
+          type: integer
+          format: int64
+          description: Доход реселлера с этой оплаты.
+        reseller_bp:
+          type: integer
+          description: Процент реселлера в счёте, базисные пункты.
+    ResellerPayout:
+      type: object
+      required: [date, amount_tiyn]
+      properties:
+        date:
+          type: string
+          description: дд.мм.гггг
+        note:
+          type: string
+        amount_tiyn:
+          type: integer
+          format: int64

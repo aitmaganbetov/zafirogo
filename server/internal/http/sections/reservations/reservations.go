@@ -80,6 +80,8 @@ func (h *handlers) ListReservations(ctx context.Context, req reservationsapi.Lis
 				StartsAt: r.StartsAt, EndsAt: r.EndsAt,
 				State:         reservationsapi.ReservationState(booking.State(r.StartsAt, r.EndsAt, r.ArrivedAt, r.CancelledAt, now)),
 				CustomerLabel: booking.CustomerLabel(r.UserName, r.UserPhone, r.CustomerName, r.CustomerPhone),
+				// Бронь из приложения: «Из приложения, оплачено N · код 123456» (reservations/index.blade.php).
+				FromApp: r.FromApp, Paid: r.PaidMainCents + r.PaidBonusCents, Code: r.Code,
 			}
 			if r.Note != nil && *r.Note == "" {
 				item.Note = nil
@@ -337,15 +339,22 @@ func (h *handlers) ArriveReservation(ctx context.Context, req reservationsapi.Ar
 
 func (h *handlers) close(ctx context.Context, id int64, arrive bool) error {
 	p := httpx.Principal(ctx)
-	now := h.d.NowFunc()
+	// Оплаченная бронь из приложения: отмена возвращает деньги гостю (ledger reservation_refund), «Клиент пришёл»
+	// запускает оплаченное время на ПК — агенту сессия и баланс уходят после коммита (h.d.Tx: CommitHooks).
+	env := booking.Env{Now: h.d.NowFunc(), Actor: httpx.Actor(ctx), T: func(key string, params map[string]string) string {
+		return h.d.T(ctx, key, params)
+	}}
+	if h.d.Cash != nil && h.d.Cash.Notifier != nil {
+		env.Notifier = h.d.Cash.Notifier
+	}
 	return h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		info, err := club.Load(ctx, q, p.ClubID)
 		if err != nil {
 			return err
 		}
 		if arrive {
-			return booking.Arrive(ctx, q, info, p.UserID, id, now)
+			return booking.Arrive(ctx, q, info, id, env)
 		}
-		return booking.Cancel(ctx, q, info, p.UserID, id, now)
+		return booking.Cancel(ctx, q, info, id, env)
 	})
 }

@@ -44,7 +44,9 @@ task visual:stop                          # остановить серверы 
   в них видно на снимке (и это не ошибка загрузчика).
 - **Пароль** всех пользователей — `login.password` (`zafiro-demo-2026`); в базах — один и тот же bcrypt-хэш
   `login.password_bcrypt`. Новый сервер принимает старый bcrypt и перехеширует его при первом входе.
-- **Роли** для входа — `login.roles` (`superadmin`, `owner`, `admin`, `cashier`, `operator` → id пользователя).
+- **Роли** для входа — `login.roles` (`superadmin`, `owner`, `admin`, `cashier`, `operator`, `reseller` → id пользователя).
+  `reseller` (тема Д) — аккаунт реселлера без клубов: входит только на хосте кабинета реселлера (страницы с
+  `"host": "resseler.localhost"`; `RESELLER_DOMAIN` старого и `ZAFIRO_RESELLER_DOMAIN` нового ставят `old.sh` и `new.sh`).
 - **Второй фактор суперадмина** (Этап 7, только новый): у демо-суперадмина TOTP уже включён ключом
   `login.totp_secret` (`visual-seed` шифрует его ключом данных `VISUAL_DATA_KEY` из `secrets.env`, сервер получает
   тот же ключ в `ZAFIRO_SECURITY_DATA_KEYS`); вход снимка вводит код (`web/e2e/visual/support.ts` `totpNow`, по

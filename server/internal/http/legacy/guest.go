@@ -156,10 +156,11 @@ func (a *API) news(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 var (
-	historyOwn      = []string{"tariff.purchased", "time.purchased", "shop.purchased", "time.refunded", "balance.transferred", "session.transferred", "auth.api_login", "auth.qr_login"}
-	historyReceived = []string{"user.balance_topped_up", "user.balance_refunded", "user.balance_written_off", "balance.transferred", "shop.order_cancelled", "time.refunded"} //nolint:misspell // код события старого журнала
+	// reservation.paid, reservation.refunded — оплата и возврат брони из приложения (GuestHistory, Zafiro a680bab).
+	historyOwn      = []string{"tariff.purchased", "time.purchased", "shop.purchased", "time.refunded", "reservation.paid", "reservation.refunded", "balance.transferred", "session.transferred", "auth.api_login", "auth.qr_login"}
+	historyReceived = []string{"user.balance_topped_up", "user.balance_refunded", "user.balance_written_off", "balance.transferred", "shop.order_cancelled", "time.refunded", "reservation.refunded"} //nolint:misspell // код события старого журнала
 	historyFilters  = map[string][2][]string{
-		"purchases": {{"tariff.purchased", "time.purchased", "shop.purchased", "time.refunded"}, {"shop.order_cancelled", "time.refunded"}}, //nolint:misspell // код события старого журнала
+		"purchases": {{"tariff.purchased", "time.purchased", "shop.purchased", "time.refunded", "reservation.paid", "reservation.refunded"}, {"shop.order_cancelled", "time.refunded", "reservation.refunded"}}, //nolint:misspell // код события старого журнала
 		"top_ups":   {{}, {"user.balance_topped_up", "user.balance_refunded", "user.balance_written_off"}},
 		"transfers": {{"balance.transferred"}, {"balance.transferred"}},
 		"visits":    {{"session.transferred", "auth.api_login", "auth.qr_login"}, {}},
@@ -394,6 +395,24 @@ func (a *API) historyEntry(r *http.Request, l historyLog, userID int64, tariffs,
 		}
 		e.Amount = historyAmount(first(d, "main_balance_amount", "amount"), true)
 		e.BonusAmount = historyAmount(d["bonus_balance_amount"], true)
+	case "reservation.paid":
+		// Laravel: app/Services/GuestHistory.php entry() — бронь ПК из приложения: note — время начала (время клуба).
+		e.Kind = "purchase"
+		name := "—"
+		if v, ok := d["computer"]; ok && v != nil {
+			name = scalar(v)
+		}
+		e.Title = t("Бронь ПК :computer", map[string]string{"computer": name})
+		if v, ok := d["starts_at"]; ok && v != nil {
+			e.Note = ptr(scalar(v))
+		}
+		e.Amount = historyAmount(d["main_balance_amount"], true)
+		e.BonusAmount = historyAmount(d["bonus_balance_amount"], true)
+	case "reservation.refunded":
+		e.Kind = "refund"
+		e.Title = t("Возврат за отменённую бронь", nil)
+		e.Amount = historyAmount(d["main_balance_amount"], false)
+		e.BonusAmount = historyAmount(d["bonus_balance_amount"], false)
 	case "shop.purchased":
 		e.Kind = "shop"
 		e.Title = t("Заказ в магазине клуба", nil)

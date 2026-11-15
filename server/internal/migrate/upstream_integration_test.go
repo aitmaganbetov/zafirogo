@@ -259,6 +259,21 @@ func TestMigrateUpstream2026_11(t *testing.T) {
 	if got := scalarPG[int64](t, owner, "SELECT count(*) FROM zafiro_tables_without_rls()"); got != 0 {
 		t.Fatalf("таблицы без RLS: %d", got)
 	}
+	// Тема Д: кабинеты реселлеров на перенесённых данных показывают те же суммы, что старый кабинет на MySQL
+	// (реселлер 5 — 594,04 ₸ заработано и выплачено; 6 — без клубов, выплата 0,01 ₸; 7 — пришёл с клубом, 100 % от
+	// счёта в 0 ₸), и проверка 8 учений восстановления (документы = журнал денег платформы) проходит.
+	if c := assertResellerCabinetMatchesMySQL(t, my, pgdb, 100, 5); c.Earned != 59404 || c.PaidOut != 59404 || c.Balance != 0 ||
+		c.Earnings[0].Amount != 481000 || *c.Earnings[0].ResellerAmount != 59404 || *c.Earnings[0].ResellerBp != 1235 || len(c.Payouts) != 2 {
+		t.Fatalf("кабинет реселлера 5: %+v", c)
+	}
+	if c := assertResellerCabinetMatchesMySQL(t, my, pgdb, 102, 6); c.Earned != 0 || c.PaidOut != 1 || c.Balance != -1 || c.Active {
+		t.Fatalf("кабинет реселлера 6: %+v", c)
+	}
+	if c := assertResellerCabinetMatchesMySQL(t, my, pgdb, 101, 7); c.Earned != 0 || c.CommissionBP != 10000 {
+		t.Fatalf("кабинет реселлера 7: %+v", c)
+	}
+	assertPlatformMoneyVerified(t, pgdb)
+
 	// Новый счёт zafirogo получает id выше всех id старой базы (номер ZF-… не повторится).
 	if got := scalarPG[int64](t, owner, "SELECT nextval(pg_get_serial_sequence('subscription_invoices', 'id'))"); got <= idReserve {
 		t.Fatalf("последовательность subscription_invoices: %d", got)

@@ -198,11 +198,24 @@ components:
   schemas:
     Reservation:
       type: object
-      required: [id, computer_id, computer_name, starts_at, ends_at, state, customer_label]
+      required: [id, computer_id, computer_name, starts_at, ends_at, state, customer_label, from_app, paid]
       properties:
         id:
           type: integer
           format: int64
+        from_app:
+          type: boolean
+          description: Бронь создана гостем в мобильном приложении (computer_reservations.from_app).
+        paid:
+          type: integer
+          format: int64
+          description: >-
+            Оплачено гостем за этот ПК, тиыны (paid_main_cents + paid_bonus_cents); 0 — бронь не оплачена.
+            Отмена оплаченной брони возвращает эти деньги гостю, «Клиент пришёл» запускает оплаченное время на ПК.
+        code:
+          type: string
+          nullable: true
+          description: Код брони из приложения (6 цифр, один на ПК, забронированные вместе); null — кода нет.
         computer_id:
           type: integer
           format: int64

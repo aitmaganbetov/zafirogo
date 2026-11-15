@@ -36,6 +36,9 @@ var access = httpx.Access{
 		"DeleteClubPhoto":     "settings.photos.destroy",
 		"SetClubPhotoCover":   "settings.photos.cover",
 		"SaveClubZoneProfile": "settings.profile.zone",
+		// Тема Д: карточка «Реселлер» (reseller.go).
+		"GetClubReseller":    "settings.club",
+		"AttachClubReseller": "settings.reseller",
 	},
 }
 
@@ -50,6 +53,8 @@ func Section() httpx.Section {
 	return httpx.Section{Name: "settings", Mount: mount, Limits: map[string]string{
 		// routes/web.php: settings.photos.store — throttle:20,1.
 		"POST /api/settings/profile/photos": "settings.photos.store",
+		// routes/web.php: settings.reseller — throttle:10,1,settings.reseller.
+		"POST /api/settings/reseller": "settings.reseller",
 	}}
 }
 

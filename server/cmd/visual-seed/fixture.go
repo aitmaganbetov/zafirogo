@@ -16,6 +16,7 @@ type Fixture struct {
 	SaasPlans         []SaasPlan        `json:"saas_plans"`
 	BillingKaspi      json.RawMessage   `json:"billing_kaspi"`
 	Invoices          []Invoice         `json:"subscription_invoices"`
+	Resellers         []Reseller        `json:"resellers"`
 	Clubs             []Club            `json:"clubs"`
 	Users             []User            `json:"users"`
 	Memberships       []Membership      `json:"memberships"`
@@ -85,6 +86,35 @@ type Invoice struct {
 	CreatedAt        string  `json:"created_at"`
 	PaidAt           *string `json:"paid_at"`
 	PeriodEndsAt     *string `json:"period_ends_at"`
+}
+
+// Reseller — реселлер (тема Д): процент — строка процентов, суммы — строки тенге, как decimal старого проекта.
+type Reseller struct {
+	ID                int64  `json:"id"`
+	UserID            int64  `json:"user_id"`
+	Code              string `json:"code"`
+	Name              string `json:"name"`
+	CommissionPercent string `json:"commission_percent"`
+	DiscountPercent   int16  `json:"discount_percent"`
+	IsActive          bool   `json:"is_active"`
+	CreatedAt         string `json:"created_at"`
+	// Clubs — клубы реселлера; Invoices — снимок реселлера в счетах (и начисление у оплаченных); Payouts — выплаты.
+	Clubs []struct {
+		ClubID     int64  `json:"club_id"`
+		AttachedAt string `json:"attached_at"`
+	} `json:"clubs"`
+	Invoices []struct {
+		InvoiceID int64   `json:"invoice_id"`
+		Percent   string  `json:"percent"`
+		Amount    *string `json:"amount"`
+	} `json:"invoices"`
+	Payouts []struct {
+		ID        int64   `json:"id"`
+		Amount    string  `json:"amount"`
+		Note      *string `json:"note"`
+		CreatedBy *int64  `json:"created_by"`
+		CreatedAt string  `json:"created_at"`
+	} `json:"payouts"`
 }
 
 type User struct {
@@ -256,6 +286,11 @@ type Reservation struct {
 	CancelledAt   *string `json:"cancelled_at"` //nolint:misspell // колонка старой схемы
 	CreatedBy     *int64  `json:"created_by"`
 	CreatedAt     string  `json:"created_at"`
+	// Бронь из гостевого приложения (тема Г): оплата в тиынах («центы» старого кода — без × 100) и код брони.
+	FromApp        bool    `json:"from_app"`
+	PaidMainCents  int64   `json:"paid_main_cents"`
+	PaidBonusCents int64   `json:"paid_bonus_cents"`
+	Code           *string `json:"code"`
 }
 
 type News struct {

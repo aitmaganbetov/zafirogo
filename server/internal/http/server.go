@@ -121,6 +121,8 @@ type Options struct {
 	Sections []httpx.Section
 	// Superadmin — кабинет суперадмина (домен Q-069, секреты платформы, рассылка агентам).
 	Superadmin httpx.SuperadminDeps
+	// ResellerDomain — хост кабинета реселлера (reseller.domain, UQ-21); пусто — кабинет по /reseller.
+	ResellerDomain string
 	// Metrics — счётчики запросов экрана «Сервер» (monitoring.Recorder). nil — не считаются.
 	Metrics *monitoring.Recorder
 	// Legacy — старый REST мобильных приложений (server/internal/http/legacy, Q-058): middleware, перехватывающий
@@ -270,9 +272,10 @@ func NewRouter(o Options) http.Handler {
 		sections = Sections()
 	}
 	deps := &httpx.Deps{
-		Superadmin: o.Superadmin,
-		Secrets:    o.Secrets,
-		Logger:     o.Logger, Auth: o.Auth, Pool: o.Pool, PlatformPool: o.PlatformPool, Billing: o.Billing, Cash: o.Cash,
+		Superadmin:     o.Superadmin,
+		ResellerDomain: o.ResellerDomain,
+		Secrets:        o.Secrets,
+		Logger:         o.Logger, Auth: o.Auth, Pool: o.Pool, PlatformPool: o.PlatformPool, Billing: o.Billing, Cash: o.Cash,
 		Presence: o.Presence, HealthVerdict: o.HealthVerdict, Checkers: o.Checkers, CheckTimeout: o.CheckTimeout, Now: o.Now, Passwords: o.Passwords,
 		AgentCommands: o.AgentCommands, Enroll: o.Enroll,
 		SignOutGuest:      o.SignOutGuest,
@@ -330,7 +333,7 @@ func NewRouter(o Options) http.Handler {
 		r.Use(skipIntegrationAPI(o.Auth.Middleware))
 	}
 	// После Principal: клуб запроса для счётчиков и режим просмотра для домена кабинета.
-	r.Use(o.Metrics.Middleware, superadminHost(o.Superadmin.Domain), readOnlyGuard)
+	r.Use(o.Metrics.Middleware, superadminHost(o.Superadmin.Domain), resellerHost(o.ResellerDomain), readOnlyGuard)
 	r.Use(limitRoutes(o.Limiter, sections))
 	if o.Pool != nil && o.RequireSubscription {
 		// RequireActiveSubscription: разделы панели клуба — при активной подписке (subscription.go).

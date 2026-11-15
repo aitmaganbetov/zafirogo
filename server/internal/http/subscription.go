@@ -32,6 +32,7 @@ const CodeSubscriptionInactive = "subscription_inactive"
 var subscriptionExempt = []string{
 	"/api/auth",          // вход, выход (auth.logout), сессия, смена клуба (clubs.switch), регистрация
 	"/api/superadmin",    // кабинет и вход/выход из просмотра клуба
+	"/api/reseller",      // кабинет реселлера (вне группы клуба: reseller.dashboard — только auth)
 	"/api/invitations",   // приглашения (вне группы клуба)
 	"/api/ws-ticket",     // билет WebSocket (события, не данные раздела)
 	"/api/i18n",          // переводы

@@ -12,9 +12,12 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/session"
+	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	authapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/auth"
 	apicommon "github.com/aitmaganbetov/zafirogo/server/internal/http/api/common"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
+	"github.com/aitmaganbetov/zafirogo/server/internal/reseller"
+	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
 // Cookie сессии. Префиксы __Secure-/__Host- браузер принимает только с Secure (и __Host- — с Path=/ без Domain).
@@ -138,6 +141,10 @@ func (h *handlers) Login(ctx context.Context, req authapi.LoginRequestObject) (a
 	}
 	// Хост кабинета суперадмина (Q-069): здесь входят только суперадмины.
 	in.SuperadminOnly = r != nil && onSuperadminHost(r.Host, h.d.Superadmin.Domain)
+	// Хост кабинета реселлера (UQ-21): здесь входят только реселлеры (их создаёт суперадмин).
+	if r != nil && onSuperadminHost(r.Host, h.d.ResellerDomain) {
+		in.IsReseller = h.isReseller
+	}
 	res, err := h.d.Auth.Login(ctx, in)
 	var fe *auth.FieldError
 	if errors.As(err, &fe) {
@@ -372,6 +379,20 @@ func (h *handlers) SuperadminLeaveClub(ctx context.Context, _ authapi.Superadmin
 		return nil, err
 	}
 	return authapi.SuperadminLeaveClub200JSONResponse(out), nil
+}
+
+// isReseller — у аккаунта есть запись реселлера (пул платформы: пул клуба видит только реселлера своего клуба).
+func (h *handlers) isReseller(ctx context.Context, userID int64) (bool, error) {
+	if h.d.PlatformPool == nil {
+		return false, httpx.ErrNotConfigured
+	}
+	var ok bool
+	err := db.InPlatformTx(ctx, h.d.PlatformPool, func(q *store.Queries) error {
+		var err error
+		ok, err = reseller.IsReseller(ctx, q, userID)
+		return err
+	})
+	return ok, err
 }
 
 // onSuperadminHost — SuperadminHost::is(): имя хоста запроса без порта совпадает с SUPERADMIN_DOMAIN.

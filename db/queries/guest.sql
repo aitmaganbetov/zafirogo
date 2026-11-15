@@ -157,13 +157,16 @@ RETURNING id, number, display_name, device_name, current_session_id;
 
 -- name: GuestListTariffs :many
 -- AgentTariffPurchaseService::availableFor(): активные неудалённые тарифы клуба по длительности и имени,
--- с зонами (club_zone_tariff) и счётчиком продаж в агенте (tariff_sales, Q-007).
+-- с зонами (club_zone_tariff) и счётчиком покупок для лимита количества: продажи в агенте (tariff_sales, Q-007)
+-- + неотменённые брони из приложения этим тарифом (BR-190, purchaseCounts()).
 SELECT t.id, t.name, t.description, t.duration_minutes, t.price, t.payment_method, t.currency, t.discount_enabled,
        t.is_active, t.usage_limit_enabled, t.usage_limit_minutes, t.quantity_limit_enabled, t.quantity_limit,
        t.user_roles, t.sale_periods, t.validity_periods,
        COALESCE((SELECT array_agg(zt.club_zone_id ORDER BY zt.club_zone_id) FROM club_zone_tariff zt
                  WHERE zt.club_id = t.club_id AND zt.tariff_id = t.id), '{}')::bigint[] AS zone_ids,
-       COALESCE((SELECT s.sold FROM tariff_sales s WHERE s.club_id = t.club_id AND s.tariff_id = t.id), 0)::bigint AS sold
+       (COALESCE((SELECT s.sold FROM tariff_sales s WHERE s.club_id = t.club_id AND s.tariff_id = t.id), 0)
+        + (SELECT count(*) FROM computer_reservations r
+           WHERE r.club_id = t.club_id AND r.tariff_id = t.id AND r.cancelled_at IS NULL))::bigint AS sold
 FROM tariffs t
 WHERE t.club_id = sqlc.arg(club_id) AND t.is_active AND t.deleted_at IS NULL
 ORDER BY t.duration_minutes, t.name;

@@ -323,6 +323,56 @@ paths:
           $ref: "common.yaml#/components/responses/Forbidden"
         "422":
           $ref: "common.yaml#/components/responses/ValidationFailed"
+  /api/settings/reseller:
+    get:
+      operationId: getClubReseller
+      tags: [settings]
+      summary: Реселлер клуба
+      description: |
+        Карточка «Реселлер» на «Настройке клуба» (settings/club.blade.php, #reseller; тема Д): реселлер, через которого
+        подключён клуб, или reseller: null — тогда карточка показывает форму кода. Процент реселлера клубу не отдаётся.
+      responses:
+        "200":
+          description: Реселлер клуба.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClubResellerState"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+    post:
+      operationId: attachClubReseller
+      tags: [settings]
+      summary: Ввести код реселлера
+      description: |
+        Laravel: SettingsController::reseller() (settings.reseller, settings.update, throttle:10,1). Код вводится один
+        раз: клуб уже привязан — 422 по полю reseller_code «Клуб уже привязан к реселлеру. Сменить реселлера можно через
+        поддержку Zafiro.»; кода нет или он остановлен — «Реселлер с таким кодом не найден.». Код сравнивается без
+        учёта регистра и пробелов по краям. Журнал клуба club.reseller_attached. Сменить или снять реселлера может
+        только суперадмин.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResellerCodeRequest"
+      responses:
+        "200":
+          description: Клуб привязан к реселлеру.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsMessage"
+        "401":
+          $ref: "common.yaml#/components/responses/Unauthenticated"
+        "403":
+          $ref: "common.yaml#/components/responses/Forbidden"
+        "422":
+          $ref: "common.yaml#/components/responses/ValidationFailed"
+        "429":
+          $ref: "common.yaml#/components/responses/TooManyRequests"
   /api/settings/profile:
     get:
       operationId: getClubProfile
@@ -560,7 +610,7 @@ components:
       type: object
       required: [session_idle_timeout, pc_action_after_session_end, pc_restart_after_session_end,
         session_auto_terminate_when_pc_unavailable, booking_interval, max_cashiers_on_shift, max_operators_on_shift,
-        agent_idle_logout_minutes, agent_shop_enabled, agent_auto_update]
+        agent_idle_logout_minutes, agent_shop_enabled, agent_auto_update, app_booking_enabled, app_booking_cancel]
       properties:
         session_idle_timeout:
           type: number
@@ -590,6 +640,12 @@ components:
           type: boolean
         agent_auto_update:
           type: boolean
+        app_booking_enabled:
+          type: boolean
+          description: Бронь из гостевого приложения включена (club.app_booking_enabled, по умолчанию выключена).
+        app_booking_cancel:
+          type: boolean
+          description: Гость может отменить бронь до начала с возвратом денег (club.app_booking_cancel, по умолчанию да).
     SettingsFinancesSection:
       type: object
       required: [currency, loyalty_enabled, loyalty_levels, topup_bonus_enabled, topup_bonus_levels, discount_scope,
@@ -863,3 +919,27 @@ components:
         locale:
           type: string
           description: Язык клуба (LocaleResolver::forClub()).
+    ClubResellerState:
+      type: object
+      properties:
+        reseller:
+          allOf:
+            - $ref: "#/components/schemas/ClubReseller"
+          nullable: true
+    ClubReseller:
+      type: object
+      required: [name, code, discount_percent]
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        discount_percent:
+          type: integer
+          description: Скидка на подписку от реселлера; 0 — скидки нет или код реселлера остановлен (текст о скидке не показывается).
+    ResellerCodeRequest:
+      type: object
+      properties:
+        reseller_code:
+          type: string
+          nullable: true

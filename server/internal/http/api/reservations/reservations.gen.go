@@ -46,19 +46,27 @@ func (e ReservationState) Valid() bool {
 
 // Reservation defines model for Reservation.
 type Reservation struct {
-	ComputerId int64 `json:"computer_id"`
+	// Code Код брони из приложения (6 цифр, один на ПК, забронированные вместе); null — кода нет.
+	Code       *string `json:"code,omitempty"`
+	ComputerId int64   `json:"computer_id"`
 
 	// ComputerName displayName() ПК; null — ПК удалён.
 	ComputerName *string `json:"computer_name"`
 
 	// CustomerLabel customerLabel() — «имя · телефон» (пусто — нет).
-	CustomerLabel string           `json:"customer_label"`
-	EndsAt        time.Time        `json:"ends_at"`
-	Id            int64            `json:"id"`
-	Note          *string          `json:"note,omitempty"`
-	StartsAt      time.Time        `json:"starts_at"`
-	State         ReservationState `json:"state"`
-	ZoneName      *string          `json:"zone_name,omitempty"`
+	CustomerLabel string    `json:"customer_label"`
+	EndsAt        time.Time `json:"ends_at"`
+
+	// FromApp Бронь создана гостем в мобильном приложении (computer_reservations.from_app).
+	FromApp bool    `json:"from_app"`
+	Id      int64   `json:"id"`
+	Note    *string `json:"note,omitempty"`
+
+	// Paid Оплачено гостем за этот ПК, тиыны (paid_main_cents + paid_bonus_cents); 0 — бронь не оплачена. Отмена оплаченной брони возвращает эти деньги гостю, «Клиент пришёл» запускает оплаченное время на ПК.
+	Paid     int64            `json:"paid"`
+	StartsAt time.Time        `json:"starts_at"`
+	State    ReservationState `json:"state"`
+	ZoneName *string          `json:"zone_name,omitempty"`
 }
 
 // ReservationState defines model for Reservation.State.

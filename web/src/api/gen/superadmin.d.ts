@@ -648,6 +648,94 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/superadmin/resellers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Реселлеры
+         * @description Laravel: Superadmin\ResellerController::index() (superadmin.resellers.index): реселлеры, новые первыми, по 30; поиск по коду или имени; у каждого — заработано (начисления с оплаченных счетов), выплачено, к выплате (тиыны) и его клубы.
+         */
+        get: operations["saListResellers"];
+        put?: never;
+        /**
+         * Создать реселлера
+         * @description Laravel: Superadmin\ResellerController::store(): новый аккаунт (телефон и пароль) или существующий по телефону — он сохраняет пароль и становится реселлером один раз. Код приводится к нижнему регистру. Журнал платформы superadmin.reseller_created и audit_log. Не в режиме просмотра клуба (403 read_only).
+         */
+        post: operations["saCreateReseller"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/superadmin/resellers/{resellerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Удалить реселлера
+         * @description Laravel: Superadmin\ResellerController::destroy(): аккаунт остаётся, клубы отвязываются, выплаты удаляются каскадом, в счетах начисленное остаётся; суммы выплат и начислений остаются в журнале денег платформы (UQ-10). Отличие от Laravel: нужен свежий код TOTP действующего суперадмина в теле (как выдача прав суперадмина, аудит A-10) — без кода или с неверным/уже использованным — 422 (поле code), лимит superadmin-totp — 429. Не в режиме просмотра клуба (403 read_only).
+         */
+        delete: operations["saDeleteReseller"];
+        options?: never;
+        head?: never;
+        /**
+         * Процент, скидка клубам и «код действует»
+         * @description Laravel: Superadmin\ResellerController::update(). На уже выставленные счета не влияет (счёт хранит снимок). Журнал платформы superadmin.reseller_updated (только при изменении) и audit_log. Не в режиме просмотра клуба (403 read_only).
+         */
+        patch: operations["saUpdateReseller"];
+        trace?: never;
+    };
+    "/api/superadmin/resellers/{resellerId}/payouts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Записать выплату реселлеру
+         * @description Laravel: Superadmin\ResellerController::payout(): сумма 0,01…999 999 999 ₸ (в тиынах), превышение остатка не проверяется; выплата не исправляется и не удаляется. В той же транзакции — строка reseller_payout:<id выплаты> журнала денег платформы. Отличия от Laravel: заголовок Idempotency-Key (повтор с тем же ключом и телом не создаёт вторую выплату, с другим телом — 409) и свежий код TOTP действующего суперадмина в теле (422 по полю code, лимит — 429). Не в режиме просмотра клуба (403 read_only).
+         */
+        post: operations["saPayoutReseller"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/superadmin/resellers/{resellerId}/clubs/{clubId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Отвязать клуб от реселлера
+         * @description Laravel: Superadmin\ResellerController::detach(): новые счета клуба идут без скидки и процента реселлера; клуб не этого реселлера — 404. Журнал платформы superadmin.reseller_detached и audit_log. Не в режиме просмотра клуба (403 read_only).
+         */
+        delete: operations["saDetachResellerClub"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1208,6 +1296,74 @@ export interface components {
             bot_token: string;
             chat_id?: string | null;
         };
+        /** @description Экран «Реселлеры» (superadmin/resellers/index.blade.php). */
+        ResellerBoard: {
+            /** @description Где входят реселлеры — хост кабинета реселлера (reseller.domain) или адрес /reseller этого сервера. */
+            host: string;
+            items: components["schemas"]["ResellerCard"][];
+            page: number;
+            per_page: number;
+            /** Format: int64 */
+            total: number;
+        };
+        ResellerCard: {
+            /** Format: int64 */
+            id: number;
+            code: string;
+            name: string;
+            user_name: string;
+            user_phone: string;
+            /** @description Процент реселлера с оплат в базисных пунктах (1235 = 12,35 %). */
+            commission_bp: number;
+            discount_percent: number;
+            is_active: boolean;
+            /**
+             * Format: int64
+             * @description Заработано — начисления с оплаченных счетов, тиыны.
+             */
+            earned_tiyn: number;
+            /** Format: int64 */
+            paid_out_tiyn: number;
+            /**
+             * Format: int64
+             * @description К выплате — заработано минус выплачено; может быть отрицательным.
+             */
+            balance_tiyn: number;
+            clubs: components["schemas"]["ResellerClub"][];
+        };
+        ResellerClub: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            /** @description Когда клуб привязан, дд.мм.гггг (UTC). */
+            attached?: string;
+        };
+        ResellerForm: {
+            name: string;
+            phone: string;
+            /** @description Пароль нового аккаунта (не короче 6 знаков); для существующего аккаунта не нужен — пароль остаётся прежним. */
+            password?: string | null;
+            code: string;
+            /** @description Процент реселлера в базисных пунктах, 0…10000. */
+            commission_bp: number;
+            /** @description Скидка клубам реселлера, целые проценты 0…100. */
+            discount_percent: number;
+        };
+        ResellerTermsForm: {
+            commission_bp: number;
+            discount_percent: number;
+            is_active: boolean;
+        };
+        ResellerPayoutForm: {
+            /**
+             * Format: int64
+             * @description Сумма выплаты в тиынах, 1…99 999 999 900.
+             */
+            amount_tiyn: number;
+            note?: string | null;
+            /** @description Свежий код TOTP действующего суперадмина (см. SecondFactorConfirm). */
+            code: string;
+        };
         Error: {
             /** @description Машинный код (unauthenticated, forbidden, read_only, not_found, too_many_requests, …). */
             error: string;
@@ -1272,6 +1428,24 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description Неверный запрос (параметр, курсор, нет заголовка Idempotency-Key). */
+        BadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Ключ идемпотентности уже использован запросом с другим телом (idempotency_conflict). */
+        Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
     };
     parameters: {
         ClubId: number;
@@ -1280,6 +1454,12 @@ export interface components {
         PlanId: number;
         NewsId: number;
         LanguageId: number;
+        ResellerId: number;
+        /**
+         * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+         *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+         */
+        IdempotencyKey: string;
     };
     requestBodies: never;
     headers: never;
@@ -2381,6 +2561,184 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
+        };
+    };
+    saListResellers: {
+        parameters: {
+            query?: {
+                q?: string;
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResellerBoard"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    saCreateReseller: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResellerForm"];
+            };
+        };
+        responses: {
+            /** @description Создан */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    saDeleteReseller: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                resellerId: components["parameters"]["ResellerId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecondFactorConfirm"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    saUpdateReseller: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                resellerId: components["parameters"]["ResellerId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResellerTermsForm"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationFailed"];
+        };
+    };
+    saPayoutReseller: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+                 *     Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+                 */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                resellerId: components["parameters"]["ResellerId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResellerPayoutForm"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    saDetachResellerClub: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                resellerId: components["parameters"]["ResellerId"];
+                clubId: components["parameters"]["ClubId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
 }

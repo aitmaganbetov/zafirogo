@@ -29,8 +29,8 @@ var sectionOrder = []string{sectionClub, sectionFinances, sectionGuests}
 var sectionFields = map[string][]string{
 	sectionClub: {
 		"session_idle_timeout", "pc_action_after_session_end", "pc_restart_after_session_end",
-		"session_auto_terminate_when_pc_unavailable", "booking_interval", "max_cashiers_on_shift",
-		"max_operators_on_shift", "agent_idle_logout_minutes", "agent_shop_enabled", "agent_auto_update",
+		"session_auto_terminate_when_pc_unavailable", "booking_interval", "app_booking_enabled", "app_booking_cancel",
+		"max_cashiers_on_shift", "max_operators_on_shift", "agent_idle_logout_minutes", "agent_shop_enabled", "agent_auto_update",
 	},
 	sectionFinances: {
 		"currency", "loyalty_enabled", "loyalty_levels", "topup_bonus_enabled", "topup_bonus_levels", "discount_scope",
@@ -47,6 +47,8 @@ var booleanFields = []string{
 	"loyalty_enabled", "topup_bonus_enabled", "allow_mixed_payment", "allow_whole_balance", "auto_billing",
 	"show_qr_code_on_login", "allow_guest_self_transfer", "allow_adding_friends", "allow_balance_transfer_to_friends",
 	"agent_shop_enabled", "agent_auto_update", "guest_mode_enabled",
+	// Бронь из гостевого приложения (тема Г, docs/upstream-2026-11.md): включение и отмена гостем с возвратом.
+	"app_booking_enabled", "app_booking_cancel",
 }
 
 // minuteFields — $minuteFields save(): number((float) input).
@@ -69,11 +71,14 @@ var defaults = map[string]map[string]json.RawMessage{
 		"pc_restart_after_session_end":               raw("0.5"),
 		"session_auto_terminate_when_pc_unavailable": raw("5"),
 		"booking_interval":                           raw("30"),
-		"max_cashiers_on_shift":                      raw("0"),
-		"max_operators_on_shift":                     raw("0"),
-		"agent_idle_logout_minutes":                  raw("5"), // GuestFeatures::DEFAULT_IDLE_LOGOUT_MINUTES
-		"agent_shop_enabled":                         raw("true"),
-		"agent_auto_update":                          raw("true"),
+		// Guests book and pay for PCs in the mobile app; they may cancel and get the money back.
+		"app_booking_enabled":       raw("false"),
+		"app_booking_cancel":        raw("true"),
+		"max_cashiers_on_shift":     raw("0"),
+		"max_operators_on_shift":    raw("0"),
+		"agent_idle_logout_minutes": raw("5"), // GuestFeatures::DEFAULT_IDLE_LOGOUT_MINUTES
+		"agent_shop_enabled":        raw("true"),
+		"agent_auto_update":         raw("true"),
 	},
 	sectionFinances: {
 		"currency":                   raw(`"KZT"`),
@@ -103,7 +108,8 @@ func raw(s string) json.RawMessage { return json.RawMessage(s) }
 type clubSettings map[string]map[string]json.RawMessage
 
 // loadSettings — loadSettings(): array_replace_recursive(defaultSettings(), сохранённые), затем «минутные» поля
-// секции club (все, кроме pc_action_after_session_end, agent_shop_enabled, agent_auto_update) — minutes().
+// секции club (все, кроме pc_action_after_session_end, agent_shop_enabled, agent_auto_update, app_booking_enabled,
+// app_booking_cancel) — minutes().
 // Секции и ключи, которых нет в defaultSettings(), сохраняются (array_replace_recursive их не теряет).
 func loadSettings(stored []byte) clubSettings {
 	out := clubSettings{}
@@ -132,7 +138,8 @@ func loadSettings(stored []byte) clubSettings {
 		}
 	}
 	for _, f := range sectionFields[sectionClub] {
-		if f == "pc_action_after_session_end" || f == "agent_shop_enabled" || f == "agent_auto_update" {
+		if f == "pc_action_after_session_end" || f == "agent_shop_enabled" || f == "agent_auto_update" ||
+			f == "app_booking_enabled" || f == "app_booking_cancel" {
 			continue
 		}
 		out[sectionClub][f] = encodeNumber(minutes(out[sectionClub][f]))

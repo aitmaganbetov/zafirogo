@@ -8,6 +8,7 @@ import { Pagination } from '../../components/Pagination';
 import { useAdminPageTitle } from '../../layouts/adminSession';
 import { addDays, formatDate } from '../../lib/datetime';
 import { setFlash, useFlash } from '../../lib/flash';
+import { formatMoney } from '../../lib/money';
 import { useInvalidateOn } from '../../realtime/hooks';
 import {
   allErrors,
@@ -353,6 +354,12 @@ export function ReservationsPage({ search }: { search: ReservationsSearch }) {
                   <td className="px-4 py-3 text-gray-700 dark:text-gray-300">
                     {r.customer_label || '—'}
                     {r.note && <div className="text-xs text-gray-500">{r.note}</div>}
+                    {r.from_app && (
+                      <div className="text-xs text-gray-500">
+                        {r.paid > 0 ? t('Из приложения, оплачено {{amount}}', { amount: formatMoney(r.paid, 0, '.', ' ') }) : t('Из приложения')}
+                        {r.code && ` · ${t('код {{code}}', { code: r.code })}`}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${stateClass}`}>{t(stateLabel)}</span>
@@ -374,7 +381,7 @@ export function ReservationsPage({ search }: { search: ReservationsSearch }) {
                     )}
                     {open && can(me, 'reservations.update') && can(me, 'reservations.delete') && ' '}
                     {open && can(me, 'reservations.delete') && (
-                      <ConfirmForm message={t('Отменить бронь?')} onConfirm={() => cancel.mutate(r.id)} className="inline">
+                      <ConfirmForm message={r.paid > 0 ? t('Отменить бронь? Оплата вернётся клиенту на баланс.') : t('Отменить бронь?')} onConfirm={() => cancel.mutate(r.id)} className="inline">
                         <button type="submit" className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 dark:border-red-800 dark:text-red-400" disabled={readOnly}>
                           {t('Отменить')}
                         </button>

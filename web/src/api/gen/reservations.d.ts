@@ -122,6 +122,15 @@ export interface components {
         Reservation: {
             /** Format: int64 */
             id: number;
+            /** @description Бронь создана гостем в мобильном приложении (computer_reservations.from_app). */
+            from_app: boolean;
+            /**
+             * Format: int64
+             * @description Оплачено гостем за этот ПК, тиыны (paid_main_cents + paid_bonus_cents); 0 — бронь не оплачена. Отмена оплаченной брони возвращает эти деньги гостю, «Клиент пришёл» запускает оплаченное время на ПК.
+             */
+            paid: number;
+            /** @description Код брони из приложения (6 цифр, один на ПК, забронированные вместе); null — кода нет. */
+            code?: string | null;
             /** Format: int64 */
             computer_id: number;
             /** @description displayName() ПК; null — ПК удалён. */

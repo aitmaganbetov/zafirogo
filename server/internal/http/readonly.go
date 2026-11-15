@@ -39,6 +39,11 @@ func readOnlyAllowed(method, path string) bool {
 		(strings.HasSuffix(path, "/second-factor") || strings.HasSuffix(path, "/superadmin")) {
 		return false
 	}
+	// Реселлеры (тема Д): в режиме просмотра раздел только читается — создание, условия, выплаты, отвязка клуба и
+	// удаление реселлера закрыты (docs/open-questions/upstream-resellers.md UR-3).
+	if path == "/api/superadmin/resellers" || strings.HasPrefix(path, "/api/superadmin/resellers/") {
+		return false
+	}
 	// Действия своей учётной записи вне клуба (в Laravel — не под current-club): подтверждение входа на ПК по QR,
 	// принятие приглашения, восстановление пароля, регистрация.
 	if strings.HasPrefix(path, "/api/superadmin/") || strings.HasPrefix(path, "/api/pc-login/") ||

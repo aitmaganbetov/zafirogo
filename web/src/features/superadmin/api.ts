@@ -1,5 +1,5 @@
 import { queryOptions } from '@tanstack/react-query';
-import { apiFetch, createApiClient, errorFromResponse, isApiError, unwrap } from '../../api/http';
+import { apiFetch, createApiClient, errorFromResponse, idempotencyKey, isApiError, unwrap } from '../../api/http';
 import type { components, paths } from '../../api/gen/superadmin';
 
 /*
@@ -140,6 +140,41 @@ export const invoicesQuery = (page?: number) =>
 export const payInvoice = (invoiceId: number) => unwrap(saApi.POST('/api/superadmin/invoices/{invoiceId}/pay', { params: { path: { invoiceId } } }));
 export const cancelInvoice = (invoiceId: number) => unwrap(saApi.POST('/api/superadmin/invoices/{invoiceId}/cancel', { params: { path: { invoiceId } } }));
 export const setInvoiceKaspi = (body: S['KaspiForm']) => unwrap(saApi.POST('/api/superadmin/invoices/kaspi', { body }));
+
+// ---------------------------------------------------------------------------
+// Реселлеры (тема Д)
+// ---------------------------------------------------------------------------
+
+export type ResellerBoard = S['ResellerBoard'];
+export type ResellerCard = S['ResellerCard'];
+
+export interface ResellersSearch {
+  readonly q?: string;
+  readonly page?: number;
+}
+
+export function parseResellersSearch(s: Record<string, unknown>): ResellersSearch {
+  return { q: strParam(s.q), page: intParam(s.page, 2) };
+}
+
+export const resellersQuery = (s: ResellersSearch) =>
+  queryOptions({
+    queryKey: ['superadmin', 'resellers', s.q ?? '', s.page ?? 1],
+    queryFn: ({ signal }) => unwrap(saApi.GET('/api/superadmin/resellers', { params: { query: { q: s.q, page: s.page } }, signal })),
+  });
+
+export const createReseller = (body: S['ResellerForm']) => unwrap(saApi.POST('/api/superadmin/resellers', { body }));
+export const updateReseller = (resellerId: number, body: S['ResellerTermsForm']) =>
+  unwrap(saApi.PATCH('/api/superadmin/resellers/{resellerId}', { params: { path: { resellerId } }, body }));
+export const detachResellerClub = (resellerId: number, clubId: number) =>
+  unwrap(saApi.DELETE('/api/superadmin/resellers/{resellerId}/clubs/{clubId}', { params: { path: { resellerId, clubId } } }));
+/** Удаление — со свежим кодом TOTP действующего суперадмина. */
+export const deleteReseller = (resellerId: number, code: string) =>
+  unwrap(saApi.DELETE('/api/superadmin/resellers/{resellerId}', { params: { path: { resellerId } }, body: { code } }));
+/** Выплата — со свежим кодом TOTP и ключом идемпотентности формы (повтор не создаёт вторую выплату). */
+export const payoutReseller = (resellerId: number, body: S['ResellerPayoutForm'], key: string) =>
+  unwrap(saApi.POST('/api/superadmin/resellers/{resellerId}/payouts', { params: { path: { resellerId }, header: { 'Idempotency-Key': key } }, body }));
+export { idempotencyKey };
 
 // ---------------------------------------------------------------------------
 // Пользователи, тарифы, журнал

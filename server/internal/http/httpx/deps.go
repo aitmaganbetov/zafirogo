@@ -111,6 +111,9 @@ type Deps struct {
 	ApproveQrLogin func(ctx context.Context, clubID int64, code string, userID int64) error
 	// Superadmin — кабинет суперадмина: домен, секреты платформы, рассылка агентам (superadmin.go).
 	Superadmin SuperadminDeps
+	// ResellerDomain — хост кабинета реселлера (RESELLER_DOMAIN старого проекта, reseller.domain; UQ-21): на нём
+	// входят только реселлеры. Пусто — кабинет по /reseller на любом хосте.
+	ResellerDomain string
 	// Now — часы (nil — time.Now).
 	Now func() time.Time
 }

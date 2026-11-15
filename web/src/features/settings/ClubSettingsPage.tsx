@@ -9,6 +9,8 @@ import {
   clubSettingsQuery, deleteLogo, deleteSigninImage, firstError, minutesToInput, saveAgentPin, saveLocation, saveStaffTime,
   saveTimezone, uploadImage,
 } from './api';
+import { AppBookingCard } from './AppBookingCard';
+import { ResellerCard } from './ResellerCard';
 import { SettingsAnchors } from './SettingsAnchors';
 import { SettingsForm } from './SettingsForm';
 import { useSettingsResult } from './status';
@@ -83,12 +85,14 @@ export function ClubSettingsPage() {
 
   const anchors: ReadonlyArray<readonly [string, string]> = [
     ['club-sessions', t('Сессии и ПК')],
+    ['app-booking', t('Бронь из приложения')],
     ['agent-settings', t('Агент на ПК')],
     ['shift-limits', t('Сотрудники на смене')],
     ['club-key', t('Ключ установки клуба')],
     ['club-logo', t('Логотип клуба')],
     ['signin-image', t('Картинка экрана входа')],
     ['location', t('Город и адрес')],
+    ['reseller', t('Реселлер')],
     ['timezone', t('Часовой пояс')],
     ['agent-pin', t('PIN-код для выхода из агента')],
   ];
@@ -136,6 +140,8 @@ export function ClubSettingsPage() {
             ))}
           </div>
         </SettingsCard>
+
+        <AppBookingCard enabled={club.app_booking_enabled} cancel={club.app_booking_cancel} />
 
         <SettingsCard id="agent-settings" aria-labelledby="agent-settings-title">
           <h5 id="agent-settings-title" className="mb-2 font-semibold text-gray-900 dark:text-white">{t('Агент на ПК')}</h5>
@@ -265,6 +271,8 @@ export function ClubSettingsPage() {
           </form>
         </>
       ))}
+
+      <ResellerCard readOnly={readOnly} onDone={refresh} onError={fail('reseller')} error={errorOf('reseller')} />
 
       {card('timezone', t('Часовой пояс'), (
         <>

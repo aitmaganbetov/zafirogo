@@ -229,9 +229,9 @@ describe('Настройка клуба: город и адрес', () => {
     renderPage(<ClubSettingsPage />);
     const card = (await screen.findByRole('heading', { name: 'Город и адрес' })).closest('section') as HTMLElement;
     expect(card.id).toBe('location');
-    // Якорь карточки — в меню страницы, между «Картинка экрана входа» и «Часовой пояс».
+    // Якорь карточки — в меню страницы, после «Картинка экрана входа»; за ним — «Реселлер» (тема Д) и «Часовой пояс».
     const anchors = [...document.querySelectorAll('[data-settings-anchors] a')].map((a) => a.getAttribute('href'));
-    expect(anchors.slice(anchors.indexOf('#signin-image'), anchors.indexOf('#timezone') + 1)).toEqual(['#signin-image', '#location', '#timezone']);
+    expect(anchors.slice(anchors.indexOf('#signin-image'), anchors.indexOf('#timezone') + 1)).toEqual(['#signin-image', '#location', '#reseller', '#timezone']);
     const select = within(card).getByText('Город').nextElementSibling as HTMLSelectElement;
     expect([...select.options].map((o) => [o.value, o.text])).toEqual([['', 'Не указан'], ['aktau', 'Актау'], ['aktobe', 'Актобе'], ['almaty', 'Алматы']]);
     expect(select.value).toBe('');

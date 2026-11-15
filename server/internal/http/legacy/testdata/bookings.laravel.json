@@ -1,0 +1,954 @@
+{
+ "php": "8.4.27",
+ "laravel": "a680bab",
+ "now": "2026-11-16T05:00:00+00:00",
+ "ids": {
+  "club": 1,
+  "vip": 1,
+  "common": 2,
+  "bare": 3,
+  "pc1": 1,
+  "pc2": 2,
+  "pc3": 3,
+  "pc4": 4,
+  "pc5": 5,
+  "three": 1,
+  "night": 2,
+  "hour": 3,
+  "guest": 1,
+  "poor": 2
+ },
+ "steps": [
+  {
+   "name": "index-empty",
+   "method": "GET",
+   "path": "/api/guest/bookings",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "enabled": true,
+    "can_cancel": true,
+    "gap_minutes": 10,
+    "currency": "KZT",
+    "min_minutes": 30,
+    "max_minutes": 720,
+    "max_days_ahead": 7,
+    "bookings": []
+   }
+  },
+  {
+   "name": "computers",
+   "method": "GET",
+   "path": "/api/guest/bookings/computers",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "zones": [
+     {
+      "id": 1,
+      "name": "VIP",
+      "price_per_hour": "600.00",
+      "computers": [
+       {
+        "id": 1,
+        "name": "PC-01"
+       },
+       {
+        "id": 2,
+        "name": "PC-02"
+       }
+      ]
+     },
+     {
+      "id": 2,
+      "name": "Общий",
+      "price_per_hour": "333.33",
+      "computers": [
+       {
+        "id": 3,
+        "name": "PC-03"
+       }
+      ]
+     },
+     {
+      "id": 3,
+      "name": "Без цены",
+      "price_per_hour": null,
+      "computers": [
+       {
+        "id": 5,
+        "name": "Стрим"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "tariffs-noon",
+   "method": "GET",
+   "path": "/api/guest/bookings/tariffs?starts_at=2026-11-16T12:00:00%2B05:00",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "tariffs": [
+     {
+      "id": 3,
+      "name": "Час",
+      "description": null,
+      "minutes": 60,
+      "price": "270.00",
+      "zone_ids": []
+     },
+     {
+      "id": 1,
+      "name": "3 часа",
+      "description": null,
+      "minutes": 180,
+      "price": "1200.00",
+      "zone_ids": [
+       1
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "tariffs-night-pc3",
+   "method": "GET",
+   "path": "/api/guest/bookings/tariffs?starts_at=2026-11-16T23:00:00%2B05:00&computer_id=3",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "tariffs": [
+     {
+      "id": 3,
+      "name": "Час",
+      "description": null,
+      "minutes": 60,
+      "price": "270.00",
+      "zone_ids": []
+     },
+     {
+      "id": 2,
+      "name": "Ночь",
+      "description": "Ночной пакет",
+      "minutes": 540,
+      "price": "2000.00",
+      "zone_ids": []
+     }
+    ]
+   }
+  },
+  {
+   "name": "tariffs-pcs-1-3",
+   "method": "GET",
+   "path": "/api/guest/bookings/tariffs?starts_at=2026-11-16T12:00:00%2B05:00&computer_ids[]=1&computer_ids[]=3",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "tariffs": [
+     {
+      "id": 3,
+      "name": "Час",
+      "description": null,
+      "minutes": 60,
+      "price": "270.00",
+      "zone_ids": []
+     }
+    ]
+   }
+  },
+  {
+   "name": "tariffs-no-start",
+   "method": "GET",
+   "path": "/api/guest/bookings/tariffs",
+   "user": "guest",
+   "body": null,
+   "status": 422,
+   "response": {
+    "message": "Поле «starts at» обязательно.",
+    "errors": {
+     "starts_at": [
+      "Поле «starts at» обязательно."
+     ]
+    }
+   }
+  },
+  {
+   "name": "options-hourly",
+   "method": "GET",
+   "path": "/api/guest/bookings/options?starts_at=2026-11-16T12:00:00%2B05:00&duration_minutes=90",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "minutes": 90,
+    "zones": [
+     {
+      "id": 1,
+      "name": "VIP",
+      "price_per_hour": "600.00",
+      "price": "900.00",
+      "computers": [
+       {
+        "id": 1,
+        "name": "PC-01",
+        "available": true
+       },
+       {
+        "id": 2,
+        "name": "PC-02",
+        "available": true
+       }
+      ]
+     },
+     {
+      "id": 2,
+      "name": "Общий",
+      "price_per_hour": "333.33",
+      "price": "500.00",
+      "computers": [
+       {
+        "id": 3,
+        "name": "PC-03",
+        "available": true
+       },
+       {
+        "id": 4,
+        "name": "PC-04",
+        "available": false
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "options-tariff",
+   "method": "GET",
+   "path": "/api/guest/bookings/options?starts_at=2026-11-16T12:00:00%2B05:00&tariff_id=1",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "minutes": 180,
+    "zones": [
+     {
+      "id": 1,
+      "name": "VIP",
+      "price_per_hour": "600.00",
+      "price": "1200.00",
+      "computers": [
+       {
+        "id": 1,
+        "name": "PC-01",
+        "available": true
+       },
+       {
+        "id": 2,
+        "name": "PC-02",
+        "available": true
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "options-tariff-night-early",
+   "method": "GET",
+   "path": "/api/guest/bookings/options?starts_at=2026-11-16T12:00:00%2B05:00&tariff_id=2",
+   "user": "guest",
+   "body": null,
+   "status": 422,
+   "response": {
+    "message": "Этот тариф нельзя забронировать на это время.",
+    "errors": {
+     "tariff_id": [
+      "Этот тариф нельзя забронировать на это время."
+     ]
+    }
+   }
+  },
+  {
+   "name": "options-no-duration",
+   "method": "GET",
+   "path": "/api/guest/bookings/options?starts_at=2026-11-16T12:00:00%2B05:00",
+   "user": "guest",
+   "body": null,
+   "status": 422,
+   "response": {
+    "message": "validation.required_without",
+    "errors": {
+     "duration_minutes": [
+      "validation.required_without"
+     ]
+    }
+   }
+  },
+  {
+   "name": "store-empty",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "poor",
+   "body": {},
+   "status": 422,
+   "response": {
+    "message": "validation.required_without (and 1 more error)",
+    "errors": {
+     "club_computer_ids": [
+      "validation.required_without"
+     ],
+     "club_computer_id": [
+      "validation.required_without"
+     ]
+    }
+   }
+  },
+  {
+   "name": "store-bad-date",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "poor",
+   "body": {
+    "club_computer_id": 1,
+    "starts_at": "завтра",
+    "duration_minutes": 60
+   },
+   "status": 422,
+   "response": {
+    "message": "Поле «starts at» должно быть корректной датой.",
+    "errors": {
+     "starts_at": [
+      "Поле «starts at» должно быть корректной датой."
+     ]
+    }
+   }
+  },
+  {
+   "name": "store-no-duration",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "poor",
+   "body": {
+    "club_computer_id": 1,
+    "starts_at": "2026-11-16T12:00:00+05:00"
+   },
+   "status": 422,
+   "response": {
+    "message": "validation.required_without",
+    "errors": {
+     "duration_minutes": [
+      "validation.required_without"
+     ]
+    }
+   }
+  },
+  {
+   "name": "store-short",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "poor",
+   "body": {
+    "club_computer_id": 1,
+    "starts_at": "2026-11-16T12:00:00+05:00",
+    "duration_minutes": 10
+   },
+   "status": 422,
+   "response": {
+    "message": "Поле «duration minutes» должно быть не меньше 30.",
+    "errors": {
+     "duration_minutes": [
+      "Поле «duration minutes» должно быть не меньше 30."
+     ]
+    }
+   }
+  },
+  {
+   "name": "store-past",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "poor",
+   "body": {
+    "club_computer_id": 1,
+    "starts_at": "2026-11-16T09:00:00+05:00",
+    "duration_minutes": 60
+   },
+   "status": 422,
+   "response": {
+    "message": "Нельзя забронировать ПК на прошедшее время.",
+    "errors": {
+     "starts_at": [
+      "Нельзя забронировать ПК на прошедшее время."
+     ]
+    }
+   }
+  },
+  {
+   "name": "store-no-money",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "poor",
+   "body": {
+    "club_computer_id": 1,
+    "starts_at": "2026-11-16T12:00:00+05:00",
+    "duration_minutes": 60
+   },
+   "status": 422,
+   "response": {
+    "message": "Недостаточно средств: бронь стоит 600.00.",
+    "errors": {
+     "balance": [
+      "Недостаточно средств: бронь стоит 600.00."
+     ]
+    }
+   }
+  },
+  {
+   "name": "store-one",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "guest",
+   "body": {
+    "club_computer_id": 1,
+    "starts_at": "2026-11-16T12:00:00+05:00",
+    "duration_minutes": 90
+   },
+   "status": 201,
+   "response": {
+    "message": "ПК забронирован. Войдите на нём в своё время — оплаченное время начнётся само.",
+    "booking": {
+     "id": 1,
+     "code": "590141",
+     "computer": "PC-01",
+     "computers": [
+      "PC-01"
+     ],
+     "zone": "VIP",
+     "tariff": null,
+     "starts_at": "2026-11-16T07:00:00+00:00",
+     "ends_at": "2026-11-16T08:30:00+00:00",
+     "state": "pending",
+     "paid": "900.00",
+     "paid_bonus": "0.00",
+     "can_cancel": true
+    }
+   }
+  },
+  {
+   "name": "store-conflict",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "guest",
+   "body": {
+    "club_computer_id": 1,
+    "starts_at": "2026-11-16T13:35:00+05:00",
+    "duration_minutes": 60
+   },
+   "status": 422,
+   "response": {
+    "message": "ПК уже забронирован с 16.11 12:00 до 13:30 (между бронями нужно 10 мин).",
+    "errors": {
+     "starts_at": [
+      "ПК уже забронирован с 16.11 12:00 до 13:30 (между бронями нужно 10 мин)."
+     ]
+    }
+   }
+  },
+  {
+   "name": "store-reserved-pc",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "guest",
+   "body": {
+    "club_computer_id": 4,
+    "starts_at": "2026-11-16T16:00:00+05:00",
+    "duration_minutes": 60
+   },
+   "status": 422,
+   "response": {
+    "message": "ПК PC-04 нельзя забронировать.",
+    "errors": {
+     "club_computer_ids": [
+      "ПК PC-04 нельзя забронировать."
+     ]
+    }
+   }
+  },
+  {
+   "name": "store-11-pcs",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "guest",
+   "body": {
+    "club_computer_ids": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ],
+    "starts_at": "2026-11-16T16:00:00+05:00",
+    "duration_minutes": 60
+   },
+   "status": 422,
+   "response": {
+    "message": "Поле «club computer ids» не может содержать больше 10 элементов.",
+    "errors": {
+     "club_computer_ids": [
+      "Поле «club computer ids» не может содержать больше 10 элементов."
+     ]
+    }
+   }
+  },
+  {
+   "name": "options-after-booking",
+   "method": "GET",
+   "path": "/api/guest/bookings/options?starts_at=2026-11-16T13:35:00%2B05:00&duration_minutes=60",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "minutes": 60,
+    "zones": [
+     {
+      "id": 1,
+      "name": "VIP",
+      "price_per_hour": "600.00",
+      "price": "600.00",
+      "computers": [
+       {
+        "id": 1,
+        "name": "PC-01",
+        "available": false
+       },
+       {
+        "id": 2,
+        "name": "PC-02",
+        "available": true
+       }
+      ]
+     },
+     {
+      "id": 2,
+      "name": "Общий",
+      "price_per_hour": "333.33",
+      "price": "333.33",
+      "computers": [
+       {
+        "id": 3,
+        "name": "PC-03",
+        "available": true
+       },
+       {
+        "id": 4,
+        "name": "PC-04",
+        "available": false
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "store-two-tariff",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "guest",
+   "body": {
+    "club_computer_ids": [
+     3,
+     2
+    ],
+    "starts_at": "2026-11-16T15:00:00+05:00",
+    "tariff_id": 3
+   },
+   "status": 201,
+   "response": {
+    "message": "ПК забронированы. Код брони 373826: на забронированных ПК его вводят на экране входа — оплаченное время начнётся само.",
+    "booking": {
+     "id": 2,
+     "code": "373826",
+     "computer": "PC-02, PC-03",
+     "computers": [
+      "PC-02",
+      "PC-03"
+     ],
+     "zone": "VIP, Общий",
+     "tariff": "Час",
+     "starts_at": "2026-11-16T10:00:00+00:00",
+     "ends_at": "2026-11-16T11:00:00+00:00",
+     "state": "pending",
+     "paid": "540.00",
+     "paid_bonus": "0.00",
+     "can_cancel": true
+    }
+   }
+  },
+  {
+   "name": "index-two",
+   "method": "GET",
+   "path": "/api/guest/bookings",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "enabled": true,
+    "can_cancel": true,
+    "gap_minutes": 10,
+    "currency": "KZT",
+    "min_minutes": 30,
+    "max_minutes": 720,
+    "max_days_ahead": 7,
+    "bookings": [
+     {
+      "id": 1,
+      "code": "590141",
+      "computer": "PC-01",
+      "computers": [
+       "PC-01"
+      ],
+      "zone": "VIP",
+      "tariff": null,
+      "starts_at": "2026-11-16T07:00:00+00:00",
+      "ends_at": "2026-11-16T08:30:00+00:00",
+      "state": "pending",
+      "paid": "900.00",
+      "paid_bonus": "0.00",
+      "can_cancel": true
+     },
+     {
+      "id": 2,
+      "code": "373826",
+      "computer": "PC-02, PC-03",
+      "computers": [
+       "PC-02",
+       "PC-03"
+      ],
+      "zone": "VIP, Общий",
+      "tariff": "Час",
+      "starts_at": "2026-11-16T10:00:00+00:00",
+      "ends_at": "2026-11-16T11:00:00+00:00",
+      "state": "pending",
+      "paid": "540.00",
+      "paid_bonus": "0.00",
+      "can_cancel": true
+     }
+    ]
+   }
+  },
+  {
+   "name": "store-limit",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "guest",
+   "body": {
+    "club_computer_id": 1,
+    "starts_at": "2026-11-16T18:00:00+05:00",
+    "duration_minutes": 60
+   },
+   "status": 422,
+   "response": {
+    "message": "У вас уже 2 брони в этом клубе — это предел.",
+    "errors": {
+     "starts_at": [
+      "У вас уже 2 брони в этом клубе — это предел."
+     ]
+    }
+   }
+  },
+  {
+   "name": "cancel-foreign",
+   "method": "POST",
+   "path": "/api/guest/bookings/2/cancel",
+   "user": "poor",
+   "body": null,
+   "status": 404,
+   "response": {
+    "message": "No query results for model [App\\Models\\ComputerReservation] 2"
+   }
+  },
+  {
+   "name": "cancel-two",
+   "method": "POST",
+   "path": "/api/guest/bookings/2/cancel",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "message": "Бронь отменена, деньги вернулись на баланс."
+   }
+  },
+  {
+   "name": "cancel-again",
+   "method": "POST",
+   "path": "/api/guest/bookings/2/cancel",
+   "user": "guest",
+   "body": null,
+   "status": 422,
+   "response": {
+    "message": "Бронь уже началась или закрыта — отменить её нельзя.",
+    "errors": {
+     "reservation": [
+      "Бронь уже началась или закрыта — отменить её нельзя."
+     ]
+    }
+   }
+  },
+  {
+   "name": "index-after-cancel",
+   "method": "GET",
+   "path": "/api/guest/bookings",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "enabled": true,
+    "can_cancel": true,
+    "gap_minutes": 10,
+    "currency": "KZT",
+    "min_minutes": 30,
+    "max_minutes": 720,
+    "max_days_ahead": 7,
+    "bookings": [
+     {
+      "id": 1,
+      "code": "590141",
+      "computer": "PC-01",
+      "computers": [
+       "PC-01"
+      ],
+      "zone": "VIP",
+      "tariff": null,
+      "starts_at": "2026-11-16T07:00:00+00:00",
+      "ends_at": "2026-11-16T08:30:00+00:00",
+      "state": "pending",
+      "paid": "900.00",
+      "paid_bonus": "0.00",
+      "can_cancel": true
+     },
+     {
+      "id": 2,
+      "code": "373826",
+      "computer": "PC-02, PC-03",
+      "computers": [
+       "PC-02",
+       "PC-03"
+      ],
+      "zone": "VIP, Общий",
+      "tariff": "Час",
+      "starts_at": "2026-11-16T10:00:00+00:00",
+      "ends_at": "2026-11-16T11:00:00+00:00",
+      "state": "cancelled",
+      "paid": "540.00",
+      "paid_bonus": "0.00",
+      "can_cancel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "history",
+   "method": "GET",
+   "path": "/api/guest/history?filter=purchases",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "data": [
+     {
+      "id": 8,
+      "at": "2026-11-16T05:00:00+00:00",
+      "kind": "refund",
+      "title": "Возврат за отменённую бронь",
+      "note": null,
+      "amount": "270.00",
+      "bonus_amount": null
+     },
+     {
+      "id": 6,
+      "at": "2026-11-16T05:00:00+00:00",
+      "kind": "refund",
+      "title": "Возврат за отменённую бронь",
+      "note": null,
+      "amount": "270.00",
+      "bonus_amount": null
+     },
+     {
+      "id": 5,
+      "at": "2026-11-16T05:00:00+00:00",
+      "kind": "purchase",
+      "title": "Бронь ПК PC-02, PC-03",
+      "note": "16.11.2026 15:00",
+      "amount": "-540.00",
+      "bonus_amount": null
+     },
+     {
+      "id": 2,
+      "at": "2026-11-16T05:00:00+00:00",
+      "kind": "purchase",
+      "title": "Бронь ПК PC-01",
+      "note": "16.11.2026 12:00",
+      "amount": "-900.00",
+      "bonus_amount": null
+     }
+    ],
+    "next_before": null
+   }
+  },
+  {
+   "name": "index-no-cancel",
+   "method": "GET",
+   "path": "/api/guest/bookings",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "enabled": true,
+    "can_cancel": false,
+    "gap_minutes": 10,
+    "currency": "KZT",
+    "min_minutes": 30,
+    "max_minutes": 720,
+    "max_days_ahead": 7,
+    "bookings": [
+     {
+      "id": 1,
+      "code": "590141",
+      "computer": "PC-01",
+      "computers": [
+       "PC-01"
+      ],
+      "zone": "VIP",
+      "tariff": null,
+      "starts_at": "2026-11-16T07:00:00+00:00",
+      "ends_at": "2026-11-16T08:30:00+00:00",
+      "state": "pending",
+      "paid": "900.00",
+      "paid_bonus": "0.00",
+      "can_cancel": false
+     },
+     {
+      "id": 2,
+      "code": "373826",
+      "computer": "PC-02, PC-03",
+      "computers": [
+       "PC-02",
+       "PC-03"
+      ],
+      "zone": "VIP, Общий",
+      "tariff": "Час",
+      "starts_at": "2026-11-16T10:00:00+00:00",
+      "ends_at": "2026-11-16T11:00:00+00:00",
+      "state": "cancelled",
+      "paid": "540.00",
+      "paid_bonus": "0.00",
+      "can_cancel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "cancel-not-allowed",
+   "method": "POST",
+   "path": "/api/guest/bookings/1/cancel",
+   "user": "guest",
+   "body": null,
+   "status": 422,
+   "response": {
+    "message": "Клуб не разрешает отменять бронь в приложении.",
+    "errors": {
+     "reservation": [
+      "Клуб не разрешает отменять бронь в приложении."
+     ]
+    }
+   }
+  },
+  {
+   "name": "index-disabled",
+   "method": "GET",
+   "path": "/api/guest/bookings",
+   "user": "guest",
+   "body": null,
+   "status": 200,
+   "response": {
+    "enabled": false,
+    "can_cancel": false,
+    "gap_minutes": 10,
+    "currency": "KZT",
+    "min_minutes": 30,
+    "max_minutes": 720,
+    "max_days_ahead": 7,
+    "bookings": [
+     {
+      "id": 1,
+      "code": "590141",
+      "computer": "PC-01",
+      "computers": [
+       "PC-01"
+      ],
+      "zone": "VIP",
+      "tariff": null,
+      "starts_at": "2026-11-16T07:00:00+00:00",
+      "ends_at": "2026-11-16T08:30:00+00:00",
+      "state": "pending",
+      "paid": "900.00",
+      "paid_bonus": "0.00",
+      "can_cancel": false
+     },
+     {
+      "id": 2,
+      "code": "373826",
+      "computer": "PC-02, PC-03",
+      "computers": [
+       "PC-02",
+       "PC-03"
+      ],
+      "zone": "VIP, Общий",
+      "tariff": "Час",
+      "starts_at": "2026-11-16T10:00:00+00:00",
+      "ends_at": "2026-11-16T11:00:00+00:00",
+      "state": "cancelled",
+      "paid": "540.00",
+      "paid_bonus": "0.00",
+      "can_cancel": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "computers-disabled",
+   "method": "GET",
+   "path": "/api/guest/bookings/computers",
+   "user": "guest",
+   "body": null,
+   "status": 403,
+   "response": {
+    "message": "Бронь из приложения в этом клубе выключена."
+   }
+  },
+  {
+   "name": "store-disabled",
+   "method": "POST",
+   "path": "/api/guest/bookings",
+   "user": "guest",
+   "body": {},
+   "status": 403,
+   "response": {
+    "message": "Бронь из приложения в этом клубе выключена."
+   }
+  }
+ ]
+}

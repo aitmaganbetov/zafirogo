@@ -28,6 +28,9 @@ func TestNamedRuleValues(t *testing.T) {
 		AgentRegister:                {{5, 10 * time.Minute}, {60, 10 * time.Minute}},
 		AgentQrLogin:                 {{20, time.Minute}},
 		AgentQrPoll:                  {{60, time.Minute}},
+		AgentBookingCode:             {{5, time.Minute}, {200, time.Hour}},
+		"api.guest.bookings.store":   {{10, time.Minute}},
+		"api.guest.bookings.cancel":  {{10, time.Minute}},
 		AgentTokenRotate:             {{10, time.Minute}},
 		AgentTranslations:            {{600, time.Minute}},
 		ClubComputerRegistration:     {{10, time.Minute}},
@@ -45,9 +48,11 @@ func TestNamedRuleValues(t *testing.T) {
 		}
 		rules[r.Name] = r
 	}
-	// 40 throttle:N,M до ноября 2026 + 3 темы В (api.catalog.clubs, api.catalog.club, settings.photos.store).
-	if len(rules) != 13+2+1+40+3 {
-		t.Errorf("rules = %d, want 59 (13 named + 2 web + superadmin-totp + 43 throttle:N,M)", len(rules))
+	// 40 throttle:N,M до ноября 2026 + 3 темы В (api.catalog.clubs, api.catalog.club, settings.photos.store)
+	// + 6 темы Г (api.guest.bookings*); именованных — 14 (тема Г: agent-booking-code).
+	// + 1 темы Д (settings.reseller).
+	if len(rules) != 14+2+1+40+3+6+1 {
+		t.Errorf("rules = %d, want 67 (14 named + 2 web + superadmin-totp + 50 throttle:N,M)", len(rules))
 	}
 	for name, lims := range want {
 		r, ok := rules[name]

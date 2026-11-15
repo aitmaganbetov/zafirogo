@@ -740,6 +740,78 @@ type PlatformNewsPage struct {
 	Total   int64              `json:"total"`
 }
 
+// ResellerBoard Экран «Реселлеры» (superadmin/resellers/index.blade.php).
+type ResellerBoard struct {
+	// Host Где входят реселлеры — хост кабинета реселлера (reseller.domain) или адрес /reseller этого сервера.
+	Host    string         `json:"host"`
+	Items   []ResellerCard `json:"items"`
+	Page    int            `json:"page"`
+	PerPage int            `json:"per_page"`
+	Total   int64          `json:"total"`
+}
+
+// ResellerCard defines model for ResellerCard.
+type ResellerCard struct {
+	// BalanceTiyn К выплате — заработано минус выплачено; может быть отрицательным.
+	BalanceTiyn int64          `json:"balance_tiyn"`
+	Clubs       []ResellerClub `json:"clubs"`
+	Code        string         `json:"code"`
+
+	// CommissionBp Процент реселлера с оплат в базисных пунктах (1235 = 12,35 %).
+	CommissionBp    int `json:"commission_bp"`
+	DiscountPercent int `json:"discount_percent"`
+
+	// EarnedTiyn Заработано — начисления с оплаченных счетов, тиыны.
+	EarnedTiyn  int64  `json:"earned_tiyn"`
+	Id          int64  `json:"id"`
+	IsActive    bool   `json:"is_active"`
+	Name        string `json:"name"`
+	PaidOutTiyn int64  `json:"paid_out_tiyn"`
+	UserName    string `json:"user_name"`
+	UserPhone   string `json:"user_phone"`
+}
+
+// ResellerClub defines model for ResellerClub.
+type ResellerClub struct {
+	// Attached Когда клуб привязан, дд.мм.гггг (UTC).
+	Attached *string `json:"attached,omitempty"`
+	Id       int64   `json:"id"`
+	Name     string  `json:"name"`
+}
+
+// ResellerForm defines model for ResellerForm.
+type ResellerForm struct {
+	Code string `json:"code"`
+
+	// CommissionBp Процент реселлера в базисных пунктах, 0…10000.
+	CommissionBp int `json:"commission_bp"`
+
+	// DiscountPercent Скидка клубам реселлера, целые проценты 0…100.
+	DiscountPercent int    `json:"discount_percent"`
+	Name            string `json:"name"`
+
+	// Password Пароль нового аккаунта (не короче 6 знаков); для существующего аккаунта не нужен — пароль остаётся прежним.
+	Password *string `json:"password,omitempty"`
+	Phone    string  `json:"phone"`
+}
+
+// ResellerPayoutForm defines model for ResellerPayoutForm.
+type ResellerPayoutForm struct {
+	// AmountTiyn Сумма выплаты в тиынах, 1…99 999 999 900.
+	AmountTiyn int64 `json:"amount_tiyn"`
+
+	// Code Свежий код TOTP действующего суперадмина (см. SecondFactorConfirm).
+	Code string  `json:"code"`
+	Note *string `json:"note,omitempty"`
+}
+
+// ResellerTermsForm defines model for ResellerTermsForm.
+type ResellerTermsForm struct {
+	CommissionBp    int  `json:"commission_bp"`
+	DiscountPercent int  `json:"discount_percent"`
+	IsActive        bool `json:"is_active"`
+}
+
 // SecondFactorConfirm Свежее подтверждение вторым фактором действующего суперадмина (аудит A-10) — код TOTP из приложения (6 цифр). Код восстановления не принимается. Один код — одно действие (повтор шага отклоняется, как при входе).
 type SecondFactorConfirm struct {
 	Code string `json:"code"`
@@ -807,6 +879,9 @@ type NewsId = int64
 
 // PlanId defines model for PlanId.
 type PlanId = int64
+
+// ResellerId defines model for ResellerId.
+type ResellerId = int64
 
 // UserId defines model for UserId.
 type UserId = int64
@@ -887,6 +962,19 @@ type SaListPlatformNewsParams struct {
 	Page *int `form:"page,omitempty" json:"page,omitempty"`
 }
 
+// SaListResellersParams defines parameters for SaListResellers.
+type SaListResellersParams struct {
+	Q    *string `form:"q,omitempty" json:"q,omitempty"`
+	Page *int    `form:"page,omitempty" json:"page,omitempty"`
+}
+
+// SaPayoutResellerParams defines parameters for SaPayoutReseller.
+type SaPayoutResellerParams struct {
+	// IdempotencyKey Ключ идемпотентности денежного запроса (SPA генерирует UUID на каждую отправку формы, CSQ-4).
+	// Повтор с тем же ключом и тем же телом — тот же ответ; с другим телом — 409.
+	IdempotencyKey externalRef0.IdempotencyKey `json:"Idempotency-Key"`
+}
+
 // SaResetSecondFactorJSONRequestBody defines body for SaResetSecondFactor for application/json ContentType.
 type SaResetSecondFactorJSONRequestBody = SecondFactorConfirm
 
@@ -934,6 +1022,18 @@ type SaCreatePlatformNewsMultipartRequestBody = PlatformNewsForm
 
 // SaUpdatePlatformNewsMultipartRequestBody defines body for SaUpdatePlatformNews for multipart/form-data ContentType.
 type SaUpdatePlatformNewsMultipartRequestBody = PlatformNewsForm
+
+// SaCreateResellerJSONRequestBody defines body for SaCreateReseller for application/json ContentType.
+type SaCreateResellerJSONRequestBody = ResellerForm
+
+// SaDeleteResellerJSONRequestBody defines body for SaDeleteReseller for application/json ContentType.
+type SaDeleteResellerJSONRequestBody = SecondFactorConfirm
+
+// SaUpdateResellerJSONRequestBody defines body for SaUpdateReseller for application/json ContentType.
+type SaUpdateResellerJSONRequestBody = ResellerTermsForm
+
+// SaPayoutResellerJSONRequestBody defines body for SaPayoutReseller for application/json ContentType.
+type SaPayoutResellerJSONRequestBody = ResellerPayoutForm
 
 // SaSetTelegramGatewayJSONRequestBody defines body for SaSetTelegramGateway for application/json ContentType.
 type SaSetTelegramGatewayJSONRequestBody = GatewayForm
@@ -1048,6 +1148,24 @@ type ServerInterface interface {
 	// SaUpdatePlatformNews Изменить новость
 	// (PATCH /api/superadmin/platform-news/{newsId})
 	SaUpdatePlatformNews(w http.ResponseWriter, r *http.Request, newsId NewsId)
+	// SaListResellers Реселлеры
+	// (GET /api/superadmin/resellers)
+	SaListResellers(w http.ResponseWriter, r *http.Request, params SaListResellersParams)
+	// SaCreateReseller Создать реселлера
+	// (POST /api/superadmin/resellers)
+	SaCreateReseller(w http.ResponseWriter, r *http.Request)
+	// SaDeleteReseller Удалить реселлера
+	// (DELETE /api/superadmin/resellers/{resellerId})
+	SaDeleteReseller(w http.ResponseWriter, r *http.Request, resellerId ResellerId)
+	// SaUpdateReseller Процент, скидка клубам и «код действует»
+	// (PATCH /api/superadmin/resellers/{resellerId})
+	SaUpdateReseller(w http.ResponseWriter, r *http.Request, resellerId ResellerId)
+	// SaDetachResellerClub Отвязать клуб от реселлера
+	// (DELETE /api/superadmin/resellers/{resellerId}/clubs/{clubId})
+	SaDetachResellerClub(w http.ResponseWriter, r *http.Request, resellerId ResellerId, clubId ClubId)
+	// SaPayoutReseller Записать выплату реселлеру
+	// (POST /api/superadmin/resellers/{resellerId}/payouts)
+	SaPayoutReseller(w http.ResponseWriter, r *http.Request, resellerId ResellerId, params SaPayoutResellerParams)
 	// SaClearTelegramGateway Отключить Telegram Gateway
 	// (DELETE /api/superadmin/telegram)
 	SaClearTelegramGateway(w http.ResponseWriter, r *http.Request)
@@ -1279,6 +1397,42 @@ func (_ Unimplemented) SaDeletePlatformNews(w http.ResponseWriter, r *http.Reque
 // SaUpdatePlatformNews Изменить новость
 // (PATCH /api/superadmin/platform-news/{newsId})
 func (_ Unimplemented) SaUpdatePlatformNews(w http.ResponseWriter, r *http.Request, newsId NewsId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaListResellers Реселлеры
+// (GET /api/superadmin/resellers)
+func (_ Unimplemented) SaListResellers(w http.ResponseWriter, r *http.Request, params SaListResellersParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaCreateReseller Создать реселлера
+// (POST /api/superadmin/resellers)
+func (_ Unimplemented) SaCreateReseller(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaDeleteReseller Удалить реселлера
+// (DELETE /api/superadmin/resellers/{resellerId})
+func (_ Unimplemented) SaDeleteReseller(w http.ResponseWriter, r *http.Request, resellerId ResellerId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaUpdateReseller Процент, скидка клубам и «код действует»
+// (PATCH /api/superadmin/resellers/{resellerId})
+func (_ Unimplemented) SaUpdateReseller(w http.ResponseWriter, r *http.Request, resellerId ResellerId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaDetachResellerClub Отвязать клуб от реселлера
+// (DELETE /api/superadmin/resellers/{resellerId}/clubs/{clubId})
+func (_ Unimplemented) SaDetachResellerClub(w http.ResponseWriter, r *http.Request, resellerId ResellerId, clubId ClubId) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// SaPayoutReseller Записать выплату реселлеру
+// (POST /api/superadmin/resellers/{resellerId}/payouts)
+func (_ Unimplemented) SaPayoutReseller(w http.ResponseWriter, r *http.Request, resellerId ResellerId, params SaPayoutResellerParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -2379,6 +2533,207 @@ func (siw *ServerInterfaceWrapper) SaUpdatePlatformNews(w http.ResponseWriter, r
 	handler.ServeHTTP(w, r)
 }
 
+// SaListResellers operation middleware
+func (siw *ServerInterfaceWrapper) SaListResellers(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SaListResellersParams
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "page" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page", r.URL.Query(), &params.Page, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaListResellers(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaCreateReseller operation middleware
+func (siw *ServerInterfaceWrapper) SaCreateReseller(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaCreateReseller(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaDeleteReseller operation middleware
+func (siw *ServerInterfaceWrapper) SaDeleteReseller(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "resellerId" -------------
+	var resellerId ResellerId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "resellerId", chi.URLParam(r, "resellerId"), &resellerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "resellerId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaDeleteReseller(w, r, resellerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaUpdateReseller operation middleware
+func (siw *ServerInterfaceWrapper) SaUpdateReseller(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "resellerId" -------------
+	var resellerId ResellerId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "resellerId", chi.URLParam(r, "resellerId"), &resellerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "resellerId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaUpdateReseller(w, r, resellerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaDetachResellerClub operation middleware
+func (siw *ServerInterfaceWrapper) SaDetachResellerClub(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "resellerId" -------------
+	var resellerId ResellerId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "resellerId", chi.URLParam(r, "resellerId"), &resellerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "resellerId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "clubId" -------------
+	var clubId ClubId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "clubId", chi.URLParam(r, "clubId"), &clubId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "clubId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaDetachResellerClub(w, r, resellerId, clubId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SaPayoutReseller operation middleware
+func (siw *ServerInterfaceWrapper) SaPayoutReseller(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "resellerId" -------------
+	var resellerId ResellerId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "resellerId", chi.URLParam(r, "resellerId"), &resellerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: r.URL.RawPath == ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "resellerId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SaPayoutResellerParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey externalRef0.IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SaPayoutReseller(w, r, resellerId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SaClearTelegramGateway operation middleware
 func (siw *ServerInterfaceWrapper) SaClearTelegramGateway(w http.ResponseWriter, r *http.Request) {
 
@@ -2698,6 +3053,24 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/superadmin/telegram/alerts/test", wrapper.SaTestTelegramAlerts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/superadmin/resellers", wrapper.SaListResellers)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/superadmin/resellers", wrapper.SaCreateReseller)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/superadmin/resellers/{resellerId}", wrapper.SaDeleteReseller)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/superadmin/resellers/{resellerId}", wrapper.SaUpdateReseller)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/superadmin/resellers/{resellerId}/payouts", wrapper.SaPayoutReseller)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/superadmin/resellers/{resellerId}/clubs/{clubId}", wrapper.SaDetachResellerClub)
 	})
 
 	return r
@@ -5396,6 +5769,533 @@ func (response SaUpdatePlatformNews422JSONResponse) VisitSaUpdatePlatformNewsRes
 	return err
 }
 
+type SaListResellersRequestObject struct {
+	Params SaListResellersParams
+}
+
+type SaListResellersResponseObject interface {
+	VisitSaListResellersResponse(w http.ResponseWriter) error
+}
+
+type SaListResellers200JSONResponse ResellerBoard
+
+func (response SaListResellers200JSONResponse) VisitSaListResellersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaListResellers401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaListResellers401JSONResponse) VisitSaListResellersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaListResellers403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaListResellers403JSONResponse) VisitSaListResellersResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaCreateResellerRequestObject struct {
+	Body *SaCreateResellerJSONRequestBody
+}
+
+type SaCreateResellerResponseObject interface {
+	VisitSaCreateResellerResponse(w http.ResponseWriter) error
+}
+
+type SaCreateReseller201JSONResponse Message
+
+func (response SaCreateReseller201JSONResponse) VisitSaCreateResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaCreateReseller401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaCreateReseller401JSONResponse) VisitSaCreateResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaCreateReseller403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaCreateReseller403JSONResponse) VisitSaCreateResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaCreateReseller422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SaCreateReseller422JSONResponse) VisitSaCreateResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaDeleteResellerRequestObject struct {
+	ResellerId ResellerId `json:"resellerId"`
+	Body       *SaDeleteResellerJSONRequestBody
+}
+
+type SaDeleteResellerResponseObject interface {
+	VisitSaDeleteResellerResponse(w http.ResponseWriter) error
+}
+
+type SaDeleteReseller200JSONResponse Message
+
+func (response SaDeleteReseller200JSONResponse) VisitSaDeleteResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaDeleteReseller401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaDeleteReseller401JSONResponse) VisitSaDeleteResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaDeleteReseller403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaDeleteReseller403JSONResponse) VisitSaDeleteResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaDeleteReseller404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response SaDeleteReseller404JSONResponse) VisitSaDeleteResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaDeleteReseller422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SaDeleteReseller422JSONResponse) VisitSaDeleteResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaDeleteReseller429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response SaDeleteReseller429JSONResponse) VisitSaDeleteResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaUpdateResellerRequestObject struct {
+	ResellerId ResellerId `json:"resellerId"`
+	Body       *SaUpdateResellerJSONRequestBody
+}
+
+type SaUpdateResellerResponseObject interface {
+	VisitSaUpdateResellerResponse(w http.ResponseWriter) error
+}
+
+type SaUpdateReseller200JSONResponse Message
+
+func (response SaUpdateReseller200JSONResponse) VisitSaUpdateResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaUpdateReseller401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaUpdateReseller401JSONResponse) VisitSaUpdateResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaUpdateReseller403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaUpdateReseller403JSONResponse) VisitSaUpdateResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaUpdateReseller404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response SaUpdateReseller404JSONResponse) VisitSaUpdateResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaUpdateReseller422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SaUpdateReseller422JSONResponse) VisitSaUpdateResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaDetachResellerClubRequestObject struct {
+	ResellerId ResellerId `json:"resellerId"`
+	ClubId     ClubId     `json:"clubId"`
+}
+
+type SaDetachResellerClubResponseObject interface {
+	VisitSaDetachResellerClubResponse(w http.ResponseWriter) error
+}
+
+type SaDetachResellerClub200JSONResponse Message
+
+func (response SaDetachResellerClub200JSONResponse) VisitSaDetachResellerClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaDetachResellerClub401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaDetachResellerClub401JSONResponse) VisitSaDetachResellerClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaDetachResellerClub403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaDetachResellerClub403JSONResponse) VisitSaDetachResellerClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaDetachResellerClub404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response SaDetachResellerClub404JSONResponse) VisitSaDetachResellerClubResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayoutResellerRequestObject struct {
+	ResellerId ResellerId `json:"resellerId"`
+	Params     SaPayoutResellerParams
+	Body       *SaPayoutResellerJSONRequestBody
+}
+
+type SaPayoutResellerResponseObject interface {
+	VisitSaPayoutResellerResponse(w http.ResponseWriter) error
+}
+
+type SaPayoutReseller200JSONResponse Message
+
+func (response SaPayoutReseller200JSONResponse) VisitSaPayoutResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayoutReseller400JSONResponse struct {
+	externalRef0.BadRequestJSONResponse
+}
+
+func (response SaPayoutReseller400JSONResponse) VisitSaPayoutResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayoutReseller401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response SaPayoutReseller401JSONResponse) VisitSaPayoutResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayoutReseller403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response SaPayoutReseller403JSONResponse) VisitSaPayoutResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayoutReseller404JSONResponse struct {
+	externalRef0.NotFoundJSONResponse
+}
+
+func (response SaPayoutReseller404JSONResponse) VisitSaPayoutResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayoutReseller409JSONResponse struct {
+	externalRef0.ConflictJSONResponse
+}
+
+func (response SaPayoutReseller409JSONResponse) VisitSaPayoutResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayoutReseller422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response SaPayoutReseller422JSONResponse) VisitSaPayoutResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayoutReseller429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response SaPayoutReseller429JSONResponse) VisitSaPayoutResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SaClearTelegramGatewayRequestObject struct {
 }
 
@@ -5890,6 +6790,24 @@ type StrictServerInterface interface {
 	// SaUpdatePlatformNews Изменить новость
 	// (PATCH /api/superadmin/platform-news/{newsId})
 	SaUpdatePlatformNews(ctx context.Context, request SaUpdatePlatformNewsRequestObject) (SaUpdatePlatformNewsResponseObject, error)
+	// SaListResellers Реселлеры
+	// (GET /api/superadmin/resellers)
+	SaListResellers(ctx context.Context, request SaListResellersRequestObject) (SaListResellersResponseObject, error)
+	// SaCreateReseller Создать реселлера
+	// (POST /api/superadmin/resellers)
+	SaCreateReseller(ctx context.Context, request SaCreateResellerRequestObject) (SaCreateResellerResponseObject, error)
+	// SaDeleteReseller Удалить реселлера
+	// (DELETE /api/superadmin/resellers/{resellerId})
+	SaDeleteReseller(ctx context.Context, request SaDeleteResellerRequestObject) (SaDeleteResellerResponseObject, error)
+	// SaUpdateReseller Процент, скидка клубам и «код действует»
+	// (PATCH /api/superadmin/resellers/{resellerId})
+	SaUpdateReseller(ctx context.Context, request SaUpdateResellerRequestObject) (SaUpdateResellerResponseObject, error)
+	// SaDetachResellerClub Отвязать клуб от реселлера
+	// (DELETE /api/superadmin/resellers/{resellerId}/clubs/{clubId})
+	SaDetachResellerClub(ctx context.Context, request SaDetachResellerClubRequestObject) (SaDetachResellerClubResponseObject, error)
+	// SaPayoutReseller Записать выплату реселлеру
+	// (POST /api/superadmin/resellers/{resellerId}/payouts)
+	SaPayoutReseller(ctx context.Context, request SaPayoutResellerRequestObject) (SaPayoutResellerResponseObject, error)
 	// SaClearTelegramGateway Отключить Telegram Gateway
 	// (DELETE /api/superadmin/telegram)
 	SaClearTelegramGateway(ctx context.Context, request SaClearTelegramGatewayRequestObject) (SaClearTelegramGatewayResponseObject, error)
@@ -6948,6 +7866,190 @@ func (sh *strictHandler) SaUpdatePlatformNews(w http.ResponseWriter, r *http.Req
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(SaUpdatePlatformNewsResponseObject); ok {
 		if err := validResponse.VisitSaUpdatePlatformNewsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaListResellers operation middleware
+func (sh *strictHandler) SaListResellers(w http.ResponseWriter, r *http.Request, params SaListResellersParams) {
+	var request SaListResellersRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaListResellers(ctx, request.(SaListResellersRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaListResellers")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaListResellersResponseObject); ok {
+		if err := validResponse.VisitSaListResellersResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaCreateReseller operation middleware
+func (sh *strictHandler) SaCreateReseller(w http.ResponseWriter, r *http.Request) {
+	var request SaCreateResellerRequestObject
+
+	var body SaCreateResellerJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaCreateReseller(ctx, request.(SaCreateResellerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaCreateReseller")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaCreateResellerResponseObject); ok {
+		if err := validResponse.VisitSaCreateResellerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaDeleteReseller operation middleware
+func (sh *strictHandler) SaDeleteReseller(w http.ResponseWriter, r *http.Request, resellerId ResellerId) {
+	var request SaDeleteResellerRequestObject
+
+	request.ResellerId = resellerId
+
+	var body SaDeleteResellerJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaDeleteReseller(ctx, request.(SaDeleteResellerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaDeleteReseller")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaDeleteResellerResponseObject); ok {
+		if err := validResponse.VisitSaDeleteResellerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaUpdateReseller operation middleware
+func (sh *strictHandler) SaUpdateReseller(w http.ResponseWriter, r *http.Request, resellerId ResellerId) {
+	var request SaUpdateResellerRequestObject
+
+	request.ResellerId = resellerId
+
+	var body SaUpdateResellerJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaUpdateReseller(ctx, request.(SaUpdateResellerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaUpdateReseller")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaUpdateResellerResponseObject); ok {
+		if err := validResponse.VisitSaUpdateResellerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaDetachResellerClub operation middleware
+func (sh *strictHandler) SaDetachResellerClub(w http.ResponseWriter, r *http.Request, resellerId ResellerId, clubId ClubId) {
+	var request SaDetachResellerClubRequestObject
+
+	request.ResellerId = resellerId
+	request.ClubId = clubId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaDetachResellerClub(ctx, request.(SaDetachResellerClubRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaDetachResellerClub")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaDetachResellerClubResponseObject); ok {
+		if err := validResponse.VisitSaDetachResellerClubResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SaPayoutReseller operation middleware
+func (sh *strictHandler) SaPayoutReseller(w http.ResponseWriter, r *http.Request, resellerId ResellerId, params SaPayoutResellerParams) {
+	var request SaPayoutResellerRequestObject
+
+	request.ResellerId = resellerId
+	request.Params = params
+
+	var body SaPayoutResellerJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SaPayoutReseller(ctx, request.(SaPayoutResellerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SaPayoutReseller")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SaPayoutResellerResponseObject); ok {
+		if err := validResponse.VisitSaPayoutResellerResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

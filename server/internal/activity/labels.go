@@ -93,6 +93,8 @@ var EventLabels = []struct{ Event, Label string }{
 	{"reservation.created", "Бронирование ПК"},
 	{"reservation.cancelled", "Отмена брони ПК"},
 	{"reservation.arrived", "Клиент пришёл по брони"},
+	{"reservation.paid", "Оплата брони в приложении"},
+	{"reservation.refunded", "Возврат за отменённую бронь"},
 	{"auth.qr_login", "Вход на ПК по QR-коду"},
 	{"session.transferred", "Пересадка гостя на другой ПК"},
 	{"friend.requested", "Заявка в друзья"},

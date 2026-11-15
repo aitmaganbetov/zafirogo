@@ -118,6 +118,8 @@ func settingsView(s clubSettings) settingsapi.ClubSettings {
 			AgentIdleLogoutMinutes:                toFloat(c["agent_idle_logout_minutes"]),
 			AgentShopEnabled:                      truthy(c["agent_shop_enabled"]),
 			AgentAutoUpdate:                       truthy(c["agent_auto_update"]),
+			AppBookingEnabled:                     truthy(c["app_booking_enabled"]),
+			AppBookingCancel:                      truthy(c["app_booking_cancel"]),
 		},
 		Finances: settingsapi.SettingsFinancesSection{
 			Currency:                phpString(f["currency"]),

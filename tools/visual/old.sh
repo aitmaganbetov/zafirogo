@@ -120,6 +120,9 @@ start() {
   # Кабинет суперадмина — на своём домене (Q-069), как в проде: страницы pages.json с "host" (и для копии из кэша).
   sed -i '/^SUPERADMIN_DOMAIN=/d' "$APP/.env"
   printf 'SUPERADMIN_DOMAIN=%s\n' "${VISUAL_SUPERADMIN_HOST:-admin.localhost}" >> "$APP/.env"
+  # Кабинет реселлера — тоже на своём домене (UQ-21; написание хоста — как в config/app.php старого проекта).
+  sed -i '/^RESELLER_DOMAIN=/d' "$APP/.env"
+  printf 'RESELLER_DOMAIN=%s\n' "${VISUAL_RESELLER_HOST:-resseler.localhost}" >> "$APP/.env"
   seed
   # php artisan serve внутри контейнера: PHP_CLI_SERVER_WORKERS из .env копии (параллельные запросы Playwright).
   # Сеть хоста: старый видит клиента как 127.0.0.1, как новый (IP в журналах — одинаковой ширины на снимке).

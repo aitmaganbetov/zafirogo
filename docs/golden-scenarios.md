@@ -3043,6 +3043,79 @@ recipient: "ИП Zafiro"}`; «сейчас» — 2026-11-15 07:00 UTC. Go: `serv
 | GAP-055 | BR-181 | последний день скидки: панель клуба — по часам клуба, кабинет — по UTC (см. GS-536) | `TestOwnDiscount`, `TestSubscriptionDiscount/GS-536_GAP-055…` |
 | GAP-052 | — | события `billing.invoice_opened` / `billing.invoice_canceled` в «Журнале действий» клуба показываются кодом события без подписи, как в старом (в `ActivityLog::EVENTS` их нет) | — (UB-4) |
 
+### Реселлеры (`ResellerTest.php`, тема Д)
+
+Коммиты ca5c8f0, 2318bc7, 9c2df5f (итоговое состояние: реселлеров создаёт суперадмин; хост реселлера только впускает
+реселлеров). Правила — `business-rules.md` BR-185…BR-189; решения и отличия — `docs/open-questions/upstream-resellers.md`.
+Go — `server/internal/http/resellers_integration_test.go` (`TestResellers`), `internal/auth` `TestResellerHostLogin`;
+экраны — `web` `ResellersPage.test.tsx`, `reseller/DashboardPage.test.tsx`, `reseller/host.router.test.tsx`,
+`settings/ResellerCard.test.tsx`, `e2e/resellers.spec.ts`. Подготовка: реселлер «Arman», процент 10 %, скидка 15 %.
+
+#### GS-560 · P2 · `saas` · `TestReseller_CreatedBySuperadmin`
+**Тест:** «the superadmin creates resellers: a new account, or an existing one by phone»
+- Занятый код → 422 `code` «Этот код уже занят — выберите другой.»; новый телефон без пароля → 422 `password` (обе ошибки
+  приходят вместе). `{phone: "8 700 123-45-67", code: " Arman-Games ", 1000 б.п., 15}` → 201, реселлер `arman-games`,
+  телефон `+77001234567`, `commission_bp 1000`, скидка 15, пароль — хэш Argon2id; журнал платформы
+  `superadmin.reseller_created`, `audit_log` `permission / reseller.created`. Существующий аккаунт без пароля → реселлер,
+  пароль прежний; ещё раз тот же телефон → 422 `phone` «Аккаунт с этим телефоном уже реселлер.». Не суперадмин → 403.
+- **Go:** `TestResellers/GS-560…`.
+
+#### GS-561 · P2 · `auth` · `TestReseller_HostSignInOnly`
+**Тест:** «only resellers sign in on the reseller host; there is no sign-up there»
+- Хост реселлера: вход не-реселлера → 422 `phone` «Здесь входят только реселлеры Zafiro.», сессии нет, причина журнала
+  `not_reseller`; вход реселлера (пароль) → сессия без клуба, кабинет: его код, клубов нет («Пока ни один клуб не ввёл
+  ваш код.»). REST панели клуба, регистрации и кабинета суперадмина на этом хосте → 403; кабинет реселлера на других
+  хостах → 404. Страницы `/register`, `/dashboard`, `/pricing` на этом хосте → кабинет; на входе нет «Зарегистрироваться».
+  Суперадмин-реселлер проходит второй фактор (отличие — UR-1).
+- **Go:** `TestResellers/GS-561…`, `auth` `TestResellerHostLogin`, `http` `TestResellerHostMiddleware`, `webui`
+  `TestHandlerMarksResellerHost`; экран — `host.router.test.tsx`, `e2e/resellers.spec.ts`.
+
+#### GS-562 · P2 · `saas` · `TestReseller_ClubEntersCodeOnce`
+**Тест:** «a club enters the reseller code once; unknown or stopped codes are refused»
+- `nobody`, остановленный код, пустой код → 422 `reseller_code` «Реселлер с таким кодом не найден.»; `" ARMAN-GAMES "` →
+  «Клуб привязан к реселлеру Arman.», `clubs.reseller_id`, журнал клуба `club.reseller_attached`, `audit_log`; карточка:
+  реселлер, код, скидка 15 %. Повторный ввод (любым кодом) → 422 «Клуб уже привязан к реселлеру. Сменить реселлера
+  можно через поддержку Zafiro.», привязка прежняя. Кассир → 403; режим просмотра → 403 `read_only`; больше 10 попыток
+  в минуту → 429; два одновременных ввода → привязка одна (`TestResellers_ConcurrentAttach`); роль `zafiro_app` колонку
+  не меняет (`TestResellers_ClubPoolCannotTouch`).
+- **Go:** `TestResellers/GS-562…`.
+
+#### GS-563 · P1 · `saas` · `TestReseller_DiscountAndCommission`
+**Тест:** «a club of a reseller pays with the reseller discount and the reseller earns their percent»
+- **Дано:** 2 ПК, тариф 1000 ₸; своя скидка клуба 5 %; реселлер: процент 10 % (1000 б.п.), скидка 20 %.
+- **Ожидается:** клуб вводит код → счёт на 3 месяца: `amount` **480 000** тиын (1000 × 2 × 3 − 20 % = 4 800 ₸),
+  `discount_percent 20`, `reseller_id`, `reseller_bp 1000`. Оплата → `reseller_amount` **48 000** тиын (480 ₸),
+  `reseller_accrual:<id>` в журнале денег. Выплата 300 ₸ («Kaspi») → `reseller_payouts.amount 30 000`,
+  `reseller_payout:<id выплаты>` в журнале денег. Суперадмин: заработано 48 000, выплачено 30 000, **к выплате 18 000**
+  тиын (180 ₸). Кабинет реселлера: те же 48 000 / 30 000 / 18 000, клуб, начисление (4 800 ₸, 3 месяца, 480 ₸, 10 %),
+  выплата. Повтор выплаты с тем же ключом — выплата одна; тот же ключ с другой суммой — 409.
+- **Go:** `TestResellers/GS-563…` (сквозной: код → счёт → оплата → начисление → выплата → кабинеты).
+
+#### GS-564 · P2 · `saas` · `TestReseller_UpdateStopDetach`
+**Тест:** «the superadmin sets the percent and discount, stops a code and unlinks a club; others cannot»
+- Не суперадмин → 403. `{1250 б.п., 10, is_active: false}` → процент 12,5 %, скидка 10, не активен; журнал
+  `superadmin.reseller_updated` с изменёнными полями строками (`"12.5"`, `"10"`, `""`); скидка клуба на «Подписке» — 0.
+  Отвязка → `reseller_id = NULL`; клуб не этого реселлера → 404.
+- **Go:** `TestResellers/GS-564…`.
+
+#### GS-565 · P2 · `saas` · `TestReseller_Delete`
+**Тест:** «the superadmin deletes a reseller: the account stays, clubs are unlinked, payouts go»
+- Реселлер с выплатой 100 ₸, клубом и оплаченным счётом. Не суперадмин → 403; без кода второго фактора → 422 `code`.
+  Удаление → реселлера нет, аккаунт есть, клуб отвязан, выплат 0; в счёте `reseller_id NULL`, `reseller_amount`
+  остался; в `platform_money_log` строка выплаты осталась (UQ-10). Тот же аккаунт снова становится реселлером с тем же
+  кодом — с нулевыми суммами.
+- **Go:** `TestResellers/GS-565…`.
+
+#### Пробелы покрытия темы Д
+
+| ID | Правило | Сценарий и результат | Go-тест |
+|---|---|---|---|
+| GAP-053 | BR-188 | остаток 180 ₸, выплата 500,01 ₸ → принята, «к выплате» **−320,01 ₸** (−32 001 тиын) у суперадмина и в кабинете; сумма с тремя знаками не отправляется формой («…must have 0-2 decimal places»), 0 и больше 999 999 999 ₸ → 422 `amount` | `TestResellers/GS-563…`, `reseller` `TestBalance`; `ResellersPage.test.tsx` |
+| GAP-054 | BR-189 | клуб отвязан между выставлением и оплатой: начисление по снимку есть (850 ₸ × 12,35 % = 104,975 → 104,98 ₸), следующий счёт — без скидки и реселлера | `TestResellers/GAP-054…` (остановка и удаление — `TestSubscriptionInvoices_Reseller`) |
+| GAP-052 | — | события `club.reseller_attached` (журнал клуба) и `superadmin.reseller_*` (журнал платформы) — без подписи события, как в старом | — (UR-6) |
+| — | изоляция | реселлер A не видит клубов, сумм и выплат реселлера B; параметры запроса (`reseller_id`, `club_id`) ничего не выбирают; бывший реселлер → 403 | `TestResellers/кабинет_реселлера:_чужие…` |
+| — | перенос | кабинет реселлера на перенесённых из MySQL данных показывает те же суммы, что старые запросы на исходной базе; проверка 8 `deploy/backup/verify.sql` проходит | `migrate` `TestMigrateUpstream2026_11` |
+
 ### Каталог и профиль клуба (`ClubCatalogTest.php`, тема В)
 
 Коммиты 1a0487a, 792d822. Денег нет; правила — `business-rules.md` BR-191…BR-195; решения и отличия —
@@ -3111,6 +3184,48 @@ recipient: "ИП Zafiro"}`; «сейчас» — 2026-11-15 07:00 UTC. Go: `serv
 
 Изменённые сценарии: **GS-471** — на «Настройка клуба» карточек-секций 11 (было 8): `#location` «Город и адрес» —
 тема В (сделано), `#app-booking` — тема Г, `#reseller` — тема Д. **GS-534** — выше, «Прочие исправления» (fcd5d41).
+
+### Брони из гостевого приложения (`GuestBookingTest.php`, тема Г)
+
+Go-тесты: `server/internal/reservations` `TestAppBooking/GS-5xx…` (Postgres, деньги через ledger, до тиына),
+`TestAppBooking_Gaps/GAP-0xx…`, `TestAppBooking_Concurrency`, `TestAppBooking_RandomSplitThroughLedger`; формулы —
+`TestSplitBonus*`, `TestPlanStart`, `TestBookingMatchesPHP` (PHP 8.4); старый REST — `http/legacy`
+`TestBookingsMatchLaravel` (ответы 1:1 со стендом Laravel), `TestBookingsRoutes`; панель — `http`
+`TestUpstreamAppBookingsInPanel`; фоновый запуск — `worker` `TestStartAppBookings`. Подготовка — как в Pest: пояс UTC,
+интервал 10 мин, бронь включена, зона «VIP» 600 ₸/ч.
+
+| GS | Приор. | Сценарий | Числа | Go-тест |
+|---|---|---|---|---|
+| GS-538 | P2 | выключено по умолчанию | `enabled false`; бронь → 403; броней 0 | `TestAppBooking/GS-538…`, `TestBookingsMatchLaravel` (`index-disabled`, `store-disabled`) |
+| GS-539 | P1 | бронь ПК по цене зоны | 90 мин × 600 ₸/ч = 900.00; баланс 1000.00 → 100.00; `paid_main_cents 90000`; ledger `member_main −90000 / revenue_time +90000`; options 13:35: ПК-01 занят, ПК-02 свободен; вторая бронь — 422 `balance` | `TestAppBooking/GS-539…` |
+| GS-540 | P2 | пределы | прошлое и 30.11 → 422 `starts_at`; 2 брони; третья → 422 «У вас уже 2 брони…»; 29 и 721 мин → 422 | `TestAppBooking/GS-540…` |
+| GS-541 | P1 | отмена гостем с возвратом | 1000.00 → 400.00 → 1000.00; траты 0; ledger `reservation_refund` со ссылкой на оплату; `app_booking_cancel = false` → `can_cancel false`, отмена 422; история: `refund`, `purchase` | `TestAppBooking/GS-541…`, `TestBookingsRoutes/GS-541…` |
+| GS-542 | P2 | чужая и начавшаяся бронь | чужая → 404; в 10:40 бронь 10:30 → 422 | `TestAppBooking/GS-542…` |
+| GS-543 | P1 | отмена сотрудником | возврат 600.00 при запрете отмены гостям; идущая бронь — тоже; повтор → «Эта бронь уже закрыта.» | `TestAppBooking/GS-543…`, `TestUpstreamAppBookingsInPanel` |
+| GS-544 | P1 | время начинается при входе гостя | 10:00 — рано; другой гость — нет; 11:55 → сессия до 12:55, часть `{minutes 60, main_cents 60000}`; повтор — ничего | `TestAppBooking/GS-544…`, `TestStartAppBookings` |
+| GS-545 | P1 | опоздание, отметка сотрудника | 12:30 → сессия до 13:00, часть `{30, 30000}`, баланс не меняется | `TestAppBooking/GS-545…`, `TestUpstreamAppBookingsInPanel` |
+| GS-546 | P1 | покупка времени не закрывает оплаченную бронь | `arrived_at NULL`; неоплаченная бронь кассы закрывается, как раньше | `TestAppBooking/GS-546…` |
+| GS-547 | P1 | бронь тарифом | «3 часа» 1200.00, 180 мин, зона VIP, лимит 1; «Ночь» на 23:00 → 540 мин; ПК другой зоны → 422; баланс 5000.00 → 3800.00; вторая → 422 `tariff_id`; часть `{tariff, 180}` | `TestAppBooking/GS-547…` |
+| GS-548 | P2 | сначала ПК | зоны с ПК, цена часа `null` у зоны без цены, служебный ПК скрыт; тарифы по зоне ПК, порядок «длительность, имя» | `TestAppBooking/GS-548…` |
+| GS-549 | P2 | пояс клуба в текстах | Asia/Almaty: `reservation.paid.starts_at = "16.11.2026 10:30"`; ошибка покупки другого гостя — «10:30» | `TestAppBooking/GS-549…`, `TestBookingsMatchLaravel` (`store-conflict`) |
+| GS-550 | P1 | несколько ПК | 2 ПК: одна оплата 1200.00, один код, одна запись в списке, одна операция ledger; отмена — обе брони, 2000.00 | `TestAppBooking/GS-550…` |
+| GS-551 | P1 | код брони | рано → 422 с временем; чужой ПК → «не для этого ПК»; неверный код; 11:55 → гостевая сессия до 12:55 на обоих ПК; повтор → 422; денег не двигает; досрочный конец ничего не возвращает | `TestAppBooking/GS-551…` |
+
+| GAP | Правило | Что проверено | Go-тест |
+|---|---|---|---|
+| GAP-041 | BR-176 | 3 ПК по 600 ₸, основной баланс 0,01 ₸: старая формула даёт последнему ПК 600,01 ₸ бонусов (основная часть −0,01 ₸ — бронь не создавалась); исправлено: `[599.99, 600.00, 600.00]`, сумма = 1799.99. 2 ПК (600 и 300 ₸), бонусы 450 ₸ → 300 + 150 | `TestSplitBonus_GAP041_Characterization`, `TestSplitBonus`, `TestBookingMatchesPHP`, `TestAppBooking_Gaps/GAP-041…` |
+| GAP-042 | BR-176 | без смешанной оплаты — бонусами вся цена, если основного не хватает; тариф «только основной» — отказ; лимит бонусов 30 % от общей суммы 1200 → 360 | `TestAppBooking_Gaps/GAP-042…` |
+| GAP-043 | BR-179 | возврат без строки баланса: строка создаётся, 600.00 зачислены (UQ-9) | `TestAppBooking_Gaps/GAP-043…` |
+| GAP-044 | BR-178 | своя идущая сессия — время брони добавляется (тот же `session_id`); чужая сессия — «Клиент пришёл» отклонён, бронь остаётся; отметка за час до начала — время сразу; за секунду до конца — 1 минута и 10 ₸; после конца — ничего | `TestAppBooking_Gaps/GAP-044…`, `TestPlanStart` |
+| GAP-045 | BR-178, BR-032 | опоздал на 30 мин (часть 300 ₸), ушёл через 15 — возврат 150 ₸ | `TestAppBooking_Gaps/GAP-045…` |
+| GAP-049 | BR-190 | лимит 2: покупка в агенте + бронь на 2 ПК → «осталось купить на 1 ПК»; после брони покупка в агенте отклонена; отмена освобождает | `TestAppBooking_Gaps/GAP-049…` |
+| GAP-050 | BR-179 | сотрудник отменил один ПК группы — возврат только его части (150 + 150); гость после этого отменить группу не может (в ней закрытая бронь — как в старом), остаток отменяет сотрудник | `TestAppBooking_Gaps/GAP-050…` |
+| GAP-051 | BR-177 | сессия до 11:00: бронь на 11:05 — отказ, на 11:10 — можно; 11 ПК и 0 ПК — отказ; повтор ПК — одна бронь; ПК чужого клуба; пересечение с бронью кассы; зона без цены часа | `TestAppBooking_Gaps/GAP-051…`, `TestAppBooking/GS-548…` |
+| GAP-058 | BR-177 | 12 одновременных броней — 12 разных кодов; один код на одном ПК вводят 5 раз одновременно — сессия одна | `TestAppBooking_Concurrency/GAP-058…` |
+| гонки | §3.6 | 8 гостей на один ПК и время — одна бронь, одно списание; двойной тап с `Idempotency-Key` — одна бронь; 6 броней одного гостя одновременно — ровно 2; отмена и запуск одновременно — либо возврат, либо сессия; ограничение базы `computer_reservations_pending_no_overlap` | `TestAppBooking_Concurrency` |
+
+Изменённые сценарии: **GS-471** — карточка `#app-booking` «Бронь из приложения» на «Настройке клуба» перенесена
+(визуальное сравнение `settings-club` — без скрытых блоков темы Г).
 
 ### Прочие исправления (без денег)
 

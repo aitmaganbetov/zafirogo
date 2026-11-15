@@ -114,6 +114,7 @@ const (
 	AgentRegister            = "agent-register"
 	AgentQrLogin             = "agent-qr-login"
 	AgentQrPoll              = "agent-qr-poll"
+	AgentBookingCode         = "agent-booking-code"
 	AgentTokenRotate         = "agent-token-rotate"
 	AgentTranslations        = "agent-translations"
 	ClubComputerRegistration = "club-computer-registration"
@@ -167,6 +168,16 @@ func DefaultRules() []Rule {
 		{Name: AgentRegister, Limits: []Limit{perMinutes(10, 5, byPC), perMinutes(10, 60, byIP)}},
 		{Name: AgentQrLogin, Limits: []Limit{perMinute(20, byPC)}},
 		{Name: AgentQrPoll, Limits: []Limit{perMinute(60, byPC)}},
+		// Booking codes: 6 digits, so guessing is slowed per PC and per club (UQ-14). Limit::perHour(200) — на клуб ПК.
+		{Name: AgentBookingCode, Limits: []Limit{
+			perMinute(5, byPC),
+			perMinutes(60, 200, func(s Subject) string {
+				if s.ClubID > 0 {
+					return "club:" + strconv.FormatInt(s.ClubID, 10)
+				}
+				return s.IP
+			}),
+		}},
 		{Name: AgentTokenRotate, Limits: []Limit{perMinute(10, byPC)}},
 		{Name: AgentTranslations, Limits: []Limit{perMinute(600, byIP)}},
 		{Name: ClubComputerRegistration, Limits: []Limit{perMinute(10, byPC)}},
@@ -206,6 +217,8 @@ var throttles = []struct {
 	{"reservations.customers", 60, 1},
 	// routes/web.php: settings.photos.store — throttle:20,1 (без префикса; здесь — имя маршрута).
 	{"settings.photos.store", 20, 1},
+	// routes/web.php: settings.reseller — throttle:10,1,settings.reseller (подбор кода реселлера, тема Д).
+	{"settings.reseller", 10, 1},
 	{"billing.invoices.store", 10, 1},
 	// routes/api.php
 	{"api.auth.clubs", 30, 1},
@@ -236,6 +249,13 @@ var throttles = []struct {
 	{"api.guest.profile.name", 10, 1},
 	{"api.guest.profile.password", 5, 1},
 	{"api.guest.history", 60, 1},
+	// Брони из гостевого приложения (тема Г, docs/upstream-2026-11.md).
+	{"api.guest.bookings", 60, 1},
+	{"api.guest.bookings.cancel", 10, 1},
+	{"api.guest.bookings.computers", 60, 1},
+	{"api.guest.bookings.tariffs", 60, 1},
+	{"api.guest.bookings.options", 60, 1},
+	{"api.guest.bookings.store", 10, 1},
 	{"api.guest.seats.index", 30, 1},
 	{"api.guest.seat-transfer", 10, 1},
 	{"api.guest.qr-login.show", 30, 1},

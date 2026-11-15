@@ -3,6 +3,7 @@ import { createRouter, type RouterHistory } from '@tanstack/react-router';
 import { routeTree } from './routeTree.gen';
 import { session, type SessionStore } from './auth/session';
 import { NotFoundPage, RouteErrorPage } from './pages/ErrorPage';
+import { isResellerHost, resellerRewrite } from './features/reseller/host';
 import { cabinetRewrite, isCabinetHost } from './features/superadmin/host';
 
 /** Контекст маршрутов: кэш запросов и сессия (гарды берут их из context в beforeLoad). */
@@ -26,6 +27,8 @@ export function createAppRouter(queryClient: QueryClient, store: SessionStore = 
     ...(history ? { history } : {}),
     // Хост кабинета суперадмина (Q-069): кабинет с корня, внутри — маршруты /superadmin/….
     ...(isCabinetHost() ? { rewrite: cabinetRewrite } : {}),
+    // Хост кабинета реселлера (UQ-21): кабинет с корня, внутри — маршрут /reseller.
+    ...(isResellerHost() ? { rewrite: resellerRewrite } : {}),
     context: { queryClient, session: store },
     defaultPreload: 'intent',
     defaultPreloadStaleTime: 0,

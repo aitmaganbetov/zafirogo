@@ -6,7 +6,7 @@
 -- index(): брони локального дня клуба [from, to) по starts_at, по времени начала; paginate(50). Список ограничен
 -- одним днём (индекс (club_id, starts_at)), поэтому страницы — номером, как ->links() старого шаблона.
 SELECT r.id, r.club_computer_id, r.user_id, r.customer_name, r.customer_phone, r.note, r.starts_at, r.ends_at,
-       r.arrived_at, r.cancelled_at,
+       r.arrived_at, r.cancelled_at, r.from_app, r.paid_main_cents, r.paid_bonus_cents, r.code,
        c.number AS computer_number, c.display_name AS computer_display_name, c.device_name AS computer_device_name,
        z.name AS zone_name, u.name AS user_name, u.phone AS user_phone
 FROM computer_reservations r
@@ -53,21 +53,31 @@ ORDER BY starts_at, id
 LIMIT 1;
 
 -- name: InsertReservation :one
+-- Бронь с кассы — from_app = false, оплаты, тарифа и кода нет (CHECK computer_reservations_app_only_check);
+-- бронь из приложения (GuestBookings::book()) — from_app, доля оплаты этого ПК, тариф, код группы.
 INSERT INTO computer_reservations (club_id, club_computer_id, user_id, customer_name, customer_phone, note, starts_at,
-                                   ends_at, created_by, created_at, updated_at)
+                                   ends_at, created_by, created_at, updated_at, from_app, paid_main_cents,
+                                   paid_bonus_cents, tariff_id, code)
 VALUES (sqlc.arg(club_id), sqlc.arg(computer_id), sqlc.narg(user_id), sqlc.narg(customer_name),
         sqlc.narg(customer_phone), sqlc.narg(note), sqlc.arg(starts_at), sqlc.arg(ends_at), sqlc.arg(created_by),
-        sqlc.arg(now), sqlc.arg(now))
+        sqlc.arg(now), sqlc.arg(now), sqlc.arg(from_app), sqlc.arg(paid_main_cents), sqlc.arg(paid_bonus_cents),
+        sqlc.narg(tariff_id), sqlc.narg(code))
 RETURNING id;
 
 -- name: LockReservation :one
 -- close(): бронь с ПК, строка блокируется.
-SELECT r.id, r.club_computer_id, r.starts_at, r.ends_at, r.arrived_at, r.cancelled_at,
+SELECT r.id, r.club_computer_id, r.user_id, r.starts_at, r.ends_at, r.arrived_at, r.cancelled_at,
+       r.from_app, r.paid_main_cents, r.paid_bonus_cents, r.tariff_id, r.code,
        c.number AS computer_number, c.display_name AS computer_display_name, c.device_name AS computer_device_name
 FROM computer_reservations r
 LEFT JOIN club_computers c ON c.club_id = r.club_id AND c.id = r.club_computer_id
 WHERE r.club_id = sqlc.arg(club_id) AND r.id = sqlc.arg(id)
 FOR UPDATE OF r;
+
+-- name: ReservationComputerID :one
+-- close(): ПК брони — его строка блокируется раньше строки брони («The PC first, as bookings and purchases on it
+-- lock it»).
+SELECT club_computer_id FROM computer_reservations WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);
 
 -- name: CancelReservation :exec
 UPDATE computer_reservations SET cancelled_at = sqlc.arg(now), updated_at = sqlc.arg(now)

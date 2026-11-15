@@ -94,6 +94,20 @@ type ClubProfileRequest struct {
 	Phone       *string `json:"phone,omitempty"`
 }
 
+// ClubReseller defines model for ClubReseller.
+type ClubReseller struct {
+	Code string `json:"code"`
+
+	// DiscountPercent Скидка на подписку от реселлера; 0 — скидки нет или код реселлера остановлен (текст о скидке не показывается).
+	DiscountPercent int    `json:"discount_percent"`
+	Name            string `json:"name"`
+}
+
+// ClubResellerState defines model for ClubResellerState.
+type ClubResellerState struct {
+	Reseller *ClubReseller `json:"reseller,omitempty"`
+}
+
 // ClubSettings defines model for ClubSettings.
 type ClubSettings struct {
 	Club     SettingsClubSection     `json:"club"`
@@ -178,11 +192,22 @@ type PercentLevel struct {
 	ThresholdTiyn int64 `json:"threshold_tiyn"`
 }
 
+// ResellerCodeRequest defines model for ResellerCodeRequest.
+type ResellerCodeRequest struct {
+	ResellerCode *string `json:"reseller_code,omitempty"`
+}
+
 // SettingsClubSection defines model for SettingsClubSection.
 type SettingsClubSection struct {
-	AgentAutoUpdate                       bool    `json:"agent_auto_update"`
-	AgentIdleLogoutMinutes                float64 `json:"agent_idle_logout_minutes"`
-	AgentShopEnabled                      bool    `json:"agent_shop_enabled"`
+	AgentAutoUpdate        bool    `json:"agent_auto_update"`
+	AgentIdleLogoutMinutes float64 `json:"agent_idle_logout_minutes"`
+	AgentShopEnabled       bool    `json:"agent_shop_enabled"`
+
+	// AppBookingCancel Гость может отменить бронь до начала с возвратом денег (club.app_booking_cancel, по умолчанию да).
+	AppBookingCancel bool `json:"app_booking_cancel"`
+
+	// AppBookingEnabled Бронь из гостевого приложения включена (club.app_booking_enabled, по умолчанию выключена).
+	AppBookingEnabled                     bool    `json:"app_booking_enabled"`
 	BookingInterval                       float64 `json:"booking_interval"`
 	MaxCashiersOnShift                    float64 `json:"max_cashiers_on_shift"`
 	MaxOperatorsOnShift                   float64 `json:"max_operators_on_shift"`
@@ -327,6 +352,9 @@ type UploadClubPhotosMultipartRequestBody UploadClubPhotosMultipartBody
 // SaveClubZoneProfileJSONRequestBody defines body for SaveClubZoneProfile for application/json ContentType.
 type SaveClubZoneProfileJSONRequestBody = ZoneProfileRequest
 
+// AttachClubResellerJSONRequestBody defines body for AttachClubReseller for application/json ContentType.
+type AttachClubResellerJSONRequestBody = ResellerCodeRequest
+
 // SaveClubSettingsJSONRequestBody defines body for SaveClubSettings for application/json ContentType.
 type SaveClubSettingsJSONRequestBody = SettingsSaveRequest
 
@@ -442,6 +470,12 @@ type ServerInterface interface {
 	// SaveClubZoneProfile Описание и оборудование зоны
 	// (PUT /api/settings/profile/zones/{zone})
 	SaveClubZoneProfile(w http.ResponseWriter, r *http.Request, zone int64)
+	// GetClubReseller Реселлер клуба
+	// (GET /api/settings/reseller)
+	GetClubReseller(w http.ResponseWriter, r *http.Request)
+	// AttachClubReseller Ввести код реселлера
+	// (POST /api/settings/reseller)
+	AttachClubReseller(w http.ResponseWriter, r *http.Request)
 	// SaveClubSettings Сохранить секцию настроек
 	// (PUT /api/settings/sections/{section})
 	SaveClubSettings(w http.ResponseWriter, r *http.Request, section SaveClubSettingsParamsSection)
@@ -541,6 +575,18 @@ func (_ Unimplemented) SetClubPhotoCover(w http.ResponseWriter, r *http.Request,
 // SaveClubZoneProfile Описание и оборудование зоны
 // (PUT /api/settings/profile/zones/{zone})
 func (_ Unimplemented) SaveClubZoneProfile(w http.ResponseWriter, r *http.Request, zone int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// GetClubReseller Реселлер клуба
+// (GET /api/settings/reseller)
+func (_ Unimplemented) GetClubReseller(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// AttachClubReseller Ввести код реселлера
+// (POST /api/settings/reseller)
+func (_ Unimplemented) AttachClubReseller(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -809,6 +855,34 @@ func (siw *ServerInterfaceWrapper) SaveClubZoneProfile(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// GetClubReseller operation middleware
+func (siw *ServerInterfaceWrapper) GetClubReseller(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetClubReseller(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AttachClubReseller operation middleware
+func (siw *ServerInterfaceWrapper) AttachClubReseller(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AttachClubReseller(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SaveClubSettings operation middleware
 func (siw *ServerInterfaceWrapper) SaveClubSettings(w http.ResponseWriter, r *http.Request) {
 
@@ -1025,6 +1099,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/settings/location", wrapper.SaveClubLocation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/settings/reseller", wrapper.GetClubReseller)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/settings/reseller", wrapper.AttachClubReseller)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/settings/profile", wrapper.GetClubProfile)
@@ -1996,6 +2076,148 @@ func (response SaveClubZoneProfile422JSONResponse) VisitSaveClubZoneProfileRespo
 	return err
 }
 
+type GetClubResellerRequestObject struct {
+}
+
+type GetClubResellerResponseObject interface {
+	VisitGetClubResellerResponse(w http.ResponseWriter) error
+}
+
+type GetClubReseller200JSONResponse ClubResellerState
+
+func (response GetClubReseller200JSONResponse) VisitGetClubResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClubReseller401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response GetClubReseller401JSONResponse) VisitGetClubResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClubReseller403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response GetClubReseller403JSONResponse) VisitGetClubResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AttachClubResellerRequestObject struct {
+	Body *AttachClubResellerJSONRequestBody
+}
+
+type AttachClubResellerResponseObject interface {
+	VisitAttachClubResellerResponse(w http.ResponseWriter) error
+}
+
+type AttachClubReseller200JSONResponse SettingsMessage
+
+func (response AttachClubReseller200JSONResponse) VisitAttachClubResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AttachClubReseller401JSONResponse struct {
+	externalRef0.UnauthenticatedJSONResponse
+}
+
+func (response AttachClubReseller401JSONResponse) VisitAttachClubResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AttachClubReseller403JSONResponse struct {
+	externalRef0.ForbiddenJSONResponse
+}
+
+func (response AttachClubReseller403JSONResponse) VisitAttachClubResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AttachClubReseller422JSONResponse struct {
+	externalRef0.ValidationFailedJSONResponse
+}
+
+func (response AttachClubReseller422JSONResponse) VisitAttachClubResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AttachClubReseller429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response AttachClubReseller429JSONResponse) VisitAttachClubResellerResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SaveClubSettingsRequestObject struct {
 	Section SaveClubSettingsParamsSection `json:"section"`
 	Body    *SaveClubSettingsJSONRequestBody
@@ -2304,6 +2526,12 @@ type StrictServerInterface interface {
 	// SaveClubZoneProfile Описание и оборудование зоны
 	// (PUT /api/settings/profile/zones/{zone})
 	SaveClubZoneProfile(ctx context.Context, request SaveClubZoneProfileRequestObject) (SaveClubZoneProfileResponseObject, error)
+	// GetClubReseller Реселлер клуба
+	// (GET /api/settings/reseller)
+	GetClubReseller(ctx context.Context, request GetClubResellerRequestObject) (GetClubResellerResponseObject, error)
+	// AttachClubReseller Ввести код реселлера
+	// (POST /api/settings/reseller)
+	AttachClubReseller(ctx context.Context, request AttachClubResellerRequestObject) (AttachClubResellerResponseObject, error)
 	// SaveClubSettings Сохранить секцию настроек
 	// (PUT /api/settings/sections/{section})
 	SaveClubSettings(ctx context.Context, request SaveClubSettingsRequestObject) (SaveClubSettingsResponseObject, error)
@@ -2748,6 +2976,61 @@ func (sh *strictHandler) SaveClubZoneProfile(w http.ResponseWriter, r *http.Requ
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(SaveClubZoneProfileResponseObject); ok {
 		if err := validResponse.VisitSaveClubZoneProfileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetClubReseller operation middleware
+func (sh *strictHandler) GetClubReseller(w http.ResponseWriter, r *http.Request) {
+	var request GetClubResellerRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetClubReseller(ctx, request.(GetClubResellerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetClubReseller")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetClubResellerResponseObject); ok {
+		if err := validResponse.VisitGetClubResellerResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AttachClubReseller operation middleware
+func (sh *strictHandler) AttachClubReseller(w http.ResponseWriter, r *http.Request) {
+	var request AttachClubResellerRequestObject
+
+	var body AttachClubResellerJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AttachClubReseller(ctx, request.(AttachClubResellerRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AttachClubReseller")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AttachClubResellerResponseObject); ok {
+		if err := validResponse.VisitAttachClubResellerResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

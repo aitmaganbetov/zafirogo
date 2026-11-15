@@ -19,6 +19,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/pclogin"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/public"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/recovery"
+	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/reseller"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/reservations"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/services"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/sections/sessions"
@@ -71,6 +72,7 @@ func Sections() []httpx.Section {
 		settings.Section(),
 		integrations.Section(),
 		superadmin.Section(),
+		reseller.Section(),
 		v1.Section(),
 	}
 }

@@ -172,6 +172,14 @@ docker compose -f docker-compose.dev.yml --env-file .env down -v   # удали�
 `ZAFIRO_SUPERADMIN_DOMAIN=admin.localhost`, кабинет — `http://admin.localhost:<порт>/` (поддомены `localhost` браузер
 ведёт на 127.0.0.1). В `vite dev` хост кабинета не определяется (атрибут `data-superadmin-host` ставит сервер в `index.html`).
 
+## Кабинет реселлера на своём домене (UQ-21)
+
+Без `ZAFIRO_RESELLER_DOMAIN` кабинет реселлера открывается по `/reseller` любому вошедшему аккаунту с записью
+реселлера (как старый проект без `RESELLER_DOMAIN`); реселлер без клубов войти на общем хосте не может — ему нужен
+хост кабинета. Проверить локально: `task build` и запуск с `ZAFIRO_RESELLER_DOMAIN=resseler.localhost`, кабинет —
+`http://resseler.localhost:<порт>/`. В `vite dev` хост не определяется (атрибут `data-reseller-host` ставит сервер в
+`index.html`). Реселлера создаёт суперадмин: кабинет → «Реселлеры».
+
 ## Вход суперадмина: второй фактор (Этап 7)
 
 Суперадмин после пароля вводит код TOTP; при первом входе — настройка (ключ — в приложение-аутентификатор, коды

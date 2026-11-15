@@ -191,3 +191,18 @@ Carbon заменён тройкой (день недели ISO, час, мин�
 php tools/php-oracle/gen-weekly-fixture.php > server/internal/billing/pricing/testdata/php_weekly_endof.json
 cd server && go test ./internal/billing/pricing/ -run EndOfMatchesPHP
 ```
+
+## Брони из гостевого приложения
+
+`gen-booking-fixture.php` — эталон расчётов брони (Zafiro a680bab): буквальные копии `ComputerReservation::
+durationMinutes()` (`round()` от float), `ComputerReservations::startPaidSession()` (минуты и суммы части сессии),
+`AgentTariffPurchaseService::bookedMinutes()` (`ceil()` от float) и дележа бонусной части по ПК из
+`GuestBookings::book()` — вместе со случаями, где старая формула даёт отрицательную основную часть (GAP-041).
+Снято на PHP 8.4.27; Go сверяет `reservations.DurationMinutes`, `PlanStart`, `BookedMinutes` и `SplitBonus`
+(`TestBookingMatchesPHP`).
+
+```sh
+docker run --rm -v "$PWD":/w -w /w php:8.4.27-cli php tools/php-oracle/gen-booking-fixture.php \
+  > server/internal/reservations/testdata/php_booking.json
+cd server && go test ./internal/reservations/ -run 'TestBookingMatchesPHP|TestSplitBonus'
+```

@@ -40,6 +40,8 @@ const (
 	MsgClubMissing = "Нет доступа к выбранному клубу."
 	// MsgSuperadminOnly — вход на хосте кабинета не суперадмином (AuthController::login()).
 	MsgSuperadminOnly = "Здесь входят только суперадмины Zafiro."
+	// MsgResellersOnly — вход на хосте кабинета реселлера не реселлером (AuthController::login()).
+	MsgResellersOnly = "Здесь входят только реселлеры Zafiro."
 )
 
 // Причины неудачного входа для журнала (ActivityLogger::recordFailedLogin('auth.login_failed', phone, reason)).
@@ -49,6 +51,7 @@ const (
 	ReasonNoClubAccess       = "no_club_access"
 	ReasonShiftFull          = "shift_full"
 	ReasonNotSuperadmin      = "not_superadmin"
+	ReasonNotReseller        = "not_reseller"
 )
 
 // FieldError — ошибка входа, привязанная к полю формы (Laravel: back()->withErrors([поле => текст])).
@@ -195,6 +198,10 @@ type LoginInput struct {
 	// кабинет (сессия без клуба, журнал платформы superadmin.login). Laravel: AuthController::login(),
 	// SuperadminHost::is($request).
 	SuperadminOnly bool
+	// IsReseller — вход на хосте кабинета реселлера (RESELLER_DOMAIN, UQ-21): не nil — входят только аккаунты с
+	// записью реселлера (её и проверяет функция — пулом платформы: пул клуба таблицу реселлеров не читает), сразу в
+	// кабинет — сессия без клуба. Laravel: AuthController::login(), ResellerHost::is($request).
+	IsReseller func(ctx context.Context, userID int64) (bool, error)
 }
 
 // LoginResult — итог входа.
@@ -253,6 +260,22 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginResult, error)
 	}
 	if user.BlockedAt != nil {
 		return fail(ReasonBlocked, MsgBlocked)
+	}
+	// The reseller host: resellers only (the superadmin creates them), straight to the cabinet.
+	if in.IsReseller != nil {
+		ok, err := in.IsReseller(ctx, user.ID)
+		if err != nil {
+			return LoginResult{}, fmt.Errorf("auth: reseller: %w", err)
+		}
+		if !ok {
+			return fail(ReasonNotReseller, MsgResellersOnly)
+		}
+		// В старом на этом хосте хватает пароля. Суперадмин-реселлер — исключение: его сессия несёт права
+		// суперадмина, поэтому второй фактор обязателен и здесь (иначе хост реселлера был бы обходом Этапа 7).
+		if user.IsSuperadmin {
+			return s.beginSecondFactor(ctx, mfa.Pending{UserID: user.ID, Remember: in.Remember, Name: user.Name, Phone: user.Phone})
+		}
+		return s.startResellerSession(ctx, user.ID, in.Remember)
 	}
 	if in.SuperadminOnly {
 		if !user.IsSuperadmin {
@@ -382,6 +405,20 @@ func (s *Service) startSession(ctx context.Context, userID, clubID int64, name s
 	}
 	s.events.LoginSucceeded(ctx, userID, clubID, name)
 	return LoginResult{Tokens: tokens, UserID: userID, ClubID: clubID, Principal: p}, nil
+}
+
+// startResellerSession — сессия реселлера на хосте его кабинета: без клуба (панели клуба на этом хосте нет) и без
+// записи в журнал — старый код при входе реселлера ничего не пишет (redirect()->intended(route('reseller.dashboard'))).
+func (s *Service) startResellerSession(ctx context.Context, userID int64, remember bool) (LoginResult, error) {
+	tokens, err := s.sessions.Create(ctx, userID, 0, remember)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	p, err := s.principalFor(ctx, session.Session{ID: tokens.SessionID, UserID: userID}, false)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	return LoginResult{Tokens: tokens, UserID: userID, Principal: p}, nil
 }
 
 // rehash заменяет хэш на Argon2id. Ошибка не мешает входу (пароль уже проверен) — только в лог.

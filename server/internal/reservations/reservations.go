@@ -15,21 +15,24 @@ import (
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/club"
+	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
 // Тексты ComputerReservations / контроллера (ключи перевода).
 const (
-	MsgConflict    = "ПК уже забронирован с :from до :to (между бронями нужно :count мин)."
-	MsgSession     = "На ПК идёт сессия до :time."
-	MsgClosed      = "Эта бронь уже закрыта."
-	MsgPast        = "Нельзя забронировать ПК на прошедшее время."
-	MsgPickClient  = "Выберите клиента из пользователей клуба."
-	logCreated     = "ПК :computer забронирован на :from – :to"
-	logCancelled   = "Бронь ПК :computer на :from отменена"
-	logArrived     = "Клиент пришёл по брони ПК :computer на :from"
-	subjectBooking = `App\Models\ComputerReservation`
+	MsgConflict = "ПК уже забронирован с :from до :to (между бронями нужно :count мин)."
+	MsgSession  = "На ПК идёт сессия до :time."
+	MsgClosed   = "Эта бронь уже закрыта."
+	// MsgStartedOrClosed — GuestBookings::cancel(): гость отменяет бронь только до её начала.
+	MsgStartedOrClosed = "Бронь уже началась или закрыта — отменить её нельзя."
+	MsgPast            = "Нельзя забронировать ПК на прошедшее время."
+	MsgPickClient      = "Выберите клиента из пользователей клуба."
+	logCreated         = "ПК :computer забронирован на :from – :to"
+	logCancelled       = "Бронь ПК :computer на :from отменена"
+	logArrived         = "Клиент пришёл по брони ПК :computer на :from"
+	subjectBooking     = `App\Models\ComputerReservation`
 )
 
 // ErrNotFound — бронь или ПК не найдены в клубе (findOrFail).
@@ -53,6 +56,13 @@ type Booking struct {
 	Note          *string
 	StartsAt      time.Time
 	EndsAt        time.Time
+	// Бронь из гостевого приложения (GuestBookings::book()): доля оплаты этого ПК в тиынах, тариф (nil — по часам)
+	// и код группы ПК. У брони с кассы — нули (CHECK computer_reservations_app_only_check).
+	FromApp   bool
+	PaidMain  money.Tiyn
+	PaidBonus money.Tiyn
+	TariffID  *int64
+	Code      *string
 }
 
 // State — ComputerReservation::state() на момент now.
@@ -129,6 +139,7 @@ func Create(ctx context.Context, q *store.Queries, info club.Info, actorID int64
 	id, err := q.InsertReservation(ctx, store.InsertReservationParams{
 		ClubID: info.ID, ComputerID: pc.ID, UserID: &uid, CustomerName: &name, CustomerPhone: b.CustomerPhone, Note: b.Note,
 		StartsAt: b.StartsAt, EndsAt: b.EndsAt, CreatedBy: &actorID, Now: &now,
+		FromApp: b.FromApp, PaidMainCents: int64(b.PaidMain), PaidBonusCents: int64(b.PaidBonus), TariffID: b.TariffID, Code: b.Code,
 	})
 	if err != nil {
 		return 0, err
@@ -149,50 +160,91 @@ func Create(ctx context.Context, q *store.Queries, info club.Info, actorID int64
 	return id, changed(ctx, q, info, id, pc.ID, "created", from)
 }
 
-// Cancel — ComputerReservations::cancel().
-func Cancel(ctx context.Context, q *store.Queries, info club.Info, actorID, id int64, now time.Time) error {
-	return closeBooking(ctx, q, info, actorID, id, now, false)
+// Cancel — ComputerReservations::cancel(): отмена оплаченной брони возвращает деньги гостю (BR-179).
+func Cancel(ctx context.Context, q *store.Queries, info club.Info, id int64, env Env) error {
+	_, err := closeBooking(ctx, q, info, id, env, false, false)
+	return err
 }
 
-// Arrive — ComputerReservations::arrive(): клиент пришёл, ПК больше не удерживается.
-func Arrive(ctx context.Context, q *store.Queries, info club.Info, actorID, id int64, now time.Time) error {
-	return closeBooking(ctx, q, info, actorID, id, now, true)
+// Arrive — ComputerReservations::arrive(): клиент пришёл, ПК больше не удерживается; оплаченное время брони из
+// приложения начинается на ПК сразу — в любой момент до конца брони (UQ-16).
+func Arrive(ctx context.Context, q *store.Queries, info club.Info, id int64, env Env) error {
+	_, err := closeBooking(ctx, q, info, id, env, true, false)
+	return err
 }
 
-// closeBooking — close(): закрыть можно только ожидающую или идущую бронь.
-func closeBooking(ctx context.Context, q *store.Queries, info club.Info, actorID, id int64, now time.Time, arrive bool) error {
-	r, err := q.LockReservation(ctx, store.LockReservationParams{ClubID: info.ID, ID: id})
+// closeBooking — close(): закрыть можно только ожидающую или идущую бронь. Порядок блокировок как в старом:
+// ПК («The PC first, as bookings and purchases on it lock it»), затем бронь; состояние проверяется под блокировкой.
+// onlyPending — отмена гостем: только бронь, которая ещё не началась (GuestBookings::cancel()).
+//
+// Laravel: app/Services/ComputerReservations.php close():
+//
+//	if ($column === 'arrived_at' && $reservation->isPaid()) { startPaidSession() или ошибка «На ПК идёт сессия другого клиента…» }
+//	else { $reservation->update([$column => now()]); }
+//	if ($column === 'cancelled_at' && $reservation->isPaid()) { $this->refund($reservation, $actor); }
+func closeBooking(ctx context.Context, q *store.Queries, info club.Info, id int64, env Env, arrive, onlyPending bool) (store.LockReservationRow, error) {
+	now := env.Now
+	var r store.LockReservationRow
+	pcID, err := q.ReservationComputerID(ctx, store.ReservationComputerIDParams{ClubID: info.ID, ID: id})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
+		return r, ErrNotFound
 	}
 	if err != nil {
-		return err
+		return r, err
 	}
-	if s := State(r.StartsAt, r.EndsAt, r.ArrivedAt, r.CancelledAt, now); s != "pending" && s != "active" {
-		return &Error{Field: "reservation", Message: MsgClosed}
+	pc, err := q.LockComputer(ctx, store.LockComputerParams{ClubID: info.ID, ID: pcID})
+	if err != nil {
+		return r, err
 	}
+	r, err = q.LockReservation(ctx, store.LockReservationParams{ClubID: info.ID, ID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return r, ErrNotFound
+	}
+	if err != nil {
+		return r, err
+	}
+	state := State(r.StartsAt, r.EndsAt, r.ArrivedAt, r.CancelledAt, now)
+	if onlyPending && state != "pending" {
+		return r, &Error{Field: "reservation", Message: MsgStartedOrClosed}
+	}
+	if state != "pending" && state != "active" {
+		return r, &Error{Field: "reservation", Message: MsgClosed}
+	}
+	paid := IsPaid(r.PaidMainCents, r.PaidBonusCents)
+	computer := club.ComputerName(pc.DisplayName, pc.DeviceName, pc.Number)
 	event, key, action := "reservation.cancelled", logCancelled, "cancelled" //nolint:misspell // код события старого журнала
-	if arrive {
+	switch {
+	case arrive && paid:
+		event, key, action = "reservation.arrived", logArrived, "arrived"
+		_, ok, err := startPaidSession(ctx, q, info.ID, r, pc, false, env)
+		if err != nil {
+			return r, err
+		}
+		if !ok {
+			return r, &Error{Field: "reservation", Message: MsgBusyOther}
+		}
+	case arrive:
 		event, key, action = "reservation.arrived", logArrived, "arrived"
 		err = q.ArriveReservation(ctx, store.ArriveReservationParams{ClubID: info.ID, ID: r.ID, Now: &now})
-	} else {
+	default:
 		err = q.CancelReservation(ctx, store.CancelReservationParams{ClubID: info.ID, ID: r.ID, Now: &now})
 	}
 	if err != nil {
-		return err
+		return r, err
 	}
-	computer := "—"
-	if r.ComputerNumber != nil {
-		computer = club.ComputerName(r.ComputerDisplayName, r.ComputerDeviceName, *r.ComputerNumber)
+	if !arrive && paid {
+		if err := refund(ctx, q, info, r, computer, env); err != nil {
+			return r, err
+		}
 	}
 	from := r.StartsAt.In(info.Loc)
 	if _, err := activity.Record(ctx, q, activity.Entry{
-		ClubID: info.ID, Event: event, UserID: actorID, SubjectType: subjectBooking, SubjectID: r.ID, At: now,
+		ClubID: info.ID, Event: event, UserID: env.Actor.UserID, SubjectType: subjectBooking, SubjectID: r.ID, At: now, Meta: env.Meta,
 		Details: map[string]any{"computer": computer, "starts_at": from.Format("02.01.2006 15:04")},
 	}.Translated(key, map[string]string{"computer": computer, "from": from.Format("02.01.2006 15:04")})); err != nil {
-		return err
+		return r, err
 	}
-	return changed(ctx, q, info, r.ID, r.ClubComputerID, action, from)
+	return r, changed(ctx, q, info, r.ID, r.ClubComputerID, action, from)
 }
 
 // changed — reservation.changed (экран «Брони»: перечитать день) и computer.state (карта клуба: перечитать ПК —

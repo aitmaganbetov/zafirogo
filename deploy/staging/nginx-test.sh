@@ -99,6 +99,10 @@ req "$APP" /api/small -H 'Accept-Encoding: gzip'
 req staging.zafiro.test /api/big -H 'Accept-Encoding: gzip'
 [ "$(header 'content-encoding: gzip')" = 1 ] || fail "Laravel-домен: нет Content-Encoding: gzip"
 
+# --- хост кабинета реселлера (reseller.domain, UQ-21) обслуживает zafirogo, а не «неизвестный хост» ---
+req resseler.staging.zafiro.test /api/small
+[ "$(header 'HTTP/.* 200')" = 1 ] || fail "resseler.staging.zafiro.test: хост не обслуживается (server_name)"
+
 # --- журнал доступа ---
 TOKEN=Secr3tInviteT0ken0123456789abcdef
 CODE=Secr3tPcLoginC0de

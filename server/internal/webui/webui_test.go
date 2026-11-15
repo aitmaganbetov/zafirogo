@@ -95,6 +95,31 @@ func TestHandlerMarksSuperadminHost(t *testing.T) {
 	}
 }
 
+// UQ-21: хост кабинета реселлера отмечается своим атрибутом; хост суперадмина и остальные — нет.
+func TestHandlerMarksResellerHost(t *testing.T) {
+	h := Handler(fstest.MapFS{"index.html": {Data: []byte("<!doctype html><html lang=\"ru\"><title>SPA</title>")}},
+		WithSuperadminDomain("admin.example.kz"), WithResellerDomain("resseler.example.kz"))
+	on := func(host, path string) string {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Header().Get("Vary") == "" {
+			t.Fatalf("%s: нет Vary", host)
+		}
+		return rec.Body.String()
+	}
+	if body := on("Resseler.Example.kz:8443", "/"); !strings.Contains(body, "<html data-reseller-host lang") || strings.Contains(body, "data-superadmin-host") {
+		t.Fatalf("reseller host: %q", body)
+	}
+	if body := on("admin.example.kz", "/"); strings.Contains(body, "data-reseller-host") || !strings.Contains(body, "data-superadmin-host") {
+		t.Fatalf("cabinet host: %q", body)
+	}
+	if body := on("example.kz", "/login"); strings.Contains(body, "data-reseller-host") || strings.Contains(body, "data-superadmin-host") {
+		t.Fatalf("other host marked: %q", body)
+	}
+}
+
 func gunzip(t *testing.T, b []byte) string {
 	t.Helper()
 	zr, err := gzip.NewReader(bytes.NewReader(b))

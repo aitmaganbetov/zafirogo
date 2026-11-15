@@ -61,8 +61,12 @@ SET total_spent = sqlc.arg(total_spent), updated_at = sqlc.arg(now)
 WHERE club_id = sqlc.arg(club_id) AND user_id = sqlc.arg(user_id);
 
 -- name: GetTariffSales :one
--- Продаж тарифа в агенте (Решение Q-007 (docs/DECISIONS.md); вызывать под блокировкой тарифа).
-SELECT COALESCE((SELECT sold FROM tariff_sales WHERE club_id = sqlc.arg(club_id) AND tariff_id = sqlc.arg(tariff_id)), 0)::bigint AS sold;
+-- Покупок тарифа для лимита количества: продажи в агенте (Решение Q-007 (docs/DECISIONS.md)) + брони из приложения
+-- этим тарифом, кроме отменённых, — по одной на ПК (BR-190; Laravel: AgentTariffPurchaseService::purchaseCounts()).
+-- Вызывать под блокировкой тарифа.
+SELECT (COALESCE((SELECT s.sold FROM tariff_sales s WHERE s.club_id = sqlc.arg(club_id) AND s.tariff_id = sqlc.arg(tariff_id)), 0)
+        + (SELECT count(*) FROM computer_reservations r
+           WHERE r.club_id = sqlc.arg(club_id) AND r.tariff_id = sqlc.arg(tariff_id) AND r.cancelled_at IS NULL))::bigint AS sold;
 
 -- name: IncrementTariffSales :exec
 INSERT INTO tariff_sales (club_id, tariff_id, sold, updated_at)
@@ -112,13 +116,15 @@ ORDER BY starts_at
 LIMIT 1;
 
 -- name: MarkReservationsArrived :exec
--- ComputerReservations::markArrivedBy(): своя бронь клиента на это время выполнена.
+-- ComputerReservations::markArrivedBy(): своя бронь клиента на это время выполнена. Только неоплаченная
+-- (->unpaid()): оплаченную бронь из приложения покупка времени не закрывает — её время начнётся само (BR-178, GS-546).
 UPDATE computer_reservations
 SET arrived_at = sqlc.arg(now), updated_at = sqlc.arg(now)
 WHERE club_id = sqlc.arg(club_id)
   AND club_computer_id = sqlc.arg(computer_id)
   AND user_id = sqlc.arg(user_id)
   AND cancelled_at IS NULL AND arrived_at IS NULL
+  AND paid_main_cents = 0 AND paid_bonus_cents = 0
   AND starts_at < sqlc.arg(until) AND ends_at > sqlc.arg(from_at);
 
 -- name: InsertSessionPurchase :one

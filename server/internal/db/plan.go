@@ -30,6 +30,8 @@ var customPlanQueries = map[string]struct{}{
 	"ListActivityLogPage": {}, "CountActivityLogPage": {}, "ListClubActivityLogs": {},
 	"SuperadminActivityLogs": {}, "SuperadminCountActivityLogs": {},
 	"SuperadminPlatformLogs": {}, "SuperadminCountPlatformLogs": {},
+	// Реселлеры (кабинет суперадмина): список с необязательным поиском.
+	"ResellerList": {}, "ResellerCount": {},
 	// Клиенты: список, счётчик, поиск на кассе (индексы pg_trgm users(name), users(phone) — 0032).
 	"AdminListCustomers": {}, "AdminListCustomersBefore": {}, "AdminCountCustomers": {}, "CashSearchCustomers": {},
 	"SuperadminUsers": {}, "SuperadminCountUsers": {}, "SuperadminClubs": {}, "SuperadminCountClubs": {},

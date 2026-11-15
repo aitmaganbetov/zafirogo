@@ -344,14 +344,8 @@
         "@clock",
         "#club-key"
       ],
-      "hide": [
-        "#app-booking",
-        "[data-settings-anchors] a[href='#app-booking']",
-        "#reseller",
-        "[data-settings-anchors] a[href='#reseller']"
-      ],
       "status": "ported",
-      "note": "Настройка клуба (settings/club.blade.php). #club-key замаскирован: в старом — случайный ключ установки клуба, в новом — ссылка на «Подключение ПК» (Q-037, docs/open-questions/stage3-settings.md S-2). ВРЕМЕННО скрыты (hide) карточки и якоря «Бронь из приложения» (#app-booking, тема Г) и «Реселлер» (#reseller, тема Д) свежего старого проекта: их переносят исполнители этих тем — вместе с карточкой убрать её строки из hide (docs/open-questions/upstream-catalog.md §5). Карточка «Город и адрес» (#location, тема В) сверяется."
+      "note": "Настройка клуба (settings/club.blade.php). #club-key замаскирован: в старом — случайный ключ установки клуба, в новом — ссылка на «Подключение ПК» (Q-037, docs/open-questions/stage3-settings.md S-2). Карточки «Город и адрес» (#location, тема В), «Бронь из приложения» (#app-booking, тема Г) и «Реселлер» (#reseller, тема Д: клуб 1 без реселлера — форма кода) сверяются."
     },
     {
       "id": "settings-profile",
@@ -872,8 +866,17 @@
       "role": "superadmin",
       "waitFor": "#closed-title",
       "status": "ported",
-      "maxDiffPercent": 2,
-      "note": "Кабинет: Оплаты (superadmin/invoices/index.blade.php, Zafiro 77ae201): счёт, ожидающий оплаты, настройка Kaspi, история (оплаченный и отменённый). Содержимое страницы совпадает; расхождение 1,46 % на широком окне — пункт меню «Реселлеры» старого сайдбара (тема Д, П5): без него «Оплаты» и пункты ниже стоят на строку выше. Порог 2 % — до переноса реселлеров, затем убрать maxDiffPercent."
+      "note": "Кабинет: Оплаты (superadmin/invoices/index.blade.php, Zafiro 77ae201): счёт, ожидающий оплаты, настройка Kaspi, история (оплаченные и отменённый)."
+    },
+    {
+      "id": "superadmin-resellers",
+      "old": "/resellers",
+      "new": "/resellers",
+      "host": "admin.localhost",
+      "role": "superadmin",
+      "waitFor": "article",
+      "status": "ported",
+      "note": "Кабинет: Реселлеры (superadmin/resellers/index.blade.php, Zafiro 9c2df5f): форма «Новый реселлер», поиск, карточки — реселлер с клубом, начислением и выплатой (в поле выплаты — остаток 1156.25) и остановленный реселлер без клубов."
     },
     {
       "id": "superadmin-news",
@@ -925,6 +928,30 @@
       "waitFor": "#alerts-title",
       "status": "ported",
       "note": "Кабинет: Telegram (superadmin/telegram.blade.php)."
+    },
+    {
+      "id": "reseller-login",
+      "old": "/login",
+      "new": "/login",
+      "host": "resseler.localhost",
+      "role": null,
+      "themes": [
+        "light"
+      ],
+      "mask": [],
+      "waitFor": "form",
+      "status": "ported",
+      "note": "Вход на хосте кабинета реселлера (auth/login.blade.php, RESELLER_DOMAIN — UQ-21): вместо «Нет аккаунта? Зарегистрироваться» — «Кабинет реселлера Zafiro. Аккаунт реселлера создаёт Zafiro.»."
+    },
+    {
+      "id": "reseller-dashboard",
+      "old": "/",
+      "new": "/",
+      "host": "resseler.localhost",
+      "role": "reseller",
+      "waitFor": "#reseller-earnings",
+      "status": "ported",
+      "note": "Кабинет реселлера (reseller/dashboard.blade.php, layouts/reseller.blade.php; Zafiro 9c2df5f) на своём хосте: код и условия, заработано 2 656 ₸ / выплачено 1 500 ₸ / к выплате 1 156 ₸, клуб «Zafiro Lite» (подписка истекла — «Не оплачена»), начисление и выплата."
     }
   ]
 }

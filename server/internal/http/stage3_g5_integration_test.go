@@ -185,6 +185,26 @@ func TestG5Settings(t *testing.T) {
 		if g.configCount() != before+1 {
 			t.Fatal("ConfigChanged")
 		}
+		// Тема Г: «Бронь из приложения» — два переключателя общей формы секции club.
+		r = e.send("PUT", manager, "/api/settings/sections/club", map[string]any{
+			"session_idle_timeout": "15", "pc_action_after_session_end": "restart", "pc_restart_after_session_end": "1",
+			"session_auto_terminate_when_pc_unavailable": "5", "booking_interval": "45", "app_booking_enabled": "1", "app_booking_cancel": "0",
+		})
+		expect(t, r, http.StatusOK, "save app booking")
+		s = e.clubSettings()
+		if s["club"]["app_booking_enabled"] != true || s["club"]["app_booking_cancel"] != false {
+			t.Fatalf("stored app booking: %v", s["club"])
+		}
+		d = e.activityDetails("settings.updated")
+		if d["app_booking_enabled"] != "нет → да" || d["app_booking_cancel"] != "да → нет" {
+			t.Fatalf("app booking details: %v", d)
+		}
+		if got := obj(obj(e.get(manager, "/api/settings").body["settings"])["club"]); got["app_booking_enabled"] != true || got["app_booking_cancel"] != false {
+			t.Fatalf("GET app booking: %v", got)
+		}
+		expectField(t, e.send("PUT", manager, "/api/settings/sections/club", map[string]any{"session_idle_timeout": "15",
+			"pc_restart_after_session_end": "1", "session_auto_terminate_when_pc_unavailable": "5", "booking_interval": "45", "app_booking_enabled": "maybe"}),
+			"app_booking_enabled", "The app booking enabled field must be true or false.")
 		expectField(t, e.send("PUT", manager, "/api/settings/sections/club", map[string]any{"booking_interval": "x"}),
 			"session_idle_timeout", "The session idle timeout field is required.")
 		if r := e.send("PUT", cashier, "/api/settings/sections/club", map[string]any{}); r.status != http.StatusForbidden {

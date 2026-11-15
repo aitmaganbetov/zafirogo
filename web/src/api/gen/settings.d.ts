@@ -228,6 +228,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/reseller": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Реселлер клуба
+         * @description Карточка «Реселлер» на «Настройке клуба» (settings/club.blade.php, #reseller; тема Д): реселлер, через которого
+         *     подключён клуб, или reseller: null — тогда карточка показывает форму кода. Процент реселлера клубу не отдаётся.
+         */
+        get: operations["getClubReseller"];
+        put?: never;
+        /**
+         * Ввести код реселлера
+         * @description Laravel: SettingsController::reseller() (settings.reseller, settings.update, throttle:10,1). Код вводится один
+         *     раз: клуб уже привязан — 422 по полю reseller_code «Клуб уже привязан к реселлеру. Сменить реселлера можно через
+         *     поддержку Zafiro.»; кода нет или он остановлен — «Реселлер с таким кодом не найден.». Код сравнивается без
+         *     учёта регистра и пробелов по краям. Журнал клуба club.reseller_attached. Сменить или снять реселлера может
+         *     только суперадмин.
+         */
+        post: operations["attachClubReseller"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/profile": {
         parameters: {
             query?: never;
@@ -400,6 +429,10 @@ export interface components {
             agent_idle_logout_minutes: number;
             agent_shop_enabled: boolean;
             agent_auto_update: boolean;
+            /** @description Бронь из гостевого приложения включена (club.app_booking_enabled, по умолчанию выключена). */
+            app_booking_enabled: boolean;
+            /** @description Гость может отменить бронь до начала с возвратом денег (club.app_booking_cancel, по умолчанию да). */
+            app_booking_cancel: boolean;
         };
         SettingsFinancesSection: {
             currency: string;
@@ -544,6 +577,18 @@ export interface components {
             languages: components["schemas"]["LanguageItem"][];
             /** @description Язык клуба (LocaleResolver::forClub()). */
             locale: string;
+        };
+        ClubResellerState: {
+            reseller?: components["schemas"]["ClubReseller"] | null;
+        };
+        ClubReseller: {
+            name: string;
+            code: string;
+            /** @description Скидка на подписку от реселлера; 0 — скидки нет или код реселлера остановлен (текст о скидке не показывается). */
+            discount_percent: number;
+        };
+        ResellerCodeRequest: {
+            reseller_code?: string | null;
         };
         Error: {
             /** @description Машинный код (unauthenticated, forbidden, read_only, not_found, too_many_requests, …). */
@@ -929,6 +974,56 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
+        };
+    };
+    getClubReseller: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Реселлер клуба. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClubResellerState"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    attachClubReseller: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResellerCodeRequest"];
+            };
+        };
+        responses: {
+            /** @description Клуб привязан к реселлеру. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsMessage"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     getClubProfile: {

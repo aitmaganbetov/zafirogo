@@ -55,11 +55,15 @@ const placeholder = `<!doctype html>
 // Option — настройка отдачи SPA.
 type Option func(*options)
 
-type options struct{ cabinetDomain string }
+type options struct{ cabinetDomain, resellerDomain string }
 
 // WithSuperadminDomain — на хосте кабинета суперадмина (SUPERADMIN_DOMAIN, Q-069) index.html отдаётся с атрибутом
 // <html data-superadmin-host>: SPA показывает кабинет с корня хоста (как Route::domain() старого кода).
 func WithSuperadminDomain(domain string) Option { return func(o *options) { o.cabinetDomain = domain } }
+
+// WithResellerDomain — на хосте кабинета реселлера (RESELLER_DOMAIN, UQ-21) index.html отдаётся с атрибутом
+// <html data-reseller-host>: SPA показывает кабинет реселлера с корня хоста и не показывает регистрацию.
+func WithResellerDomain(domain string) Option { return func(o *options) { o.resellerDomain = domain } }
 
 // minCompress — файлы меньше этого не сжимаются (выигрыш меньше заголовков и работы).
 const minCompress = 1024
@@ -168,6 +172,8 @@ func Handler(fsys fs.FS, opts ...Option) http.Handler {
 	}
 	cabinetIndex := bytes.Replace(index, []byte("<html"), []byte("<html data-superadmin-host"), 1)
 	indexVariant, cabinetVariant := newVariant("index.html", index), newVariant("index.html", cabinetIndex)
+	resellerIndex := bytes.Replace(index, []byte("<html"), []byte("<html data-reseller-host"), 1)
+	resellerVariant := newVariant("index.html", resellerIndex)
 	fileServer := http.FileServerFS(fsys)
 
 	// variants — файлы сборки по имени: набор конечен (вшитая ФС), сжатие — один раз на файл.
@@ -201,10 +207,13 @@ func Handler(fsys fs.FS, opts ...Option) http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Add("Vary", "Accept-Encoding")
 		body, v := index, indexVariant
-		if o.cabinetDomain != "" {
+		if o.cabinetDomain != "" || o.resellerDomain != "" {
 			w.Header().Add("Vary", "Host")
-			if sameHost(r.Host, o.cabinetDomain) {
+			switch {
+			case o.cabinetDomain != "" && sameHost(r.Host, o.cabinetDomain):
 				body, v = cabinetIndex, cabinetVariant
+			case o.resellerDomain != "" && sameHost(r.Host, o.resellerDomain):
+				body, v = resellerIndex, resellerVariant
 			}
 		}
 		if v.gz != nil && acceptsGzip(r) {

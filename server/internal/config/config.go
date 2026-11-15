@@ -69,6 +69,7 @@ type Config struct {
 	Realtime        Realtime      `koanf:"realtime"`
 	Workers         Workers       `koanf:"workers"`
 	Superadmin      Superadmin    `koanf:"superadmin"`
+	Reseller        Reseller      `koanf:"reseller"`
 	Mobile          Mobile        `koanf:"mobile"`
 	Security        Security      `koanf:"security"`
 	Dev             Dev           `koanf:"dev"`
@@ -502,6 +503,15 @@ type Mobile struct {
 	TokenTTL time.Duration `koanf:"token_ttl"`
 }
 
+// Reseller — кабинет реселлера (тема Д, docs/upstream-2026-11.md).
+type Reseller struct {
+	// Domain — отдельный хост кабинета реселлера (RESELLER_DOMAIN старого проекта, config/app.php; в проде —
+	// resseler.zafiro.kz, написание как в старом, решение UQ-21): кабинет отвечает только на нём (с корня), на нём же
+	// входят только реселлеры, а панели клуба и регистрации нет. Пусто — кабинет по /reseller на любом хосте.
+	// В dev — поддомен localhost (например resseler.localhost).
+	Domain string `koanf:"domain"`
+}
+
 // Superadmin — кабинет суперадмина (Этап 3, группа 6).
 type Superadmin struct {
 	// Domain — отдельный хост кабинета (SUPERADMIN_DOMAIN старого проекта, решение Q-069): маршруты кабинета
@@ -712,6 +722,7 @@ func Defaults() map[string]any {
 		"mobile.token_ttl":     "720h",
 
 		"superadmin.domain":      "",
+		"reseller.domain":        "",
 		"superadmin.secret_key":  "",
 		"superadmin.backup_path": "",
 		"superadmin.ssl_hosts":   []string{},
@@ -1185,6 +1196,14 @@ func (c *Config) Validate() error {
 	}
 	if d := c.Superadmin.Domain; d != "" && (strings.ContainsAny(d, "/:@ ") || strings.HasPrefix(d, ".")) {
 		add("superadmin.domain: ожидается имя хоста без схемы и порта, получено %q", d)
+	}
+	if d := c.Reseller.Domain; d != "" {
+		switch {
+		case strings.ContainsAny(d, "/:@ ") || strings.HasPrefix(d, "."):
+			add("reseller.domain: ожидается имя хоста без схемы и порта, получено %q", d)
+		case strings.EqualFold(d, c.Superadmin.Domain) || strings.EqualFold(d, c.HTTP.WikiHost):
+			add("reseller.domain: хост %q уже занят кабинетом суперадмина или wiki", d)
+		}
 	}
 	if _, err := c.Agent.Update.UpdatePublicKeys(); err != nil {
 		errs = append(errs, err)

@@ -201,7 +201,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (_ *App, e
 		Logger:         log,
 		RequestTimeout: cfg.HTTP.RequestTimeout,
 		TrustedProxies: trusted,
-		Frontend:       webui.Handler(webui.FS(), webui.WithSuperadminDomain(cfg.Superadmin.Domain)),
+		Frontend:       webui.Handler(webui.FS(), webui.WithSuperadminDomain(cfg.Superadmin.Domain), webui.WithResellerDomain(cfg.Reseller.Domain)),
 		Checkers:       []httpserver.Checker{httpserver.CheckFunc{CheckName: "shutdown", Fn: a.checkNotDraining}},
 		Observe:        a.Obs.HTTPMiddleware,
 	}
@@ -590,6 +590,17 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		{"expire-sessions", expire.Run},
 		{"burn-expired-packages", burnPackages.Run},
 		{"agent-auto-billing", (&worker.AutoBilling{Platform: a.PlatformPool, Engine: guestSrv, Log: log}).Run}, // AG-12, Q-008
+		// Тема Г (UQ-11): оплаченное время брони из приложения начинается, когда гость сидит за забронированным ПК —
+		// по присутствию агентов и времени начала, а не на каждом heartbeat (один исполнитель, Q-086).
+		{"start-app-bookings", (&worker.StartAppBookings{Platform: a.PlatformPool, App: a.AppPool, Notifier: guestNotifier, Now: ro.Now, Log: log,
+			SignedIn: func(ctx context.Context, clubID, userID int64) ([]int64, error) {
+				states, err := a.Stream.Presence().SignedInOrList(ctx, clubID, userID)
+				ids := make([]int64, 0, len(states))
+				for _, st := range states {
+					ids = append(ids, st.ComputerID)
+				}
+				return ids, err
+			}}).Run},
 		{"reencrypt-secrets", (&worker.ReencryptSecrets{Platform: a.PlatformPool, Box: box, Log: log}).Run},
 		{"ensure-partitions", partitions.Run},
 		// Этап 7: почасовая история здоровья ПК — агрегаты часа из Valkey в Postgres (один исполнитель, Q-086).
@@ -689,6 +700,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	}
 	ro.Mounts = map[string]http.Handler{"/ws": a.Realtime}
 	ro.Metrics = metrics
+	ro.ResellerDomain = cfg.Reseller.Domain
 	ro.Superadmin = httpx.SuperadminDeps{
 		Domain: cfg.Superadmin.Domain, BackupPath: cfg.Superadmin.BackupPath, SSLHosts: cfg.Superadmin.SSLHosts,
 		LedgerReconcileInterval: cfg.Workers.LedgerReconcile.Interval,

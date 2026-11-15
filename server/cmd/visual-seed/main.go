@@ -227,6 +227,71 @@ func (s *seeder) billing(ctx context.Context, tx pgx.Tx) error {
 			}
 		}
 	}
+	return s.resellers(ctx, tx)
+}
+
+// resellers — реселлеры (тема Д): реселлер, его клубы, снимок реселлера и начисление в счетах, выплаты. Процент —
+// базисные пункты, суммы — тиыны (без float: «12.50» → 1250 тем же разбором, что и тенге). По начислению и выплате —
+// строки журнала денег платформы с теми же ключами, что пишет сервер (reseller_accrual:<id счёта>,
+// reseller_payout:<id выплаты>).
+func (s *seeder) resellers(ctx context.Context, tx pgx.Tx) error {
+	for _, r := range s.f.Resellers {
+		bp, err := tiyn(&r.CommissionPercent)
+		if err != nil {
+			return err
+		}
+		at := s.created(r.CreatedAt)
+		if _, err := tx.Exec(ctx, `INSERT INTO resellers (id, user_id, code, name, commission_bp, discount_percent, is_active, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`, r.ID, r.UserID, r.Code, r.Name, int64(bp), r.DiscountPercent, r.IsActive, at); err != nil {
+			return fmt.Errorf("реселлер %d: %w", r.ID, err)
+		}
+		for _, c := range r.Clubs {
+			if _, err := tx.Exec(ctx, `UPDATE clubs SET reseller_id = $2, reseller_attached_at = $3 WHERE id = $1`, c.ClubID, r.ID, s.created(c.AttachedAt)); err != nil {
+				return fmt.Errorf("клуб %d реселлера %d: %w", c.ClubID, r.ID, err)
+			}
+		}
+		for _, i := range r.Invoices {
+			invBP, err := tiyn(&i.Percent)
+			if err != nil {
+				return err
+			}
+			var earning *int64
+			if i.Amount != nil {
+				a, err := tiyn(i.Amount)
+				if err != nil {
+					return err
+				}
+				v := int64(a)
+				earning = &v
+			}
+			if _, err := tx.Exec(ctx, `UPDATE subscription_invoices SET reseller_id = $2, reseller_bp = $3, reseller_amount = $4 WHERE id = $1`,
+				i.InvoiceID, r.ID, int64(invBP), earning); err != nil {
+				return fmt.Errorf("счёт %d реселлера %d: %w", i.InvoiceID, r.ID, err)
+			}
+			if earning != nil {
+				if _, err := tx.Exec(ctx, `INSERT INTO platform_money_log (kind, idempotency_key, amount, club_id, invoice_id, reseller_id, actor_user_id, created_at)
+					SELECT 'reseller_accrual', $1, $2, club_id, id, $3, confirmed_by, paid_at FROM subscription_invoices WHERE id = $4`,
+					"reseller_accrual:"+strconv.FormatInt(i.InvoiceID, 10), *earning, r.ID, i.InvoiceID); err != nil {
+					return err
+				}
+			}
+		}
+		for _, p := range r.Payouts {
+			amount, err := tiyn(&p.Amount)
+			if err != nil {
+				return err
+			}
+			paidAt := s.created(p.CreatedAt)
+			if _, err := tx.Exec(ctx, `INSERT INTO reseller_payouts (id, reseller_id, amount, note, created_by, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $6)`, p.ID, r.ID, int64(amount), p.Note, p.CreatedBy, paidAt); err != nil {
+				return fmt.Errorf("выплата %d: %w", p.ID, err)
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO platform_money_log (kind, idempotency_key, amount, reseller_id, payout_id, actor_user_id, created_at)
+				VALUES ('reseller_payout', $1, $2, $3, $4, $5, $6)`, "reseller_payout:"+strconv.FormatInt(p.ID, 10), int64(amount), r.ID, p.ID, p.CreatedBy, paidAt); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -487,8 +552,9 @@ func (s *seeder) operation(ctx context.Context, q *store.Queries, svc *cashsvc.S
 
 //nolint:misspell // колонка старой схемы
 const insertReservation = `INSERT INTO computer_reservations (id, club_id, club_computer_id, user_id, customer_name,
-	customer_phone, note, starts_at, ends_at, arrived_at, cancelled_at, created_by, created_at, updated_at)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)`
+	customer_phone, note, starts_at, ends_at, arrived_at, cancelled_at, created_by, created_at, updated_at,
+	from_app, paid_main_cents, paid_bonus_cents, code)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $14, $15, $16, $17)`
 
 // rest — заказы, брони, новости, задачи, чат, журнал (без движения денег: заказы с ПК — готовые записи).
 func (s *seeder) rest(ctx context.Context) error {
@@ -544,7 +610,7 @@ func (s *seeder) rest(ctx context.Context) error {
 				}
 				if _, err := tx.Exec(ctx, insertReservation,
 					r.ID, r.ClubID, r.ComputerID, r.UserID, r.CustomerName, r.CustomerPhone, r.Note, ts[0], ts[1], ts[2], ts[3],
-					r.CreatedBy, s.created(r.CreatedAt)); err != nil {
+					r.CreatedBy, s.created(r.CreatedAt), r.FromApp, r.PaidMainCents, r.PaidBonusCents, r.Code); err != nil {
 					return fmt.Errorf("бронь %d: %w", r.ID, err)
 				}
 			}

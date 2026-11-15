@@ -112,6 +112,7 @@ start() {
     ZAFIRO_DEV_DISABLE_WORKERS=monitoring-collect,monitoring-flush,monitoring-clubs \
     ZAFIRO_DEV_FIXED_NOW="$now" ZAFIRO_LOG_LEVEL=warn ZAFIRO_LOG_FORMAT=text \
     ZAFIRO_SUPERADMIN_DOMAIN="${VISUAL_SUPERADMIN_HOST:-admin.localhost}" \
+    ZAFIRO_RESELLER_DOMAIN="${VISUAL_RESELLER_HOST:-resseler.localhost}" \
     nohup "$BIN" > "$WORK/zafiro.log" 2>&1 &
   echo $! > "$WORK/zafiro.pid"
   for _ in $(seq 1 60); do

@@ -50,6 +50,14 @@ func TestLoadSettingsDefaultsAndMinutes(t *testing.T) {
 	if s := loadSettings([]byte(`5`)); string(s[sectionClub]["booking_interval"]) != "30" {
 		t.Fatal("не объект — дефолты")
 	}
+	// Бронь из приложения (тема Г): по умолчанию выключена, отмена гостем разрешена; булевы — не «минутные» поля.
+	if string(c["app_booking_enabled"]) != "false" || string(c["app_booking_cancel"]) != "true" {
+		t.Fatalf("app_booking_*: %s %s", c["app_booking_enabled"], c["app_booking_cancel"])
+	}
+	on := loadSettings([]byte(`{"club":{"app_booking_enabled":true,"app_booking_cancel":false}}`))[sectionClub]
+	if string(on["app_booking_enabled"]) != "true" || string(on["app_booking_cancel"]) != "false" {
+		t.Fatalf("сохранённые app_booking_*: %s %s", on["app_booking_enabled"], on["app_booking_cancel"])
+	}
 }
 
 // SaveSettingsRequest: ошибки полей и тексты messages().
