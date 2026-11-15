@@ -61,9 +61,15 @@ public sealed class ServerScenarioTests : IDisposable
             installer: null, new XunitLoggerFactory(_out));
     }
 
-    private async Task<string> OwnerToken()
+    private Task<string> OwnerToken() => Token(new { phone = Env("ZAFIRO_IT_OWNER_PHONE"), password = Env("ZAFIRO_IT_PASSWORD") });
+
+    /// <summary>Токен гостя в гостевом приложении (/api/guest/*): вход с device_name — старый REST мобильных (docs/mobile-compat.md).</summary>
+    private Task<string> GuestAppToken() =>
+        Token(new { phone = Env("ZAFIRO_IT_GUEST_PHONE"), password = Env("ZAFIRO_IT_PASSWORD"), device_name = "mobileclient" });
+
+    private async Task<string> Token(object credentials)
     {
-        using var resp = await _http.PostAsJsonAsync("/api/auth/login", new { phone = Env("ZAFIRO_IT_OWNER_PHONE"), password = Env("ZAFIRO_IT_PASSWORD") });
+        using var resp = await _http.PostAsJsonAsync("/api/auth/login", credentials);
         resp.EnsureSuccessStatusCode();
         var json = await resp.Content.ReadFromJsonAsync<JsonObject>();
         return json!["access_token"]!.GetValue<string>();
@@ -155,6 +161,83 @@ public sealed class ServerScenarioTests : IDisposable
             }
         }
 
+        await cts.CancelAsync();
+        await run;
+    }
+
+    /// <summary>
+    /// Вход по коду брони (тема Ж): клуб включает бронь из приложения → гость бронирует и оплачивает этот ПК в гостевом
+    /// приложении (старый REST мобильных) → на экране входа ПК вводят код брони → служба открывает ПК сессией без
+    /// аккаунта (гость не входит: токена, баланса и лаунчера нет) → та же сессия приходит командой StartSession →
+    /// повтор кода и неверные коды отклоняются с текстом для экрана.
+    /// </summary>
+    [Fact]
+    public async Task Вход_по_коду_брони()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var owner = await OwnerToken();
+        var zone = long.Parse(Env("ZAFIRO_IT_ZONE_ID"), System.Globalization.CultureInfo.InvariantCulture);
+        var code = (await Panel(HttpMethod.Post, "/api/agent-enrollment/codes", owner, new { zone_id = zone }))["code"]!.GetValue<string>();
+
+        await using var runtime = NewRuntime(new FakePlatform(), Path.Combine(_dir.Path, "booking"));
+        var started = new List<ActiveSession>();
+        runtime.CommandHandled += (c, r) =>
+        {
+            if (c.KindCase == Command.KindOneofCase.StartSession && r.Status == CommandStatus.Succeeded) lock (started) started.Add(c.StartSession.Session);
+        };
+        await runtime.EnrollWithCodeAsync(code, cts.Token);
+        var computerId = runtime.Credentials!.Stored.ComputerId;
+        var run = runtime.RunAsync(cts.Token);
+        await WaitUntil(() => runtime.State.Connection == Connection.Online, "Welcome");
+        Assert.Equal(Screen.Lock, runtime.State.Screen);
+
+        // Бронь из приложения: 30 минут с этой минуты, оплата с баланса гостя; в ответе — код брони.
+        var club = (await Panel(HttpMethod.Get, "/api/settings", owner))["settings"]!["club"]!.DeepClone().AsObject();
+        club["app_booking_enabled"] = true;
+        await Panel(HttpMethod.Put, "/api/settings/sections/club", owner, club);
+        var guest = await GuestAppToken();
+        var booked = await Panel(HttpMethod.Post, "/api/guest/bookings", guest, new
+        {
+            club_computer_id = computerId,
+            starts_at = DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture),
+            duration_minutes = 30,
+        });
+        var bookingCode = booked["booking"]!["code"]!.GetValue<string>();
+        Assert.Matches("^[0-9]{6}$", bookingCode);
+
+        // Не 6 цифр и чужой код — отказ с текстом для экрана, ПК закрыт.
+        var format = await Assert.ThrowsAnyAsync<AgentRpcException>(() => runtime.Guest.StartBookingByCodeAsync(new StartBookingByCodeRequest { Code = "12" }, cts.Token));
+        Assert.Equal(ErrorCode.ValidationFailed, format.ErrorCode);
+        Assert.False(string.IsNullOrEmpty(format.LocalizedMessage));
+        var other = bookingCode == "000000" ? "000001" : "000000";
+        var unknown = await Assert.ThrowsAnyAsync<AgentRpcException>(() => runtime.Guest.StartBookingByCodeAsync(new StartBookingByCodeRequest { Code = other }, cts.Token));
+        Assert.Equal(ErrorCode.BookingCodeNotFound, unknown.ErrorCode);
+        Assert.False(string.IsNullOrEmpty(unknown.LocalizedMessage));
+        Assert.Equal(Screen.Lock, runtime.State.Screen);
+
+        // Верный код на забронированном ПК: сессия без аккаунта, ПК открыт, гость не вошёл.
+        var opened = await runtime.Guest.StartBookingByCodeAsync(new StartBookingByCodeRequest { Code = bookingCode }, cts.Token);
+        Assert.True(opened.Session.Guest);
+        Assert.Equal(0, opened.Session.UserId);
+        var minutes = (opened.Session.EndsAt.ToDateTimeOffset() - DateTimeOffset.UtcNow).TotalMinutes;
+        Assert.InRange(minutes, 28, 31);
+        Assert.Equal(ComputerState.InSession, runtime.State.ComputerState);
+        Assert.Equal(Screen.None, runtime.State.Screen);
+        Assert.Null(runtime.State.GuestToken);
+        var snap = runtime.State.BuildSnapshot();
+        Assert.Equal(opened.Session.SessionId, snap.Session.SessionId);
+        Assert.Null(snap.Guest);
+
+        // Та же сессия — командой StartSession (ответ RPC мог не дойти).
+        await WaitUntil(() => { lock (started) return started.Any(s => s.SessionId == opened.Session.SessionId && s.Guest); }, "StartSession");
+
+        // Повтор кода: бронь уже начата — «не найден»; сессия на ПК прежняя.
+        var again = await Assert.ThrowsAnyAsync<AgentRpcException>(() => runtime.Guest.StartBookingByCodeAsync(new StartBookingByCodeRequest { Code = bookingCode }, cts.Token));
+        Assert.Equal(ErrorCode.BookingCodeNotFound, again.ErrorCode);
+        Assert.Equal(opened.Session.SessionId, runtime.State.Session?.SessionId);
+
+        await Panel(HttpMethod.Post, $"/api/agent-enrollment/computers/{computerId}/revoke", owner);
+        await WaitUntil(() => runtime.State.Connection == Connection.Revoked, "CERTIFICATE_REVOKED", 30);
         await cts.CancelAsync();
         await run;
     }

@@ -157,6 +157,18 @@ enum ErrorCode {
   // Старый аналог: ComputerReservations::blocking() в AgentTariffPurchaseService (~строка 276),
   // SeatTransfers, GuestSessions. Метаданные ErrorInfo: "reserved_from" (RFC 3339).
   ERROR_CODE_COMPUTER_RESERVED = 91;
+  // Код брони не найден среди ожидающих незакончившихся броней клуба (NOT_FOUND).
+  // Старый аналог: 422 code «Код брони не найден или бронь уже закончилась.» (ComputerReservations::startByCode()).
+  ERROR_CODE_BOOKING_CODE_NOT_FOUND = 92;
+  // Код брони — от брони другого ПК этого клуба (FAILED_PRECONDITION).
+  // Старый аналог: 422 code «Этот код брони не для этого ПК: сядьте за забронированный ПК.»
+  ERROR_CODE_BOOKING_CODE_OTHER_COMPUTER = 93;
+  // Бронь ещё нельзя начинать: до её начала больше интервала клуба (FAILED_PRECONDITION).
+  // Старый аналог: 422 code «Бронь начнётся в :time. Код заработает за :count мин до начала.»
+  ERROR_CODE_BOOKING_NOT_STARTED = 94;
+  // На ПК уже идёт оплаченная сессия (FAILED_PRECONDITION).
+  // Старый аналог: 422 code «На этом ПК уже идёт сессия.»
+  ERROR_CODE_COMPUTER_BUSY = 95;
 
   // --- Команды стрима (только в CommandResult) ---
 

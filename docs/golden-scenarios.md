@@ -3202,14 +3202,14 @@ Go-тесты: `server/internal/reservations` `TestAppBooking/GS-5xx…` (Postgr
 | GS-541 | P1 | отмена гостем с возвратом | 1000.00 → 400.00 → 1000.00; траты 0; ledger `reservation_refund` со ссылкой на оплату; `app_booking_cancel = false` → `can_cancel false`, отмена 422; история: `refund`, `purchase` | `TestAppBooking/GS-541…`, `TestBookingsRoutes/GS-541…` |
 | GS-542 | P2 | чужая и начавшаяся бронь | чужая → 404; в 10:40 бронь 10:30 → 422 | `TestAppBooking/GS-542…` |
 | GS-543 | P1 | отмена сотрудником | возврат 600.00 при запрете отмены гостям; идущая бронь — тоже; повтор → «Эта бронь уже закрыта.» | `TestAppBooking/GS-543…`, `TestUpstreamAppBookingsInPanel` |
-| GS-544 | P1 | время начинается при входе гостя | 10:00 — рано; другой гость — нет; 11:55 → сессия до 12:55, часть `{minutes 60, main_cents 60000}`; повтор — ничего | `TestAppBooking/GS-544…`, `TestStartAppBookings` |
+| GS-544 | P1 | время начинается при входе гостя | 10:00 — рано; другой гость — нет; 11:55 → сессия до 12:55, часть `{minutes 60, main_cents 60000}`; повтор — ничего | `TestAppBooking/GS-544…`, `TestStartAppBookings`; агент: `TestSignInStartsPaidBooking`, `TestQrLoginStartsPaidBooking` (`agent/guestapi`) |
 | GS-545 | P1 | опоздание, отметка сотрудника | 12:30 → сессия до 13:00, часть `{30, 30000}`, баланс не меняется | `TestAppBooking/GS-545…`, `TestUpstreamAppBookingsInPanel` |
 | GS-546 | P1 | покупка времени не закрывает оплаченную бронь | `arrived_at NULL`; неоплаченная бронь кассы закрывается, как раньше | `TestAppBooking/GS-546…` |
 | GS-547 | P1 | бронь тарифом | «3 часа» 1200.00, 180 мин, зона VIP, лимит 1; «Ночь» на 23:00 → 540 мин; ПК другой зоны → 422; баланс 5000.00 → 3800.00; вторая → 422 `tariff_id`; часть `{tariff, 180}` | `TestAppBooking/GS-547…` |
 | GS-548 | P2 | сначала ПК | зоны с ПК, цена часа `null` у зоны без цены, служебный ПК скрыт; тарифы по зоне ПК, порядок «длительность, имя» | `TestAppBooking/GS-548…` |
 | GS-549 | P2 | пояс клуба в текстах | Asia/Almaty: `reservation.paid.starts_at = "16.11.2026 10:30"`; ошибка покупки другого гостя — «10:30» | `TestAppBooking/GS-549…`, `TestBookingsMatchLaravel` (`store-conflict`) |
 | GS-550 | P1 | несколько ПК | 2 ПК: одна оплата 1200.00, один код, одна запись в списке, одна операция ledger; отмена — обе брони, 2000.00 | `TestAppBooking/GS-550…` |
-| GS-551 | P1 | код брони | рано → 422 с временем; чужой ПК → «не для этого ПК»; неверный код; 11:55 → гостевая сессия до 12:55 на обоих ПК; повтор → 422; денег не двигает; досрочный конец ничего не возвращает | `TestAppBooking/GS-551…` |
+| GS-551 | P1 | код брони | рано → 422 с временем; чужой ПК → «не для этого ПК»; неверный код; 11:55 → гостевая сессия до 12:55 на обоих ПК; повтор → 422; денег не двигает; досрочный конец ничего не возвращает | `TestAppBooking/GS-551…`; агент (RPC `StartBookingByCode`): `TestBookingCode`, `TestBookingCodeRace`, `TestBookingCodeRateLimit` (`agent/guestapi`), сквозной .NET `Вход_по_коду_брони` |
 
 | GAP | Правило | Что проверено | Go-тест |
 |---|---|---|---|

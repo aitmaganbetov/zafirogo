@@ -902,6 +902,98 @@ func (*ResetPasswordResponse) Descriptor() ([]byte, []int) {
 	return file_agent_v1_guest_proto_rawDescGZIP(), []int{13}
 }
 
+// Запрос входа по коду брони.
+type StartBookingByCodeRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Код брони из гостевого приложения: ровно 6 цифр.
+	Code          string `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartBookingByCodeRequest) Reset() {
+	*x = StartBookingByCodeRequest{}
+	mi := &file_agent_v1_guest_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartBookingByCodeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartBookingByCodeRequest) ProtoMessage() {}
+
+func (x *StartBookingByCodeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_guest_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartBookingByCodeRequest.ProtoReflect.Descriptor instead.
+func (*StartBookingByCodeRequest) Descriptor() ([]byte, []int) {
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *StartBookingByCodeRequest) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+// Ответ входа по коду брони.
+type StartBookingByCodeResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Начатая сессия без аккаунта (user_id = 0, guest = true).
+	Session       *ActiveSession `protobuf:"bytes,1,opt,name=session,proto3" json:"session,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartBookingByCodeResponse) Reset() {
+	*x = StartBookingByCodeResponse{}
+	mi := &file_agent_v1_guest_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartBookingByCodeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartBookingByCodeResponse) ProtoMessage() {}
+
+func (x *StartBookingByCodeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_v1_guest_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartBookingByCodeResponse.ProtoReflect.Descriptor instead.
+func (*StartBookingByCodeResponse) Descriptor() ([]byte, []int) {
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *StartBookingByCodeResponse) GetSession() *ActiveSession {
+	if x != nil {
+		return x.Session
+	}
+	return nil
+}
+
 // Запрос выхода.
 type LogoutRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -911,7 +1003,7 @@ type LogoutRequest struct {
 
 func (x *LogoutRequest) Reset() {
 	*x = LogoutRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[14]
+	mi := &file_agent_v1_guest_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -923,7 +1015,7 @@ func (x *LogoutRequest) String() string {
 func (*LogoutRequest) ProtoMessage() {}
 
 func (x *LogoutRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[14]
+	mi := &file_agent_v1_guest_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -936,7 +1028,7 @@ func (x *LogoutRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogoutRequest.ProtoReflect.Descriptor instead.
 func (*LogoutRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{14}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{16}
 }
 
 // Ответ выхода.
@@ -948,7 +1040,7 @@ type LogoutResponse struct {
 
 func (x *LogoutResponse) Reset() {
 	*x = LogoutResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[15]
+	mi := &file_agent_v1_guest_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -960,7 +1052,7 @@ func (x *LogoutResponse) String() string {
 func (*LogoutResponse) ProtoMessage() {}
 
 func (x *LogoutResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[15]
+	mi := &file_agent_v1_guest_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -973,7 +1065,7 @@ func (x *LogoutResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogoutResponse.ProtoReflect.Descriptor instead.
 func (*LogoutResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{15}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{17}
 }
 
 // Запрос профиля.
@@ -985,7 +1077,7 @@ type GetProfileRequest struct {
 
 func (x *GetProfileRequest) Reset() {
 	*x = GetProfileRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[16]
+	mi := &file_agent_v1_guest_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -997,7 +1089,7 @@ func (x *GetProfileRequest) String() string {
 func (*GetProfileRequest) ProtoMessage() {}
 
 func (x *GetProfileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[16]
+	mi := &file_agent_v1_guest_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1010,7 +1102,7 @@ func (x *GetProfileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProfileRequest.ProtoReflect.Descriptor instead.
 func (*GetProfileRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{16}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{18}
 }
 
 // Профиль гостя.
@@ -1030,7 +1122,7 @@ type GetProfileResponse struct {
 
 func (x *GetProfileResponse) Reset() {
 	*x = GetProfileResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[17]
+	mi := &file_agent_v1_guest_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1042,7 +1134,7 @@ func (x *GetProfileResponse) String() string {
 func (*GetProfileResponse) ProtoMessage() {}
 
 func (x *GetProfileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[17]
+	mi := &file_agent_v1_guest_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1055,7 +1147,7 @@ func (x *GetProfileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetProfileResponse.ProtoReflect.Descriptor instead.
 func (*GetProfileResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{17}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *GetProfileResponse) GetUser() *GuestUser {
@@ -1097,7 +1189,7 @@ type UpdateNameRequest struct {
 
 func (x *UpdateNameRequest) Reset() {
 	*x = UpdateNameRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[18]
+	mi := &file_agent_v1_guest_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1109,7 +1201,7 @@ func (x *UpdateNameRequest) String() string {
 func (*UpdateNameRequest) ProtoMessage() {}
 
 func (x *UpdateNameRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[18]
+	mi := &file_agent_v1_guest_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1122,7 +1214,7 @@ func (x *UpdateNameRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateNameRequest.ProtoReflect.Descriptor instead.
 func (*UpdateNameRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{18}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *UpdateNameRequest) GetName() string {
@@ -1143,7 +1235,7 @@ type UpdateNameResponse struct {
 
 func (x *UpdateNameResponse) Reset() {
 	*x = UpdateNameResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[19]
+	mi := &file_agent_v1_guest_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1155,7 +1247,7 @@ func (x *UpdateNameResponse) String() string {
 func (*UpdateNameResponse) ProtoMessage() {}
 
 func (x *UpdateNameResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[19]
+	mi := &file_agent_v1_guest_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1168,7 +1260,7 @@ func (x *UpdateNameResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateNameResponse.ProtoReflect.Descriptor instead.
 func (*UpdateNameResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{19}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *UpdateNameResponse) GetName() string {
@@ -1191,7 +1283,7 @@ type ChangePasswordRequest struct {
 
 func (x *ChangePasswordRequest) Reset() {
 	*x = ChangePasswordRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[20]
+	mi := &file_agent_v1_guest_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1203,7 +1295,7 @@ func (x *ChangePasswordRequest) String() string {
 func (*ChangePasswordRequest) ProtoMessage() {}
 
 func (x *ChangePasswordRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[20]
+	mi := &file_agent_v1_guest_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1216,7 +1308,7 @@ func (x *ChangePasswordRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangePasswordRequest.ProtoReflect.Descriptor instead.
 func (*ChangePasswordRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{20}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ChangePasswordRequest) GetCurrentPassword() string {
@@ -1242,7 +1334,7 @@ type ChangePasswordResponse struct {
 
 func (x *ChangePasswordResponse) Reset() {
 	*x = ChangePasswordResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[21]
+	mi := &file_agent_v1_guest_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1254,7 +1346,7 @@ func (x *ChangePasswordResponse) String() string {
 func (*ChangePasswordResponse) ProtoMessage() {}
 
 func (x *ChangePasswordResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[21]
+	mi := &file_agent_v1_guest_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1267,7 +1359,7 @@ func (x *ChangePasswordResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangePasswordResponse.ProtoReflect.Descriptor instead.
 func (*ChangePasswordResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{21}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{23}
 }
 
 // Запрос тарифов.
@@ -1279,7 +1371,7 @@ type ListTariffsRequest struct {
 
 func (x *ListTariffsRequest) Reset() {
 	*x = ListTariffsRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[22]
+	mi := &file_agent_v1_guest_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1291,7 +1383,7 @@ func (x *ListTariffsRequest) String() string {
 func (*ListTariffsRequest) ProtoMessage() {}
 
 func (x *ListTariffsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[22]
+	mi := &file_agent_v1_guest_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1304,7 +1396,7 @@ func (x *ListTariffsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTariffsRequest.ProtoReflect.Descriptor instead.
 func (*ListTariffsRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{22}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{24}
 }
 
 // Тариф, доступный на ПК. Старый аналог — элемент data[] из AgentTariffPurchaseService.
@@ -1338,7 +1430,7 @@ type Tariff struct {
 
 func (x *Tariff) Reset() {
 	*x = Tariff{}
-	mi := &file_agent_v1_guest_proto_msgTypes[23]
+	mi := &file_agent_v1_guest_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1350,7 +1442,7 @@ func (x *Tariff) String() string {
 func (*Tariff) ProtoMessage() {}
 
 func (x *Tariff) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[23]
+	mi := &file_agent_v1_guest_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1363,7 +1455,7 @@ func (x *Tariff) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Tariff.ProtoReflect.Descriptor instead.
 func (*Tariff) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{23}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *Tariff) GetTariffId() int64 {
@@ -1454,7 +1546,7 @@ type ListTariffsResponse struct {
 
 func (x *ListTariffsResponse) Reset() {
 	*x = ListTariffsResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[24]
+	mi := &file_agent_v1_guest_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1466,7 +1558,7 @@ func (x *ListTariffsResponse) String() string {
 func (*ListTariffsResponse) ProtoMessage() {}
 
 func (x *ListTariffsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[24]
+	mi := &file_agent_v1_guest_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1479,7 +1571,7 @@ func (x *ListTariffsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTariffsResponse.ProtoReflect.Descriptor instead.
 func (*ListTariffsResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{24}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ListTariffsResponse) GetTariffs() []*Tariff {
@@ -1510,7 +1602,7 @@ type TimePurchase struct {
 
 func (x *TimePurchase) Reset() {
 	*x = TimePurchase{}
-	mi := &file_agent_v1_guest_proto_msgTypes[25]
+	mi := &file_agent_v1_guest_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1522,7 +1614,7 @@ func (x *TimePurchase) String() string {
 func (*TimePurchase) ProtoMessage() {}
 
 func (x *TimePurchase) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[25]
+	mi := &file_agent_v1_guest_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1535,7 +1627,7 @@ func (x *TimePurchase) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TimePurchase.ProtoReflect.Descriptor instead.
 func (*TimePurchase) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{25}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *TimePurchase) GetMessage() string {
@@ -1595,7 +1687,7 @@ type PurchaseTariffRequest struct {
 
 func (x *PurchaseTariffRequest) Reset() {
 	*x = PurchaseTariffRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[26]
+	mi := &file_agent_v1_guest_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1607,7 +1699,7 @@ func (x *PurchaseTariffRequest) String() string {
 func (*PurchaseTariffRequest) ProtoMessage() {}
 
 func (x *PurchaseTariffRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[26]
+	mi := &file_agent_v1_guest_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1620,7 +1712,7 @@ func (x *PurchaseTariffRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PurchaseTariffRequest.ProtoReflect.Descriptor instead.
 func (*PurchaseTariffRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{26}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *PurchaseTariffRequest) GetIdempotencyKey() string {
@@ -1655,7 +1747,7 @@ type PurchaseTariffResponse struct {
 
 func (x *PurchaseTariffResponse) Reset() {
 	*x = PurchaseTariffResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[27]
+	mi := &file_agent_v1_guest_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1667,7 +1759,7 @@ func (x *PurchaseTariffResponse) String() string {
 func (*PurchaseTariffResponse) ProtoMessage() {}
 
 func (x *PurchaseTariffResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[27]
+	mi := &file_agent_v1_guest_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1680,7 +1772,7 @@ func (x *PurchaseTariffResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PurchaseTariffResponse.ProtoReflect.Descriptor instead.
 func (*PurchaseTariffResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{27}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *PurchaseTariffResponse) GetPurchase() *TimePurchase {
@@ -1699,7 +1791,7 @@ type GetMinuteOfferRequest struct {
 
 func (x *GetMinuteOfferRequest) Reset() {
 	*x = GetMinuteOfferRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[28]
+	mi := &file_agent_v1_guest_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1711,7 +1803,7 @@ func (x *GetMinuteOfferRequest) String() string {
 func (*GetMinuteOfferRequest) ProtoMessage() {}
 
 func (x *GetMinuteOfferRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[28]
+	mi := &file_agent_v1_guest_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1724,7 +1816,7 @@ func (x *GetMinuteOfferRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMinuteOfferRequest.ProtoReflect.Descriptor instead.
 func (*GetMinuteOfferRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{28}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{30}
 }
 
 // Условия поминутной оплаты (GuestMinutesController::show).
@@ -1765,7 +1857,7 @@ type GetMinuteOfferResponse struct {
 
 func (x *GetMinuteOfferResponse) Reset() {
 	*x = GetMinuteOfferResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[29]
+	mi := &file_agent_v1_guest_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1777,7 +1869,7 @@ func (x *GetMinuteOfferResponse) String() string {
 func (*GetMinuteOfferResponse) ProtoMessage() {}
 
 func (x *GetMinuteOfferResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[29]
+	mi := &file_agent_v1_guest_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1790,7 +1882,7 @@ func (x *GetMinuteOfferResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMinuteOfferResponse.ProtoReflect.Descriptor instead.
 func (*GetMinuteOfferResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{29}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *GetMinuteOfferResponse) GetAvailable() bool {
@@ -1906,7 +1998,7 @@ type PurchaseMinutesRequest struct {
 
 func (x *PurchaseMinutesRequest) Reset() {
 	*x = PurchaseMinutesRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[30]
+	mi := &file_agent_v1_guest_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1918,7 +2010,7 @@ func (x *PurchaseMinutesRequest) String() string {
 func (*PurchaseMinutesRequest) ProtoMessage() {}
 
 func (x *PurchaseMinutesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[30]
+	mi := &file_agent_v1_guest_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1931,7 +2023,7 @@ func (x *PurchaseMinutesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PurchaseMinutesRequest.ProtoReflect.Descriptor instead.
 func (*PurchaseMinutesRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{30}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *PurchaseMinutesRequest) GetIdempotencyKey() string {
@@ -1966,7 +2058,7 @@ type PurchaseMinutesResponse struct {
 
 func (x *PurchaseMinutesResponse) Reset() {
 	*x = PurchaseMinutesResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[31]
+	mi := &file_agent_v1_guest_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1978,7 +2070,7 @@ func (x *PurchaseMinutesResponse) String() string {
 func (*PurchaseMinutesResponse) ProtoMessage() {}
 
 func (x *PurchaseMinutesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[31]
+	mi := &file_agent_v1_guest_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1991,7 +2083,7 @@ func (x *PurchaseMinutesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PurchaseMinutesResponse.ProtoReflect.Descriptor instead.
 func (*PurchaseMinutesResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{31}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *PurchaseMinutesResponse) GetPurchase() *TimePurchase {
@@ -2012,7 +2104,7 @@ type PlayWholeBalanceRequest struct {
 
 func (x *PlayWholeBalanceRequest) Reset() {
 	*x = PlayWholeBalanceRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[32]
+	mi := &file_agent_v1_guest_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2024,7 +2116,7 @@ func (x *PlayWholeBalanceRequest) String() string {
 func (*PlayWholeBalanceRequest) ProtoMessage() {}
 
 func (x *PlayWholeBalanceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[32]
+	mi := &file_agent_v1_guest_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2037,7 +2129,7 @@ func (x *PlayWholeBalanceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlayWholeBalanceRequest.ProtoReflect.Descriptor instead.
 func (*PlayWholeBalanceRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{32}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *PlayWholeBalanceRequest) GetIdempotencyKey() string {
@@ -2059,7 +2151,7 @@ type PlayWholeBalanceResponse struct {
 
 func (x *PlayWholeBalanceResponse) Reset() {
 	*x = PlayWholeBalanceResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[33]
+	mi := &file_agent_v1_guest_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2071,7 +2163,7 @@ func (x *PlayWholeBalanceResponse) String() string {
 func (*PlayWholeBalanceResponse) ProtoMessage() {}
 
 func (x *PlayWholeBalanceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[33]
+	mi := &file_agent_v1_guest_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2084,7 +2176,7 @@ func (x *PlayWholeBalanceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlayWholeBalanceResponse.ProtoReflect.Descriptor instead.
 func (*PlayWholeBalanceResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{33}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *PlayWholeBalanceResponse) GetPurchase() *TimePurchase {
@@ -2103,7 +2195,7 @@ type GetAutoBillingRequest struct {
 
 func (x *GetAutoBillingRequest) Reset() {
 	*x = GetAutoBillingRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[34]
+	mi := &file_agent_v1_guest_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2115,7 +2207,7 @@ func (x *GetAutoBillingRequest) String() string {
 func (*GetAutoBillingRequest) ProtoMessage() {}
 
 func (x *GetAutoBillingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[34]
+	mi := &file_agent_v1_guest_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2128,7 +2220,7 @@ func (x *GetAutoBillingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAutoBillingRequest.ProtoReflect.Descriptor instead.
 func (*GetAutoBillingRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{34}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{36}
 }
 
 // Состояние автобиллинга.
@@ -2142,7 +2234,7 @@ type GetAutoBillingResponse struct {
 
 func (x *GetAutoBillingResponse) Reset() {
 	*x = GetAutoBillingResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[35]
+	mi := &file_agent_v1_guest_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2154,7 +2246,7 @@ func (x *GetAutoBillingResponse) String() string {
 func (*GetAutoBillingResponse) ProtoMessage() {}
 
 func (x *GetAutoBillingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[35]
+	mi := &file_agent_v1_guest_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2167,7 +2259,7 @@ func (x *GetAutoBillingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAutoBillingResponse.ProtoReflect.Descriptor instead.
 func (*GetAutoBillingResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{35}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *GetAutoBillingResponse) GetStatus() *AutoBillingStatus {
@@ -2186,7 +2278,7 @@ type ListPackagesRequest struct {
 
 func (x *ListPackagesRequest) Reset() {
 	*x = ListPackagesRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[36]
+	mi := &file_agent_v1_guest_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2198,7 +2290,7 @@ func (x *ListPackagesRequest) String() string {
 func (*ListPackagesRequest) ProtoMessage() {}
 
 func (x *ListPackagesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[36]
+	mi := &file_agent_v1_guest_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2211,7 +2303,7 @@ func (x *ListPackagesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPackagesRequest.ProtoReflect.Descriptor instead.
 func (*ListPackagesRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{36}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{38}
 }
 
 // Сохранённый пакет времени (TimePackage).
@@ -2231,7 +2323,7 @@ type TimePackage struct {
 
 func (x *TimePackage) Reset() {
 	*x = TimePackage{}
-	mi := &file_agent_v1_guest_proto_msgTypes[37]
+	mi := &file_agent_v1_guest_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2243,7 +2335,7 @@ func (x *TimePackage) String() string {
 func (*TimePackage) ProtoMessage() {}
 
 func (x *TimePackage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[37]
+	mi := &file_agent_v1_guest_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2256,7 +2348,7 @@ func (x *TimePackage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TimePackage.ProtoReflect.Descriptor instead.
 func (*TimePackage) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{37}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *TimePackage) GetPackageId() int64 {
@@ -2298,7 +2390,7 @@ type ListPackagesResponse struct {
 
 func (x *ListPackagesResponse) Reset() {
 	*x = ListPackagesResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[38]
+	mi := &file_agent_v1_guest_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2310,7 +2402,7 @@ func (x *ListPackagesResponse) String() string {
 func (*ListPackagesResponse) ProtoMessage() {}
 
 func (x *ListPackagesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[38]
+	mi := &file_agent_v1_guest_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2323,7 +2415,7 @@ func (x *ListPackagesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPackagesResponse.ProtoReflect.Descriptor instead.
 func (*ListPackagesResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{38}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ListPackagesResponse) GetPackages() []*TimePackage {
@@ -2346,7 +2438,7 @@ type StartPackageRequest struct {
 
 func (x *StartPackageRequest) Reset() {
 	*x = StartPackageRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[39]
+	mi := &file_agent_v1_guest_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2358,7 +2450,7 @@ func (x *StartPackageRequest) String() string {
 func (*StartPackageRequest) ProtoMessage() {}
 
 func (x *StartPackageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[39]
+	mi := &file_agent_v1_guest_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2371,7 +2463,7 @@ func (x *StartPackageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartPackageRequest.ProtoReflect.Descriptor instead.
 func (*StartPackageRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{39}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *StartPackageRequest) GetIdempotencyKey() string {
@@ -2399,7 +2491,7 @@ type StartPackageResponse struct {
 
 func (x *StartPackageResponse) Reset() {
 	*x = StartPackageResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[40]
+	mi := &file_agent_v1_guest_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2411,7 +2503,7 @@ func (x *StartPackageResponse) String() string {
 func (*StartPackageResponse) ProtoMessage() {}
 
 func (x *StartPackageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[40]
+	mi := &file_agent_v1_guest_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2424,7 +2516,7 @@ func (x *StartPackageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartPackageResponse.ProtoReflect.Descriptor instead.
 func (*StartPackageResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{40}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *StartPackageResponse) GetPurchase() *TimePurchase {
@@ -2447,7 +2539,7 @@ type EndSessionRequest struct {
 
 func (x *EndSessionRequest) Reset() {
 	*x = EndSessionRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[41]
+	mi := &file_agent_v1_guest_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2459,7 +2551,7 @@ func (x *EndSessionRequest) String() string {
 func (*EndSessionRequest) ProtoMessage() {}
 
 func (x *EndSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[41]
+	mi := &file_agent_v1_guest_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2472,7 +2564,7 @@ func (x *EndSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EndSessionRequest.ProtoReflect.Descriptor instead.
 func (*EndSessionRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{41}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *EndSessionRequest) GetIdempotencyKey() string {
@@ -2506,7 +2598,7 @@ type EndSessionResponse struct {
 
 func (x *EndSessionResponse) Reset() {
 	*x = EndSessionResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[42]
+	mi := &file_agent_v1_guest_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2518,7 +2610,7 @@ func (x *EndSessionResponse) String() string {
 func (*EndSessionResponse) ProtoMessage() {}
 
 func (x *EndSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[42]
+	mi := &file_agent_v1_guest_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2531,7 +2623,7 @@ func (x *EndSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EndSessionResponse.ProtoReflect.Descriptor instead.
 func (*EndSessionResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{42}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *EndSessionResponse) GetRefundedMainTiyn() int64 {
@@ -2571,7 +2663,7 @@ type GetSeatMapRequest struct {
 
 func (x *GetSeatMapRequest) Reset() {
 	*x = GetSeatMapRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[43]
+	mi := &file_agent_v1_guest_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2583,7 +2675,7 @@ func (x *GetSeatMapRequest) String() string {
 func (*GetSeatMapRequest) ProtoMessage() {}
 
 func (x *GetSeatMapRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[43]
+	mi := &file_agent_v1_guest_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2596,7 +2688,7 @@ func (x *GetSeatMapRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSeatMapRequest.ProtoReflect.Descriptor instead.
 func (*GetSeatMapRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{43}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{45}
 }
 
 // Зона на карте клуба.
@@ -2624,7 +2716,7 @@ type SeatZone struct {
 
 func (x *SeatZone) Reset() {
 	*x = SeatZone{}
-	mi := &file_agent_v1_guest_proto_msgTypes[44]
+	mi := &file_agent_v1_guest_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2636,7 +2728,7 @@ func (x *SeatZone) String() string {
 func (*SeatZone) ProtoMessage() {}
 
 func (x *SeatZone) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[44]
+	mi := &file_agent_v1_guest_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2649,7 +2741,7 @@ func (x *SeatZone) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SeatZone.ProtoReflect.Descriptor instead.
 func (*SeatZone) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{44}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *SeatZone) GetZoneId() int64 {
@@ -2727,7 +2819,7 @@ type Seat struct {
 
 func (x *Seat) Reset() {
 	*x = Seat{}
-	mi := &file_agent_v1_guest_proto_msgTypes[45]
+	mi := &file_agent_v1_guest_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2739,7 +2831,7 @@ func (x *Seat) String() string {
 func (*Seat) ProtoMessage() {}
 
 func (x *Seat) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[45]
+	mi := &file_agent_v1_guest_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2752,7 +2844,7 @@ func (x *Seat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Seat.ProtoReflect.Descriptor instead.
 func (*Seat) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{45}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *Seat) GetComputer() *ComputerRef {
@@ -2805,7 +2897,7 @@ type GetSeatMapResponse struct {
 
 func (x *GetSeatMapResponse) Reset() {
 	*x = GetSeatMapResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[46]
+	mi := &file_agent_v1_guest_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2817,7 +2909,7 @@ func (x *GetSeatMapResponse) String() string {
 func (*GetSeatMapResponse) ProtoMessage() {}
 
 func (x *GetSeatMapResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[46]
+	mi := &file_agent_v1_guest_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2830,7 +2922,7 @@ func (x *GetSeatMapResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSeatMapResponse.ProtoReflect.Descriptor instead.
 func (*GetSeatMapResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{46}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *GetSeatMapResponse) GetZones() []*SeatZone {
@@ -2867,7 +2959,7 @@ type TransferSeatRequest struct {
 
 func (x *TransferSeatRequest) Reset() {
 	*x = TransferSeatRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[47]
+	mi := &file_agent_v1_guest_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2879,7 +2971,7 @@ func (x *TransferSeatRequest) String() string {
 func (*TransferSeatRequest) ProtoMessage() {}
 
 func (x *TransferSeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[47]
+	mi := &file_agent_v1_guest_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2892,7 +2984,7 @@ func (x *TransferSeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferSeatRequest.ProtoReflect.Descriptor instead.
 func (*TransferSeatRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{47}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *TransferSeatRequest) GetIdempotencyKey() string {
@@ -2924,7 +3016,7 @@ type TransferSeatResponse struct {
 
 func (x *TransferSeatResponse) Reset() {
 	*x = TransferSeatResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[48]
+	mi := &file_agent_v1_guest_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2936,7 +3028,7 @@ func (x *TransferSeatResponse) String() string {
 func (*TransferSeatResponse) ProtoMessage() {}
 
 func (x *TransferSeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[48]
+	mi := &file_agent_v1_guest_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2949,7 +3041,7 @@ func (x *TransferSeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferSeatResponse.ProtoReflect.Descriptor instead.
 func (*TransferSeatResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{48}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *TransferSeatResponse) GetTarget() *ComputerRef {
@@ -2986,7 +3078,7 @@ type ListHistoryRequest struct {
 
 func (x *ListHistoryRequest) Reset() {
 	*x = ListHistoryRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[49]
+	mi := &file_agent_v1_guest_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2998,7 +3090,7 @@ func (x *ListHistoryRequest) String() string {
 func (*ListHistoryRequest) ProtoMessage() {}
 
 func (x *ListHistoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[49]
+	mi := &file_agent_v1_guest_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3011,7 +3103,7 @@ func (x *ListHistoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListHistoryRequest.ProtoReflect.Descriptor instead.
 func (*ListHistoryRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{49}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *ListHistoryRequest) GetFilter() HistoryFilter {
@@ -3049,7 +3141,7 @@ type HistoryEntry struct {
 
 func (x *HistoryEntry) Reset() {
 	*x = HistoryEntry{}
-	mi := &file_agent_v1_guest_proto_msgTypes[50]
+	mi := &file_agent_v1_guest_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3061,7 +3153,7 @@ func (x *HistoryEntry) String() string {
 func (*HistoryEntry) ProtoMessage() {}
 
 func (x *HistoryEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[50]
+	mi := &file_agent_v1_guest_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3074,7 +3166,7 @@ func (x *HistoryEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryEntry.ProtoReflect.Descriptor instead.
 func (*HistoryEntry) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{50}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *HistoryEntry) GetEntryId() int64 {
@@ -3132,7 +3224,7 @@ type ListHistoryResponse struct {
 
 func (x *ListHistoryResponse) Reset() {
 	*x = ListHistoryResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[51]
+	mi := &file_agent_v1_guest_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3144,7 +3236,7 @@ func (x *ListHistoryResponse) String() string {
 func (*ListHistoryResponse) ProtoMessage() {}
 
 func (x *ListHistoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[51]
+	mi := &file_agent_v1_guest_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3157,7 +3249,7 @@ func (x *ListHistoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListHistoryResponse.ProtoReflect.Descriptor instead.
 func (*ListHistoryResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{51}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *ListHistoryResponse) GetEntries() []*HistoryEntry {
@@ -3183,7 +3275,7 @@ type ListNewsRequest struct {
 
 func (x *ListNewsRequest) Reset() {
 	*x = ListNewsRequest{}
-	mi := &file_agent_v1_guest_proto_msgTypes[52]
+	mi := &file_agent_v1_guest_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3195,7 +3287,7 @@ func (x *ListNewsRequest) String() string {
 func (*ListNewsRequest) ProtoMessage() {}
 
 func (x *ListNewsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[52]
+	mi := &file_agent_v1_guest_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3208,7 +3300,7 @@ func (x *ListNewsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNewsRequest.ProtoReflect.Descriptor instead.
 func (*ListNewsRequest) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{52}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{54}
 }
 
 // Новость.
@@ -3230,7 +3322,7 @@ type NewsItem struct {
 
 func (x *NewsItem) Reset() {
 	*x = NewsItem{}
-	mi := &file_agent_v1_guest_proto_msgTypes[53]
+	mi := &file_agent_v1_guest_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3242,7 +3334,7 @@ func (x *NewsItem) String() string {
 func (*NewsItem) ProtoMessage() {}
 
 func (x *NewsItem) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[53]
+	mi := &file_agent_v1_guest_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3255,7 +3347,7 @@ func (x *NewsItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NewsItem.ProtoReflect.Descriptor instead.
 func (*NewsItem) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{53}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *NewsItem) GetNewsId() int64 {
@@ -3306,7 +3398,7 @@ type ListNewsResponse struct {
 
 func (x *ListNewsResponse) Reset() {
 	*x = ListNewsResponse{}
-	mi := &file_agent_v1_guest_proto_msgTypes[54]
+	mi := &file_agent_v1_guest_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3318,7 +3410,7 @@ func (x *ListNewsResponse) String() string {
 func (*ListNewsResponse) ProtoMessage() {}
 
 func (x *ListNewsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_v1_guest_proto_msgTypes[54]
+	mi := &file_agent_v1_guest_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3331,7 +3423,7 @@ func (x *ListNewsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNewsResponse.ProtoReflect.Descriptor instead.
 func (*ListNewsResponse) Descriptor() ([]byte, []int) {
-	return file_agent_v1_guest_proto_rawDescGZIP(), []int{54}
+	return file_agent_v1_guest_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *ListNewsResponse) GetPlatform() []*NewsItem {
@@ -3395,7 +3487,11 @@ const file_agent_v1_guest_proto_rawDesc = "" +
 	"\x05phone\x18\x01 \x01(\tR\x05phone\x12\x12\n" +
 	"\x04code\x18\x02 \x01(\tR\x04code\x12!\n" +
 	"\fnew_password\x18\x03 \x01(\tR\vnewPassword\"\x17\n" +
-	"\x15ResetPasswordResponse\"\x0f\n" +
+	"\x15ResetPasswordResponse\"/\n" +
+	"\x19StartBookingByCodeRequest\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\tR\x04code\"V\n" +
+	"\x1aStartBookingByCodeResponse\x128\n" +
+	"\asession\x18\x01 \x01(\v2\x1e.zafiro.agent.v1.ActiveSessionR\asession\"\x0f\n" +
 	"\rLogoutRequest\"\x10\n" +
 	"\x0eLogoutResponse\"\x13\n" +
 	"\x11GetProfileRequest\"\xec\x01\n" +
@@ -3561,7 +3657,7 @@ const file_agent_v1_guest_proto_rawDesc = "" +
 	"\x18HISTORY_FILTER_PURCHASES\x10\x01\x12\x1a\n" +
 	"\x16HISTORY_FILTER_TOP_UPS\x10\x02\x12\x1c\n" +
 	"\x18HISTORY_FILTER_TRANSFERS\x10\x03\x12\x19\n" +
-	"\x15HISTORY_FILTER_VISITS\x10\x042\x96\x05\n" +
+	"\x15HISTORY_FILTER_VISITS\x10\x042\x85\x06\n" +
 	"\x10GuestAuthService\x12F\n" +
 	"\x05Login\x12\x1d.zafiro.agent.v1.LoginRequest\x1a\x1e.zafiro.agent.v1.LoginResponse\x12O\n" +
 	"\bRegister\x12 .zafiro.agent.v1.RegisterRequest\x1a!.zafiro.agent.v1.RegisterResponse\x12^\n" +
@@ -3569,7 +3665,8 @@ const file_agent_v1_guest_proto_rawDesc = "" +
 	"\fWatchQrLogin\x12$.zafiro.agent.v1.WatchQrLoginRequest\x1a%.zafiro.agent.v1.WatchQrLoginResponse0\x01\x12\x7f\n" +
 	"\x18RequestPasswordResetCode\x120.zafiro.agent.v1.RequestPasswordResetCodeRequest\x1a1.zafiro.agent.v1.RequestPasswordResetCodeResponse\x12^\n" +
 	"\rResetPassword\x12%.zafiro.agent.v1.ResetPasswordRequest\x1a&.zafiro.agent.v1.ResetPasswordResponse\x12I\n" +
-	"\x06Logout\x12\x1e.zafiro.agent.v1.LogoutRequest\x1a\x1f.zafiro.agent.v1.LogoutResponse2\xe1\v\n" +
+	"\x06Logout\x12\x1e.zafiro.agent.v1.LogoutRequest\x1a\x1f.zafiro.agent.v1.LogoutResponse\x12m\n" +
+	"\x12StartBookingByCode\x12*.zafiro.agent.v1.StartBookingByCodeRequest\x1a+.zafiro.agent.v1.StartBookingByCodeResponse2\xe1\v\n" +
 	"\fGuestService\x12U\n" +
 	"\n" +
 	"GetProfile\x12\".zafiro.agent.v1.GetProfileRequest\x1a#.zafiro.agent.v1.GetProfileResponse\x12U\n" +
@@ -3605,7 +3702,7 @@ func file_agent_v1_guest_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_v1_guest_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_agent_v1_guest_proto_msgTypes = make([]protoimpl.MessageInfo, 55)
+var file_agent_v1_guest_proto_msgTypes = make([]protoimpl.MessageInfo, 57)
 var file_agent_v1_guest_proto_goTypes = []any{
 	(QrLoginStatus)(0),                       // 0: zafiro.agent.v1.QrLoginStatus
 	(HistoryFilter)(0),                       // 1: zafiro.agent.v1.HistoryFilter
@@ -3623,146 +3720,151 @@ var file_agent_v1_guest_proto_goTypes = []any{
 	(*RequestPasswordResetCodeResponse)(nil), // 13: zafiro.agent.v1.RequestPasswordResetCodeResponse
 	(*ResetPasswordRequest)(nil),             // 14: zafiro.agent.v1.ResetPasswordRequest
 	(*ResetPasswordResponse)(nil),            // 15: zafiro.agent.v1.ResetPasswordResponse
-	(*LogoutRequest)(nil),                    // 16: zafiro.agent.v1.LogoutRequest
-	(*LogoutResponse)(nil),                   // 17: zafiro.agent.v1.LogoutResponse
-	(*GetProfileRequest)(nil),                // 18: zafiro.agent.v1.GetProfileRequest
-	(*GetProfileResponse)(nil),               // 19: zafiro.agent.v1.GetProfileResponse
-	(*UpdateNameRequest)(nil),                // 20: zafiro.agent.v1.UpdateNameRequest
-	(*UpdateNameResponse)(nil),               // 21: zafiro.agent.v1.UpdateNameResponse
-	(*ChangePasswordRequest)(nil),            // 22: zafiro.agent.v1.ChangePasswordRequest
-	(*ChangePasswordResponse)(nil),           // 23: zafiro.agent.v1.ChangePasswordResponse
-	(*ListTariffsRequest)(nil),               // 24: zafiro.agent.v1.ListTariffsRequest
-	(*Tariff)(nil),                           // 25: zafiro.agent.v1.Tariff
-	(*ListTariffsResponse)(nil),              // 26: zafiro.agent.v1.ListTariffsResponse
-	(*TimePurchase)(nil),                     // 27: zafiro.agent.v1.TimePurchase
-	(*PurchaseTariffRequest)(nil),            // 28: zafiro.agent.v1.PurchaseTariffRequest
-	(*PurchaseTariffResponse)(nil),           // 29: zafiro.agent.v1.PurchaseTariffResponse
-	(*GetMinuteOfferRequest)(nil),            // 30: zafiro.agent.v1.GetMinuteOfferRequest
-	(*GetMinuteOfferResponse)(nil),           // 31: zafiro.agent.v1.GetMinuteOfferResponse
-	(*PurchaseMinutesRequest)(nil),           // 32: zafiro.agent.v1.PurchaseMinutesRequest
-	(*PurchaseMinutesResponse)(nil),          // 33: zafiro.agent.v1.PurchaseMinutesResponse
-	(*PlayWholeBalanceRequest)(nil),          // 34: zafiro.agent.v1.PlayWholeBalanceRequest
-	(*PlayWholeBalanceResponse)(nil),         // 35: zafiro.agent.v1.PlayWholeBalanceResponse
-	(*GetAutoBillingRequest)(nil),            // 36: zafiro.agent.v1.GetAutoBillingRequest
-	(*GetAutoBillingResponse)(nil),           // 37: zafiro.agent.v1.GetAutoBillingResponse
-	(*ListPackagesRequest)(nil),              // 38: zafiro.agent.v1.ListPackagesRequest
-	(*TimePackage)(nil),                      // 39: zafiro.agent.v1.TimePackage
-	(*ListPackagesResponse)(nil),             // 40: zafiro.agent.v1.ListPackagesResponse
-	(*StartPackageRequest)(nil),              // 41: zafiro.agent.v1.StartPackageRequest
-	(*StartPackageResponse)(nil),             // 42: zafiro.agent.v1.StartPackageResponse
-	(*EndSessionRequest)(nil),                // 43: zafiro.agent.v1.EndSessionRequest
-	(*EndSessionResponse)(nil),               // 44: zafiro.agent.v1.EndSessionResponse
-	(*GetSeatMapRequest)(nil),                // 45: zafiro.agent.v1.GetSeatMapRequest
-	(*SeatZone)(nil),                         // 46: zafiro.agent.v1.SeatZone
-	(*Seat)(nil),                             // 47: zafiro.agent.v1.Seat
-	(*GetSeatMapResponse)(nil),               // 48: zafiro.agent.v1.GetSeatMapResponse
-	(*TransferSeatRequest)(nil),              // 49: zafiro.agent.v1.TransferSeatRequest
-	(*TransferSeatResponse)(nil),             // 50: zafiro.agent.v1.TransferSeatResponse
-	(*ListHistoryRequest)(nil),               // 51: zafiro.agent.v1.ListHistoryRequest
-	(*HistoryEntry)(nil),                     // 52: zafiro.agent.v1.HistoryEntry
-	(*ListHistoryResponse)(nil),              // 53: zafiro.agent.v1.ListHistoryResponse
-	(*ListNewsRequest)(nil),                  // 54: zafiro.agent.v1.ListNewsRequest
-	(*NewsItem)(nil),                         // 55: zafiro.agent.v1.NewsItem
-	(*ListNewsResponse)(nil),                 // 56: zafiro.agent.v1.ListNewsResponse
-	(*timestamppb.Timestamp)(nil),            // 57: google.protobuf.Timestamp
-	(*GuestUser)(nil),                        // 58: zafiro.agent.v1.GuestUser
-	(*Balance)(nil),                          // 59: zafiro.agent.v1.Balance
-	(*ActiveSession)(nil),                    // 60: zafiro.agent.v1.ActiveSession
-	(*durationpb.Duration)(nil),              // 61: google.protobuf.Duration
-	(BalanceSource)(0),                       // 62: zafiro.agent.v1.BalanceSource
-	(*AutoBillingStatus)(nil),                // 63: zafiro.agent.v1.AutoBillingStatus
-	(*ComputerRef)(nil),                      // 64: zafiro.agent.v1.ComputerRef
+	(*StartBookingByCodeRequest)(nil),        // 16: zafiro.agent.v1.StartBookingByCodeRequest
+	(*StartBookingByCodeResponse)(nil),       // 17: zafiro.agent.v1.StartBookingByCodeResponse
+	(*LogoutRequest)(nil),                    // 18: zafiro.agent.v1.LogoutRequest
+	(*LogoutResponse)(nil),                   // 19: zafiro.agent.v1.LogoutResponse
+	(*GetProfileRequest)(nil),                // 20: zafiro.agent.v1.GetProfileRequest
+	(*GetProfileResponse)(nil),               // 21: zafiro.agent.v1.GetProfileResponse
+	(*UpdateNameRequest)(nil),                // 22: zafiro.agent.v1.UpdateNameRequest
+	(*UpdateNameResponse)(nil),               // 23: zafiro.agent.v1.UpdateNameResponse
+	(*ChangePasswordRequest)(nil),            // 24: zafiro.agent.v1.ChangePasswordRequest
+	(*ChangePasswordResponse)(nil),           // 25: zafiro.agent.v1.ChangePasswordResponse
+	(*ListTariffsRequest)(nil),               // 26: zafiro.agent.v1.ListTariffsRequest
+	(*Tariff)(nil),                           // 27: zafiro.agent.v1.Tariff
+	(*ListTariffsResponse)(nil),              // 28: zafiro.agent.v1.ListTariffsResponse
+	(*TimePurchase)(nil),                     // 29: zafiro.agent.v1.TimePurchase
+	(*PurchaseTariffRequest)(nil),            // 30: zafiro.agent.v1.PurchaseTariffRequest
+	(*PurchaseTariffResponse)(nil),           // 31: zafiro.agent.v1.PurchaseTariffResponse
+	(*GetMinuteOfferRequest)(nil),            // 32: zafiro.agent.v1.GetMinuteOfferRequest
+	(*GetMinuteOfferResponse)(nil),           // 33: zafiro.agent.v1.GetMinuteOfferResponse
+	(*PurchaseMinutesRequest)(nil),           // 34: zafiro.agent.v1.PurchaseMinutesRequest
+	(*PurchaseMinutesResponse)(nil),          // 35: zafiro.agent.v1.PurchaseMinutesResponse
+	(*PlayWholeBalanceRequest)(nil),          // 36: zafiro.agent.v1.PlayWholeBalanceRequest
+	(*PlayWholeBalanceResponse)(nil),         // 37: zafiro.agent.v1.PlayWholeBalanceResponse
+	(*GetAutoBillingRequest)(nil),            // 38: zafiro.agent.v1.GetAutoBillingRequest
+	(*GetAutoBillingResponse)(nil),           // 39: zafiro.agent.v1.GetAutoBillingResponse
+	(*ListPackagesRequest)(nil),              // 40: zafiro.agent.v1.ListPackagesRequest
+	(*TimePackage)(nil),                      // 41: zafiro.agent.v1.TimePackage
+	(*ListPackagesResponse)(nil),             // 42: zafiro.agent.v1.ListPackagesResponse
+	(*StartPackageRequest)(nil),              // 43: zafiro.agent.v1.StartPackageRequest
+	(*StartPackageResponse)(nil),             // 44: zafiro.agent.v1.StartPackageResponse
+	(*EndSessionRequest)(nil),                // 45: zafiro.agent.v1.EndSessionRequest
+	(*EndSessionResponse)(nil),               // 46: zafiro.agent.v1.EndSessionResponse
+	(*GetSeatMapRequest)(nil),                // 47: zafiro.agent.v1.GetSeatMapRequest
+	(*SeatZone)(nil),                         // 48: zafiro.agent.v1.SeatZone
+	(*Seat)(nil),                             // 49: zafiro.agent.v1.Seat
+	(*GetSeatMapResponse)(nil),               // 50: zafiro.agent.v1.GetSeatMapResponse
+	(*TransferSeatRequest)(nil),              // 51: zafiro.agent.v1.TransferSeatRequest
+	(*TransferSeatResponse)(nil),             // 52: zafiro.agent.v1.TransferSeatResponse
+	(*ListHistoryRequest)(nil),               // 53: zafiro.agent.v1.ListHistoryRequest
+	(*HistoryEntry)(nil),                     // 54: zafiro.agent.v1.HistoryEntry
+	(*ListHistoryResponse)(nil),              // 55: zafiro.agent.v1.ListHistoryResponse
+	(*ListNewsRequest)(nil),                  // 56: zafiro.agent.v1.ListNewsRequest
+	(*NewsItem)(nil),                         // 57: zafiro.agent.v1.NewsItem
+	(*ListNewsResponse)(nil),                 // 58: zafiro.agent.v1.ListNewsResponse
+	(*timestamppb.Timestamp)(nil),            // 59: google.protobuf.Timestamp
+	(*GuestUser)(nil),                        // 60: zafiro.agent.v1.GuestUser
+	(*Balance)(nil),                          // 61: zafiro.agent.v1.Balance
+	(*ActiveSession)(nil),                    // 62: zafiro.agent.v1.ActiveSession
+	(*durationpb.Duration)(nil),              // 63: google.protobuf.Duration
+	(BalanceSource)(0),                       // 64: zafiro.agent.v1.BalanceSource
+	(*AutoBillingStatus)(nil),                // 65: zafiro.agent.v1.AutoBillingStatus
+	(*ComputerRef)(nil),                      // 66: zafiro.agent.v1.ComputerRef
 }
 var file_agent_v1_guest_proto_depIdxs = []int32{
-	57, // 0: zafiro.agent.v1.GuestToken.expires_at:type_name -> google.protobuf.Timestamp
+	59, // 0: zafiro.agent.v1.GuestToken.expires_at:type_name -> google.protobuf.Timestamp
 	2,  // 1: zafiro.agent.v1.GuestSignIn.token:type_name -> zafiro.agent.v1.GuestToken
-	58, // 2: zafiro.agent.v1.GuestSignIn.user:type_name -> zafiro.agent.v1.GuestUser
-	59, // 3: zafiro.agent.v1.GuestSignIn.balance:type_name -> zafiro.agent.v1.Balance
-	60, // 4: zafiro.agent.v1.GuestSignIn.session:type_name -> zafiro.agent.v1.ActiveSession
+	60, // 2: zafiro.agent.v1.GuestSignIn.user:type_name -> zafiro.agent.v1.GuestUser
+	61, // 3: zafiro.agent.v1.GuestSignIn.balance:type_name -> zafiro.agent.v1.Balance
+	62, // 4: zafiro.agent.v1.GuestSignIn.session:type_name -> zafiro.agent.v1.ActiveSession
 	3,  // 5: zafiro.agent.v1.LoginResponse.sign_in:type_name -> zafiro.agent.v1.GuestSignIn
 	3,  // 6: zafiro.agent.v1.RegisterResponse.sign_in:type_name -> zafiro.agent.v1.GuestSignIn
-	57, // 7: zafiro.agent.v1.CreateQrLoginResponse.expires_at:type_name -> google.protobuf.Timestamp
+	59, // 7: zafiro.agent.v1.CreateQrLoginResponse.expires_at:type_name -> google.protobuf.Timestamp
 	0,  // 8: zafiro.agent.v1.WatchQrLoginResponse.status:type_name -> zafiro.agent.v1.QrLoginStatus
 	3,  // 9: zafiro.agent.v1.WatchQrLoginResponse.sign_in:type_name -> zafiro.agent.v1.GuestSignIn
-	61, // 10: zafiro.agent.v1.RequestPasswordResetCodeResponse.code_valid_for:type_name -> google.protobuf.Duration
-	61, // 11: zafiro.agent.v1.RequestPasswordResetCodeResponse.resend_after:type_name -> google.protobuf.Duration
-	58, // 12: zafiro.agent.v1.GetProfileResponse.user:type_name -> zafiro.agent.v1.GuestUser
-	59, // 13: zafiro.agent.v1.GetProfileResponse.balance:type_name -> zafiro.agent.v1.Balance
-	25, // 14: zafiro.agent.v1.ListTariffsResponse.tariffs:type_name -> zafiro.agent.v1.Tariff
-	59, // 15: zafiro.agent.v1.TimePurchase.balance:type_name -> zafiro.agent.v1.Balance
-	60, // 16: zafiro.agent.v1.TimePurchase.session:type_name -> zafiro.agent.v1.ActiveSession
-	62, // 17: zafiro.agent.v1.PurchaseTariffRequest.balance_source:type_name -> zafiro.agent.v1.BalanceSource
-	27, // 18: zafiro.agent.v1.PurchaseTariffResponse.purchase:type_name -> zafiro.agent.v1.TimePurchase
-	62, // 19: zafiro.agent.v1.PurchaseMinutesRequest.balance_source:type_name -> zafiro.agent.v1.BalanceSource
-	27, // 20: zafiro.agent.v1.PurchaseMinutesResponse.purchase:type_name -> zafiro.agent.v1.TimePurchase
-	27, // 21: zafiro.agent.v1.PlayWholeBalanceResponse.purchase:type_name -> zafiro.agent.v1.TimePurchase
-	63, // 22: zafiro.agent.v1.GetAutoBillingResponse.status:type_name -> zafiro.agent.v1.AutoBillingStatus
-	57, // 23: zafiro.agent.v1.TimePackage.expires_at:type_name -> google.protobuf.Timestamp
-	39, // 24: zafiro.agent.v1.ListPackagesResponse.packages:type_name -> zafiro.agent.v1.TimePackage
-	27, // 25: zafiro.agent.v1.StartPackageResponse.purchase:type_name -> zafiro.agent.v1.TimePurchase
-	59, // 26: zafiro.agent.v1.EndSessionResponse.balance:type_name -> zafiro.agent.v1.Balance
-	64, // 27: zafiro.agent.v1.Seat.computer:type_name -> zafiro.agent.v1.ComputerRef
-	46, // 28: zafiro.agent.v1.GetSeatMapResponse.zones:type_name -> zafiro.agent.v1.SeatZone
-	47, // 29: zafiro.agent.v1.GetSeatMapResponse.seats:type_name -> zafiro.agent.v1.Seat
-	64, // 30: zafiro.agent.v1.TransferSeatResponse.target:type_name -> zafiro.agent.v1.ComputerRef
-	60, // 31: zafiro.agent.v1.TransferSeatResponse.session:type_name -> zafiro.agent.v1.ActiveSession
-	1,  // 32: zafiro.agent.v1.ListHistoryRequest.filter:type_name -> zafiro.agent.v1.HistoryFilter
-	57, // 33: zafiro.agent.v1.HistoryEntry.occurred_at:type_name -> google.protobuf.Timestamp
-	52, // 34: zafiro.agent.v1.ListHistoryResponse.entries:type_name -> zafiro.agent.v1.HistoryEntry
-	57, // 35: zafiro.agent.v1.NewsItem.published_at:type_name -> google.protobuf.Timestamp
-	55, // 36: zafiro.agent.v1.ListNewsResponse.platform:type_name -> zafiro.agent.v1.NewsItem
-	55, // 37: zafiro.agent.v1.ListNewsResponse.club:type_name -> zafiro.agent.v1.NewsItem
-	4,  // 38: zafiro.agent.v1.GuestAuthService.Login:input_type -> zafiro.agent.v1.LoginRequest
-	6,  // 39: zafiro.agent.v1.GuestAuthService.Register:input_type -> zafiro.agent.v1.RegisterRequest
-	8,  // 40: zafiro.agent.v1.GuestAuthService.CreateQrLogin:input_type -> zafiro.agent.v1.CreateQrLoginRequest
-	10, // 41: zafiro.agent.v1.GuestAuthService.WatchQrLogin:input_type -> zafiro.agent.v1.WatchQrLoginRequest
-	12, // 42: zafiro.agent.v1.GuestAuthService.RequestPasswordResetCode:input_type -> zafiro.agent.v1.RequestPasswordResetCodeRequest
-	14, // 43: zafiro.agent.v1.GuestAuthService.ResetPassword:input_type -> zafiro.agent.v1.ResetPasswordRequest
-	16, // 44: zafiro.agent.v1.GuestAuthService.Logout:input_type -> zafiro.agent.v1.LogoutRequest
-	18, // 45: zafiro.agent.v1.GuestService.GetProfile:input_type -> zafiro.agent.v1.GetProfileRequest
-	20, // 46: zafiro.agent.v1.GuestService.UpdateName:input_type -> zafiro.agent.v1.UpdateNameRequest
-	22, // 47: zafiro.agent.v1.GuestService.ChangePassword:input_type -> zafiro.agent.v1.ChangePasswordRequest
-	24, // 48: zafiro.agent.v1.GuestService.ListTariffs:input_type -> zafiro.agent.v1.ListTariffsRequest
-	28, // 49: zafiro.agent.v1.GuestService.PurchaseTariff:input_type -> zafiro.agent.v1.PurchaseTariffRequest
-	30, // 50: zafiro.agent.v1.GuestService.GetMinuteOffer:input_type -> zafiro.agent.v1.GetMinuteOfferRequest
-	32, // 51: zafiro.agent.v1.GuestService.PurchaseMinutes:input_type -> zafiro.agent.v1.PurchaseMinutesRequest
-	34, // 52: zafiro.agent.v1.GuestService.PlayWholeBalance:input_type -> zafiro.agent.v1.PlayWholeBalanceRequest
-	36, // 53: zafiro.agent.v1.GuestService.GetAutoBilling:input_type -> zafiro.agent.v1.GetAutoBillingRequest
-	38, // 54: zafiro.agent.v1.GuestService.ListPackages:input_type -> zafiro.agent.v1.ListPackagesRequest
-	41, // 55: zafiro.agent.v1.GuestService.StartPackage:input_type -> zafiro.agent.v1.StartPackageRequest
-	43, // 56: zafiro.agent.v1.GuestService.EndSession:input_type -> zafiro.agent.v1.EndSessionRequest
-	45, // 57: zafiro.agent.v1.GuestService.GetSeatMap:input_type -> zafiro.agent.v1.GetSeatMapRequest
-	49, // 58: zafiro.agent.v1.GuestService.TransferSeat:input_type -> zafiro.agent.v1.TransferSeatRequest
-	51, // 59: zafiro.agent.v1.GuestService.ListHistory:input_type -> zafiro.agent.v1.ListHistoryRequest
-	54, // 60: zafiro.agent.v1.GuestService.ListNews:input_type -> zafiro.agent.v1.ListNewsRequest
-	5,  // 61: zafiro.agent.v1.GuestAuthService.Login:output_type -> zafiro.agent.v1.LoginResponse
-	7,  // 62: zafiro.agent.v1.GuestAuthService.Register:output_type -> zafiro.agent.v1.RegisterResponse
-	9,  // 63: zafiro.agent.v1.GuestAuthService.CreateQrLogin:output_type -> zafiro.agent.v1.CreateQrLoginResponse
-	11, // 64: zafiro.agent.v1.GuestAuthService.WatchQrLogin:output_type -> zafiro.agent.v1.WatchQrLoginResponse
-	13, // 65: zafiro.agent.v1.GuestAuthService.RequestPasswordResetCode:output_type -> zafiro.agent.v1.RequestPasswordResetCodeResponse
-	15, // 66: zafiro.agent.v1.GuestAuthService.ResetPassword:output_type -> zafiro.agent.v1.ResetPasswordResponse
-	17, // 67: zafiro.agent.v1.GuestAuthService.Logout:output_type -> zafiro.agent.v1.LogoutResponse
-	19, // 68: zafiro.agent.v1.GuestService.GetProfile:output_type -> zafiro.agent.v1.GetProfileResponse
-	21, // 69: zafiro.agent.v1.GuestService.UpdateName:output_type -> zafiro.agent.v1.UpdateNameResponse
-	23, // 70: zafiro.agent.v1.GuestService.ChangePassword:output_type -> zafiro.agent.v1.ChangePasswordResponse
-	26, // 71: zafiro.agent.v1.GuestService.ListTariffs:output_type -> zafiro.agent.v1.ListTariffsResponse
-	29, // 72: zafiro.agent.v1.GuestService.PurchaseTariff:output_type -> zafiro.agent.v1.PurchaseTariffResponse
-	31, // 73: zafiro.agent.v1.GuestService.GetMinuteOffer:output_type -> zafiro.agent.v1.GetMinuteOfferResponse
-	33, // 74: zafiro.agent.v1.GuestService.PurchaseMinutes:output_type -> zafiro.agent.v1.PurchaseMinutesResponse
-	35, // 75: zafiro.agent.v1.GuestService.PlayWholeBalance:output_type -> zafiro.agent.v1.PlayWholeBalanceResponse
-	37, // 76: zafiro.agent.v1.GuestService.GetAutoBilling:output_type -> zafiro.agent.v1.GetAutoBillingResponse
-	40, // 77: zafiro.agent.v1.GuestService.ListPackages:output_type -> zafiro.agent.v1.ListPackagesResponse
-	42, // 78: zafiro.agent.v1.GuestService.StartPackage:output_type -> zafiro.agent.v1.StartPackageResponse
-	44, // 79: zafiro.agent.v1.GuestService.EndSession:output_type -> zafiro.agent.v1.EndSessionResponse
-	48, // 80: zafiro.agent.v1.GuestService.GetSeatMap:output_type -> zafiro.agent.v1.GetSeatMapResponse
-	50, // 81: zafiro.agent.v1.GuestService.TransferSeat:output_type -> zafiro.agent.v1.TransferSeatResponse
-	53, // 82: zafiro.agent.v1.GuestService.ListHistory:output_type -> zafiro.agent.v1.ListHistoryResponse
-	56, // 83: zafiro.agent.v1.GuestService.ListNews:output_type -> zafiro.agent.v1.ListNewsResponse
-	61, // [61:84] is the sub-list for method output_type
-	38, // [38:61] is the sub-list for method input_type
-	38, // [38:38] is the sub-list for extension type_name
-	38, // [38:38] is the sub-list for extension extendee
-	0,  // [0:38] is the sub-list for field type_name
+	63, // 10: zafiro.agent.v1.RequestPasswordResetCodeResponse.code_valid_for:type_name -> google.protobuf.Duration
+	63, // 11: zafiro.agent.v1.RequestPasswordResetCodeResponse.resend_after:type_name -> google.protobuf.Duration
+	62, // 12: zafiro.agent.v1.StartBookingByCodeResponse.session:type_name -> zafiro.agent.v1.ActiveSession
+	60, // 13: zafiro.agent.v1.GetProfileResponse.user:type_name -> zafiro.agent.v1.GuestUser
+	61, // 14: zafiro.agent.v1.GetProfileResponse.balance:type_name -> zafiro.agent.v1.Balance
+	27, // 15: zafiro.agent.v1.ListTariffsResponse.tariffs:type_name -> zafiro.agent.v1.Tariff
+	61, // 16: zafiro.agent.v1.TimePurchase.balance:type_name -> zafiro.agent.v1.Balance
+	62, // 17: zafiro.agent.v1.TimePurchase.session:type_name -> zafiro.agent.v1.ActiveSession
+	64, // 18: zafiro.agent.v1.PurchaseTariffRequest.balance_source:type_name -> zafiro.agent.v1.BalanceSource
+	29, // 19: zafiro.agent.v1.PurchaseTariffResponse.purchase:type_name -> zafiro.agent.v1.TimePurchase
+	64, // 20: zafiro.agent.v1.PurchaseMinutesRequest.balance_source:type_name -> zafiro.agent.v1.BalanceSource
+	29, // 21: zafiro.agent.v1.PurchaseMinutesResponse.purchase:type_name -> zafiro.agent.v1.TimePurchase
+	29, // 22: zafiro.agent.v1.PlayWholeBalanceResponse.purchase:type_name -> zafiro.agent.v1.TimePurchase
+	65, // 23: zafiro.agent.v1.GetAutoBillingResponse.status:type_name -> zafiro.agent.v1.AutoBillingStatus
+	59, // 24: zafiro.agent.v1.TimePackage.expires_at:type_name -> google.protobuf.Timestamp
+	41, // 25: zafiro.agent.v1.ListPackagesResponse.packages:type_name -> zafiro.agent.v1.TimePackage
+	29, // 26: zafiro.agent.v1.StartPackageResponse.purchase:type_name -> zafiro.agent.v1.TimePurchase
+	61, // 27: zafiro.agent.v1.EndSessionResponse.balance:type_name -> zafiro.agent.v1.Balance
+	66, // 28: zafiro.agent.v1.Seat.computer:type_name -> zafiro.agent.v1.ComputerRef
+	48, // 29: zafiro.agent.v1.GetSeatMapResponse.zones:type_name -> zafiro.agent.v1.SeatZone
+	49, // 30: zafiro.agent.v1.GetSeatMapResponse.seats:type_name -> zafiro.agent.v1.Seat
+	66, // 31: zafiro.agent.v1.TransferSeatResponse.target:type_name -> zafiro.agent.v1.ComputerRef
+	62, // 32: zafiro.agent.v1.TransferSeatResponse.session:type_name -> zafiro.agent.v1.ActiveSession
+	1,  // 33: zafiro.agent.v1.ListHistoryRequest.filter:type_name -> zafiro.agent.v1.HistoryFilter
+	59, // 34: zafiro.agent.v1.HistoryEntry.occurred_at:type_name -> google.protobuf.Timestamp
+	54, // 35: zafiro.agent.v1.ListHistoryResponse.entries:type_name -> zafiro.agent.v1.HistoryEntry
+	59, // 36: zafiro.agent.v1.NewsItem.published_at:type_name -> google.protobuf.Timestamp
+	57, // 37: zafiro.agent.v1.ListNewsResponse.platform:type_name -> zafiro.agent.v1.NewsItem
+	57, // 38: zafiro.agent.v1.ListNewsResponse.club:type_name -> zafiro.agent.v1.NewsItem
+	4,  // 39: zafiro.agent.v1.GuestAuthService.Login:input_type -> zafiro.agent.v1.LoginRequest
+	6,  // 40: zafiro.agent.v1.GuestAuthService.Register:input_type -> zafiro.agent.v1.RegisterRequest
+	8,  // 41: zafiro.agent.v1.GuestAuthService.CreateQrLogin:input_type -> zafiro.agent.v1.CreateQrLoginRequest
+	10, // 42: zafiro.agent.v1.GuestAuthService.WatchQrLogin:input_type -> zafiro.agent.v1.WatchQrLoginRequest
+	12, // 43: zafiro.agent.v1.GuestAuthService.RequestPasswordResetCode:input_type -> zafiro.agent.v1.RequestPasswordResetCodeRequest
+	14, // 44: zafiro.agent.v1.GuestAuthService.ResetPassword:input_type -> zafiro.agent.v1.ResetPasswordRequest
+	18, // 45: zafiro.agent.v1.GuestAuthService.Logout:input_type -> zafiro.agent.v1.LogoutRequest
+	16, // 46: zafiro.agent.v1.GuestAuthService.StartBookingByCode:input_type -> zafiro.agent.v1.StartBookingByCodeRequest
+	20, // 47: zafiro.agent.v1.GuestService.GetProfile:input_type -> zafiro.agent.v1.GetProfileRequest
+	22, // 48: zafiro.agent.v1.GuestService.UpdateName:input_type -> zafiro.agent.v1.UpdateNameRequest
+	24, // 49: zafiro.agent.v1.GuestService.ChangePassword:input_type -> zafiro.agent.v1.ChangePasswordRequest
+	26, // 50: zafiro.agent.v1.GuestService.ListTariffs:input_type -> zafiro.agent.v1.ListTariffsRequest
+	30, // 51: zafiro.agent.v1.GuestService.PurchaseTariff:input_type -> zafiro.agent.v1.PurchaseTariffRequest
+	32, // 52: zafiro.agent.v1.GuestService.GetMinuteOffer:input_type -> zafiro.agent.v1.GetMinuteOfferRequest
+	34, // 53: zafiro.agent.v1.GuestService.PurchaseMinutes:input_type -> zafiro.agent.v1.PurchaseMinutesRequest
+	36, // 54: zafiro.agent.v1.GuestService.PlayWholeBalance:input_type -> zafiro.agent.v1.PlayWholeBalanceRequest
+	38, // 55: zafiro.agent.v1.GuestService.GetAutoBilling:input_type -> zafiro.agent.v1.GetAutoBillingRequest
+	40, // 56: zafiro.agent.v1.GuestService.ListPackages:input_type -> zafiro.agent.v1.ListPackagesRequest
+	43, // 57: zafiro.agent.v1.GuestService.StartPackage:input_type -> zafiro.agent.v1.StartPackageRequest
+	45, // 58: zafiro.agent.v1.GuestService.EndSession:input_type -> zafiro.agent.v1.EndSessionRequest
+	47, // 59: zafiro.agent.v1.GuestService.GetSeatMap:input_type -> zafiro.agent.v1.GetSeatMapRequest
+	51, // 60: zafiro.agent.v1.GuestService.TransferSeat:input_type -> zafiro.agent.v1.TransferSeatRequest
+	53, // 61: zafiro.agent.v1.GuestService.ListHistory:input_type -> zafiro.agent.v1.ListHistoryRequest
+	56, // 62: zafiro.agent.v1.GuestService.ListNews:input_type -> zafiro.agent.v1.ListNewsRequest
+	5,  // 63: zafiro.agent.v1.GuestAuthService.Login:output_type -> zafiro.agent.v1.LoginResponse
+	7,  // 64: zafiro.agent.v1.GuestAuthService.Register:output_type -> zafiro.agent.v1.RegisterResponse
+	9,  // 65: zafiro.agent.v1.GuestAuthService.CreateQrLogin:output_type -> zafiro.agent.v1.CreateQrLoginResponse
+	11, // 66: zafiro.agent.v1.GuestAuthService.WatchQrLogin:output_type -> zafiro.agent.v1.WatchQrLoginResponse
+	13, // 67: zafiro.agent.v1.GuestAuthService.RequestPasswordResetCode:output_type -> zafiro.agent.v1.RequestPasswordResetCodeResponse
+	15, // 68: zafiro.agent.v1.GuestAuthService.ResetPassword:output_type -> zafiro.agent.v1.ResetPasswordResponse
+	19, // 69: zafiro.agent.v1.GuestAuthService.Logout:output_type -> zafiro.agent.v1.LogoutResponse
+	17, // 70: zafiro.agent.v1.GuestAuthService.StartBookingByCode:output_type -> zafiro.agent.v1.StartBookingByCodeResponse
+	21, // 71: zafiro.agent.v1.GuestService.GetProfile:output_type -> zafiro.agent.v1.GetProfileResponse
+	23, // 72: zafiro.agent.v1.GuestService.UpdateName:output_type -> zafiro.agent.v1.UpdateNameResponse
+	25, // 73: zafiro.agent.v1.GuestService.ChangePassword:output_type -> zafiro.agent.v1.ChangePasswordResponse
+	28, // 74: zafiro.agent.v1.GuestService.ListTariffs:output_type -> zafiro.agent.v1.ListTariffsResponse
+	31, // 75: zafiro.agent.v1.GuestService.PurchaseTariff:output_type -> zafiro.agent.v1.PurchaseTariffResponse
+	33, // 76: zafiro.agent.v1.GuestService.GetMinuteOffer:output_type -> zafiro.agent.v1.GetMinuteOfferResponse
+	35, // 77: zafiro.agent.v1.GuestService.PurchaseMinutes:output_type -> zafiro.agent.v1.PurchaseMinutesResponse
+	37, // 78: zafiro.agent.v1.GuestService.PlayWholeBalance:output_type -> zafiro.agent.v1.PlayWholeBalanceResponse
+	39, // 79: zafiro.agent.v1.GuestService.GetAutoBilling:output_type -> zafiro.agent.v1.GetAutoBillingResponse
+	42, // 80: zafiro.agent.v1.GuestService.ListPackages:output_type -> zafiro.agent.v1.ListPackagesResponse
+	44, // 81: zafiro.agent.v1.GuestService.StartPackage:output_type -> zafiro.agent.v1.StartPackageResponse
+	46, // 82: zafiro.agent.v1.GuestService.EndSession:output_type -> zafiro.agent.v1.EndSessionResponse
+	50, // 83: zafiro.agent.v1.GuestService.GetSeatMap:output_type -> zafiro.agent.v1.GetSeatMapResponse
+	52, // 84: zafiro.agent.v1.GuestService.TransferSeat:output_type -> zafiro.agent.v1.TransferSeatResponse
+	55, // 85: zafiro.agent.v1.GuestService.ListHistory:output_type -> zafiro.agent.v1.ListHistoryResponse
+	58, // 86: zafiro.agent.v1.GuestService.ListNews:output_type -> zafiro.agent.v1.ListNewsResponse
+	63, // [63:87] is the sub-list for method output_type
+	39, // [39:63] is the sub-list for method input_type
+	39, // [39:39] is the sub-list for extension type_name
+	39, // [39:39] is the sub-list for extension extendee
+	0,  // [0:39] is the sub-list for field type_name
 }
 
 func init() { file_agent_v1_guest_proto_init() }
@@ -3777,7 +3879,7 @@ func file_agent_v1_guest_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_v1_guest_proto_rawDesc), len(file_agent_v1_guest_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   55,
+			NumMessages:   57,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

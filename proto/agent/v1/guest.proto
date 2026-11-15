@@ -60,6 +60,18 @@ service GuestAuthService {
   // Выход гостя: токен из метаданных отзывается. Заменяет POST /api/auth/logout.
   // Требует токен гостя.
   rpc Logout(LogoutRequest) returns (LogoutResponse);
+
+  // Вход по коду брони из гостевого приложения (экран входа ПК, «Есть код брони?»): если этот ПК — один из
+  // забронированных и бронь уже можно начинать (с интервала клуба до её начала), её оплаченное время начинается
+  // на этом ПК сессией без аккаунта (ActiveSession.guest = true, как время, проданное на кассе).
+  // Заменяет POST /api/agent/booking-code (AgentBookingCodeController, ComputerReservations::startByCode()).
+  // Токен гостя не нужен; ПК и клуб — из сертификата. Денег не двигает (бронь оплачена при бронировании).
+  // Сервер также шлёт ПК команду StartSession с той же сессией (ответ мог не дойти).
+  // Лимит: 5/мин на ПК, 200/час на клуб (RateLimiter `agent-booking-code`).
+  // Ошибки: VALIDATION_FAILED (поле code — не 6 цифр), BOOKING_CODE_NOT_FOUND, BOOKING_CODE_OTHER_COMPUTER,
+  // BOOKING_NOT_STARTED, COMPUTER_BUSY, SUBSCRIPTION_INACTIVE, RATE_LIMITED.
+  // Агент: с версии протокола этого RPC (docs/agent-protocol.md §15.5); старый сервер отвечает UNIMPLEMENTED.
+  rpc StartBookingByCode(StartBookingByCodeRequest) returns (StartBookingByCodeResponse);
 }
 
 // Действия вошедшего гостя (токен гостя обязателен).
@@ -261,6 +273,18 @@ message ResetPasswordRequest {
 
 // Ответ: пароль изменён (все токены аккаунта отозваны).
 message ResetPasswordResponse {}
+
+// Запрос входа по коду брони.
+message StartBookingByCodeRequest {
+  // Код брони из гостевого приложения: ровно 6 цифр.
+  string code = 1;
+}
+
+// Ответ входа по коду брони.
+message StartBookingByCodeResponse {
+  // Начатая сессия без аккаунта (user_id = 0, guest = true).
+  ActiveSession session = 1;
+}
 
 // Запрос выхода.
 message LogoutRequest {}

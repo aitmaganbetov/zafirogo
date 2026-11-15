@@ -95,6 +95,20 @@ public sealed class GuestApi
     public Task<ResetPasswordResponse> ResetPasswordAsync(ResetPasswordRequest request, CancellationToken ct = default) =>
         Call((i, o) => new GuestAuthService.GuestAuthServiceClient(i).ResetPasswordAsync(request, o), write: true, token: false, ct);
 
+    /// <summary>
+    /// Вход по коду брони из мобильного приложения (экран входа, «Есть код брони?»): сервер открывает на этом ПК
+    /// оплаченную сессию без аккаунта, если ПК — один из забронированных и бронь началась. Сессия применяется сразу
+    /// (ПК открывается, как для времени с кассы); гость не входит — магазина, баланса и профиля у такой сессии нет.
+    /// Не повторяется сам: повтор после успеха ответил бы «код не найден»; потерянный ответ восполняет команда
+    /// StartSession сервера. Старый агент: ClubSetupService.EnterBookingCodeAsync (POST /api/agent/booking-code).
+    /// </summary>
+    public async Task<StartBookingByCodeResponse> StartBookingByCodeAsync(StartBookingByCodeRequest request, CancellationToken ct = default)
+    {
+        var r = await Call((i, o) => new GuestAuthService.GuestAuthServiceClient(i).StartBookingByCodeAsync(request, o), write: true, token: false, ct).ConfigureAwait(false);
+        if (r.Session is not null && !string.IsNullOrEmpty(r.Session.SessionId)) _state.StartSession(r.Session);
+        return r;
+    }
+
     /// <summary>Выход гостя: токен отзывается на сервере; локально — в любом случае.</summary>
     public async Task<LogoutResponse> LogoutAsync(LogoutRequest request, CancellationToken ct = default)
     {

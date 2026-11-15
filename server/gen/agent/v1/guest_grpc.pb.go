@@ -33,6 +33,7 @@ const (
 	GuestAuthService_RequestPasswordResetCode_FullMethodName = "/zafiro.agent.v1.GuestAuthService/RequestPasswordResetCode"
 	GuestAuthService_ResetPassword_FullMethodName            = "/zafiro.agent.v1.GuestAuthService/ResetPassword"
 	GuestAuthService_Logout_FullMethodName                   = "/zafiro.agent.v1.GuestAuthService/Logout"
+	GuestAuthService_StartBookingByCode_FullMethodName       = "/zafiro.agent.v1.GuestAuthService/StartBookingByCode"
 )
 
 // GuestAuthServiceClient is the client API for GuestAuthService service.
@@ -78,6 +79,17 @@ type GuestAuthServiceClient interface {
 	// Выход гостя: токен из метаданных отзывается. Заменяет POST /api/auth/logout.
 	// Требует токен гостя.
 	Logout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error)
+	// Вход по коду брони из гостевого приложения (экран входа ПК, «Есть код брони?»): если этот ПК — один из
+	// забронированных и бронь уже можно начинать (с интервала клуба до её начала), её оплаченное время начинается
+	// на этом ПК сессией без аккаунта (ActiveSession.guest = true, как время, проданное на кассе).
+	// Заменяет POST /api/agent/booking-code (AgentBookingCodeController, ComputerReservations::startByCode()).
+	// Токен гостя не нужен; ПК и клуб — из сертификата. Денег не двигает (бронь оплачена при бронировании).
+	// Сервер также шлёт ПК команду StartSession с той же сессией (ответ мог не дойти).
+	// Лимит: 5/мин на ПК, 200/час на клуб (RateLimiter `agent-booking-code`).
+	// Ошибки: VALIDATION_FAILED (поле code — не 6 цифр), BOOKING_CODE_NOT_FOUND, BOOKING_CODE_OTHER_COMPUTER,
+	// BOOKING_NOT_STARTED, COMPUTER_BUSY, SUBSCRIPTION_INACTIVE, RATE_LIMITED.
+	// Агент: с версии протокола этого RPC (docs/agent-protocol.md §15.5); старый сервер отвечает UNIMPLEMENTED.
+	StartBookingByCode(ctx context.Context, in *StartBookingByCodeRequest, opts ...grpc.CallOption) (*StartBookingByCodeResponse, error)
 }
 
 type guestAuthServiceClient struct {
@@ -167,6 +179,16 @@ func (c *guestAuthServiceClient) Logout(ctx context.Context, in *LogoutRequest, 
 	return out, nil
 }
 
+func (c *guestAuthServiceClient) StartBookingByCode(ctx context.Context, in *StartBookingByCodeRequest, opts ...grpc.CallOption) (*StartBookingByCodeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StartBookingByCodeResponse)
+	err := c.cc.Invoke(ctx, GuestAuthService_StartBookingByCode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GuestAuthServiceServer is the server API for GuestAuthService service.
 // All implementations must embed UnimplementedGuestAuthServiceServer
 // for forward compatibility.
@@ -210,6 +232,17 @@ type GuestAuthServiceServer interface {
 	// Выход гостя: токен из метаданных отзывается. Заменяет POST /api/auth/logout.
 	// Требует токен гостя.
 	Logout(context.Context, *LogoutRequest) (*LogoutResponse, error)
+	// Вход по коду брони из гостевого приложения (экран входа ПК, «Есть код брони?»): если этот ПК — один из
+	// забронированных и бронь уже можно начинать (с интервала клуба до её начала), её оплаченное время начинается
+	// на этом ПК сессией без аккаунта (ActiveSession.guest = true, как время, проданное на кассе).
+	// Заменяет POST /api/agent/booking-code (AgentBookingCodeController, ComputerReservations::startByCode()).
+	// Токен гостя не нужен; ПК и клуб — из сертификата. Денег не двигает (бронь оплачена при бронировании).
+	// Сервер также шлёт ПК команду StartSession с той же сессией (ответ мог не дойти).
+	// Лимит: 5/мин на ПК, 200/час на клуб (RateLimiter `agent-booking-code`).
+	// Ошибки: VALIDATION_FAILED (поле code — не 6 цифр), BOOKING_CODE_NOT_FOUND, BOOKING_CODE_OTHER_COMPUTER,
+	// BOOKING_NOT_STARTED, COMPUTER_BUSY, SUBSCRIPTION_INACTIVE, RATE_LIMITED.
+	// Агент: с версии протокола этого RPC (docs/agent-protocol.md §15.5); старый сервер отвечает UNIMPLEMENTED.
+	StartBookingByCode(context.Context, *StartBookingByCodeRequest) (*StartBookingByCodeResponse, error)
 	mustEmbedUnimplementedGuestAuthServiceServer()
 }
 
@@ -240,6 +273,9 @@ func (UnimplementedGuestAuthServiceServer) ResetPassword(context.Context, *Reset
 }
 func (UnimplementedGuestAuthServiceServer) Logout(context.Context, *LogoutRequest) (*LogoutResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Logout not implemented")
+}
+func (UnimplementedGuestAuthServiceServer) StartBookingByCode(context.Context, *StartBookingByCodeRequest) (*StartBookingByCodeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartBookingByCode not implemented")
 }
 func (UnimplementedGuestAuthServiceServer) mustEmbedUnimplementedGuestAuthServiceServer() {}
 func (UnimplementedGuestAuthServiceServer) testEmbeddedByValue()                          {}
@@ -381,6 +417,24 @@ func _GuestAuthService_Logout_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GuestAuthService_StartBookingByCode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartBookingByCodeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GuestAuthServiceServer).StartBookingByCode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GuestAuthService_StartBookingByCode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GuestAuthServiceServer).StartBookingByCode(ctx, req.(*StartBookingByCodeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // GuestAuthService_ServiceDesc is the grpc.ServiceDesc for GuestAuthService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -411,6 +465,10 @@ var GuestAuthService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Logout",
 			Handler:    _GuestAuthService_Logout_Handler,
+		},
+		{
+			MethodName: "StartBookingByCode",
+			Handler:    _GuestAuthService_StartBookingByCode_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

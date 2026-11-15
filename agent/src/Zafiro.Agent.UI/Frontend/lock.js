@@ -1,6 +1,6 @@
 // Экран входа / блокировки, регистрация ПК и PIN сотрудника. Перенос WPF-окон старого агента в HTML 1:1 по виду:
 // Views/ClubSetupWindow.xaml(.cs) — вход по телефону и паролю, регистрация, восстановление пароля по коду из Telegram,
-// вход с телефона по QR-коду, кнопки выключения/перезагрузки (второе нажатие подтверждает), языки, номер ПК;
+// вход по коду брони из мобильного приложения («Есть код брони?»), вход с телефона по QR-коду, кнопки выключения/перезагрузки (второе нажатие подтверждает), языки, номер ПК;
 // Views/StaffPinWindow.xaml(.cs) — PIN сотрудника (Ctrl+Alt+P). Ключа установки больше нет: ПК подключается одноразовым
 // кодом из панели клуба (agent.Enroll). Пароль гостя уходит в службу внутри запроса и нигде не хранится.
 (() => {
@@ -29,12 +29,16 @@
   const submit = $('loginSubmit');
   const registerToggle = $('loginRegisterToggle');
   const forgotToggle = $('loginForgotToggle');
+  const bookingToggle = $('loginBookingToggle');
+  const bookingInput = $('loginBookingCode');
   const qr = $('loginQr');
   const qrImage = $('loginQrImage');
   const inputLanguage = $('loginInputLanguage');
 
-  // Режимы формы входа (ClubSetupWindow: _registering, _recovery).
+  // Режимы формы входа (ClubSetupWindow: _registering, _recovery, _bookingCode).
   let registering = false;
+  // Вход по коду брони из мобильного приложения (бронь на компанию): без аккаунта.
+  let bookingCode = false;
   let recovery = 'none'; // none | phone | code
   let busy = false;
   let screen = '';
@@ -173,7 +177,11 @@
       setKey(club, connectionText(snap?.connection));
       return;
     }
-    if (recovery !== 'none') {
+    if (bookingCode) {
+      setKey(title, 'Вход по коду брони');
+      setKey(club, 'Введите код из приложения Zafiro того, кто бронировал. Код работает только на забронированных ПК и только во время брони.');
+      setKey(submit, 'Начать по коду');
+    } else if (recovery !== 'none') {
       setKey(title, 'Восстановление пароля');
       setKey(club, recovery === 'phone' ? 'Пришлём код в Telegram на номер вашего аккаунта.' : 'Введите код из Telegram и придумайте новый пароль.');
       setKey($('loginPasswordLabel'), 'Новый пароль');
@@ -187,6 +195,7 @@
     }
     setKey(registerToggle, registering ? 'Уже есть аккаунт? Войти' : 'Нет аккаунта? Зарегистрироваться');
     setKey(forgotToggle, recovery === 'phone' ? 'Вернуться ко входу' : recovery === 'code' ? 'Запросить новый код' : 'Забыли пароль?');
+    setKey(bookingToggle, bookingCode ? 'Вернуться ко входу' : 'Есть код брони?');
     renderLanguages();
   };
 
@@ -206,14 +215,18 @@
     $('loginNamePanel').hidden = !registering;
     $('loginConfirmPanel').hidden = !(registering || recovery === 'code');
     $('loginCodePanel').hidden = recovery !== 'code';
-    $('loginPasswordPanel').hidden = recovery === 'phone';
-    registerToggle.hidden = recovery !== 'none';
+    $('loginPasswordPanel').hidden = bookingCode || recovery === 'phone';
+    $('loginBookingPanel').hidden = !bookingCode;
+    $('loginPhonePanel').hidden = bookingCode;
+    registerToggle.hidden = bookingCode || recovery !== 'none';
+    forgotToggle.hidden = bookingCode;
     setText(error, '');
     applyTexts();
   };
 
   registerToggle.addEventListener('click', () => {
     if (busy) return;
+    bookingCode = false;
     registering = !registering;
     showNotice(notice, null);
     setMode();
@@ -221,11 +234,29 @@
   });
   forgotToggle.addEventListener('click', () => {
     if (busy) return;
+    bookingCode = false;
     registering = false;
     recovery = recovery === 'phone' ? 'none' : 'phone';
     showNotice(notice, null);
     setMode();
     phone.focus();
+  });
+  // «Есть код брони?» — вход по коду брони вместо телефона и пароля (ClubSetupWindow.SetBookingCode); режим
+  // выключает регистрацию и восстановление пароля.
+  bookingToggle.addEventListener('click', () => {
+    if (busy) return;
+    bookingCode = !bookingCode;
+    registering = false;
+    recovery = 'none';
+    bookingInput.value = '';
+    showNotice(notice, null);
+    setMode();
+    (bookingCode ? bookingInput : phone).focus();
+  });
+  // Только цифры (BookingCodeBox.PreviewTextInput).
+  bookingInput.addEventListener('input', () => {
+    const digits = bookingInput.value.replace(/[^0-9]/g, '').slice(0, 6);
+    if (digits !== bookingInput.value) bookingInput.value = digits;
   });
 
   const fail = (err, fallbackKey) => {
@@ -233,9 +264,35 @@
     else setKey(error, fallbackKey);
   };
 
+  // Код брони (ClubSetupWindow.EnterBookingCodeAsync): сервер открывает на этом ПК оплаченную сессию без аккаунта,
+  // если ПК — один из забронированных; служба сразу присылает снимок с сессией — экран входа уходит.
+  const enterBookingCode = async () => {
+    const value = bookingInput.value.trim();
+    if (!/^[0-9]{6}$/.test(value)) {
+      setKey(error, 'Код брони — 6 цифр.');
+      return;
+    }
+    busy = true;
+    submit.disabled = true;
+    setText(error, '');
+    try {
+      await bridge.call('GuestAuthService/StartBookingByCode', { code: value });
+      resetForm();
+    } catch (err) {
+      fail(err, 'Не удалось проверить код. Повторите попытку или обратитесь к администратору клуба.');
+    } finally {
+      busy = false;
+      submit.disabled = false;
+    }
+  };
+
   loginForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (busy) return;
+    if (bookingCode) {
+      await enterBookingCode();
+      return;
+    }
     const number = Z.normalizePhone(phone.value);
     if (!number) {
       setKey(error, 'Введите 10 цифр номера после +7.');
@@ -290,7 +347,9 @@
   // Гость вошёл (снимок покажет лаунчер) или ушёл: форма пустая, следующий гость начинает с входа.
   const resetForm = () => {
     registering = false;
+    bookingCode = false;
     recovery = 'none';
+    bookingInput.value = '';
     phone.value = '';
     name.value = '';
     code.value = '';

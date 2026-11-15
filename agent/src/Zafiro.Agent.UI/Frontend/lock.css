@@ -225,6 +225,10 @@
   text-transform: uppercase;
 }
 
+.lock-booking-code {
+  font-size: 22px;
+}
+
 .lock-phone,
 .lock-password {
   position: relative;

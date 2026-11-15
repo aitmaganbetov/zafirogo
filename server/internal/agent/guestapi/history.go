@@ -20,12 +20,14 @@ import (
 const historyPage = 30
 
 // Журнал гостя (app/Services/GuestHistory.php): свои события и события над аккаунтом (сотрудник, друг).
+// reservation.paid, reservation.refunded — оплата и возврат брони из приложения (GuestHistory, Zafiro a680bab);
+// списки — те же, что в legacy/guest.go (historyOwn, historyReceived, фильтр purchases).
 var (
-	historyOwnEvents      = []string{"tariff.purchased", "time.purchased", "shop.purchased", "time.refunded", "balance.transferred", "session.transferred", "auth.api_login", "auth.qr_login"}
-	historyReceivedEvents = []string{"user.balance_topped_up", "user.balance_refunded", "user.balance_written_off", "balance.transferred", "shop.order_cancelled", "time.refunded"} //nolint:misspell // код события старого журнала
+	historyOwnEvents      = []string{"tariff.purchased", "time.purchased", "shop.purchased", "time.refunded", "reservation.paid", "reservation.refunded", "balance.transferred", "session.transferred", "auth.api_login", "auth.qr_login"}
+	historyReceivedEvents = []string{"user.balance_topped_up", "user.balance_refunded", "user.balance_written_off", "balance.transferred", "shop.order_cancelled", "time.refunded", "reservation.refunded"} //nolint:misspell // код события старого журнала
 	// GuestHistory::FILTERS: [свои, полученные].
 	historyFilters = map[agentv1.HistoryFilter][2][]string{
-		agentv1.HistoryFilter_HISTORY_FILTER_PURCHASES: {{"tariff.purchased", "time.purchased", "shop.purchased", "time.refunded"}, {"shop.order_cancelled", "time.refunded"}}, //nolint:misspell // код события старого журнала
+		agentv1.HistoryFilter_HISTORY_FILTER_PURCHASES: {{"tariff.purchased", "time.purchased", "shop.purchased", "time.refunded", "reservation.paid", "reservation.refunded"}, {"shop.order_cancelled", "time.refunded", "reservation.refunded"}}, //nolint:misspell // код события старого журнала
 		agentv1.HistoryFilter_HISTORY_FILTER_TOP_UPS:   {{}, {"user.balance_topped_up", "user.balance_refunded", "user.balance_written_off"}},
 		agentv1.HistoryFilter_HISTORY_FILTER_TRANSFERS: {{"balance.transferred"}, {"balance.transferred"}},
 		agentv1.HistoryFilter_HISTORY_FILTER_VISITS:    {{"session.transferred", "auth.api_login", "auth.qr_login"}, {}},
@@ -225,6 +227,20 @@ func historyEntry(l historyRow, userID int64, tariffs, users map[int64]string) *
 		e.Title = "Поминутная оплата: " + strconv.FormatInt(int64Of(d["duration_minutes"]), 10) + " мин."
 		e.MainDeltaTiyn = -int64(firstAmount(d, "main_balance_amount", "amount"))
 		e.BonusDeltaTiyn = -int64(firstAmount(d, "bonus_balance_amount"))
+	case "reservation.paid":
+		// Laravel: app/Services/GuestHistory.php entry() — «Бронь ПК :computer», суммы оплаты со знаком минус.
+		// Время начала брони (note в старом REST) в HistoryEntry не передаётся — как примечания остальных событий.
+		name := str(d["computer"])
+		if name == "" {
+			name = "—"
+		}
+		e.Title = "Бронь ПК " + name
+		e.MainDeltaTiyn = -int64(firstAmount(d, "main_balance_amount"))
+		e.BonusDeltaTiyn = -int64(firstAmount(d, "bonus_balance_amount"))
+	case "reservation.refunded":
+		e.Title = "Возврат за отменённую бронь"
+		e.MainDeltaTiyn = int64(firstAmount(d, "main_balance_amount"))
+		e.BonusDeltaTiyn = int64(firstAmount(d, "bonus_balance_amount"))
 	case "shop.purchased":
 		e.Title = "Заказ в магазине клуба"
 		e.MainDeltaTiyn = -int64(amountOf(d["amount"]))

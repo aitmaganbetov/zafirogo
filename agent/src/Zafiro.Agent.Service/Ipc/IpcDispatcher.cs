@@ -66,6 +66,7 @@ public sealed class IpcDispatcher
         Map("GuestAuthService/RequestPasswordResetCode", RequestPasswordResetCodeRequest.Parser, (r, ct) => g.RequestPasswordResetCodeAsync(r, ct));
         Map("GuestAuthService/ResetPassword", ResetPasswordRequest.Parser, (r, ct) => g.ResetPasswordAsync(r, ct));
         Map("GuestAuthService/Logout", LogoutRequest.Parser, (r, ct) => g.LogoutAsync(r, ct));
+        Map("GuestAuthService/StartBookingByCode", StartBookingByCodeRequest.Parser, (r, ct) => g.StartBookingByCodeAsync(r, ct));
 
         Map("GuestService/GetProfile", GetProfileRequest.Parser, (r, ct) => g.GetProfileAsync(r, ct));
         Map("GuestService/UpdateName", UpdateNameRequest.Parser, (r, ct) => g.UpdateNameAsync(r, ct));

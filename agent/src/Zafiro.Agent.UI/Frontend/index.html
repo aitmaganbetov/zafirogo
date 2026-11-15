@@ -55,10 +55,17 @@
 			  <label class="lock-label" for="loginName" data-i18n="Имя">Имя</label>
 			  <input class="lock-input" id="loginName" maxlength="255" autocomplete="off" />
 			</div>
-			<label class="lock-label" for="loginPhone" data-i18n="Телефон">Телефон</label>
-			<div class="lock-phone">
-			  <span class="lock-phone-prefix">+7</span>
-			  <input class="lock-input" id="loginPhone" maxlength="16" inputmode="tel" autocomplete="off" placeholder="700 123-45-67" />
+			<!-- Код брони из мобильного приложения: вместо телефона и пароля. -->
+			<div id="loginBookingPanel" hidden>
+			  <label class="lock-label" for="loginBookingCode" data-i18n="Код брони">Код брони</label>
+			  <input class="lock-input lock-booking-code" id="loginBookingCode" maxlength="6" inputmode="numeric" autocomplete="off" />
+			</div>
+			<div id="loginPhonePanel">
+			  <label class="lock-label" for="loginPhone" data-i18n="Телефон">Телефон</label>
+			  <div class="lock-phone">
+				<span class="lock-phone-prefix">+7</span>
+				<input class="lock-input" id="loginPhone" maxlength="16" inputmode="tel" autocomplete="off" placeholder="700 123-45-67" />
+			  </div>
 			</div>
 			<div id="loginCodePanel" hidden>
 			  <label class="lock-label" for="loginCode" data-i18n="Код из Telegram">Код из Telegram</label>
@@ -88,6 +95,7 @@
 			<button class="lock-submit" id="loginSubmit" type="submit" data-i18n="Войти">Войти</button>
 			<button class="lock-link" id="loginRegisterToggle" type="button" data-i18n="Нет аккаунта? Зарегистрироваться">Нет аккаунта? Зарегистрироваться</button>
 			<button class="lock-link" id="loginForgotToggle" type="button" data-i18n="Забыли пароль?">Забыли пароль?</button>
+			<button class="lock-link" id="loginBookingToggle" type="button" data-i18n="Есть код брони?">Есть код брони?</button>
 		  </form>
 
 		  <!-- Вход с телефона: только если клуб включил QR-код в настройках «Гости». -->

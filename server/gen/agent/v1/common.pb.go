@@ -160,6 +160,18 @@ const (
 	// Старый аналог: ComputerReservations::blocking() в AgentTariffPurchaseService (~строка 276),
 	// SeatTransfers, GuestSessions. Метаданные ErrorInfo: "reserved_from" (RFC 3339).
 	ErrorCode_ERROR_CODE_COMPUTER_RESERVED ErrorCode = 91
+	// Код брони не найден среди ожидающих незакончившихся броней клуба (NOT_FOUND).
+	// Старый аналог: 422 code «Код брони не найден или бронь уже закончилась.» (ComputerReservations::startByCode()).
+	ErrorCode_ERROR_CODE_BOOKING_CODE_NOT_FOUND ErrorCode = 92
+	// Код брони — от брони другого ПК этого клуба (FAILED_PRECONDITION).
+	// Старый аналог: 422 code «Этот код брони не для этого ПК: сядьте за забронированный ПК.»
+	ErrorCode_ERROR_CODE_BOOKING_CODE_OTHER_COMPUTER ErrorCode = 93
+	// Бронь ещё нельзя начинать: до её начала больше интервала клуба (FAILED_PRECONDITION).
+	// Старый аналог: 422 code «Бронь начнётся в :time. Код заработает за :count мин до начала.»
+	ErrorCode_ERROR_CODE_BOOKING_NOT_STARTED ErrorCode = 94
+	// На ПК уже идёт оплаченная сессия (FAILED_PRECONDITION).
+	// Старый аналог: 422 code «На этом ПК уже идёт сессия.»
+	ErrorCode_ERROR_CODE_COMPUTER_BUSY ErrorCode = 95
 	// Команда пришла после expires_at — не выполнена.
 	ErrorCode_ERROR_CODE_COMMAND_EXPIRED ErrorCode = 100
 	// Агент не умеет эту команду (старая версия агента).
@@ -216,6 +228,10 @@ var (
 		89:  "ERROR_CODE_TRANSFER_LIMIT",
 		90:  "ERROR_CODE_USER_NOT_FOUND",
 		91:  "ERROR_CODE_COMPUTER_RESERVED",
+		92:  "ERROR_CODE_BOOKING_CODE_NOT_FOUND",
+		93:  "ERROR_CODE_BOOKING_CODE_OTHER_COMPUTER",
+		94:  "ERROR_CODE_BOOKING_NOT_STARTED",
+		95:  "ERROR_CODE_COMPUTER_BUSY",
 		100: "ERROR_CODE_COMMAND_EXPIRED",
 		101: "ERROR_CODE_COMMAND_UNSUPPORTED",
 		102: "ERROR_CODE_COMMAND_REJECTED",
@@ -265,6 +281,10 @@ var (
 		"ERROR_CODE_TRANSFER_LIMIT":               89,
 		"ERROR_CODE_USER_NOT_FOUND":               90,
 		"ERROR_CODE_COMPUTER_RESERVED":            91,
+		"ERROR_CODE_BOOKING_CODE_NOT_FOUND":       92,
+		"ERROR_CODE_BOOKING_CODE_OTHER_COMPUTER":  93,
+		"ERROR_CODE_BOOKING_NOT_STARTED":          94,
+		"ERROR_CODE_COMPUTER_BUSY":                95,
 		"ERROR_CODE_COMMAND_EXPIRED":              100,
 		"ERROR_CODE_COMMAND_UNSUPPORTED":          101,
 		"ERROR_CODE_COMMAND_REJECTED":             102,
@@ -837,7 +857,7 @@ const file_agent_v1_common_proto_rawDesc = "" +
 	"computerId\x12\x16\n" +
 	"\x06number\x18\x02 \x01(\tR\x06number\x12!\n" +
 	"\fdisplay_name\x18\x03 \x01(\tR\vdisplayName\x12\x1b\n" +
-	"\tzone_name\x18\x04 \x01(\tR\bzoneName*\xf2\f\n" +
+	"\tzone_name\x18\x04 \x01(\tR\bzoneName*\x87\x0e\n" +
 	"\tErrorCode\x12\x1a\n" +
 	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13ERROR_CODE_INTERNAL\x10\x01\x12+\n" +
@@ -881,7 +901,11 @@ const file_agent_v1_common_proto_rawDesc = "" +
 	"\x1fERROR_CODE_FRIENDSHIP_NOT_FOUND\x10X\x12\x1d\n" +
 	"\x19ERROR_CODE_TRANSFER_LIMIT\x10Y\x12\x1d\n" +
 	"\x19ERROR_CODE_USER_NOT_FOUND\x10Z\x12 \n" +
-	"\x1cERROR_CODE_COMPUTER_RESERVED\x10[\x12\x1e\n" +
+	"\x1cERROR_CODE_COMPUTER_RESERVED\x10[\x12%\n" +
+	"!ERROR_CODE_BOOKING_CODE_NOT_FOUND\x10\\\x12*\n" +
+	"&ERROR_CODE_BOOKING_CODE_OTHER_COMPUTER\x10]\x12\"\n" +
+	"\x1eERROR_CODE_BOOKING_NOT_STARTED\x10^\x12\x1c\n" +
+	"\x18ERROR_CODE_COMPUTER_BUSY\x10_\x12\x1e\n" +
 	"\x1aERROR_CODE_COMMAND_EXPIRED\x10d\x12\"\n" +
 	"\x1eERROR_CODE_COMMAND_UNSUPPORTED\x10e\x12\x1f\n" +
 	"\x1bERROR_CODE_COMMAND_REJECTED\x10f\x12)\n" +

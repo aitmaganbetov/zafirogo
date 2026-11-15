@@ -35,6 +35,7 @@ public static class IpcMethods
         new("GuestAuthService/RequestPasswordResetCode", RequestPasswordResetCodeRequest.Descriptor, RequestPasswordResetCodeResponse.Descriptor),
         new("GuestAuthService/ResetPassword", ResetPasswordRequest.Descriptor, ResetPasswordResponse.Descriptor),
         new("GuestAuthService/Logout", LogoutRequest.Descriptor, LogoutResponse.Descriptor),
+        new("GuestAuthService/StartBookingByCode", StartBookingByCodeRequest.Descriptor, StartBookingByCodeResponse.Descriptor),
 
         new("GuestService/GetProfile", GetProfileRequest.Descriptor, GetProfileResponse.Descriptor),
         new("GuestService/UpdateName", UpdateNameRequest.Descriptor, UpdateNameResponse.Descriptor),

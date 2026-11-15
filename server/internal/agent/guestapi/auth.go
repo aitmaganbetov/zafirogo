@@ -208,6 +208,8 @@ func (s *Server) signIn(ctx context.Context, id identity.Identity, userID int64,
 		return nil, s.fail(ctx, "signIn", err)
 	}
 	s.abSignedIn(ctx, id, userID)
+	// Оплаченная бронь гостя на этом ПК начинается сразу (UQ-11) — сессия попадёт в ответ входа.
+	s.startBookingOnSignIn(ctx, id, userID)
 	out := &agentv1.GuestSignIn{Token: &agentv1.GuestToken{AccessToken: token, ExpiresAt: timestamppb.New(exp)}}
 	err = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
 		if err := s.record(ctx, q, activity.Entry{ClubID: id.ClubID, Event: event, Description: description,
@@ -436,6 +438,8 @@ func (a *authService) Register(ctx context.Context, req *agentv1.RegisterRequest
 		return nil, s.fail(ctx, "Register", err)
 	}
 	s.abSignedIn(ctx, id, userID)
+	// Оплаченная бронь гостя на этом ПК начинается сразу (UQ-11) — сессия попадёт в ответ входа.
+	s.startBookingOnSignIn(ctx, id, userID)
 	out := &agentv1.GuestSignIn{Token: &agentv1.GuestToken{AccessToken: token, ExpiresAt: timestamppb.New(exp)}}
 	err = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
 		var err error
