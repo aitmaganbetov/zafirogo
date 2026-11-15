@@ -22,7 +22,8 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 )
 
-// Kind — вид операции (ledger_transactions.kind, CHECK в 0002_ledger.sql и 0014_stage1_decisions.sql).
+// Kind — вид операции (ledger_transactions.kind, CHECK в 0002_ledger.sql, 0014_stage1_decisions.sql и
+// 0037_app_bookings.sql).
 type Kind string
 
 // Виды операций.
@@ -51,6 +52,13 @@ const (
 	// cash_drawer по журналу (деньги, внесённые или изъятые между сменами), счёт opening_balance.
 	// Решение CSQ-1 (docs/DECISIONS.md), миграция 0014.
 	KindCashShiftOpening Kind = "cash_shift_opening"
+	// KindReservationPayment — оплата брони из гостевого приложения с балансов гостя: одна операция на группу ПК,
+	// забронированных вместе (BR-176, docs/upstream-2026-11.md §3.5); Refs.ReservationID — первая бронь группы.
+	// Миграция 0037.
+	KindReservationPayment Kind = "reservation_payment"
+	// KindReservationRefund — полный возврат отменённой брони на те балансы, с которых платили, на каждый ПК
+	// (BR-179); Refs.ReservationID — отменённая бронь, Refs.ReversesTransactionID — её оплата. Миграция 0037.
+	KindReservationRefund Kind = "reservation_refund"
 )
 
 var validKinds = map[Kind]bool{
@@ -59,7 +67,7 @@ var validKinds = map[Kind]bool{
 	KindPackageStart: true, KindSessionRefund: true, KindPackageKept: true, KindPackageExpired: true,
 	KindShopOrder: true, KindShopOrderCancel: true, KindPOSSale: true, KindPOSRefund: true,
 	KindCashIncome: true, KindCashExpense: true, KindGuestSession: true, KindMigrationOpeningBalance: true,
-	KindCashShiftOpening: true,
+	KindCashShiftOpening: true, KindReservationPayment: true, KindReservationRefund: true,
 }
 
 // Valid сообщает, что вид операции известен схеме.
@@ -151,6 +159,7 @@ type Refs struct {
 	CashTransactionID     int64
 	SessionID             string
 	ShopOrderID           int64
+	ReservationID         int64 // computer_reservations.id (0037): оплата и возврат брони из приложения
 	ReversesTransactionID int64
 }
 

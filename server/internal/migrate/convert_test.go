@@ -129,6 +129,40 @@ func TestPlanColumns(t *testing.T) {
 	}
 }
 
+// Проценты реселлера: decimal(5,2) → integer базисные пункты под другим именем (0034, 0035); × 100 — точно, строкой.
+func TestPlanColumnsBasisPoints(t *testing.T) {
+	tbl := table{Name: "resellers", Rename: resellerRename}
+	my := []mysqlColumn{{Name: "id", DataType: "bigint", Type: "bigint unsigned"},
+		{Name: "commission_percent", DataType: "decimal", Type: "decimal(5,2)"},
+		{Name: "discount_percent", DataType: "tinyint", Type: "tinyint unsigned"}}
+	pg := []pgColumn{{Name: "id", Type: "bigint"}, {Name: "commission_bp", Type: "integer"}, {Name: "discount_percent", Type: "smallint"}}
+	cols, unmapped, err := planColumns(tbl, my, pg)
+	if err != nil || len(unmapped) != 0 || len(cols) != 3 {
+		t.Fatalf("cols %v, unmapped %v, err %v", cols, unmapped, err)
+	}
+	bp := cols[1]
+	if bp.Name != "commission_bp" || bp.Kind != kindBP || bp.Index != 1 || cols[2].Kind != kindText {
+		t.Fatalf("commission: %+v; discount: %s", bp, cols[2].Kind)
+	}
+	for in, want := range map[string]string{"12.35": "1235", "0.00": "0", "100.00": "10000", "7.5": "750", "0.01": "1"} {
+		got, err := bp.convert(&in, time.UTC)
+		if err != nil || got == nil || *got != want {
+			t.Errorf("%s %%: %v, %v; want %s", in, got, err, want)
+		}
+	}
+	bad := "12.345"
+	if _, err := bp.convert(&bad, time.UTC); err == nil {
+		t.Error("12.345 % (три знака) должно быть ошибкой, а не округлением")
+	}
+	// Без Rename колонка MySQL остаётся без пары — блокер, а не молчаливый пропуск.
+	if _, unmapped, _ := planColumns(table{Name: "resellers"}, my, pg); len(unmapped) != 1 || unmapped[0] != "commission_percent" {
+		t.Errorf("unmapped = %v", unmapped)
+	}
+	if _, _, err := planColumns(tbl, []mysqlColumn{{Name: "commission_percent", DataType: "decimal", Type: "decimal(6,3)"}}, pg); err == nil {
+		t.Error("decimal(6,3) → integer должен быть ошибкой")
+	}
+}
+
 func TestParseCheckIn(t *testing.T) {
 	def := "CHECK (((status)::text = ANY ((ARRAY['open'::character varying, 'closed'::character varying, 'it''s'::character varying])::text[])))"
 	col, values, ok := parseCheckIn(def)
@@ -163,8 +197,18 @@ func TestUsersWhere(t *testing.T) {
 	o := &Options{}
 	o.normalize()
 	where, args := usersWhere(coreTables(), o)
-	if !strings.HasPrefix(where, "id IN (SELECT user_id FROM club_memberships WHERE (club_id = ?)") {
+	if !strings.HasPrefix(where, "id IN (SELECT ") {
 		t.Fatalf("where = %s", where)
+	}
+	// Участники клуба, аккаунт реселлера клуба (0034), авторы счетов и суперадмин, отметивший оплату (0035).
+	for _, part := range []string{
+		"SELECT user_id FROM club_memberships WHERE (club_id = ?) AND user_id IS NOT NULL",
+		"SELECT user_id FROM resellers WHERE (id IN (SELECT reseller_id FROM clubs WHERE id = ?",
+		"SELECT confirmed_by FROM subscription_invoices WHERE (club_id = ?) AND confirmed_by IS NOT NULL",
+	} {
+		if !strings.Contains(where, part) {
+			t.Errorf("нет условия %q", part)
+		}
 	}
 	if strings.Count(where, "?") != len(args) {
 		t.Fatalf("плейсхолдеров %d, аргументов %d", strings.Count(where, "?"), len(args))

@@ -55,8 +55,15 @@ func platformTables() []table {
 	return []table{
 		// S5-M2-О4 → S5-M3-4: суперадмины без членства в клубах (иначе их перенёс бы только клуб, на который они
 		// ссылаются). Права — is_superadmin из MySQL; существующий аккаунт не перезаписывается (S5-M1-4).
-		{Name: "users", Platform: true, OrderBy: "id", Where: func(*Options) (string, []any) { return "is_superadmin = 1", nil }},
+		// Плюс аккаунты реселлеров (0034): реселлер может не состоять ни в одном клубе.
+		{Name: "users", Platform: true, OrderBy: "id", Where: func(*Options) (string, []any) {
+			return "is_superadmin = 1 OR id IN (SELECT user_id FROM resellers)", nil
+		}},
 		{Name: "saas_plans", Platform: true, OrderBy: "id", Where: all},
+		// Реселлеры и выплаты им (docs/upstream-2026-11.md тема Д): по id, существующие не трогаются; код реселлера,
+		// занятый другим id, — блокер. Проценты → базисные пункты, суммы выплат × 100. Счета клубов — с клубами (UQ-23).
+		{Name: "resellers", Platform: true, OrderBy: "id", Where: all, Rename: resellerRename},
+		{Name: "reseller_payouts", Platform: true, OrderBy: "id", Where: all},
 		{Name: "news", Platform: true, OrderBy: "id", Where: noClub},
 		{Name: "platform_logs", Platform: true, OrderBy: "id", Where: noClub},
 	}
@@ -663,6 +670,8 @@ func (p *platform) tables(ctx context.Context) error {
 			refs = []string{"created_by"}
 		case "platform_logs":
 			refs = []string{"user_id"}
+		case "reseller_payouts":
+			refs = []string{"created_by"}
 		}
 		if len(refs) > 0 {
 			t.Transform = func(row []*string, idx map[string]int, rowID string) (bool, error) {
@@ -691,6 +700,12 @@ func (p *platform) tables(ctx context.Context) error {
 		if err := p.r.copyTable(ctx, t); err != nil {
 			return err
 		}
+	}
+	switch p.mode {
+	case modeApply:
+		return p.logPayoutMoney(ctx)
+	case modeVerify:
+		return p.verifyResellers(ctx)
 	}
 	return nil
 }
@@ -727,7 +742,8 @@ func (p *platform) superadmins(ctx context.Context, t table) error {
 
 func (p *platform) knownPlatformUsers(ctx context.Context) (map[int64]bool, error) {
 	ids, err := p.r.mysqlIDs(ctx, "users", `id IN (SELECT created_by FROM news WHERE club_id IS NULL AND created_by IS NOT NULL
-		UNION SELECT user_id FROM platform_logs WHERE club_id IS NULL AND user_id IS NOT NULL)`, nil)
+		UNION SELECT user_id FROM platform_logs WHERE club_id IS NULL AND user_id IS NOT NULL
+		UNION SELECT created_by FROM reseller_payouts WHERE created_by IS NOT NULL)`, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -738,8 +754,8 @@ func (p *platform) knownPlatformUsers(ctx context.Context) (map[int64]bool, erro
 	if err != nil || p.mode != modePlan {
 		return known, err
 	}
-	// plan ничего не пишет: суперадмины, которых перенесёт apply, считаются известными.
-	super, err := p.r.mysqlIDs(ctx, "users", "is_superadmin = 1", nil)
+	// plan ничего не пишет: суперадмины и реселлеры, которых перенесёт apply, считаются известными.
+	super, err := p.r.mysqlIDs(ctx, "users", "is_superadmin = 1 OR id IN (SELECT user_id FROM resellers)", nil)
 	for _, id := range super {
 		known[id] = true
 	}

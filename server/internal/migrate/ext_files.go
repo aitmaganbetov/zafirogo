@@ -20,13 +20,16 @@ import (
 )
 
 // files — расширение M2 «файлы» (Q-085): логотип клуба и картинка экрана входа (clubs.logo_path,
-// signin_image_path → club_images), картинки новостей клуба (news.image_path → news_images). В старом коде — файлы
+// signin_image_path → club_images), картинки новостей клуба (news.image_path → news_images), фото клуба для
+// приложения (club_photos.path → club_photo_images, 0036, UQ-19). В старом коде — файлы
 // диска 'local' Laravel: config/filesystems.php root = storage_path('app/private') (ClubLogoController::update(),
-// ClubSignInImageController::update(), NewsManager::storeImage() — storeAs(…, 'local')). Пути в clubs/news
+// ClubSignInImageController::update(), NewsManager::storeImage(), ClubProfileController::storePhotos() —
+// storeAs(…, 'local')). Пути в clubs/news/club_photos
 // переносятся как есть (по ним сервер сверяет имя файла в URL).
 //
 // Проверки — как у сервера при загрузке (http/sections/settings/images.go readUpload(), 0018/0019): PNG или JPEG
-// (image.DecodeConfig), размер ≤ 1 МБ (логотип), 3 МБ (вход), 2 МБ (новость). Нет файла, не картинка, больше
+// (image.DecodeConfig), размер ≤ 1 МБ (логотип), 3 МБ (вход), 2 МБ (новость); фото клуба — PNG, JPEG или WebP
+// ≤ 3 МБ (WebP — по сигнатуре контейнера RIFF/WEBP: декодера WebP в стандартной библиотеке нет). Нет файла, не картинка, больше
 // лимита — предупреждение, картинка не переносится (старый сервер в таком случае тоже отдавал 404).
 type files struct{}
 
@@ -46,16 +49,20 @@ type imageFile struct {
 	Table, Column, RowID string // откуда путь (для отчёта)
 	Path                 string
 	Max                  int
-	// Ключ строки в Postgres: club_images (club, kind) или news_images (news id).
-	Kind   string
-	NewsID int64
-	ClubID *int64
+	// Ключ строки в Postgres: club_images (club, kind), news_images (news id) или club_photo_images (photo id).
+	Kind    string
+	NewsID  int64
+	PhotoID int64
+	ClubID  *int64
+	// WebP — допустим и WebP (фото клуба: mimes:jpg,jpeg,png,webp).
+	WebP bool
 }
 
 const (
 	maxLogoBytes   = 1024 * 1024 // ClubLogoController: max:1024
 	maxSigninBytes = 3072 * 1024 // ClubSignInImageController: max:3072
 	maxNewsBytes   = 2048 * 1024 // NewsManager: max:2048
+	maxPhotoBytes  = 3072 * 1024 // ClubProfileController::storePhotos(): max:3072
 )
 
 func (e files) run(ctx context.Context, env *Env, mode extMode) error {
@@ -80,6 +87,11 @@ func (e files) run(ctx context.Context, env *Env, mode extMode) error {
 		n.ClubID = &clubID
 		list = append(list, n)
 	}
+	photos, err := clubPhotos(ctx, env.Source, clubID)
+	if err != nil {
+		return err
+	}
+	list = append(list, photos...)
 	return transferImages(ctx, env.Report, env.Target, env.Options.LaravelStorage, list, mode)
 }
 
@@ -98,6 +110,26 @@ func newsImages(ctx context.Context, src querierMy, where string, args ...any) (
 			return nil, err
 		}
 		out = append(out, imageFile{Table: "news", Column: "image_path", RowID: strconv.FormatInt(id, 10), Path: p, Max: maxNewsBytes, NewsID: id})
+	}
+	return out, rows.Err()
+}
+
+// clubPhotos — фото клуба для приложения (club_photos; строки переносит ядро, здесь — файлы).
+func clubPhotos(ctx context.Context, src querierMy, clubID int64) ([]imageFile, error) {
+	rows, err := src.QueryContext(ctx, "SELECT id, path FROM club_photos WHERE club_id = ? ORDER BY id", clubID)
+	if err != nil {
+		return nil, fmt.Errorf("mysql: club photos: %w", err)
+	}
+	defer rows.Close()
+	var out []imageFile
+	for rows.Next() {
+		var id int64
+		var p string
+		if err := rows.Scan(&id, &p); err != nil {
+			return nil, err
+		}
+		out = append(out, imageFile{Table: "club_photos", Column: "path", RowID: strconv.FormatInt(id, 10), Path: p,
+			Max: maxPhotoBytes, PhotoID: id, ClubID: &clubID, WebP: true})
 	}
 	return out, rows.Err()
 }
@@ -121,7 +153,7 @@ func (e errImage) Error() string { return e.reason }
 
 // loadImage читает файл диска 'local' и проверяет его как сервер. Путь — только внутри корня (без «..» и
 // абсолютных путей: значение из базы — недоверенное).
-func loadImage(root, rel string, maxBytes int) (loadedImage, error) {
+func loadImage(root, rel string, maxBytes int, webp bool) (loadedImage, error) {
 	clean := path.Clean("/" + strings.ReplaceAll(rel, `\`, "/"))
 	if clean != "/"+rel || strings.Contains(rel, "..") {
 		return loadedImage{}, errImage{"путь вне каталога storage — не переносится"}
@@ -153,8 +185,14 @@ func loadImage(root, rel string, maxBytes int) (loadedImage, error) {
 	if len(data) > maxBytes {
 		return loadedImage{}, errImage{fmt.Sprintf("файл больше %d КБ — картинка не перенесена", maxBytes/1024)}
 	}
+	if webp && isWebP(data) {
+		return loadedImage{Data: data, ContentType: "image/webp"}, nil
+	}
 	_, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil || (format != "png" && format != "jpeg") {
+		if webp {
+			return loadedImage{}, errImage{"файл не PNG/JPEG/WebP — картинка не перенесена"}
+		}
 		return loadedImage{}, errImage{"файл не PNG/JPEG — картинка не перенесена"}
 	}
 	ct := "image/jpeg"
@@ -162,6 +200,11 @@ func loadImage(root, rel string, maxBytes int) (loadedImage, error) {
 		ct = "image/png"
 	}
 	return loadedImage{Data: data, ContentType: ct}, nil
+}
+
+// isWebP — контейнер WebP: «RIFF» + размер + «WEBP» и блок VP8/VP8L/VP8X.
+func isWebP(data []byte) bool {
+	return len(data) >= 16 && string(data[0:4]) == "RIFF" && string(data[8:12]) == "WEBP" && string(data[12:15]) == "VP8"
 }
 
 // transferImages — запись (apply), проверка (plan) или сверка (verify) картинок.
@@ -176,7 +219,7 @@ func transferImages(ctx context.Context, rep *Report, pg PGQuerier, root string,
 	}
 	moved := 0
 	for _, f := range list {
-		img, err := loadImage(root, f.Path, f.Max)
+		img, err := loadImage(root, f.Path, f.Max, f.WebP)
 		var bad errImage
 		if errors.As(err, &bad) {
 			if mode != modeVerify {
@@ -190,10 +233,14 @@ func transferImages(ctx context.Context, rep *Report, pg PGQuerier, root string,
 			if err != nil {
 				continue
 			}
-			if f.Kind != "" {
+			switch {
+			case f.Kind != "":
 				_, err = pg.Exec(ctx, `INSERT INTO club_images (club_id, kind, content_type, data, created_at)
 					VALUES ($1, $2, $3, $4, now())`, *f.ClubID, f.Kind, img.ContentType, img.Data)
-			} else {
+			case f.PhotoID != 0:
+				_, err = pg.Exec(ctx, `INSERT INTO club_photo_images (photo_id, club_id, content_type, data, created_at)
+					VALUES ($1, $2, $3, $4, now())`, f.PhotoID, *f.ClubID, img.ContentType, img.Data)
+			default:
 				_, err = pg.Exec(ctx, `INSERT INTO news_images (news_id, club_id, content_type, data, created_at)
 					VALUES ($1, $2, $3, $4, now()) ON CONFLICT (news_id) DO NOTHING`, f.NewsID, f.ClubID, img.ContentType, img.Data)
 			}
@@ -204,9 +251,12 @@ func transferImages(ctx context.Context, rep *Report, pg PGQuerier, root string,
 		case modeVerify:
 			var got []byte
 			var qerr error
-			if f.Kind != "" {
+			switch {
+			case f.Kind != "":
 				qerr = pg.QueryRow(ctx, "SELECT data FROM club_images WHERE club_id = $1 AND kind = $2", *f.ClubID, f.Kind).Scan(&got)
-			} else {
+			case f.PhotoID != 0:
+				qerr = pg.QueryRow(ctx, "SELECT data FROM club_photo_images WHERE club_id = $1 AND photo_id = $2", *f.ClubID, f.PhotoID).Scan(&got)
+			default:
 				qerr = pg.QueryRow(ctx, "SELECT data FROM news_images WHERE news_id = $1", f.NewsID).Scan(&got)
 			}
 			found := qerr == nil
@@ -229,6 +279,6 @@ func transferImages(ctx context.Context, rep *Report, pg PGQuerier, root string,
 			}
 		}
 	}
-	rep.Totals["картинки (логотип, вход, новости)"] = fmt.Sprintf("%d из %d", moved, len(list))
+	rep.Totals["картинки (логотип, вход, новости, фото клуба)"] = fmt.Sprintf("%d из %d", moved, len(list))
 	return nil
 }

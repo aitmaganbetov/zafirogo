@@ -18,3 +18,9 @@ SELECT format('club=%s cash_transactions=%s products=%s', c.id,
               (SELECT count(*) FROM cash_transactions x WHERE x.club_id = c.id),
               (SELECT count(*) FROM products p WHERE p.club_id = c.id))
 FROM clubs c ORDER BY c.id;
+-- Деньги платформы (0034, 0035, 0038): журнал по видам, счета за подписку по статусам, выплаты реселлерам.
+SELECT format('platform_money kind=%s n=%s sum=%s', kind, count(*), sum(amount))
+FROM platform_money_log GROUP BY kind ORDER BY kind;
+SELECT format('invoices status=%s n=%s amount=%s earned=%s', status, count(*), sum(amount), COALESCE(sum(reseller_amount), 0))
+FROM subscription_invoices GROUP BY status ORDER BY status;
+SELECT format('reseller_payouts n=%s sum=%s', count(*), COALESCE(sum(amount), 0)) FROM reseller_payouts;

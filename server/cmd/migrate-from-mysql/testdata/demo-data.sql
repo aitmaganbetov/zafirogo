@@ -150,6 +150,11 @@ INSERT INTO `club_memberships` (`id`, `club_id`, `user_id`, `role`, `permissions
 /*!40000 ALTER TABLE `club_memberships` ENABLE KEYS */;
 UNLOCK TABLES;
 
+LOCK TABLES `club_photos` WRITE;
+/*!40000 ALTER TABLE `club_photos` DISABLE KEYS */;
+/*!40000 ALTER TABLE `club_photos` ENABLE KEYS */;
+UNLOCK TABLES;
+
 LOCK TABLES `club_request_metrics` WRITE;
 /*!40000 ALTER TABLE `club_request_metrics` DISABLE KEYS */;
 /*!40000 ALTER TABLE `club_request_metrics` ENABLE KEYS */;
@@ -165,8 +170,8 @@ UNLOCK TABLES;
 
 LOCK TABLES `club_subscriptions` WRITE;
 /*!40000 ALTER TABLE `club_subscriptions` DISABLE KEYS */;
-INSERT INTO `club_subscriptions` (`id`, `club_id`, `saas_plan_id`, `status`, `started_at`, `trial_ends_at`, `current_period_ends_at`, `canceled_at`, `provider`, `provider_reference`, `created_at`, `updated_at`) VALUES (2,1,1,'active','2026-09-01 05:00:00',NULL,'2026-11-01 05:00:00',NULL,NULL,NULL,'2026-09-01 05:00:00','2026-09-01 05:00:00');
-INSERT INTO `club_subscriptions` (`id`, `club_id`, `saas_plan_id`, `status`, `started_at`, `trial_ends_at`, `current_period_ends_at`, `canceled_at`, `provider`, `provider_reference`, `created_at`, `updated_at`) VALUES (3,2,1,'expired','2026-08-01 05:00:00',NULL,'2026-10-01 05:00:00',NULL,NULL,NULL,'2026-08-01 05:00:00','2026-08-01 05:00:00');
+INSERT INTO `club_subscriptions` (`id`, `club_id`, `saas_plan_id`, `status`, `started_at`, `trial_ends_at`, `current_period_ends_at`, `canceled_at`, `discount_percent`, `discount_until`, `discount_note`, `provider`, `provider_reference`, `created_at`, `updated_at`) VALUES (2,1,1,'active','2026-09-01 05:00:00',NULL,'2026-11-01 05:00:00',NULL,0,NULL,NULL,NULL,NULL,'2026-09-01 05:00:00','2026-09-01 05:00:00');
+INSERT INTO `club_subscriptions` (`id`, `club_id`, `saas_plan_id`, `status`, `started_at`, `trial_ends_at`, `current_period_ends_at`, `canceled_at`, `discount_percent`, `discount_until`, `discount_note`, `provider`, `provider_reference`, `created_at`, `updated_at`) VALUES (3,2,1,'expired','2026-08-01 05:00:00',NULL,'2026-10-01 05:00:00',NULL,0,NULL,NULL,NULL,NULL,'2026-08-01 05:00:00','2026-08-01 05:00:00');
 /*!40000 ALTER TABLE `club_subscriptions` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -185,27 +190,27 @@ UNLOCK TABLES;
 
 LOCK TABLES `club_zones` WRITE;
 /*!40000 ALTER TABLE `club_zones` DISABLE KEYS */;
-INSERT INTO `club_zones` (`id`, `name`, `description`, `capacity`, `price_per_hour`, `icon`, `theme`, `status`, `is_featured`, `sort_order`, `position_x`, `position_y`, `width`, `height`, `rotation`, `created_at`, `updated_at`, `club_id`) VALUES (1,'VIP-зал','Персональные игровые места',8,1000.00,'crown','green','available',1,10,20,20,390,380,0,'2026-10-15 07:00:00','2026-10-15 07:00:00',1);
-INSERT INTO `club_zones` (`id`, `name`, `description`, `capacity`, `price_per_hour`, `icon`, `theme`, `status`, `is_featured`, `sort_order`, `position_x`, `position_y`, `width`, `height`, `rotation`, `created_at`, `updated_at`, `club_id`) VALUES (2,'Основной зал','Компьютерная зона',20,600.00,'desktop','neutral','available',0,20,425,20,330,180,0,'2026-10-15 07:00:00','2026-10-15 07:00:00',1);
-INSERT INTO `club_zones` (`id`, `name`, `description`, `capacity`, `price_per_hour`, `icon`, `theme`, `status`, `is_featured`, `sort_order`, `position_x`, `position_y`, `width`, `height`, `rotation`, `created_at`, `updated_at`, `club_id`) VALUES (3,'Консоли','PlayStation-зона',10,NULL,'gamepad','neutral','available',0,30,770,20,300,180,0,'2026-10-15 07:00:00','2026-10-15 07:00:00',1);
-INSERT INTO `club_zones` (`id`, `name`, `description`, `capacity`, `price_per_hour`, `icon`, `theme`, `status`, `is_featured`, `sort_order`, `position_x`, `position_y`, `width`, `height`, `rotation`, `created_at`, `updated_at`, `club_id`) VALUES (4,'Бар','Касса и напитки',NULL,NULL,'mug-hot','yellow','service',0,40,425,215,330,185,0,'2026-10-15 07:00:00','2026-10-15 07:00:00',1);
-INSERT INTO `club_zones` (`id`, `name`, `description`, `capacity`, `price_per_hour`, `icon`, `theme`, `status`, `is_featured`, `sort_order`, `position_x`, `position_y`, `width`, `height`, `rotation`, `created_at`, `updated_at`, `club_id`) VALUES (5,'Лаунж','Ожидание и отдых',NULL,NULL,'couch','purple','available',0,50,770,215,300,185,0,'2026-10-15 07:00:00','2026-10-15 07:00:00',1);
+INSERT INTO `club_zones` (`id`, `name`, `description`, `capacity`, `price_per_hour`, `icon`, `theme`, `status`, `is_featured`, `sort_order`, `position_x`, `position_y`, `width`, `height`, `rotation`, `created_at`, `updated_at`, `club_id`, `devices`) VALUES (1,'VIP-зал','Персональные игровые места',8,1000.00,'crown','green','available',1,10,20,20,390,380,0,'2026-10-15 07:00:00','2026-10-15 07:00:00',1,NULL);
+INSERT INTO `club_zones` (`id`, `name`, `description`, `capacity`, `price_per_hour`, `icon`, `theme`, `status`, `is_featured`, `sort_order`, `position_x`, `position_y`, `width`, `height`, `rotation`, `created_at`, `updated_at`, `club_id`, `devices`) VALUES (2,'Основной зал','Компьютерная зона',20,600.00,'desktop','neutral','available',0,20,425,20,330,180,0,'2026-10-15 07:00:00','2026-10-15 07:00:00',1,NULL);
+INSERT INTO `club_zones` (`id`, `name`, `description`, `capacity`, `price_per_hour`, `icon`, `theme`, `status`, `is_featured`, `sort_order`, `position_x`, `position_y`, `width`, `height`, `rotation`, `created_at`, `updated_at`, `club_id`, `devices`) VALUES (3,'Консоли','PlayStation-зона',10,NULL,'gamepad','neutral','available',0,30,770,20,300,180,0,'2026-10-15 07:00:00','2026-10-15 07:00:00',1,NULL);
+INSERT INTO `club_zones` (`id`, `name`, `description`, `capacity`, `price_per_hour`, `icon`, `theme`, `status`, `is_featured`, `sort_order`, `position_x`, `position_y`, `width`, `height`, `rotation`, `created_at`, `updated_at`, `club_id`, `devices`) VALUES (4,'Бар','Касса и напитки',NULL,NULL,'mug-hot','yellow','service',0,40,425,215,330,185,0,'2026-10-15 07:00:00','2026-10-15 07:00:00',1,NULL);
+INSERT INTO `club_zones` (`id`, `name`, `description`, `capacity`, `price_per_hour`, `icon`, `theme`, `status`, `is_featured`, `sort_order`, `position_x`, `position_y`, `width`, `height`, `rotation`, `created_at`, `updated_at`, `club_id`, `devices`) VALUES (5,'Лаунж','Ожидание и отдых',NULL,NULL,'couch','purple','available',0,50,770,215,300,185,0,'2026-10-15 07:00:00','2026-10-15 07:00:00',1,NULL);
 /*!40000 ALTER TABLE `club_zones` ENABLE KEYS */;
 UNLOCK TABLES;
 
 LOCK TABLES `clubs` WRITE;
 /*!40000 ALTER TABLE `clubs` DISABLE KEYS */;
-INSERT INTO `clubs` (`id`, `name`, `slug`, `settings`, `created_at`, `updated_at`, `installation_key_hash`, `installation_key_prefix`, `installation_key`, `locale`, `timezone`, `agent_exit_pin_hash`, `agent_exit_pin_changed_at`, `agent_staff_minutes`, `logo_path`, `signin_image_path`) VALUES (1,'Zafiro Arena','zafiro-arena',NULL,'2026-09-01 05:00:00','2026-09-01 05:00:00',NULL,NULL,NULL,'ru','Asia/Almaty',NULL,NULL,15,NULL,NULL);
-INSERT INTO `clubs` (`id`, `name`, `slug`, `settings`, `created_at`, `updated_at`, `installation_key_hash`, `installation_key_prefix`, `installation_key`, `locale`, `timezone`, `agent_exit_pin_hash`, `agent_exit_pin_changed_at`, `agent_staff_minutes`, `logo_path`, `signin_image_path`) VALUES (2,'Zafiro Lite','zafiro-lite',NULL,'2026-08-01 05:00:00','2026-08-01 05:00:00',NULL,NULL,NULL,'ru','Asia/Almaty',NULL,NULL,15,NULL,NULL);
+INSERT INTO `clubs` (`id`, `name`, `slug`, `settings`, `created_at`, `updated_at`, `installation_key_hash`, `installation_key_prefix`, `installation_key`, `locale`, `timezone`, `agent_exit_pin_hash`, `agent_exit_pin_changed_at`, `agent_staff_minutes`, `logo_path`, `signin_image_path`, `city`, `address`, `reseller_id`, `reseller_attached_at`, `profile`) VALUES (1,'Zafiro Arena','zafiro-arena',NULL,'2026-09-01 05:00:00','2026-09-01 05:00:00',NULL,NULL,NULL,'ru','Asia/Almaty',NULL,NULL,15,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `clubs` (`id`, `name`, `slug`, `settings`, `created_at`, `updated_at`, `installation_key_hash`, `installation_key_prefix`, `installation_key`, `locale`, `timezone`, `agent_exit_pin_hash`, `agent_exit_pin_changed_at`, `agent_staff_minutes`, `logo_path`, `signin_image_path`, `city`, `address`, `reseller_id`, `reseller_attached_at`, `profile`) VALUES (2,'Zafiro Lite','zafiro-lite',NULL,'2026-08-01 05:00:00','2026-08-01 05:00:00',NULL,NULL,NULL,'ru','Asia/Almaty',NULL,NULL,15,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 /*!40000 ALTER TABLE `clubs` ENABLE KEYS */;
 UNLOCK TABLES;
 
 LOCK TABLES `computer_reservations` WRITE;
 /*!40000 ALTER TABLE `computer_reservations` DISABLE KEYS */;
-INSERT INTO `computer_reservations` (`id`, `club_id`, `club_computer_id`, `user_id`, `customer_name`, `customer_phone`, `note`, `starts_at`, `ends_at`, `arrived_at`, `cancelled_at`, `created_by`, `created_at`, `updated_at`) VALUES (1,1,9,10,NULL,NULL,'Придёт с другом','2026-10-15 06:30:00','2026-10-15 08:00:00',NULL,NULL,3,'2026-10-14 14:00:00','2026-10-14 14:00:00');
-INSERT INTO `computer_reservations` (`id`, `club_id`, `club_computer_id`, `user_id`, `customer_name`, `customer_phone`, `note`, `starts_at`, `ends_at`, `arrived_at`, `cancelled_at`, `created_by`, `created_at`, `updated_at`) VALUES (2,1,2,NULL,'Команда Alpha','+77015550011','Турнир по CS2','2026-10-15 13:00:00','2026-10-15 16:00:00',NULL,NULL,3,'2026-10-15 04:30:00','2026-10-15 04:30:00');
-INSERT INTO `computer_reservations` (`id`, `club_id`, `club_computer_id`, `user_id`, `customer_name`, `customer_phone`, `note`, `starts_at`, `ends_at`, `arrived_at`, `cancelled_at`, `created_by`, `created_at`, `updated_at`) VALUES (3,1,11,12,NULL,NULL,NULL,'2026-10-14 10:00:00','2026-10-14 11:00:00','2026-10-14 10:05:00',NULL,4,'2026-10-14 05:00:00','2026-10-14 05:00:00');
-INSERT INTO `computer_reservations` (`id`, `club_id`, `club_computer_id`, `user_id`, `customer_name`, `customer_phone`, `note`, `starts_at`, `ends_at`, `arrived_at`, `cancelled_at`, `created_by`, `created_at`, `updated_at`) VALUES (4,1,12,11,NULL,NULL,NULL,'2026-10-15 11:00:00','2026-10-15 12:00:00',NULL,'2026-10-15 05:20:00',4,'2026-10-15 03:50:00','2026-10-15 03:50:00');
+INSERT INTO `computer_reservations` (`id`, `club_id`, `club_computer_id`, `user_id`, `customer_name`, `customer_phone`, `note`, `from_app`, `paid_main_cents`, `paid_bonus_cents`, `tariff_id`, `code`, `starts_at`, `ends_at`, `arrived_at`, `cancelled_at`, `created_by`, `created_at`, `updated_at`) VALUES (1,1,9,10,NULL,NULL,'Придёт с другом',0,0,0,NULL,NULL,'2026-10-15 06:30:00','2026-10-15 08:00:00',NULL,NULL,3,'2026-10-14 14:00:00','2026-10-14 14:00:00');
+INSERT INTO `computer_reservations` (`id`, `club_id`, `club_computer_id`, `user_id`, `customer_name`, `customer_phone`, `note`, `from_app`, `paid_main_cents`, `paid_bonus_cents`, `tariff_id`, `code`, `starts_at`, `ends_at`, `arrived_at`, `cancelled_at`, `created_by`, `created_at`, `updated_at`) VALUES (2,1,2,NULL,'Команда Alpha','+77015550011','Турнир по CS2',0,0,0,NULL,NULL,'2026-10-15 13:00:00','2026-10-15 16:00:00',NULL,NULL,3,'2026-10-15 04:30:00','2026-10-15 04:30:00');
+INSERT INTO `computer_reservations` (`id`, `club_id`, `club_computer_id`, `user_id`, `customer_name`, `customer_phone`, `note`, `from_app`, `paid_main_cents`, `paid_bonus_cents`, `tariff_id`, `code`, `starts_at`, `ends_at`, `arrived_at`, `cancelled_at`, `created_by`, `created_at`, `updated_at`) VALUES (3,1,11,12,NULL,NULL,NULL,0,0,0,NULL,NULL,'2026-10-14 10:00:00','2026-10-14 11:00:00','2026-10-14 10:05:00',NULL,4,'2026-10-14 05:00:00','2026-10-14 05:00:00');
+INSERT INTO `computer_reservations` (`id`, `club_id`, `club_computer_id`, `user_id`, `customer_name`, `customer_phone`, `note`, `from_app`, `paid_main_cents`, `paid_bonus_cents`, `tariff_id`, `code`, `starts_at`, `ends_at`, `arrived_at`, `cancelled_at`, `created_by`, `created_at`, `updated_at`) VALUES (4,1,12,11,NULL,NULL,NULL,0,0,0,NULL,NULL,'2026-10-15 11:00:00','2026-10-15 12:00:00',NULL,'2026-10-15 05:20:00',4,'2026-10-15 03:50:00','2026-10-15 03:50:00');
 /*!40000 ALTER TABLE `computer_reservations` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -216,9 +221,9 @@ UNLOCK TABLES;
 
 LOCK TABLES `languages` WRITE;
 /*!40000 ALTER TABLE `languages` DISABLE KEYS */;
-INSERT INTO `languages` (`id`, `code`, `name`, `is_enabled`, `is_system`, `sort_order`, `created_at`, `updated_at`) VALUES (1,'ru','Русский',1,1,1,'2026-11-02 17:02:43','2026-11-02 17:02:43');
-INSERT INTO `languages` (`id`, `code`, `name`, `is_enabled`, `is_system`, `sort_order`, `created_at`, `updated_at`) VALUES (2,'kk','Қазақша',1,1,2,'2026-11-02 17:02:43','2026-11-02 17:02:43');
-INSERT INTO `languages` (`id`, `code`, `name`, `is_enabled`, `is_system`, `sort_order`, `created_at`, `updated_at`) VALUES (3,'en','English',1,1,3,'2026-11-02 17:02:43','2026-11-02 17:02:43');
+INSERT INTO `languages` (`id`, `code`, `name`, `is_enabled`, `is_system`, `sort_order`, `created_at`, `updated_at`) VALUES (1,'ru','Русский',1,1,1,'2026-11-15 17:17:56','2026-11-15 17:17:56');
+INSERT INTO `languages` (`id`, `code`, `name`, `is_enabled`, `is_system`, `sort_order`, `created_at`, `updated_at`) VALUES (2,'kk','Қазақша',1,1,2,'2026-11-15 17:17:56','2026-11-15 17:17:56');
+INSERT INTO `languages` (`id`, `code`, `name`, `is_enabled`, `is_system`, `sort_order`, `created_at`, `updated_at`) VALUES (3,'en','English',1,1,3,'2026-11-15 17:17:56','2026-11-15 17:17:56');
 /*!40000 ALTER TABLE `languages` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -299,6 +304,16 @@ LOCK TABLES `request_metrics` WRITE;
 /*!40000 ALTER TABLE `request_metrics` ENABLE KEYS */;
 UNLOCK TABLES;
 
+LOCK TABLES `reseller_payouts` WRITE;
+/*!40000 ALTER TABLE `reseller_payouts` DISABLE KEYS */;
+/*!40000 ALTER TABLE `reseller_payouts` ENABLE KEYS */;
+UNLOCK TABLES;
+
+LOCK TABLES `resellers` WRITE;
+/*!40000 ALTER TABLE `resellers` DISABLE KEYS */;
+/*!40000 ALTER TABLE `resellers` ENABLE KEYS */;
+UNLOCK TABLES;
+
 LOCK TABLES `saas_plans` WRITE;
 /*!40000 ALTER TABLE `saas_plans` DISABLE KEYS */;
 INSERT INTO `saas_plans` (`id`, `slug`, `name`, `price_monthly`, `trial_days`, `features`, `is_active`, `created_at`, `updated_at`) VALUES (1,'pro','Профессиональный',25000.00,0,NULL,1,'2026-10-15 07:00:00','2026-10-15 07:00:00');
@@ -337,6 +352,11 @@ INSERT INTO `stock_movements` (`id`, `product_id`, `user_id`, `type`, `quantity`
 INSERT INTO `stock_movements` (`id`, `product_id`, `user_id`, `type`, `quantity`, `balance_after`, `note`, `created_at`, `updated_at`, `club_id`) VALUES (10,7,4,'write_off',2,10,'Продажа POS','2026-10-15 06:45:00','2026-10-15 06:45:00',1);
 INSERT INTO `stock_movements` (`id`, `product_id`, `user_id`, `type`, `quantity`, `balance_after`, `note`, `created_at`, `updated_at`, `club_id`) VALUES (11,5,4,'write_off',1,3,'Продажа POS','2026-10-15 06:45:00','2026-10-15 06:45:00',1);
 /*!40000 ALTER TABLE `stock_movements` ENABLE KEYS */;
+UNLOCK TABLES;
+
+LOCK TABLES `subscription_invoices` WRITE;
+/*!40000 ALTER TABLE `subscription_invoices` DISABLE KEYS */;
+/*!40000 ALTER TABLE `subscription_invoices` ENABLE KEYS */;
 UNLOCK TABLES;
 
 LOCK TABLES `tariffs` WRITE;

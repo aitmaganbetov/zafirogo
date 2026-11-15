@@ -39,10 +39,11 @@ const (
 	kindTime                // datetime/timestamp (строка в SourceTZ) → timestamptz
 	kindJSON                // json → jsonb (формат v1 как есть; v2 — M2)
 	kindNumeric             // decimal (не деньги) → numeric как есть
+	kindBP                  // decimal(5,2) проценты → integer базисные пункты (× 100 точно, строкой)
 )
 
 func (k kind) String() string {
-	return [...]string{"текст", "тиыны ×100", "boolean", "timestamptz", "jsonb", "numeric"}[k]
+	return [...]string{"текст", "тиыны ×100", "boolean", "timestamptz", "jsonb", "numeric", "базисные пункты ×100"}[k]
 }
 
 // column — пара колонок и способ преобразования.
@@ -66,7 +67,11 @@ func planColumns(t table, my []mysqlColumn, pg []pgColumn) ([]column, []string, 
 	var cols []column
 	var unmapped []string
 	for i, m := range my {
-		p, ok := pgByName[m.Name]
+		name := m.Name
+		if renamed, ok := t.Rename[m.Name]; ok {
+			name = renamed
+		}
+		p, ok := pgByName[name]
 		if _, omitted := t.Omit[m.Name]; omitted {
 			continue
 		}
@@ -74,7 +79,7 @@ func planColumns(t table, my []mysqlColumn, pg []pgColumn) ([]column, []string, 
 			unmapped = append(unmapped, m.Name)
 			continue
 		}
-		c := column{Name: m.Name, My: m, PG: p, Index: i, Cast: p.Type}
+		c := column{Name: name, My: m, PG: p, Index: i, Cast: p.Type}
 		switch {
 		case p.Type == "boolean":
 			c.Kind = kindBool
@@ -89,6 +94,12 @@ func planColumns(t table, my []mysqlColumn, pg []pgColumn) ([]column, []string, 
 				return nil, nil, fmt.Errorf("%s.%s: денежная колонка %s, ожидался масштаб 2", t.Name, m.Name, m.Type)
 			}
 			c.Kind = kindTiyn
+		case m.DataType == "decimal" && p.Type == "integer":
+			// Проценты: decimal(5,2) → базисные пункты (resellers.commission_bp, subscription_invoices.reseller_bp).
+			if !strings.HasSuffix(strings.TrimSuffix(m.Type, " unsigned"), ",2)") {
+				return nil, nil, fmt.Errorf("%s.%s: проценты %s, ожидался масштаб 2", t.Name, m.Name, m.Type)
+			}
+			c.Kind = kindBP
 		case m.DataType == "decimal":
 			c.Kind = kindNumeric
 		case p.Type == "jsonb":
@@ -115,7 +126,8 @@ func (c *column) convert(v *string, loc *time.Location) (*string, error) {
 	}
 	s := *v
 	switch c.Kind {
-	case kindTiyn:
+	case kindTiyn, kindBP:
+		// Базисные пункты — то же точное «× 100 через строку», что и тиыны: 12.35 % → 1235.
 		t, err := tiynFromDecimal(s)
 		if err != nil {
 			return nil, err

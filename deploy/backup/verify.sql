@@ -127,6 +127,34 @@ SELECT 7, 'RLS: роли zafiro_app/zafiro_platform без BYPASSRLS',
        AND NOT EXISTS (SELECT 1 FROM bad),
        COALESCE('обходят RLS: ' || (SELECT string_agg(rolname, ', ') FROM bad), 'ок');
 
+-- 8. Деньги платформы (0038, UQ-6): у каждого оплаченного счёта за подписку и у каждой выплаты реселлеру есть
+--    запись журнала platform_money_log на ту же сумму (ключи invoice_paid:<id>, reseller_payout:<id>), а у счёта с
+--    реселлером и начислением — запись reseller_accrual:<id>. Журнал — только добавление, документы меняются.
+INSERT INTO drill_checks
+WITH missing AS (
+    SELECT 'счёт ' || i.id AS what
+    FROM subscription_invoices i
+    WHERE i.status = 'paid'
+      AND NOT EXISTS (SELECT 1 FROM platform_money_log l
+                      WHERE l.idempotency_key = 'invoice_paid:' || i.id AND l.kind = 'invoice_paid' AND l.amount = i.amount)
+    UNION ALL
+    SELECT 'начисление по счёту ' || i.id
+    FROM subscription_invoices i
+    WHERE i.status = 'paid' AND i.reseller_id IS NOT NULL AND i.reseller_amount IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM platform_money_log l
+                      WHERE l.idempotency_key = 'reseller_accrual:' || i.id AND l.kind = 'reseller_accrual'
+                        AND l.amount = i.reseller_amount)
+    UNION ALL
+    SELECT 'выплата ' || o.id
+    FROM reseller_payouts o
+    WHERE NOT EXISTS (SELECT 1 FROM platform_money_log l
+                      WHERE l.idempotency_key = 'reseller_payout:' || o.id AND l.kind = 'reseller_payout' AND l.amount = o.amount)
+)
+SELECT 8, 'деньги платформы: документы = журнал', count(*) = 0,
+       CASE WHEN count(*) = 0 THEN format('записей журнала: %s', (SELECT count(*) FROM platform_money_log))
+            ELSE format('без записи журнала: %s (%s)', count(*), (SELECT string_agg(what, ', ') FROM (SELECT what FROM missing LIMIT 10) m)) END
+FROM missing;
+
 -- Итог по деньгам — для отчёта учений (сверка с исходной базой на тот же момент).
 SELECT club_id AS "клуб", count(*) AS "клиентов", sum(balance) AS "Σ баланс, тиын",
        sum(bonus_balance) AS "Σ бонусы, тиын"

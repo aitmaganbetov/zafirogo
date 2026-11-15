@@ -36,6 +36,9 @@ type table struct {
 	Transform func(row []*string, idx map[string]int, rowID string) (bool, error)
 	// Const — колонки Postgres без пары в MySQL с постоянным значением (текст, приводится к типу колонки).
 	Const map[string]string
+	// Rename — колонки, имя которых в Postgres другое (имя в MySQL → имя в Postgres): проценты decimal(5,2),
+	// ставшие базисными пунктами (0034, 0035).
+	Rename map[string]string
 }
 
 // tableHandler — расширение, которое переносит таблицы из skippedTables (их нет в списке «не переносится»).
@@ -51,11 +54,22 @@ func coreTables() []table {
 	return []table{
 		{Name: "saas_plans", Platform: true, OrderBy: "id", PGWhere: "id = ANY({ids})",
 			Where: func(*Options) (string, []any) {
-				return "id IN (SELECT saas_plan_id FROM club_subscriptions WHERE club_id = ?)", []any{clubArg}
+				// Тариф подписки и тарифы счетов клуба (subscription_invoices.saas_plan_id, 0035).
+				return `id IN (SELECT saas_plan_id FROM club_subscriptions WHERE club_id = ?
+					UNION SELECT saas_plan_id FROM subscription_invoices WHERE club_id = ?)`, []any{clubArg, clubArg}
 			}},
 		// users — аккаунты участников клуба и все, на кого ссылаются строки клуба (общий аккаунт может быть в
 		// нескольких клубах: не дублируется, сливается по id — см. applyUsers). Условие строится из UserRefs.
 		{Name: "users", Platform: true, OrderBy: "id", PGWhere: "id = ANY({ids})"},
+		// Реселлер клуба и реселлеры его счетов (платформенная таблица, 0034): обычно уже перенесены платформенным
+		// шагом; строка с тем же id не трогается, тот же код у другого id — блокер. Аккаунт реселлера — UserRefs.
+		{Name: "resellers", Platform: true, OrderBy: "id", PGWhere: "id = ANY({ids})", UserRefs: []string{"user_id"},
+			Rename: resellerRename,
+			Where: func(*Options) (string, []any) {
+				return `id IN (SELECT reseller_id FROM clubs WHERE id = ? AND reseller_id IS NOT NULL
+					UNION SELECT reseller_id FROM subscription_invoices WHERE club_id = ? AND reseller_id IS NOT NULL)`,
+					[]any{clubArg, clubArg}
+			}},
 		// Q-050: ключ установки клуба (зашифрован APP_KEY) не переносится — выпускается заново.
 		{Name: "clubs", Platform: true, OrderBy: "id", PGWhere: "id = {club}",
 			Where: func(*Options) (string, []any) { return "id = ?", []any{clubArg} },
@@ -67,6 +81,10 @@ func coreTables() []table {
 			// 0027: перенесённый клуб не открыт до go-live (до него его можно удалить и перенести заново, S5-M3-1).
 			Const: map[string]string{"migration_state": StateImported}},
 		{Name: "club_subscriptions", Where: clubScope, OrderBy: "id"},
+		// Счета за подписку — с клубом (UQ-23): id сохраняется, номер «ZF-…» не меняется; суммы × 100, процент
+		// реселлера — в базисные пункты. Неоплаченный счёт переносится как есть (оплату отмечают там, где клуб сейчас).
+		{Name: "subscription_invoices", Where: clubScope, OrderBy: "id", UserRefs: []string{"created_by", "confirmed_by"},
+			Rename: map[string]string{"reseller_percent": "reseller_bp"}},
 		{Name: "club_memberships", Where: clubScope, OrderBy: "id", UserRefs: []string{"user_id"}},
 		// Балансы — не копированием поля: строка с нулями, остаток — проводкой migration_opening_balance (Q-004).
 		{Name: "member_balances", Where: clubScope, OrderBy: "id", UserRefs: []string{"user_id"},
@@ -85,6 +103,8 @@ func coreTables() []table {
 		{Name: "cash_transactions", Where: clubScope, OrderBy: "id", UserRefs: []string{"user_id"}},
 		{Name: "club_services", Where: clubScope, OrderBy: "id"},
 		{Name: "club_zones", Where: clubScope, OrderBy: "id"},
+		// Фото клуба: строки (путь, порядок) — здесь, файлы — расширение Files (club_photo_images, UQ-19).
+		{Name: "club_photos", Where: clubScope, OrderBy: "id"},
 		{Name: "club_computers", Where: clubScope, OrderBy: "id", UserRefs: []string{"current_session_user_id", "staff_user_id"}},
 		{Name: "tariffs", Where: clubScope, OrderBy: "id"},
 		{Name: "club_zone_tariff", Where: clubScope, OrderBy: "club_zone_id, tariff_id", NoID: true},
@@ -115,6 +135,9 @@ func coreTables() []table {
 			}},
 	}
 }
+
+// resellerRename — resellers.commission_percent decimal(5,2) → commission_bp (базисные пункты, 0034).
+var resellerRename = map[string]string{"commission_percent": "commission_bp"}
 
 // skippedTables — тенантные/платформенные таблицы старой схемы, которые ядро (M1) не переносит, с причиной.
 // Расширения (M2) берут часть из них на себя (см. Extension).

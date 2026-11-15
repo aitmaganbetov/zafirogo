@@ -11,6 +11,10 @@
 `telegram/alerts.go`, `sections/auth/register.go`, `sections/superadmin/plans.go` (пункты А2, А3, А4, А7 и снятие
 проверки подписки с гостевых маршрутов) — перед работой сверить с `git log`.
 
+> **Ш0 (схема) выполнен 15.11.2026** — миграции `0034`…`0038`, перенос данных, переводы. Фактические имена таблиц,
+> колонок и видов операций, права пулов и то, что оставлено исполнителям тем, — в **§9** (там, где они отличаются от
+> предложенных в §2–§3, верен §9). Полное описание схемы — `docs/schema-changes.md` §17.
+
 ## 0. Как читать
 
 - Темы: **А** исправления в уже перенесённом · **Б** счета за подписку, скидки, цена за ПК · **В** каталог и профиль
@@ -169,7 +173,7 @@
 | | `price_per_computer` | `decimal(12,2)` | `bigint` тиыны (×100) | снимок цены тарифа |
 | | `discount_percent` | `unsignedTinyInteger` | `smallint` | снимок скидки |
 | | `amount` | `decimal(12,2)` | `bigint` тиыны (×100) | всегда целые тенге (BR-180) |
-| | `reseller_id`, `reseller_percent decimal(5,2)`, `reseller_amount decimal(12,2)` | (миграция реселлеров) | FK `ON DELETE SET NULL`; `integer` базисные пункты (×100); `bigint` тиыны | тема Д |
+| | `reseller_id`, `reseller_percent decimal(5,2)`, `reseller_amount decimal(12,2)` | (миграция реселлеров) | FK `ON DELETE SET NULL`; `integer` базисные пункты (×100) — **в Postgres колонка `reseller_bp`**; `bigint` тиыны | тема Д |
 | | `status` | `string(16)` default `pending` | `text CHECK IN ('pending','paid','canceled')` | + **частичный уникальный индекс `(club_id) WHERE status = 'pending'`** (GAP-046) |
 | | `created_by`, `confirmed_by` | FK users nullOnDelete | то же | |
 | | `paid_at`, `period_ends_at` | timestamp null | `timestamptz` | |
@@ -408,8 +412,8 @@ Middleware `RestrictResellerHost` (в группе `web`, `bootstrap/app.php:61`
 
 | Таблица | Колонка | Тип MySQL | В Postgres |
 |---|---|---|---|
-| `resellers` (новая, платформенная — без `club_id`) | `id`; `user_id` FK unique cascade; `code string(32)` unique; `name string(120)`; `commission_percent decimal(5,2)` default 0; `discount_percent unsignedTinyInteger` default 0; `is_active` bool default true; timestamps | | `code` — `citext`/уникальность по `lower()` (Q-025); `commission_percent` → `integer` базисные пункты (0…10000); `discount_percent smallint` |
-| `reseller_payouts` (новая, платформенная) | `id`; `reseller_id` FK cascade; `amount decimal(12,2)`; `note string(255)` null; `created_by` FK nullOnDelete; timestamps; индекс `(reseller_id, created_at)` | | `amount bigint` тиыны (×100) |
+| `resellers` (новая, платформенная — без `club_id`) | `id`; `user_id` FK unique cascade; `code string(32)` unique; `name string(120)`; `commission_percent decimal(5,2)` default 0; `discount_percent unsignedTinyInteger` default 0; `is_active` bool default true; timestamps | | `code` — CHECK «строчные латинские, цифры, дефис» + обычный UNIQUE (Q-025); `commission_percent` → **`commission_bp`** `integer` базисные пункты (0…10000); `discount_percent smallint` |
+| `reseller_payouts` (новая, платформенная) | `id`; `reseller_id` FK cascade; `amount decimal(12,2)`; `note string(255)` null; `created_by` FK nullOnDelete; timestamps; индекс `(reseller_id, created_at)` | | `amount bigint` тиыны (×100), `> 0`; + `idempotency_key` (ключ формы суперадмина, §3.6) |
 | `clubs` | `reseller_id` FK nullOnDelete; `reseller_attached_at` timestamp null | | то же |
 | `subscription_invoices` | `reseller_id`, `reseller_percent`, `reseller_amount`, индекс `(reseller_id, status, paid_at)` | | см. тему Б |
 
@@ -1249,7 +1253,7 @@ bonus = "0.00")` — гость и токен приложения `mobile`.
 
 | Шаг | Что | Зависит от | Параллельно с | Зона файлов (чтобы исполнители не пересекались) |
 |---|---|---|---|---|
-| Ш0 | Миграции (все таблицы и колонки тем Б–Д одной серией), виды ledger в `CHECK`, `docs/schema-changes.md` | — | ничем (первым, один исполнитель) | `db/migrations/**`, `server/internal/ledger/types.go` |
+| Ш0 ✅ | **Выполнен (§9).** Миграции `0034`…`0038` (все таблицы и колонки тем Б–Д), виды ledger в `CHECK` и `Refs.ReservationID`, журнал денег платформы, перенос данных, переводы, `docs/schema-changes.md` §17 | — | ничем (первым, один исполнитель) | `db/migrations/**`, `server/internal/ledger/{types,post}.go`, `db/queries/ledger.sql`, `server/internal/migrate/**` |
 | П1 | А2: `EndOf`, обрезка покупки/пакета/гостевой сессии, остаток в пакет; BR-170…173, GS-529…533, GAP-047, 048 | Ш0 не нужен | П2, П3, П7, П8 | `server/internal/billing/pricing/**`, `billing/service/{purchase,guest,packages}.go`, `db/queries/purchases.sql` |
 | П2 | Б: скидка, счета, Kaspi, право `billing.pay`, Telegram о счёте; BR-180…184, GS-536, 537, 552…559 | Ш0 | П1, П3, П7, П8 | `http/sections/billing/**`, `sections/superadmin/{clubs,invoices}.go`, `db/queries/{billing,superadmin}.sql`, `api/{billing,superadmin}.yaml`, `web/src/features/{billing,superadmin}/**`, `auth/permissions/**` |
 | П3 | В: город/адрес, профиль, фото, оборудование зон, каталог, вступление, подписка только сотрудникам, А4; GS-534, 566…571 | Ш0 | П1, П2, П7 | `http/sections/settings/**`, `api/settings.yaml`, `db/queries/{settings,mobile_api}.sql`, новый `catalog.sql`, `http/legacy/{routes,auth}.go` + новый `catalog.go`, `web/src/features/settings/**` |
@@ -1275,3 +1279,92 @@ bonus = "0.00")` — гость и токен приложения `mobile`.
 
 Сначала тесты сценариев из §4 и GAP из §5 своей темы (деньги — табличные, ID сценария в имени подтеста), затем код;
 `task gen`, `task test`, `task lint`; для экранов — визуальное сравнение со старым `a680bab`.
+
+---
+
+## 9. Ш0 выполнен: фактическая схема (15.11.2026)
+
+Исполнителям тем миграции писать не нужно. Запросы — в своих новых файлах `db/queries/<тема>.sql`; после них
+`task gen`. Подробно (типы, CHECK, индексы, права) — `docs/schema-changes.md` §17.
+
+### 9.1. Миграции
+
+| Миграция | Таблицы и колонки |
+|---|---|
+| `0034_resellers.sql` | `resellers`, `reseller_payouts`; `clubs.reseller_id`, `clubs.reseller_attached_at`; триггер `clubs_reseller_guard` |
+| `0035_subscription_invoices.sql` | `club_subscriptions.discount_percent / discount_until / discount_note`; `subscription_invoices` |
+| `0036_club_profile.sql` | `clubs.city / address / profile`; `club_zones.devices` (+ `description` до 500 символов); `club_photos`, `club_photo_images` |
+| `0037_app_bookings.sql` | `computer_reservations.from_app / paid_main_cents / paid_bonus_cents / tariff_id / code`; виды ledger; `ledger_transactions.reservation_id` |
+| `0038_platform_money_log.sql` | `platform_money_log` |
+
+### 9.2. Что называется иначе, чем предложено в §2–§3
+
+| Предложено | Фактически | Почему |
+|---|---|---|
+| `resellers.commission_percent` (базисные пункты) | **`resellers.commission_bp`** `integer` 0…10000 | рядом `discount_percent` в целых процентах; «percent» со значением 1235 читался бы как ошибка |
+| `subscription_invoices.reseller_percent` (базисные пункты) | **`subscription_invoices.reseller_bp`** | то же |
+| фото «как логотип» (`0019`) | строка — `club_photos` (`path`, `sort_order`), байты — **`club_photo_images`** (`photo_id`, `club_id`, `content_type`, `data`) | как `news` / `news_images`: строки переносит ядро переноса, файлы — расширение Files; допустим и `image/webp` |
+| «журнал платформы (только добавление) с суммами» (UQ-6) | **`platform_money_log`**: `kind` ∈ `invoice_paid`, `reseller_accrual`, `reseller_payout`; ключи `invoice_paid:<id счёта>`, `reseller_accrual:<id счёта>`, `reseller_payout:<id выплаты>`; `amount ≥ 0` в тиынах | отдельная таблица, а не `platform_logs`: суммы — колонкой `bigint`, уникальный ключ идемпотентности, запрет UPDATE/DELETE триггером |
+| `Refs.ReservationID` | есть: `ledger.Refs.ReservationID` → `ledger_transactions.reservation_id` (без FK, частичный индекс `(club_id, reservation_id)`) | — |
+| индекс `clubs (city)` | `clubs (city, name) WHERE city IS NOT NULL` | каталог — «клубы города по имени» |
+| `club_photos.sort_order` | `integer` со знаком | обложка = `min − 1` |
+| — | `reseller_payouts.idempotency_key` (частичный UNIQUE) | двойной клик «Записать выплату» (§3.6) |
+
+Без изменений против §2: имена `paid_main_cents` / `paid_bonus_cents` (тиыны, без × 100), `from_app`, `tariff_id`,
+`code`, `city`, `address`, `profile`, `devices`, `discount_*`, `months`, `computers`, `price_per_computer`, `amount`,
+`reseller_amount`, `status`, `created_by`, `confirmed_by`, `paid_at`, `period_ends_at`. Виды ledger —
+`reservation_payment`, `reservation_refund` (`ledger.KindReservationPayment`, `ledger.KindReservationRefund`), как
+предложено в §3.5.
+
+### 9.3. Ограничения схемы, о которые упрётся код (это правила, а не помехи)
+
+| Где | Ограничение | Правило |
+|---|---|---|
+| `subscription_invoices` | частичный UNIQUE `(club_id) WHERE status = 'pending'` | BR-184, GAP-046: второй неоплаченный счёт — ошибка `23505` → текст «у клуба уже есть неоплаченный счёт» |
+| | CHECK `amount % 100 = 0` | BR-180: сумма счёта — целые тенге |
+| | CHECK `paid_at` заполнен ⇔ `status = 'paid'`; `reseller_amount` — только у оплаченного | BR-183, BR-186 |
+| | CHECK `months IN (1, 3, 6, 12)`, `computers >= 1` | `SubscriptionInvoice::MONTHS`, BR-180 |
+| `resellers.code` | CHECK `^[a-z0-9][a-z0-9-]{2,31}$` | приводить к нижнему регистру до записи (`Reseller::normalizeCode()`) |
+| `reseller_payouts.amount` | CHECK `> 0` | BR-188 (0.01…); лишние знаки — отклонять (UQ-7) |
+| `computer_reservations` | CHECK: оплата, тариф и код — только при `from_app`; `code` — 6 цифр; `paid_*_cents >= 0` | BR-176; отрицательная основная часть (GAP-041) должна быть исправлена в расчёте (UQ-8), схема её не примет |
+| `clubs.profile`, `club_zones.devices` | CHECK «объект JSON»; пустое — NULL | как в старом (`$profile ?: null`) |
+| `platform_money_log` | UPDATE/DELETE запрещены; CHECK обязательных ссылок по виду | UQ-6 |
+
+### 9.4. Какой пул что пишет (RLS и права)
+
+- **Пул клуба** (`zafiro_app`, транзакция клуба): выставить счёт (`status = 'pending'`; колонки оплаты ему не даны) и
+  отменить свой неоплаченный (`UPDATE … SET status = 'canceled'`); город, адрес, профиль клуба; фото; оборудование
+  зон; брони. Читает реселлера **своего** клуба (все колонки — для карточки настроек и снимка скидки и процента в
+  счёте); других реселлеров, выплаты и журнал денег платформы не видит.
+- **Пул платформы** (`zafiro_platform`): отметить счёт оплаченным (в той же транзакции — строки `invoice_paid` и
+  `reseller_accrual` в `platform_money_log`), скидка клуба, реселлеры, выплаты (+ строка `reseller_payout`), кабинет
+  реселлера, каталог клубов и публичная отдача фото, **привязка и отвязка клуба от реселлера** (`clubs.reseller_id`
+  пул клуба изменить не может — триггер, ошибка `42501`): `POST /settings/reseller` ищет код и привязывает клуб
+  пулом платформы (`UPDATE clubs SET reseller_id = …, reseller_attached_at = … WHERE id = $1 AND reseller_id IS NULL`).
+- Счёт не удаляет никто (только каскад с клубом); выплата не исправляется и не удаляется (каскад с реселлером).
+
+### 9.5. Перенос данных и переводы
+
+- `migrate-from-mysql`: реселлеры, их аккаунты и выплаты — `platform apply`; счета, скидка, город/адрес/профиль,
+  оборудование зон, фото (и файлы), брони из приложения, реселлер клуба — с клубом (UQ-23). По оплаченным счетам и
+  выплатам перенос пишет `platform_money_log` теми же ключами, что должен писать сервер. Описание и сверка —
+  `tools/migrate-from-mysql/README.md`; тест — `server/internal/migrate/upstream_integration_test.go`. Тестовая схема
+  MySQL (`server/cmd/migrate-from-mysql/testdata`) пересоздана по `a680bab`.
+- Переводы: 537 + 7 новых ключей на язык берутся из `database/translations/*.php` свежего старого проекта
+  (`import-translations`, платформенный шаг переноса; `TestEveryKeyTranslated` читает `../Zafiro`) — новые `t('…')`
+  экранов проходят проверку без правок сида. На уже наполненной базе (dev, staging) запустить `import-translations`
+  ещё раз (добавляет недостающее). 7 ключей «код брони» добавлены во встроенные переводы нового агента
+  (`agent/src/Zafiro.Agent.UI/Frontend/i18n/*.json`). В `db/seed/translations-new.*.json` 12 ключей теперь
+  дублируют старый проект (тексты совпадают) — можно убрать при следующей чистке сида.
+- `deploy/backup/verify.sql` — проверка 8 «деньги платформы: документы = журнал» (оплаченный счёт или выплата без
+  записи журнала — ошибка учений); `fingerprint.sql` — суммы журнала, счетов и выплат.
+
+### 9.6. Оставлено исполнителям тем
+
+| Тема | Что |
+|---|---|
+| П2 (Б) | запросы и обработчики счетов и скидки; расчёт BR-180…BR-184 в тиынах; запись `platform_money_log` при оплате; право `billing.pay`; Telegram; экраны |
+| П3 (В) | запросы настроек и каталога; проверка города по списку `Cities` (в схеме списка нет); загрузка фото (проверка PNG/JPEG/WebP и размеров 200…6000 px — декодера WebP в стандартной библиотеке нет), лимит 10 фото; вступление в клуб |
+| П4 (Г) | `BookFromApp`, `CancelBooking`, `StartBooking`, `StartBookingByCode`; операции `reservation_payment` / `reservation_refund`; уникальность кода среди броней клуба (GAP-058 — в схеме её нет); настройки `app_booking_*` |
+| П5 (Д) | суперадмин и кабинет реселлера; привязка по коду пулом платформы; выплата с `idempotency_key` и строкой журнала; хост реселлера |
+| все | подписи новых событий журнала (GAP-052), `docs/business-rules.md`, `docs/golden-scenarios.md` |

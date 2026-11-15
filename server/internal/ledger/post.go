@@ -137,6 +137,7 @@ func (p *Pending) Post(ctx context.Context, q *store.Queries, op Operation) (Res
 		CashTransactionID:     nonZero(op.Refs.CashTransactionID),
 		SessionID:             nonEmpty(op.Refs.SessionID),
 		ShopOrderID:           nonZero(op.Refs.ShopOrderID),
+		ReservationID:         nonZero(op.Refs.ReservationID),
 		ReversesTransactionID: nonZero(op.Refs.ReversesTransactionID),
 		Meta:                  meta,
 		CreatedAt:             p.createdAt,
@@ -242,7 +243,8 @@ func load(ctx context.Context, q *store.Queries, clubID, txID int64, createdAt t
 		TransactionID: t.ID, CreatedAt: t.CreatedAt, Kind: Kind(t.Kind), Meta: t.Meta,
 		Refs: Refs{
 			CashShiftID: deref(t.CashShiftID), CashTransactionID: deref(t.CashTransactionID),
-			ShopOrderID: deref(t.ShopOrderID), ReversesTransactionID: deref(t.ReversesTransactionID),
+			ShopOrderID: deref(t.ShopOrderID), ReservationID: deref(t.ReservationID),
+			ReversesTransactionID: deref(t.ReversesTransactionID),
 		},
 	}
 	if t.SessionID != nil {

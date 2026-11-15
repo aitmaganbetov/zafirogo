@@ -686,3 +686,45 @@ func TestKindsMatchSchemaCheck(t *testing.T) {
 		t.Fatal("cash_shift_opening is not valid")
 	}
 }
+
+// 0037 (docs/upstream-2026-11.md §3.5): виды операций брони из приложения приняты схемой, ссылка на бронь
+// (Refs.ReservationID → ledger_transactions.reservation_id) записывается и возвращается при повторе запроса.
+func TestPost_ReservationKindsAndRef(t *testing.T) {
+	d := testDB(t)
+	club := d.Club(t, "booking-kinds")
+	user := d.Customer(t, club, "Арман")
+	if _, err := post(t, d, credit(club, user, 100000, "top-up")); err != nil {
+		t.Fatal(err)
+	}
+	pay := ledger.Operation{
+		ClubID: club, Kind: ledger.KindReservationPayment, IdempotencyKey: "reservation_payment:501",
+		Entries: []ledger.Entry{{Account: ledger.Main(user), Amount: -60000}, {Account: ledger.ClubAccount(ledger.AccountRevenueTime), Amount: 60000}},
+		Refs:    ledger.Refs{ReservationID: 501},
+	}
+	paid, err := post(t, d, pay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refund := ledger.Operation{
+		ClubID: club, Kind: ledger.KindReservationRefund, IdempotencyKey: "reservation_refund:501",
+		Entries: []ledger.Entry{{Account: ledger.ClubAccount(ledger.AccountRevenueTime), Amount: -60000}, {Account: ledger.Main(user), Amount: 60000}},
+		Refs:    ledger.Refs{ReservationID: 501, ReversesTransactionID: paid.TransactionID},
+	}
+	if _, err := post(t, d, refund); err != nil {
+		t.Fatal(err)
+	}
+	again, err := post(t, d, refund)
+	if err != nil || !again.Replayed || again.Kind != ledger.KindReservationRefund || again.Refs.ReservationID != 501 ||
+		again.Refs.ReversesTransactionID != paid.TransactionID {
+		t.Fatalf("replay = %+v, %v", again, err)
+	}
+	var got string
+	if err := d.Owner.QueryRow(context.Background(), `SELECT string_agg(kind || ':' || reservation_id, ' ' ORDER BY id)
+		FROM ledger_transactions WHERE club_id = $1 AND reservation_id IS NOT NULL`, club).Scan(&got); err != nil ||
+		got != "reservation_payment:501 reservation_refund:501" {
+		t.Fatalf("ledger_transactions.reservation_id: %q, %v", got, err)
+	}
+	if main, _ := d.Balances(t, club, user); main != 100000 {
+		t.Fatalf("баланс после оплаты и возврата брони: %d", main)
+	}
+}

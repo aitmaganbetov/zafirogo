@@ -38,6 +38,7 @@ const (
 	CodeUserConflict      = "user"     // аккаунт в Postgres с тем же телефоном, но другим id и т. п.
 	CodeUserKept          = "user_kept"
 	CodePlanConflict      = "saas_plan"
+	CodeResellerConflict  = "reseller" // реселлер в Postgres с тем же id, но другим кодом, или код занят другим id
 	CodeAlreadyMigrated   = "migrated"
 	CodeSkippedTable      = "skipped"
 	CodeRetention         = "retention"

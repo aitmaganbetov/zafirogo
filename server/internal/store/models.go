@@ -303,6 +303,16 @@ type Club struct {
 	SigninImagePath       *string    `json:"signin_image_path"`
 	// imported — перенесён из MySQL и не открыт (можно удалить и перенести заново); live — работает (окончательно)
 	MigrationState string `json:"migration_state"`
+	// Реселлер клуба (код введён в настройках один раз; сменить — суперадмин). Меняет только пул платформы (clubs_reseller_guard)
+	ResellerID *int64 `json:"reseller_id"`
+	// Когда клуб привязан к реселлеру
+	ResellerAttachedAt *time.Time `json:"reseller_attached_at"`
+	// Город клуба — ключ списка городов (Laravel: App\Support\Cities, 2026_11_13_100000_add_city_and_address_to_clubs_table); NULL — клуба нет в каталоге приложения
+	City *string `json:"city"`
+	// Адрес клуба для каталога приложения
+	Address *string `json:"address"`
+	// Профиль клуба для приложения: {description ≤ 2000, phone ≤ 32, hours ≤ 100, instagram ≤ 64 без «@»}; пустой — NULL (Laravel: 2026_11_14_100000_create_club_profile)
+	Profile json.RawMessage `json:"profile"`
 }
 
 type ClubComputer struct {
@@ -404,6 +414,27 @@ type ClubMembership struct {
 	CanManageIntegrations bool       `json:"can_manage_integrations"`
 }
 
+// Фото клуба для гостевого приложения, до 10 на клуб (Laravel: 2026_11_14_100000_create_club_profile); первое по sort_order, id — обложка. Байты — club_photo_images
+type ClubPhoto struct {
+	ID     int64 `json:"id"`
+	ClubID int64 `json:"club_id"`
+	// club-photos/<клуб>/<40 символов>.png|jpg|webp — как путь файла в старом коде; имя файла — в публичном адресе фото
+	Path string `json:"path"`
+	// Порядок показа; обложка = min − 1, поэтому со знаком (Laravel: unsignedSmallInteger)
+	SortOrder int32      `json:"sort_order"`
+	CreatedAt *time.Time `json:"created_at"`
+	UpdatedAt *time.Time `json:"updated_at"`
+}
+
+// Байты фото клуба (PNG, JPEG или WebP ≤ 3 МБ); строка фото — club_photos (UQ-19)
+type ClubPhotoImage struct {
+	PhotoID     int64     `json:"photo_id"`
+	ClubID      int64     `json:"club_id"`
+	ContentType string    `json:"content_type"`
+	Data        []byte    `json:"data"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type ClubRequestMetric struct {
 	ID            int64 `json:"id"`
 	ClubID        int64 `json:"club_id"`
@@ -441,6 +472,12 @@ type ClubSubscription struct {
 	ProviderReference   *string    `json:"provider_reference"`
 	CreatedAt           *time.Time `json:"created_at"`
 	UpdatedAt           *time.Time `json:"updated_at"`
+	// Индивидуальная скидка клуба на подписку, целые проценты 0…100; ставит суперадмин (Laravel: 2026_11_07_100000_add_discount_to_club_subscriptions_table)
+	DiscountPercent int16 `json:"discount_percent"`
+	// Последний день действия скидки включительно; NULL — бессрочно (BR-181)
+	DiscountUntil *time.Time `json:"discount_until"`
+	// Причина скидки (видна суперадмину)
+	DiscountNote *string `json:"discount_note"`
 }
 
 type ClubZone struct {
@@ -463,6 +500,8 @@ type ClubZone struct {
 	CreatedAt    *time.Time `json:"created_at"`
 	UpdatedAt    *time.Time `json:"updated_at"`
 	ClubID       int64      `json:"club_id"`
+	// Оборудование зоны, заполненное клубом: ключи cpu, gpu, ram, monitor, keyboard, mouse, headset, chair, значения ≤ 120; пустое — NULL (Laravel: 2026_11_14_100000_create_club_profile)
+	Devices json.RawMessage `json:"devices"`
 }
 
 type ClubZoneTariff struct {
@@ -525,6 +564,16 @@ type ComputerReservation struct {
 	CreatedBy      *int64     `json:"created_by"`
 	CreatedAt      *time.Time `json:"created_at"`
 	UpdatedAt      *time.Time `json:"updated_at"`
+	// Бронь создана гостем в приложении и оплачена с его балансов (Laravel: 2026_11_15_100000_add_app_payment_to_computer_reservations)
+	FromApp bool `json:"from_app"`
+	// Оплачено с основного баланса за этот ПК, тиыны (в Laravel — тоже тиыны: paid_main_cents, без × 100)
+	PaidMainCents int64 `json:"paid_main_cents"`
+	// Оплачено с бонусного баланса за этот ПК, тиыны (доля бонусов группы, BR-176; в Laravel — тоже тиыны)
+	PaidBonusCents int64 `json:"paid_bonus_cents"`
+	// Бронь тарифом, а не по часам: время начнётся как этот тариф и входит в лимит его покупок (Laravel: 2026_11_16_100000_add_tariff_to_computer_reservations)
+	TariffID *int64 `json:"tariff_id"`
+	// Код брони, 6 цифр, один на ПК, забронированные вместе: ввод на экране входа ПК начинает оплаченное время без аккаунта (Laravel: 2026_11_17_100000_add_code_to_computer_reservations)
+	Code *string `json:"code"`
 }
 
 type Friendship struct {
@@ -633,6 +682,8 @@ type LedgerTransaction struct {
 	ReversesTransactionID *int64          `json:"reverses_transaction_id"`
 	Meta                  json.RawMessage `json:"meta"`
 	CreatedAt             time.Time       `json:"created_at"`
+	// computer_reservations.id: оплата брони — первая бронь группы ПК, возврат — отменённая бронь (без внешнего ключа)
+	ReservationID *int64 `json:"reservation_id"`
 }
 
 type MemberBalance struct {
@@ -722,6 +773,30 @@ type PlatformLog struct {
 	UpdatedAt   *time.Time      `json:"updated_at"`
 }
 
+// Журнал денег платформы (только добавление, UQ-6): оплаты счетов за подписку, начисления и выплаты реселлерам. Суммы — тиыны. Ссылки без внешних ключей: строки остаются после удаления клуба и реселлера
+type PlatformMoneyLog struct {
+	ID int64 `json:"id"`
+	// invoice_paid — клуб оплатил счёт; reseller_accrual — начислено реселлеру с оплаты; reseller_payout — выплачено реселлеру
+	Kind string `json:"kind"`
+	// invoice_paid:<id счёта>, reseller_accrual:<id счёта>, reseller_payout:<id выплаты>
+	IdempotencyKey string `json:"idempotency_key"`
+	// Сумма в тиынах, ≥ 0 (направление — по виду)
+	Amount int64 `json:"amount"`
+	// Клуб счёта (clubs.id); у выплаты — NULL
+	ClubID *int64 `json:"club_id"`
+	// subscription_invoices.id
+	InvoiceID *int64 `json:"invoice_id"`
+	// resellers.id (у invoice_paid — реселлер счёта, если был)
+	ResellerID *int64 `json:"reseller_id"`
+	// reseller_payouts.id
+	PayoutID *int64 `json:"payout_id"`
+	// Суперадмин, отметивший оплату или записавший выплату (users.id); NULL — перенос из MySQL
+	ActorUserID *int64 `json:"actor_user_id"`
+	// Снимок для чтения человеком: номер счёта, месяцы, процент в базисных пунктах, {"source": "mysql"} у перенесённых
+	Meta      json.RawMessage `json:"meta"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
 type PlatformSetting struct {
 	Key       string          `json:"key"`
 	Value     json.RawMessage `json:"value"`
@@ -760,6 +835,37 @@ type RequestMetric struct {
 	Requests   int64  `json:"requests"`
 	Errors     int64  `json:"errors"`
 	DurationMs int64  `json:"duration_ms"`
+}
+
+// Реселлер платформы: аккаунт, код для клубов, процент с оплат и скидка клубам (Laravel: 2026_11_18_100000_create_resellers)
+type Reseller struct {
+	ID     int64 `json:"id"`
+	UserID int64 `json:"user_id"`
+	// Код, который клуб вводит в настройках: строчные латинские буквы, цифры, дефис; 3…32 знака
+	Code string `json:"code"`
+	Name string `json:"name"`
+	// Процент реселлера с оплаты счёта в базисных пунктах: 1235 = 12,35 % (Laravel: commission_percent decimal(5,2) × 100)
+	CommissionBp int32 `json:"commission_bp"`
+	// Скидка клубам реселлера, целые проценты 0…100 (BR-181: берётся большая из скидок)
+	DiscountPercent int16 `json:"discount_percent"`
+	// Код действует: остановленный реселлер не даёт скидки и процента в новых счетах
+	IsActive  bool       `json:"is_active"`
+	CreatedAt *time.Time `json:"created_at"`
+	UpdatedAt *time.Time `json:"updated_at"`
+}
+
+// Выплата реселлеру, записанная суперадмином (Laravel: 2026_11_18_100000_create_resellers). Удаляется вместе с реселлером; сумма остаётся в platform_money_log
+type ResellerPayout struct {
+	ID         int64 `json:"id"`
+	ResellerID int64 `json:"reseller_id"`
+	// Сумма выплаты в тиынах (Laravel: decimal(12,2) тенге × 100)
+	Amount    int64   `json:"amount"`
+	Note      *string `json:"note"`
+	CreatedBy *int64  `json:"created_by"`
+	// Ключ идемпотентности формы суперадмина (нового сервера): повтор запроса не создаёт вторую выплату; NULL — перенесено из MySQL
+	IdempotencyKey *string    `json:"idempotency_key"`
+	CreatedAt      *time.Time `json:"created_at"`
+	UpdatedAt      *time.Time `json:"updated_at"`
 }
 
 type SaasPlan struct {
@@ -843,6 +949,39 @@ type StockMovement struct {
 	CreatedAt    *time.Time `json:"created_at"`
 	UpdatedAt    *time.Time `json:"updated_at"`
 	ClubID       int64      `json:"club_id"`
+}
+
+// Счёт клубу за N месяцев тарифа платформы на все ПК клуба: оплата Kaspi, подтверждает суперадмин (Laravel: 2026_11_08_100000_create_subscription_invoices_table). Номер — ZF- + id (5 знаков)
+type SubscriptionInvoice struct {
+	ID         int64 `json:"id"`
+	ClubID     int64 `json:"club_id"`
+	SaasPlanID int64 `json:"saas_plan_id"`
+	// Срок: 1, 3, 6 или 12 месяцев (SubscriptionInvoice::MONTHS)
+	Months int16 `json:"months"`
+	// Снимок числа ПК клуба при выставлении, не меньше 1 (BR-180)
+	Computers int32 `json:"computers"`
+	// Снимок цены тарифа за ПК в месяц, тиыны (Laravel: decimal(12,2) тенге × 100)
+	PricePerComputer int64 `json:"price_per_computer"`
+	// Снимок скидки: большая из скидки клуба и скидки реселлера, целые проценты (BR-181)
+	DiscountPercent int16 `json:"discount_percent"`
+	// К оплате, тиыны; всегда целые тенге — кратно 100 (BR-180; Laravel: decimal(12,2) × 100)
+	Amount int64 `json:"amount"`
+	// Реселлер клуба при выставлении счёта (если его код действовал); NULL после удаления реселлера
+	ResellerID *int64 `json:"reseller_id"`
+	// Снимок процента реселлера в базисных пунктах: 1235 = 12,35 % (Laravel: reseller_percent decimal(5,2) × 100)
+	ResellerBp *int32 `json:"reseller_bp"`
+	// Начисление реселлеру при оплате, тиыны (BR-186; Laravel: decimal(12,2) × 100); остаётся после удаления реселлера
+	ResellerAmount *int64 `json:"reseller_amount"`
+	// pending → paid (суперадмин увидел деньги) или canceled
+	Status    string `json:"status"`
+	CreatedBy *int64 `json:"created_by"`
+	// Суперадмин, отметивший оплату
+	ConfirmedBy *int64     `json:"confirmed_by"`
+	PaidAt      *time.Time `json:"paid_at"`
+	// До какого момента продлена подписка этой оплатой (BR-183)
+	PeriodEndsAt *time.Time `json:"period_ends_at"`
+	CreatedAt    *time.Time `json:"created_at"`
+	UpdatedAt    *time.Time `json:"updated_at"`
 }
 
 // Одноразовые коды восстановления суперадмина (sha256); только пул zafiro_platform

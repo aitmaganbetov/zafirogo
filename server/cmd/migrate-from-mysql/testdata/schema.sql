@@ -354,6 +354,20 @@ CREATE TABLE `club_memberships` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `club_photos` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `club_id` bigint unsigned NOT NULL,
+  `path` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `sort_order` smallint unsigned NOT NULL DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `club_photos_club_id_sort_order_index` (`club_id`,`sort_order`),
+  CONSTRAINT `club_photos_club_id_foreign` FOREIGN KEY (`club_id`) REFERENCES `clubs` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `club_request_metrics` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `club_id` bigint unsigned NOT NULL,
@@ -397,6 +411,9 @@ CREATE TABLE `club_subscriptions` (
   `trial_ends_at` timestamp NULL DEFAULT NULL,
   `current_period_ends_at` timestamp NULL DEFAULT NULL,
   `canceled_at` timestamp NULL DEFAULT NULL,
+  `discount_percent` tinyint unsigned NOT NULL DEFAULT '0',
+  `discount_until` date DEFAULT NULL,
+  `discount_note` varchar(200) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `provider` varchar(40) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `provider_reference` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT NULL,
@@ -446,6 +463,7 @@ CREATE TABLE `club_zones` (
   `created_at` timestamp NULL DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL,
   `club_id` bigint unsigned NOT NULL,
+  `devices` json DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `club_zones_club_id_id_unique` (`club_id`,`id`),
   KEY `club_zones_status_index` (`status`),
@@ -473,10 +491,18 @@ CREATE TABLE `clubs` (
   `agent_staff_minutes` smallint unsigned NOT NULL DEFAULT '15',
   `logo_path` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `signin_image_path` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `city` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `address` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `reseller_id` bigint unsigned DEFAULT NULL,
+  `reseller_attached_at` timestamp NULL DEFAULT NULL,
+  `profile` json DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `clubs_slug_unique` (`slug`),
   UNIQUE KEY `clubs_installation_key_hash_unique` (`installation_key_hash`),
-  KEY `clubs_installation_key_prefix_index` (`installation_key_prefix`)
+  KEY `clubs_installation_key_prefix_index` (`installation_key_prefix`),
+  KEY `clubs_city_index` (`city`),
+  KEY `clubs_reseller_id_foreign` (`reseller_id`),
+  CONSTRAINT `clubs_reseller_id_foreign` FOREIGN KEY (`reseller_id`) REFERENCES `resellers` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -489,6 +515,11 @@ CREATE TABLE `computer_reservations` (
   `customer_name` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `customer_phone` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `note` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `from_app` tinyint(1) NOT NULL DEFAULT '0',
+  `paid_main_cents` int unsigned NOT NULL DEFAULT '0',
+  `paid_bonus_cents` int unsigned NOT NULL DEFAULT '0',
+  `tariff_id` bigint unsigned DEFAULT NULL,
+  `code` varchar(8) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `starts_at` datetime NOT NULL,
   `ends_at` datetime NOT NULL,
   `arrived_at` datetime DEFAULT NULL,
@@ -502,9 +533,13 @@ CREATE TABLE `computer_reservations` (
   KEY `computer_reservations_club_id_starts_at_index` (`club_id`,`starts_at`),
   KEY `computer_reservations_club_computer_id_starts_at_index` (`club_computer_id`,`starts_at`),
   KEY `computer_reservations_club_computer_fk` (`club_id`,`club_computer_id`),
+  KEY `computer_reservations_club_id_user_id_starts_at_index` (`club_id`,`user_id`,`starts_at`),
+  KEY `computer_reservations_tariff_id_foreign` (`tariff_id`),
+  KEY `computer_reservations_club_id_code_index` (`club_id`,`code`),
   CONSTRAINT `computer_reservations_club_computer_fk` FOREIGN KEY (`club_id`, `club_computer_id`) REFERENCES `club_computers` (`club_id`, `id`) ON DELETE CASCADE,
   CONSTRAINT `computer_reservations_club_id_foreign` FOREIGN KEY (`club_id`) REFERENCES `clubs` (`id`) ON DELETE CASCADE,
   CONSTRAINT `computer_reservations_created_by_foreign` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `computer_reservations_tariff_id_foreign` FOREIGN KEY (`tariff_id`) REFERENCES `tariffs` (`id`) ON DELETE SET NULL,
   CONSTRAINT `computer_reservations_user_id_foreign` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -767,6 +802,41 @@ CREATE TABLE `request_metrics` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `reseller_payouts` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `reseller_id` bigint unsigned NOT NULL,
+  `amount` decimal(12,2) NOT NULL,
+  `note` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_by` bigint unsigned DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `reseller_payouts_created_by_foreign` (`created_by`),
+  KEY `reseller_payouts_reseller_id_created_at_index` (`reseller_id`,`created_at`),
+  CONSTRAINT `reseller_payouts_created_by_foreign` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `reseller_payouts_reseller_id_foreign` FOREIGN KEY (`reseller_id`) REFERENCES `resellers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `resellers` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `user_id` bigint unsigned NOT NULL,
+  `code` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `commission_percent` decimal(5,2) NOT NULL DEFAULT '0.00',
+  `discount_percent` tinyint unsigned NOT NULL DEFAULT '0',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `resellers_user_id_unique` (`user_id`),
+  UNIQUE KEY `resellers_code_unique` (`code`),
+  CONSTRAINT `resellers_user_id_foreign` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `saas_plans` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `slug` varchar(80) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -895,6 +965,41 @@ CREATE TABLE `stock_movements` (
   CONSTRAINT `stock_movements_club_id_foreign` FOREIGN KEY (`club_id`) REFERENCES `clubs` (`id`) ON DELETE CASCADE,
   CONSTRAINT `stock_movements_club_product_fk` FOREIGN KEY (`club_id`, `product_id`) REFERENCES `products` (`club_id`, `id`) ON DELETE CASCADE,
   CONSTRAINT `stock_movements_club_user_fk` FOREIGN KEY (`club_id`, `user_id`) REFERENCES `club_memberships` (`club_id`, `user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `subscription_invoices` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `club_id` bigint unsigned NOT NULL,
+  `saas_plan_id` bigint unsigned NOT NULL,
+  `months` tinyint unsigned NOT NULL,
+  `computers` smallint unsigned NOT NULL,
+  `price_per_computer` decimal(12,2) NOT NULL,
+  `discount_percent` tinyint unsigned NOT NULL DEFAULT '0',
+  `amount` decimal(12,2) NOT NULL,
+  `reseller_id` bigint unsigned DEFAULT NULL,
+  `reseller_percent` decimal(5,2) DEFAULT NULL,
+  `reseller_amount` decimal(12,2) DEFAULT NULL,
+  `status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `created_by` bigint unsigned DEFAULT NULL,
+  `confirmed_by` bigint unsigned DEFAULT NULL,
+  `paid_at` timestamp NULL DEFAULT NULL,
+  `period_ends_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `subscription_invoices_saas_plan_id_foreign` (`saas_plan_id`),
+  KEY `subscription_invoices_created_by_foreign` (`created_by`),
+  KEY `subscription_invoices_confirmed_by_foreign` (`confirmed_by`),
+  KEY `subscription_invoices_club_id_created_at_index` (`club_id`,`created_at`),
+  KEY `subscription_invoices_status_created_at_index` (`status`,`created_at`),
+  KEY `subscription_invoices_reseller_id_status_paid_at_index` (`reseller_id`,`status`,`paid_at`),
+  CONSTRAINT `subscription_invoices_club_id_foreign` FOREIGN KEY (`club_id`) REFERENCES `clubs` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `subscription_invoices_confirmed_by_foreign` FOREIGN KEY (`confirmed_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `subscription_invoices_created_by_foreign` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `subscription_invoices_reseller_id_foreign` FOREIGN KEY (`reseller_id`) REFERENCES `resellers` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `subscription_invoices_saas_plan_id_foreign` FOREIGN KEY (`saas_plan_id`) REFERENCES `saas_plans` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;

@@ -117,10 +117,14 @@ go run ./cmd/migrate-from-mysql purge  --club zafiro-arena --confirm zafiro-aren
 
 | Таблицы | Как |
 |---|---|
-| `saas_plans` | только тариф подписки клуба; уже есть (по id, тот же slug) — не трогаем |
+| `saas_plans` | тариф подписки клуба и тарифы его счетов за подписку; уже есть (по id, тот же slug) — не трогаем |
 | `users` | участники клуба и все аккаунты, на которые ссылаются строки клуба (включая `api_keys.created_by/revoked_by`, `webhook_endpoints.created_by`); существующий id — не перезаписываем (S5-M1-4) |
-| `clubs` | без `installation_key*` (Q-050: ключ установки выпускается заново); `settings` — как есть (v1); `migration_state = imported` (0027) |
-| `club_subscriptions` | до `go-live` — `suspended` (клуб закрыт), статус после `go-live` — в записи аудита переноса (S5-M3-2) |
+| `resellers` | реселлер клуба (`clubs.reseller_id`) и реселлеры его счетов — если платформенный шаг их ещё не перенёс (реселлер создан позже); вместе с аккаунтом реселлера. Уже есть (по id, тот же код) — не трогаем; тот же код у другого id — блокер `reseller`. `commission_percent` → `commission_bp` (0034) |
+| `clubs` | без `installation_key*` (Q-050: ключ установки выпускается заново); `settings` — как есть (v1); `migration_state = imported` (0027); город, адрес, профиль (`city`, `address`, `profile`), реселлер (`reseller_id`, `reseller_attached_at`) — как есть (0034, 0036) |
+| `club_subscriptions` | до `go-live` — `suspended` (клуб закрыт), статус после `go-live` — в записи аудита переноса (S5-M3-2); скидка клуба (`discount_percent`, `discount_until`, `discount_note`, 0035) — как есть |
+| `subscription_invoices` (0035) | счета клуба за подписку — с клубом (UQ-23): id сохраняется, значит номер `ZF-…` не меняется; суммы × 100, `reseller_percent` → `reseller_bp`; неоплаченный счёт переносится неоплаченным. По каждому оплаченному счёту — запись `invoice_paid` журнала денег платформы (и `reseller_accrual`, если у счёта есть реселлер и начисление), см. «Деньги платформы» |
+| `club_zones.devices`, `club_photos` (0036) | как есть; файлы фото — расширение `files` (ниже) |
+| `computer_reservations` (0037) | брони из приложения: `from_app`, `tariff_id`, `code` — как есть; `paid_main_cents`, `paid_bonus_cents` — уже тиыны, **без × 100** |
 | `club_memberships` (Q-027), `club_invitations` | как есть |
 | `member_balances` | строка с нулями (новый id: роль платформы вставляет только `club_id, user_id`, даты — 0004), остаток — проводкой `migration_opening_balance` (см. «Деньги в ledger») |
 | склад, касса, зоны, ПК, тарифы, сессии, пакеты, брони, друзья, чат, заказы, новости клуба, задачи | как есть (id сохраняются) |
@@ -138,7 +142,12 @@ go run ./cmd/migrate-from-mysql purge  --club zafiro-arena --confirm zafiro-aren
 
 - **Деньги**: `decimal(…,2)` тенге → `bigint` тиыны × 100 **строкой** (`money.ParseTenge`, без float). Правило
   определяется по паре типов (decimal в MySQL → bigint в Postgres); масштаб не 2 — ошибка схемы.
-  `*_cents` уже в тиынах — как есть. Суммы внутри JSON — v1 (тенге), v2 — M2.
+  `*_cents` уже в тиынах — как есть (в том числе оплата броней из приложения `paid_main_cents`/`paid_bonus_cents`).
+  Суммы внутри JSON — v1 (тенге), v2 — M2.
+- **Проценты реселлера**: `decimal(5,2)` → `integer` базисные пункты (12,35 % → 1235) — то же точное «× 100 через
+  строку»; правило — по паре типов (decimal в MySQL → integer в Postgres), масштаб не 2 — ошибка схемы. Колонки
+  переименованы (`table.Rename`): `resellers.commission_percent` → `commission_bp`,
+  `subscription_invoices.reseller_percent` → `reseller_bp`. Скидки (`discount_percent`) — целые проценты, как есть.
 - **Время**: строки `DATETIME`/`TIMESTAMP` читаются без смены пояса сессии MySQL (как их читал Laravel: в
   `config/database.php` нет `timezone`) и трактуются в `--source-tz` → `timestamptz`. В отчёте — пояса сервера.
 - **boolean**: `tinyint(1)` → `false` только для `0`. **JSON** → `jsonb` (проверка валидности и `\u0000`).
@@ -156,6 +165,25 @@ go run ./cmd/migrate-from-mysql purge  --club zafiro-arena --confirm zafiro-aren
 - Пакеты минут: ledger минут, ключ `opening_minutes:<time_package_id>` (если владелец пакета — участник клуба).
 - Аудит: одна запись `money` / `migration.club_imported` с суммами.
 
+## Деньги платформы (0038)
+
+Счета за подписку, начисления и выплаты реселлерам — деньги платформы: в клубный ledger не попадают (UQ-6).
+Перенос пишет по ним журнал `platform_money_log` с теми же ключами идемпотентности, что и сервер, — журнал полон с
+первого дня, повторный запуск строк не удваивает (`ON CONFLICT DO NOTHING`), `meta.source = "mysql"`, время записи —
+время оплаты или выплаты:
+
+- `apply` клуба: `invoice_paid:<id счёта>` на сумму каждого оплаченного счёта; `reseller_accrual:<id счёта>` на
+  `reseller_amount`, если у счёта есть реселлер. Начисление по счёту, у которого реселлер уже удалён (`reseller_id`
+  NULL, сумма осталась — BR-189), в журнал не пишется: его некому приписать;
+- `platform apply`: `reseller_payout:<id выплаты>` на сумму каждой выплаты;
+- `purge` клуба удаляет и его записи журнала (их записал перенос; клуб не открывали); записи выплат остаются.
+
+Сверка (`verify`, и в `apply` до коммита): суммы `amount`, `price_per_computer`, `reseller_amount` счетов клуба
+(× 100 точно), сумма `reseller_bp`, число неоплаченных счетов, журнал — сумма и число оплаченных счетов и сумма
+начислений; оплата броней (`paid_*_cents`, число броней из приложения). Платформа: сумма процентов реселлеров,
+сумма выплат в таблице и в журнале (в журнале — блокер, в таблице — как остальные платформенные расхождения:
+выплаты удалённого в zafirogo реселлера исчезают каскадом, журнал остаётся).
+
 ## M2: производные данные (`DefaultExtensions`, в той же транзакции и сверке)
 
 | Расширение | Что | Как сверяется |
@@ -167,9 +195,10 @@ go run ./cmd/migrate-from-mysql purge  --club zafiro-arena --confirm zafiro-aren
 | `derived` (CSQ-2, Q-013) | `income_kind` приходов: запись `cash.income` с `details.balance_type` → `top_up`, `details.computers` → `guest_session` (как `ShiftReport::for()`); `payment_method` — подпись из `details.payment_method` → `cash/card/qr` по переводам старой базы | по каждому приходу |
 | `derived` (SV-3) | `session_purchases.zone_id/source` частей идущих сессий: записи журнала сессии по порядку (`tariff.purchased` → `tariff`, зона ПК; `time.purchased` → `minutes`, зона-subject; `time.package_started` → `package`) | по каждой части |
 | `integrations` | `api_keys` (хэш тот же, H1-1), `api_idempotency_keys` (+ `club_id`), `webhook_endpoints` (секрет: Crypt → `secretbox`, контекст `webhook.SecretContext`), `webhook_deliveries`; `personal_access_tokens` пользователей с ability `club:<id>` → `mobile_api_tokens` (тот же id, истёкшие не переносятся) | число строк; секрет из Postgres (ключ данных) = секрет MySQL (APP_KEY); токены по id и хэшу |
-| `files` (Q-085) | `clubs.logo_path`, `signin_image_path` → `club_images`; `news.image_path` → `news_images`; PNG/JPEG, ≤ 1/3/2 МБ (как сервер) | байты = файл на диске |
+| `files` (Q-085) | `clubs.logo_path`, `signin_image_path` → `club_images`; `news.image_path` → `news_images`; PNG/JPEG, ≤ 1/3/2 МБ (как сервер); `club_photos.path` → `club_photo_images` (UQ-19): PNG, JPEG или WebP (по сигнатуре контейнера) ≤ 3 МБ, диск `club-photos/<клуб>/…` | байты = файл на диске |
 
-Пути картинок в `clubs`/`news` переносятся как есть. Старые токены агентов (`club_computers.agent_token_hash`) — как
+Пути картинок в `clubs`/`news`/`club_photos` переносятся как есть (строка фото без файла на диске — предупреждение,
+адрес фото ответит 404, как в старом). Старые токены агентов (`club_computers.agent_token_hash`) — как
 есть: новый сервер их не читает, агенты переустанавливаются с gRPC (S5-M2-8).
 
 ## Платформенный шаг (`platform plan|apply|verify`)
@@ -180,7 +209,10 @@ go run ./cmd/migrate-from-mysql purge  --club zafiro-arena --confirm zafiro-aren
 ключом данных без контекста, как читает `telegram.Store`), аккаунты суперадминов (`users.is_superadmin`, с правами и
 паролем как в MySQL; существующий аккаунт не перезаписывается — без прав суперадмина в zafirogo он даёт предупреждение,
 права выдаются в кабинете суперадмина; S5-M3-4), все `saas_plans` (по id и slug), новости платформы (`club_id IS NULL`, с
-картинками `news/platform/…`) и журнал платформы без клуба (по id; автор, ещё не перенесённый, — NULL). Существующие в zafirogo языки, переводы, настройки перезаписываются только при первом `platform apply` (нет записи
+картинками `news/platform/…`) и журнал платформы без клуба (по id; автор, ещё не перенесённый, — NULL); реселлеры
+(`resellers`, по id; код, занятый другим id, — блокер; проценты → базисные пункты) вместе с их аккаунтами (реселлер
+может не состоять ни в одном клубе), выплаты реселлерам (`reseller_payouts`, по id, суммы × 100) и записи
+`reseller_payout` журнала денег платформы. Счета клубов переносятся с клубами (UQ-23), а не здесь. Существующие в zafirogo языки, переводы, настройки перезаписываются только при первом `platform apply` (нет записи
 аудита `migration.platform_imported`), потом — предупреждение. Сверка — в той же транзакции до коммита.
 
 ## Порядок перевода клуба
@@ -321,12 +353,20 @@ binlog, Postgres 18.6 с настройками по умолчанию), 02.11.
   - история балансов (`history_integration_test.go`): на демо-данных — список расхождений; движения каждого вида
     (касса, возврат пополнения с бонусом, тариф, перевод, возврат времени, заказ и отмена, пополнение и списание
     владельцем) не меняют расхождение клиента, остаток без истории (+1.23) — меняет ровно на 123 тиына; то же в apply/verify;
-  - суперадмин без клуба переносится платформенным шагом с правами и паролем (`m2_integration_test.go`).
+  - суперадмин без клуба переносится платформенным шагом с правами и паролем (`m2_integration_test.go`);
+  - изменения старого проекта после 26.10.2026 (`upstream_integration_test.go`): реселлеры (12,35 % → 1235; 0,01 %),
+    их аккаунты без клубов и выплаты → `platform apply` дважды и `platform verify` (журнал выплат без дублей,
+    последовательности выше id MySQL); клуб с городом, адресом, профилем, скидкой, оборудованием зоны, счетами
+    (оплаченный с реселлером, оплаченный после удаления реселлера, отменённый, неоплаченный, счёт на 0 ₸ со скидкой
+    100 %), бронью из приложения на два ПК (оплата без × 100, код, тариф) и фото (PNG, WebP, без файла) → plan → apply
+    → verify; реселлер, созданный после платформенного шага, приходит с клубом; занятый код реселлера — блокер и
+    откат; `purge` убирает записи журнала клуба, повторный apply пишет их заново.
 - Объёмы (не в CI, тег `load`): `TESTCONTAINERS_RYUK_DISABLED=true go test -tags integration,load -run TestLoad -timeout 60m -v ./internal/migrate/`
   (`ZAFIRO_LOAD_SCALE=0.1` — десятая часть) — см. «Объёмы».
 - `testdata` пересоздать: `tools/migrate-from-mysql/dump-schema.sh` (копия старого проекта + `php artisan migrate:fresh`
   в MySQL + `tools/visual/old/seed.php`; нужен Docker и кэш vendor `tools/php-oracle`). Перезапускать при изменении
-  миграций старого проекта или `tools/visual/fixtures/demo.json`.
+  миграций старого проекта или `tools/visual/fixtures/demo.json`. Сейчас — по старому проекту `a680bab` (15.11.2026,
+  55 таблиц: с `subscription_invoices`, `club_photos`, `resellers`, `reseller_payouts`).
 - Эталон шифрования Laravel (`server/internal/migrate/testdata/laravel_crypt.json`):
   `tools/migrate-from-mysql/laravel-crypt-fixture.sh` — настоящий `Illuminate\Encryption\Encrypter` из vendor старого
   проекта в `php:8.4.27-cli` (тестовые ключи).

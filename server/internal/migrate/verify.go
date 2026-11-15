@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -18,23 +19,10 @@ import (
 func (r *run) compare(ctx context.Context) error {
 	tables := coreTables()
 	usersCond, usersArgs := usersWhere(tables, r.o)
-	var planWhere string
-	var planArgs []any
 	for i := range tables {
-		switch tables[i].Name {
-		case "users":
+		if tables[i].Name == "users" {
 			tables[i].Where = func(*Options) (string, []any) { return usersCond, usersArgs }
-		case "saas_plans":
-			planWhere, planArgs = tables[i].Where(r.o)
 		}
-	}
-	userIDs, err := r.mysqlIDs(ctx, "users", usersCond, bindClub(usersArgs, r.club.ID))
-	if err != nil {
-		return err
-	}
-	planIDs, err := r.mysqlIDs(ctx, "saas_plans", planWhere, bindClub(planArgs, r.club.ID))
-	if err != nil {
-		return err
 	}
 
 	// 1. Число строк по таблицам.
@@ -44,9 +32,12 @@ func (r *run) compare(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		ids := userIDs
-		if t.Name == "saas_plans" {
-			ids = planIDs
+		// {ids} — id строк MySQL (платформенные таблицы: аккаунты, тарифы платформы, реселлеры).
+		var ids []int64
+		if strings.Contains(t.PGWhere, "{ids}") {
+			if ids, err = r.mysqlIDs(ctx, t.Name, where, bindClub(args, r.club.ID)); err != nil {
+				return err
+			}
 		}
 		cond := t.PGWhere
 		if cond == "" {
@@ -97,6 +88,10 @@ func (r *run) compare(ctx context.Context) error {
 		}
 	}
 	if err := r.compareProducts(ctx); err != nil {
+		return err
+	}
+	// Счета за подписку, оплата броней из приложения, журнал денег платформы (0035, 0037, 0038).
+	if err := r.compareInvoices(ctx); err != nil {
 		return err
 	}
 	if err := r.compareDrawer(ctx); err != nil {

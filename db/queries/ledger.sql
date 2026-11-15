@@ -49,11 +49,11 @@ WHERE wanted.user_id IS NULL;
 
 -- name: InsertLedgerTransaction :exec
 INSERT INTO ledger_transactions (id, club_id, kind, idempotency_key, actor_user_id, cash_shift_id,
-                                 cash_transaction_id, session_id, shop_order_id, reverses_transaction_id,
-                                 meta, created_at)
+                                 cash_transaction_id, session_id, shop_order_id, reservation_id,
+                                 reverses_transaction_id, meta, created_at)
 VALUES (sqlc.arg(id), sqlc.arg(club_id), sqlc.arg(kind), sqlc.arg(idempotency_key), sqlc.narg(actor_user_id),
         sqlc.narg(cash_shift_id), sqlc.narg(cash_transaction_id), sqlc.narg(session_id), sqlc.narg(shop_order_id),
-        sqlc.narg(reverses_transaction_id), sqlc.narg(meta), sqlc.arg(created_at));
+        sqlc.narg(reservation_id), sqlc.narg(reverses_transaction_id), sqlc.narg(meta), sqlc.arg(created_at));
 
 -- name: InsertLedgerEntries :many
 -- Проводки одной операции. Триггер ledger_apply_member_entry сдвигает member_balances и ставит balance_after.
@@ -74,7 +74,7 @@ FROM (SELECT unnest(sqlc.arg(user_ids)::bigint[]) AS user_id,
 
 -- name: GetLedgerTransaction :one
 SELECT id, club_id, kind, idempotency_key, actor_user_id, cash_shift_id, cash_transaction_id, session_id,
-       shop_order_id, reverses_transaction_id, meta, created_at
+       shop_order_id, reservation_id, reverses_transaction_id, meta, created_at
 FROM ledger_transactions
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id) AND created_at = sqlc.arg(created_at);
 

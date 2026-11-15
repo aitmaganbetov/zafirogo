@@ -609,3 +609,170 @@ Telegram в `platform_settings` — `Crypt::encryptString` (`app/Services/Telegr
   (`sqlc.yaml`). Имена без слова `Ledger`, чтобы сбой сверки не считался ошибкой запроса журнала денег
   (`ledger_errors_total`).
 
+## 17. Изменения старого Zafiro после 26.10.2026 (0034–0038, шаг Ш0)
+
+Схема под темы Б–Д `docs/upstream-2026-11.md` одной серией, чтобы исполнители тем (счета, каталог, брони, реселлеры)
+работали без своих миграций. Запросов тем здесь нет — их пишут исполнители в `db/queries/<тема>.sql`. Проверено:
+`goose up → down-to 0 → up` на чистой базе; на базе с демо-данными (`cmd/visual-seed`) — `down-to 33 → up`
+(откат ниже 0014 на базе с операциями ledger останавливается на CHECK вида операции — так задумано в 0014: журнал
+только добавляется).
+
+| Миграция | Laravel | Что |
+|---|---|---|
+| `0034_resellers.sql` | `2026_11_18_100000_create_resellers` | `resellers`, `reseller_payouts`, `clubs.reseller_id`, `clubs.reseller_attached_at`, триггер `clubs_reseller_guard` |
+| `0035_subscription_invoices.sql` | `2026_11_07_100000_add_discount_to_club_subscriptions_table`, `2026_11_08_100000_create_subscription_invoices_table`, колонки `reseller_*` из `2026_11_18_…` | `club_subscriptions.discount_*`, `subscription_invoices` |
+| `0036_club_profile.sql` | `2026_11_13_100000_add_city_and_address_to_clubs_table`, `2026_11_14_100000_create_club_profile` | `clubs.city/address/profile`, `club_zones.devices`, `club_photos`, `club_photo_images` |
+| `0037_app_bookings.sql` | `2026_11_15_…add_app_payment…`, `2026_11_16_…add_tariff…`, `2026_11_17_…add_code…` | `computer_reservations` +5 колонок; виды ledger `reservation_payment`, `reservation_refund`; `ledger_transactions.reservation_id` |
+| `0038_platform_money_log.sql` | — (новая) | `platform_money_log` — журнал денег платформы, только добавление (UQ-6) |
+
+### 17.1. Таблицы и колонки
+
+**`resellers`** (платформенная, без `club_id`)
+
+| Колонка | Postgres | В Laravel | Отличие |
+|---|---|---|---|
+| `id` | `bigint` identity (BY DEFAULT — id сохраняются при переносе) | `id` | |
+| `user_id` | `bigint NOT NULL`, UNIQUE, FK `users` ON DELETE CASCADE | то же | |
+| `code` | `varchar(32) NOT NULL`, UNIQUE, CHECK `^[a-z0-9][a-z0-9-]{2,31}$` | `string(32)` unique | CHECK = правило формы; только строчные → уникальность без учёта регистра (Q-025) обычным индексом |
+| `name` | `varchar(120) NOT NULL` | то же | |
+| **`commission_bp`** | `integer NOT NULL DEFAULT 0`, CHECK 0…10000 | **`commission_percent`** `decimal(5,2)` | **базисные пункты**: 12,35 % = 1235 (× 100 при переносе); имя изменено |
+| `discount_percent` | `smallint NOT NULL DEFAULT 0`, CHECK 0…100 | `unsignedTinyInteger` | целые проценты |
+| `is_active` | `boolean NOT NULL DEFAULT true` | то же | |
+| `created_at`, `updated_at` | `timestamptz` | timestamps | |
+
+**`reseller_payouts`** (платформенная)
+
+| Колонка | Postgres | В Laravel | Отличие |
+|---|---|---|---|
+| `id` | `bigint` identity | `id` | |
+| `reseller_id` | FK `resellers` ON DELETE CASCADE | то же | выплаты удаляются вместе с реселлером (BR-189); сумма остаётся в `platform_money_log` |
+| `amount` | `bigint NOT NULL`, CHECK `> 0` | `decimal(12,2)` | тиыны (× 100) |
+| `note` | `varchar(255)` | то же | |
+| `created_by` | FK `users` ON DELETE SET NULL | то же | |
+| `idempotency_key` | `varchar(200)`, частичный UNIQUE (`IS NOT NULL`) | — | новая: ключ формы суперадмина против двойного клика (§3.6); у перенесённых — NULL |
+| `created_at`, `updated_at` | `timestamptz` | timestamps | |
+
+Индексы: `(reseller_id, created_at)`, `(created_by)`.
+
+**`clubs`** — новые колонки
+
+| Колонка | Postgres | В Laravel | Отличие |
+|---|---|---|---|
+| `reseller_id` | `bigint`, FK `resellers` ON DELETE SET NULL; частичный индекс | то же | меняет только пул платформы — триггер `clubs_reseller_guard` |
+| `reseller_attached_at` | `timestamptz` | то же | то же |
+| `city` | `varchar(32)` | `string(32)` index | ключ `App\Support\Cities`; список городов — в коде (CHECK нет); индекс `(city, name) WHERE city IS NOT NULL` вместо индекса по `city` |
+| `address` | `varchar(255)` | то же | |
+| `profile` | `jsonb`, CHECK «объект» | `json` | `{description, phone, hours, instagram}`; пустой — NULL |
+
+**`club_subscriptions`** — `discount_percent smallint NOT NULL DEFAULT 0` (CHECK 0…100), `discount_until date`,
+`discount_note varchar(200)` — как в Laravel (там `unsignedTinyInteger` без CHECK).
+
+**`subscription_invoices`** (тенантная)
+
+| Колонка | Postgres | В Laravel | Отличие |
+|---|---|---|---|
+| `id` | `bigint` identity | `id` | номер счёта `ZF-` + id с нулями до 5 знаков — в базе не хранится |
+| `club_id` | FK `clubs` ON DELETE CASCADE, RLS | то же | |
+| `saas_plan_id` | FK `saas_plans` ON DELETE RESTRICT | то же | |
+| `months` | `smallint`, CHECK `IN (1, 3, 6, 12)` | `unsignedTinyInteger` | CHECK = `SubscriptionInvoice::MONTHS` |
+| `computers` | `integer`, CHECK `>= 1` | `unsignedSmallInteger` | BR-180: `max(1, число ПК)` |
+| `price_per_computer` | `bigint`, CHECK `>= 0` | `decimal(12,2)` | тиыны (× 100) |
+| `discount_percent` | `smallint NOT NULL DEFAULT 0`, CHECK 0…100 | `unsignedTinyInteger` | |
+| `amount` | `bigint`, CHECK `>= 0 AND amount % 100 = 0` | `decimal(12,2)` | тиыны; всегда целые тенге (BR-180) |
+| `reseller_id` | FK `resellers` ON DELETE SET NULL | то же | |
+| **`reseller_bp`** | `integer`, CHECK 0…10000 | **`reseller_percent`** `decimal(5,2)` | **базисные пункты** (× 100); имя изменено |
+| `reseller_amount` | `bigint`, CHECK `>= 0` | `decimal(12,2)` | тиыны; только у оплаченного счёта (CHECK) |
+| `status` | `varchar(16) NOT NULL DEFAULT 'pending'`, CHECK `pending/paid/canceled` | `string(16)` | CHECK |
+| `created_by`, `confirmed_by` | FK `users` ON DELETE SET NULL | то же | |
+| `paid_at`, `period_ends_at` | `timestamptz` | timestamp | CHECK: `paid_at` заполнен ⇔ `status = 'paid'` |
+| `created_at`, `updated_at` | `timestamptz` | timestamps | |
+
+Индексы: `(club_id, created_at)`, `(status, created_at)`, `(reseller_id, status, paid_at)` — как в Laravel; плюс
+индексы внешних ключей и **частичный уникальный `(club_id) WHERE status = 'pending'`** — один неоплаченный счёт на
+клуб (GAP-046, BR-184: в старом два одновременных счёта клуба без строки подписки проходили).
+
+**`club_zones`** — `devices jsonb` (CHECK «объект»; ключи `cpu, gpu, ram, monitor, keyboard, mouse, headset, chair`);
+`description` расширена `varchar(255)` → `varchar(500)`: форма «Зоны и оборудование» старого кода принимает 500
+символов, а MySQL на длине больше 255 отвечал ошибкой.
+
+**`club_photos`** (тенантная) — `id`, `club_id` (FK CASCADE), `path varchar(255)` (формат старого кода
+`club-photos/<клуб>/<40 символов>.png|jpg|webp`), `sort_order integer` (в Laravel `unsignedSmallInteger`; обложка =
+`min − 1`, поэтому со знаком), `created_at`, `updated_at`. UNIQUE `(club_id, id)`, UNIQUE `(club_id, path)`, индекс
+`(club_id, sort_order, id)`.
+
+**`club_photo_images`** (тенантная, новая — UQ-19) — байты фото, как `club_images` (0019) и `news_images` (0018):
+`photo_id` (PK; FK `(club_id, photo_id)` → `club_photos` ON DELETE CASCADE), `club_id`, `content_type` (CHECK
+`image/png`, `image/jpeg`, `image/webp`), `data bytea` (CHECK 1 байт … 3 МБ), `created_at`. В старом — файлы на
+локальном диске. Строка `club_photos` без `club_photo_images` — фото без файла (адрес отвечает 404, как в старом).
+
+**`computer_reservations`** — новые колонки
+
+| Колонка | Postgres | В Laravel | Отличие |
+|---|---|---|---|
+| `from_app` | `boolean NOT NULL DEFAULT false` | то же | |
+| `paid_main_cents`, `paid_bonus_cents` | `bigint NOT NULL DEFAULT 0`, CHECK `>= 0` | `unsignedInteger` | **уже тиыны** — при переносе не умножаются на 100; имена как в Laravel |
+| `tariff_id` | `bigint`, FK `(club_id, tariff_id)` → `tariffs (club_id, id)` ON DELETE SET NULL `(tariff_id)` | FK `tariffs.id` nullOnDelete | составной ключ: тариф только своего клуба |
+| `code` | `varchar(8)`, CHECK `^[0-9]{6}$` | `string(8)` | открытым текстом (UQ-14) |
+
+CHECK `computer_reservations_app_only_check`: оплата, тариф и код — только у брони из приложения. Индексы:
+`(club_id, user_id, starts_at)`; частичные `(club_id, code) WHERE code IS NOT NULL` и
+`(club_id, tariff_id) WHERE tariff_id IS NOT NULL` (лимит количества тарифа, BR-190).
+
+**`ledger_transactions`** — виды `reservation_payment` (оплата брони, одна операция на группу ПК) и
+`reservation_refund` (возврат, на каждый ПК) в CHECK `kind`; колонка `reservation_id bigint` (без внешнего ключа,
+как остальные ссылки журнала) с частичным индексом `(club_id, reservation_id)`. В Go: `ledger.KindReservationPayment`,
+`ledger.KindReservationRefund`, `ledger.Refs.ReservationID` (`server/internal/ledger/types.go`, `post.go`,
+`db/queries/ledger.sql`).
+
+**`platform_money_log`** (новая; решение UQ-6) — деньги платформы не идут в клубный ledger, а пишутся сюда:
+
+| Колонка | Тип | Смысл |
+|---|---|---|
+| `id` | `bigint` identity (ALWAYS) | |
+| `kind` | `varchar(32)`, CHECK | `invoice_paid` — клуб оплатил счёт; `reseller_accrual` — начислено реселлеру; `reseller_payout` — выплачено реселлеру |
+| `idempotency_key` | `varchar(200) NOT NULL`, UNIQUE | `invoice_paid:<id счёта>`, `reseller_accrual:<id счёта>`, `reseller_payout:<id выплаты>` |
+| `amount` | `bigint`, CHECK `>= 0` | тиыны; направление задаёт вид |
+| `club_id`, `invoice_id`, `reseller_id`, `payout_id`, `actor_user_id` | `bigint`, без внешних ключей | строки переживают удаление клуба и реселлера; CHECK `platform_money_log_refs_check` — какие ссылки обязательны для вида |
+| `meta` | `jsonb` | снимок для чтения человеком; у перенесённых `{"source": "mysql"}` |
+| `created_at` | `timestamptz NOT NULL DEFAULT now()` | |
+
+Только добавление: триггеры `zafiro_forbid_change` (UPDATE, DELETE, TRUNCATE — как у `ledger_*`) и права
+SELECT/INSERT. Запись — в той же транзакции, что изменение документа. Экраны («заработано», «выплачено», «к выплате»,
+BR-187) считают по документам (`subscription_invoices`, `reseller_payouts`), как в старом; журнал — неизменяемая
+история (в том числе выплат удалённого реселлера, UQ-10). Партиций нет: 1–2 строки на оплату счёта.
+`deploy/backup/verify.sql` (проверка 8) сверяет документы с журналом, `fingerprint.sql` включает суммы журнала.
+
+### 17.2. RLS и права
+
+| Таблица | RLS | `zafiro_app` (пул клуба) | `zafiro_platform` |
+|---|---|---|---|
+| `subscription_invoices` | FORCE; `tenant_isolation`, `platform_access` + ограничивающие `app_insert_pending`, `app_update_pending` | SELECT своих; INSERT только `pending` и без колонок оплаты (`paid_at`, `confirmed_by`, `period_ends_at`, `reseller_amount`); UPDATE только `status`, `updated_at` у своего неоплаченного (оставить `pending` или `canceled`); DELETE нет | SELECT, INSERT, UPDATE (оплату отмечает суперадмин); DELETE нет |
+| `club_photos`, `club_photo_images` | FORCE; `tenant_isolation`, `platform_access` | всё в своём клубе | всё (каталог и публичная отдача фото без токена) |
+| `resellers` | включён без FORCE (как `clubs`); `club_reseller_read`, `platform_access` | только SELECT одной строки — реселлера своего клуба | всё |
+| `reseller_payouts` | нет (нет `club_id`) | ничего | SELECT, INSERT (исправления и удаления нет; каскад при удалении реселлера) |
+| `platform_money_log` | FORCE; `tenant_isolation` (для `zafiro_purge_imported_club` владельца схемы), `platform_access` | ничего | SELECT, INSERT |
+| `clubs.reseller_id`, `reseller_attached_at` | — | не меняет (триггер `clubs_reseller_guard`, ошибка 42501) | меняет |
+
+Следствия для исполнителей тем: код реселлера ищет и клуб привязывает **пул платформы** (`UPDATE clubs … WHERE id = $1
+AND reseller_id IS NULL`); счёт выставляется и отменяется в транзакции клуба (пул клуба видит скидку и процент
+своего реселлера для снимка); оплату счёта, скидку клуба, реселлеров, выплаты и журнал денег платформы пишет пул
+платформы. Тесты: `server/internal/db/privileges_integration_test.go` (`TestAppRoleLeastPrivilege`,
+`TestUpstreamTablesPrivileges`).
+
+### 17.3. Перенос данных (`migrate-from-mysql`)
+
+- Платформенный шаг: `resellers` (и их аккаунты `users`), `reseller_payouts`, записи `reseller_payout` журнала денег
+  платформы. С клубом: `subscription_invoices` (UQ-23), новые колонки `clubs`, `club_subscriptions`, `club_zones`,
+  `computer_reservations`, `club_photos` (+ файлы → `club_photo_images`, расширение Files), реселлер клуба и его
+  счетов (если платформенный шаг его ещё не перенёс), записи `invoice_paid` / `reseller_accrual` журнала.
+- `decimal(12,2)` → тиыны и `decimal(5,2)` → базисные пункты — одно точное «× 100 через строку»; `paid_*_cents` —
+  как есть. Сверка сумм — `tools/migrate-from-mysql/README.md`.
+
+### 17.4. Переводы
+
+Новые ключи интерфейса старого проекта (537 в группе `*`, 7 в группе `agent` на язык) приходят из
+`database/translations/{ru,kk,en}.php` свежего старого проекта: `import-translations` (и платформенный шаг переноса)
+добавляет недостающие строки, существующие не трогает — на базе, наполненной до 15.11.2026, команду нужно запустить
+ещё раз. Ключ «Весь клуб — в одном окне» (в старом заменён на вариант с дефисом) остаётся в
+`db/seed/translations-new.*.json`, пока его использует `LandingPage.tsx`. Семь ключей экрана «код брони» добавлены
+во встроенные переводы агента (`agent/src/Zafiro.Agent.UI/Frontend/i18n/*.json`).

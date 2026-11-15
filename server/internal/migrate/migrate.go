@@ -210,6 +210,9 @@ func Apply(ctx context.Context, my *sql.DB, pg *pgxpool.Pool, o Options) (*Repor
 		if err := r.postOpenings(ctx, tx); err != nil {
 			return err
 		}
+		if err := r.logInvoiceMoney(ctx); err != nil {
+			return err
+		}
 		if err := r.analyze(ctx, tx, asPlatform, "ledger_accounts", "ledger_transactions", "ledger_idempotency",
 			"ledger_entries", "ledger_minute_entries", "member_balances", "cash_transactions", "cash_shifts",
 			"session_purchases", "shop_orders", "activity_logs", "products", "tariffs"); err != nil {
@@ -649,6 +652,8 @@ func (r *run) mergePlatform(ctx context.Context, t table, cols []column, batch [
 	case "saas_plans":
 		r.planIDs = append(r.planIDs, idList...)
 		return r.mergeByKey(ctx, t.Name, cols, batch, idList, "slug", CodePlanConflict)
+	case "resellers":
+		return r.mergeByKey(ctx, t.Name, cols, batch, idList, "code", CodeResellerConflict)
 	}
 	existing, err := existingIDs(ctx, r.pg, t.Name, idList)
 	if err != nil {
@@ -1143,6 +1148,8 @@ func (r *run) shiftSequences(ctx context.Context, tx pgx.Tx) error {
 	for _, s := range skippedTables {
 		names = append(names, s.Name)
 	}
+	// Платформенные таблицы, которые переносит только платформенный шаг (их нет в coreTables).
+	names = append(names, "reseller_payouts")
 	for _, name := range names {
 		var seq *string
 		if err := tx.QueryRow(ctx, "SELECT pg_get_serial_sequence($1, 'id')", "public."+name).Scan(&seq); err != nil {

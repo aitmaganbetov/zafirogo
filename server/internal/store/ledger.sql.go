@@ -80,7 +80,7 @@ func (q *Queries) GetLedgerIdempotencyKey(ctx context.Context, arg GetLedgerIdem
 
 const getLedgerTransaction = `-- name: GetLedgerTransaction :one
 SELECT id, club_id, kind, idempotency_key, actor_user_id, cash_shift_id, cash_transaction_id, session_id,
-       shop_order_id, reverses_transaction_id, meta, created_at
+       shop_order_id, reservation_id, reverses_transaction_id, meta, created_at
 FROM ledger_transactions
 WHERE club_id = $1 AND id = $2 AND created_at = $3
 `
@@ -91,9 +91,25 @@ type GetLedgerTransactionParams struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func (q *Queries) GetLedgerTransaction(ctx context.Context, arg GetLedgerTransactionParams) (LedgerTransaction, error) {
+type GetLedgerTransactionRow struct {
+	ID                    int64           `json:"id"`
+	ClubID                int64           `json:"club_id"`
+	Kind                  string          `json:"kind"`
+	IdempotencyKey        string          `json:"idempotency_key"`
+	ActorUserID           *int64          `json:"actor_user_id"`
+	CashShiftID           *int64          `json:"cash_shift_id"`
+	CashTransactionID     *int64          `json:"cash_transaction_id"`
+	SessionID             *string         `json:"session_id"`
+	ShopOrderID           *int64          `json:"shop_order_id"`
+	ReservationID         *int64          `json:"reservation_id"`
+	ReversesTransactionID *int64          `json:"reverses_transaction_id"`
+	Meta                  json.RawMessage `json:"meta"`
+	CreatedAt             time.Time       `json:"created_at"`
+}
+
+func (q *Queries) GetLedgerTransaction(ctx context.Context, arg GetLedgerTransactionParams) (GetLedgerTransactionRow, error) {
 	row := q.db.QueryRow(ctx, getLedgerTransaction, arg.ClubID, arg.ID, arg.CreatedAt)
-	var i LedgerTransaction
+	var i GetLedgerTransactionRow
 	err := row.Scan(
 		&i.ID,
 		&i.ClubID,
@@ -104,6 +120,7 @@ func (q *Queries) GetLedgerTransaction(ctx context.Context, arg GetLedgerTransac
 		&i.CashTransactionID,
 		&i.SessionID,
 		&i.ShopOrderID,
+		&i.ReservationID,
 		&i.ReversesTransactionID,
 		&i.Meta,
 		&i.CreatedAt,
@@ -229,11 +246,11 @@ func (q *Queries) InsertLedgerMinuteEntries(ctx context.Context, arg InsertLedge
 
 const insertLedgerTransaction = `-- name: InsertLedgerTransaction :exec
 INSERT INTO ledger_transactions (id, club_id, kind, idempotency_key, actor_user_id, cash_shift_id,
-                                 cash_transaction_id, session_id, shop_order_id, reverses_transaction_id,
-                                 meta, created_at)
+                                 cash_transaction_id, session_id, shop_order_id, reservation_id,
+                                 reverses_transaction_id, meta, created_at)
 VALUES ($1, $2, $3, $4, $5,
         $6, $7, $8, $9,
-        $10, $11, $12)
+        $10, $11, $12, $13)
 `
 
 type InsertLedgerTransactionParams struct {
@@ -246,6 +263,7 @@ type InsertLedgerTransactionParams struct {
 	CashTransactionID     *int64          `json:"cash_transaction_id"`
 	SessionID             *string         `json:"session_id"`
 	ShopOrderID           *int64          `json:"shop_order_id"`
+	ReservationID         *int64          `json:"reservation_id"`
 	ReversesTransactionID *int64          `json:"reverses_transaction_id"`
 	Meta                  json.RawMessage `json:"meta"`
 	CreatedAt             time.Time       `json:"created_at"`
@@ -262,6 +280,7 @@ func (q *Queries) InsertLedgerTransaction(ctx context.Context, arg InsertLedgerT
 		arg.CashTransactionID,
 		arg.SessionID,
 		arg.ShopOrderID,
+		arg.ReservationID,
 		arg.ReversesTransactionID,
 		arg.Meta,
 		arg.CreatedAt,

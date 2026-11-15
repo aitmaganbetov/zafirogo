@@ -342,6 +342,13 @@
         "Заявка в друзья отправлена.": "Friend request sent.",
         "Имя сохранено.": "Name saved.",
         "Пароль изменён.": "Password changed.",
-        "Перевод выполнен.": "Transfer completed."
+        "Перевод выполнен.": "Transfer completed.",
+        "Код брони": "Booking code",
+        "Есть код брони?": "Have a booking code?",
+        "Вход по коду брони": "Sign in with a booking code",
+        "Введите код из приложения Zafiro того, кто бронировал. Код работает только на забронированных ПК и только во время брони.": "Enter the code from the Zafiro app of the person who booked. The code works only on the booked PCs and only during the booking.",
+        "Начать по коду": "Start with the code",
+        "Код брони — 6 цифр.": "The booking code is 6 digits.",
+        "Не удалось проверить код. Повторите попытку или обратитесь к администратору клуба.": "Could not check the code. Try again or ask the club administrator."
     }
 }
