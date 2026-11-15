@@ -73,7 +73,7 @@ services:
 
   grafana:
     <<: *hardening
-    image: ${OBS_GRAFANA_IMAGE:-grafana/grafana:13.1.8@sha256:1a8e58976a6cd349d1ffdd27a14b92053816c7c60e6b7e157013e9bf0b9cec5f}
+    image: ${OBS_GRAFANA_IMAGE:-grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205}
     depends_on:
       prometheus:
         condition: service_healthy
