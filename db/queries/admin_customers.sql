@@ -2,8 +2,10 @@
 
 -- name: AdminListCustomers :many
 -- Клиенты клуба (членства не из ClubRoles::STAFF) с балансами, по user_id (как orderBy('user_id'));
--- keyset: after_user_id — последний user_id предыдущей страницы. Поиск — подстрока имени или телефона
--- (search — экранированный шаблон ILIKE, пусто — все).
+-- keyset: after_user_id — последний user_id предыдущей страницы. Поиск (35c36a0) — подстрока имени или email
+-- (search — экранированный шаблон ILIKE, пусто — все) или цифры телефона в любом формате (phone — «%цифры%»,
+-- пусто — телефон не ищется: в запросе меньше трёх цифр). Индексы pg_trgm users(name), users(phone) (0032),
+-- users(email) (0043); план под значения — db.customPlan.
 SELECT m.user_id, u.name, u.phone, u.email, m.role, m.discount::text AS discount, m.total_spent,
        COALESCE(b.balance, 0)::bigint AS balance, COALESCE(b.bonus_balance, 0)::bigint AS bonus_balance,
        (b.user_id IS NOT NULL)::boolean AS has_balance
@@ -13,7 +15,8 @@ LEFT JOIN member_balances b ON b.club_id = m.club_id AND b.user_id = m.user_id
 WHERE m.club_id = sqlc.arg(club_id)
   AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator')
   AND m.user_id > sqlc.arg(after_user_id)
-  AND (sqlc.arg(search)::text = '' OR u.name ILIKE sqlc.arg(search)::text OR u.phone ILIKE sqlc.arg(search)::text)
+  AND (sqlc.arg(search)::text = '' OR u.name ILIKE sqlc.arg(search)::text OR u.email ILIKE sqlc.arg(search)::text
+       OR (sqlc.arg(phone)::text <> '' AND u.phone LIKE sqlc.arg(phone)::text))
 ORDER BY m.user_id
 LIMIT sqlc.arg(page_size);
 
@@ -41,7 +44,8 @@ LEFT JOIN member_balances b ON b.club_id = m.club_id AND b.user_id = m.user_id
 WHERE m.club_id = sqlc.arg(club_id)
   AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator')
   AND m.user_id < sqlc.arg(before_user_id)
-  AND (sqlc.arg(search)::text = '' OR u.name ILIKE sqlc.arg(search)::text OR u.phone ILIKE sqlc.arg(search)::text)
+  AND (sqlc.arg(search)::text = '' OR u.name ILIKE sqlc.arg(search)::text OR u.email ILIKE sqlc.arg(search)::text
+       OR (sqlc.arg(phone)::text <> '' AND u.phone LIKE sqlc.arg(phone)::text))
 ORDER BY m.user_id DESC
 LIMIT sqlc.arg(page_size);
 
@@ -52,7 +56,8 @@ FROM club_memberships m
 JOIN users u ON u.id = m.user_id
 WHERE m.club_id = sqlc.arg(club_id)
   AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator')
-  AND (sqlc.arg(search)::text = '' OR u.name ILIKE sqlc.arg(search)::text OR u.phone ILIKE sqlc.arg(search)::text);
+  AND (sqlc.arg(search)::text = '' OR u.name ILIKE sqlc.arg(search)::text OR u.email ILIKE sqlc.arg(search)::text
+       OR (sqlc.arg(phone)::text <> '' AND u.phone LIKE sqlc.arg(phone)::text));
 
 -- name: AdminCountCustomersAll :one
 -- «Всего: :count» без поиска (PB-07): то же число, что AdminCountCustomers с пустым search, но без соединения с

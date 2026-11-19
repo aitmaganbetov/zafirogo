@@ -17,7 +17,9 @@ paths:
       summary: Клиенты клуба
       description: |
         Laravel: UserController::index() (users.index, customers.view): членства не из ClubRoles::STAFF с балансами,
-        по user_id. Поиск — подстрока имени или телефона. Пагинация keyset: after_id = next_after_id (вперёд),
+        по user_id. Поиск q (старый 35c36a0, там ?search=; trim, не длиннее 100 — иначе 422) — подстрока имени или
+        email без учёта регистра (% и _ — буквально) или цифры телефона в любом формате («8 700 123-45-67» находит
+        +77001234567; телефон ищется от трёх цифр). Пагинация keyset: after_id = next_after_id (вперёд),
         before_id = prev_before_id (назад); total — «Всего: :count». Лояльность и признак «сотрудник другого клуба»
         ($staffElsewhere) — в каждой строке.
       parameters:

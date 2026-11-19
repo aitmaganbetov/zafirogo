@@ -6,9 +6,10 @@ import { UsersPage } from './UsersPage';
 
 /* FE-11: «Пользователи» — балансы из тиынов, пополнение/списание баланса владельцем, новый клиент с балансом. */
 
+const navigate = vi.hoisted(() => vi.fn(async (_to: unknown) => undefined));
 vi.mock('@tanstack/react-router', async (original) => ({
   ...(await original<typeof import('@tanstack/react-router')>()),
-  useNavigate: () => vi.fn(async () => undefined),
+  useNavigate: () => navigate,
 }));
 
 const customer = {
@@ -127,5 +128,51 @@ describe('пользователи: деньги', () => {
     await waitFor(() => expect(api2.of('POST', '/api/customers')).toHaveLength(1));
     const body = api2.of('POST', '/api/customers')[0]?.body as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual(['email', 'name', 'password', 'password_confirmation', 'phone']);
+  });
+});
+
+/* Старый Zafiro 35c36a0: поиск по имени, телефону в любом формате или email (UsersTest «finds customers by name…»). */
+describe('пользователи: поиск', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    session.clear();
+    navigate.mockClear();
+  });
+
+  const field = () => screen.getByRole('searchbox', { name: 'Поиск пользователей' }) as HTMLInputElement;
+
+  it('запрос уходит в ?q=, пагинация сохраняет поиск', async () => {
+    signIn('owner', OWNER);
+    const api = mockApi({ 'GET /api/customers': { ...page, next_after_id: 9 } });
+    renderPage(<UsersPage search={{ q: '8 700 123-45-67' }} />);
+    await screen.findByText('Айгерим');
+    expect(api.of('GET', '/api/customers')[0]?.search.get('q')).toBe('8 700 123-45-67');
+    expect(field().value).toBe('8 700 123-45-67');
+    expect(field().maxLength).toBe(100);
+    expect(screen.getByRole('link', { name: 'Сбросить' })).toHaveAttribute('href', '/users');
+    expect(document.querySelector('a[rel="next"]')).toHaveAttribute('href', '/users?q=8+700+123-45-67&after=9');
+  });
+
+  it('форма: trim и переход на /users?q=…; пустой запрос — без q', () => {
+    signIn('owner', OWNER);
+    mockApi({ 'GET /api/customers': page });
+    renderPage(<UsersPage search={{}} />);
+    expect(screen.queryByRole('link', { name: 'Сбросить' })).toBeNull();
+    fireEvent.change(field(), { target: { value: '  dana@  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Найти' }));
+    expect(navigate).toHaveBeenLastCalledWith({ href: '/users?q=dana%40' });
+    fireEvent.change(field(), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Найти' }));
+    expect(navigate).toHaveBeenLastCalledWith({ href: '/users' });
+  });
+
+  it('ничего не нашли — текст с запросом; без поиска — «Пользователей пока нет»', async () => {
+    signIn('owner', OWNER);
+    mockApi({ 'GET /api/customers': { ...page, items: [], total: 0 } });
+    const view = renderPage(<UsersPage search={{ q: 'нет такого' }} />);
+    expect(await screen.findByText('Никого не нашли по запросу «нет такого»')).toBeInTheDocument();
+    view.unmount();
+    renderPage(<UsersPage search={{}} />);
+    expect(await screen.findByText('Пользователей пока нет')).toBeInTheDocument();
   });
 });

@@ -33,7 +33,7 @@ const positive = (v: unknown): number | undefined => {
 };
 
 export function parseCustomersSearch(s: Record<string, unknown>): CustomersSearch {
-  const q = typeof s.q === 'string' && s.q.trim() !== '' ? s.q.slice(0, 100) : undefined;
+  const q = typeof s.q === 'string' && s.q.trim() !== '' ? s.q.trim().slice(0, 100) : undefined;
   const after = positive(s.after);
   return { after, before: after === undefined ? positive(s.before) : undefined, q };
 }

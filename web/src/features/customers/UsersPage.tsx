@@ -27,7 +27,8 @@ import { buildCreateBody, buildUpdateBody, type CreateForm, type EditForm } from
 /*
  * Пользователи (клиенты) — перенос resources/views/users.blade.php (UserController::index/store/update/resetPassword):
  * разметка и классы один-в-один, диалоги <dialog> «Новый клиент» и «Изменить клиента», сброс пароля с confirm.
- * Пагинация — keyset (simple-tailwind вместо номеров страниц), поиск — параметр ?q= (поля поиска в старом экране нет).
+ * Пагинация — keyset (simple-tailwind вместо номеров страниц), сохраняет поиск. Поиск по имени, телефону в любом формате
+ * или email (старый Zafiro 35c36a0) — форма из users.blade.php, параметр ?q= (в старом ?search=).
  */
 
 const INPUT =
@@ -150,6 +151,13 @@ export function UsersPage({ search }: { search: CustomersSearch }) {
     nextHref: data?.next_after_id != null ? customersHref({ q: search.q, after: data.next_after_id }) : null,
   };
   const locked = editing?.account_locked === true;
+  // $search — trim, как TrimStrings; форма GET — переход по URL с ?q=.
+  const query = search.q?.trim() ?? '';
+  const onSearch = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const q = String(new FormData(e.currentTarget).get('search') ?? '').trim();
+    void navigate({ href: customersHref({ q: q || undefined }) });
+  };
 
   return (
     <div className="p-6 lg:p-8">
@@ -316,6 +324,12 @@ export function UsersPage({ search }: { search: CustomersSearch }) {
         </div>
       </dialog>
 
+      <form method="GET" action="/users" role="search" className="mb-4 flex flex-wrap items-center gap-2" onSubmit={onSearch}>
+        <input key={query} type="search" name="search" defaultValue={query} maxLength={100} placeholder={t('Имя, телефон или email')} aria-label={t('Поиск пользователей')} className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-900 sm:max-w-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white" />
+        <button type="submit" className="brand-button min-h-10 px-4">{t('Найти')}</button>
+        {query !== '' && <a href="/users" className="text-sm font-medium text-gray-600 hover:underline dark:text-gray-300">{t('Сбросить')}</a>}
+      </form>
+
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-left text-sm">
@@ -364,7 +378,7 @@ export function UsersPage({ search }: { search: CustomersSearch }) {
               {data && items.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-5 py-10 text-center text-gray-500 dark:text-gray-400">
-                    {t('Пользователей пока нет')}
+                    {query === '' ? t('Пользователей пока нет') : t('Никого не нашли по запросу «{{search}}»', { search: query })}
                   </td>
                 </tr>
               )}

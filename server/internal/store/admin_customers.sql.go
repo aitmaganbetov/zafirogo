@@ -48,17 +48,19 @@ FROM club_memberships m
 JOIN users u ON u.id = m.user_id
 WHERE m.club_id = $1
   AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator')
-  AND ($2::text = '' OR u.name ILIKE $2::text OR u.phone ILIKE $2::text)
+  AND ($2::text = '' OR u.name ILIKE $2::text OR u.email ILIKE $2::text
+       OR ($3::text <> '' AND u.phone LIKE $3::text))
 `
 
 type AdminCountCustomersParams struct {
 	ClubID int64  `json:"club_id"`
 	Search string `json:"search"`
+	Phone  string `json:"phone"`
 }
 
 // «Всего: :count» ($users->total()): клиенты клуба (с тем же поиском).
 func (q *Queries) AdminCountCustomers(ctx context.Context, arg AdminCountCustomersParams) (int64, error) {
-	row := q.db.QueryRow(ctx, adminCountCustomers, arg.ClubID, arg.Search)
+	row := q.db.QueryRow(ctx, adminCountCustomers, arg.ClubID, arg.Search, arg.Phone)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -179,15 +181,17 @@ LEFT JOIN member_balances b ON b.club_id = m.club_id AND b.user_id = m.user_id
 WHERE m.club_id = $1
   AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator')
   AND m.user_id > $2
-  AND ($3::text = '' OR u.name ILIKE $3::text OR u.phone ILIKE $3::text)
+  AND ($3::text = '' OR u.name ILIKE $3::text OR u.email ILIKE $3::text
+       OR ($4::text <> '' AND u.phone LIKE $4::text))
 ORDER BY m.user_id
-LIMIT $4
+LIMIT $5
 `
 
 type AdminListCustomersParams struct {
 	ClubID      int64  `json:"club_id"`
 	AfterUserID int64  `json:"after_user_id"`
 	Search      string `json:"search"`
+	Phone       string `json:"phone"`
 	PageSize    int32  `json:"page_size"`
 }
 
@@ -206,13 +210,16 @@ type AdminListCustomersRow struct {
 
 // Клиенты для REST админки (Этап 2, B1). Laravel: app/Http/Controllers/UserController.php index().
 // Клиенты клуба (членства не из ClubRoles::STAFF) с балансами, по user_id (как orderBy('user_id'));
-// keyset: after_user_id — последний user_id предыдущей страницы. Поиск — подстрока имени или телефона
-// (search — экранированный шаблон ILIKE, пусто — все).
+// keyset: after_user_id — последний user_id предыдущей страницы. Поиск (35c36a0) — подстрока имени или email
+// (search — экранированный шаблон ILIKE, пусто — все) или цифры телефона в любом формате (phone — «%цифры%»,
+// пусто — телефон не ищется: в запросе меньше трёх цифр). Индексы pg_trgm users(name), users(phone) (0032),
+// users(email) (0043); план под значения — db.customPlan.
 func (q *Queries) AdminListCustomers(ctx context.Context, arg AdminListCustomersParams) ([]AdminListCustomersRow, error) {
 	rows, err := q.db.Query(ctx, adminListCustomers,
 		arg.ClubID,
 		arg.AfterUserID,
 		arg.Search,
+		arg.Phone,
 		arg.PageSize,
 	)
 	if err != nil {
@@ -254,15 +261,17 @@ LEFT JOIN member_balances b ON b.club_id = m.club_id AND b.user_id = m.user_id
 WHERE m.club_id = $1
   AND m.role NOT IN ('owner', 'admin', 'manager', 'cashier', 'operator')
   AND m.user_id < $2
-  AND ($3::text = '' OR u.name ILIKE $3::text OR u.phone ILIKE $3::text)
+  AND ($3::text = '' OR u.name ILIKE $3::text OR u.email ILIKE $3::text
+       OR ($4::text <> '' AND u.phone LIKE $4::text))
 ORDER BY m.user_id DESC
-LIMIT $4
+LIMIT $5
 `
 
 type AdminListCustomersBeforeParams struct {
 	ClubID       int64  `json:"club_id"`
 	BeforeUserID int64  `json:"before_user_id"`
 	Search       string `json:"search"`
+	Phone        string `json:"phone"`
 	PageSize     int32  `json:"page_size"`
 }
 
@@ -286,6 +295,7 @@ func (q *Queries) AdminListCustomersBefore(ctx context.Context, arg AdminListCus
 		arg.ClubID,
 		arg.BeforeUserID,
 		arg.Search,
+		arg.Phone,
 		arg.PageSize,
 	)
 	if err != nil {

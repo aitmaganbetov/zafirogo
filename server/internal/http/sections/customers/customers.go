@@ -8,7 +8,10 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
@@ -32,6 +35,8 @@ const (
 	msgOwnerPaymentLabel = "без кассы (владелец)"
 	// maxInitialBalance — StoreUserRequest: balance / bonus_balance max:9999999999.99.
 	maxInitialBalance = money.Tiyn(999_999_999_999)
+	// maxSearch — UserController::index(): search max:100.
+	maxSearch = 100
 )
 
 var balanceLabel = map[billing.BalanceField]string{billing.FieldMain: "основной баланс", billing.FieldBonus: "бонусный баланс"}
@@ -43,6 +48,29 @@ func customer(ctx context.Context, q *store.Queries, clubID, userID int64) (stor
 		return row, httpx.NotFound()
 	}
 	return row, err
+}
+
+// phonePattern — шаблон LIKE по цифрам телефона из строки поиска: «8 700 123-45-67» находит +77001234567.
+// Меньше трёх цифр — пусто (телефон не ищется). Цифры не экранируются — в них нет % и _.
+// Laravel: app/Http/Controllers/UserController.php UserController::index() (35c36a0) — все не-цифры удаляются (\D+),
+// 11 цифр с ведущей 8 → 7, orWhere('phone', 'like', '%'.$digits.'%') при strlen($digits) >= 3.
+func phonePattern(q *string) string {
+	if q == nil {
+		return ""
+	}
+	digits := make([]byte, 0, len(*q))
+	for i := 0; i < len(*q); i++ {
+		if c := (*q)[i]; c >= '0' && c <= '9' {
+			digits = append(digits, c)
+		}
+	}
+	if len(digits) == 11 && digits[0] == '8' {
+		digits[0] = '7'
+	}
+	if len(digits) < 3 {
+		return ""
+	}
+	return "%" + string(digits) + "%"
 }
 
 // ListCustomers — UserController::index(): клиенты (не сотрудники) по user_id, с поиском; keyset вперёд (after_id)
@@ -58,15 +86,20 @@ func (h *handlers) ListCustomers(ctx context.Context, req customersapi.ListCusto
 	if after > 0 && before > 0 {
 		return nil, httpx.NewAPIError(http.StatusBadRequest, "bad_request", "")
 	}
+	// 'search' => ['nullable', 'string', 'max:100'] (после TrimStrings).
+	if req.Params.Q != nil && utf8.RuneCountInString(strings.TrimSpace(*req.Params.Q)) > maxSearch {
+		return nil, httpx.RuleErrorWith("q", "max_string", strconv.Itoa(maxSearch))
+	}
 	size := httpx.PageSize(req.Params.Limit)
 	search := httpx.LikePattern(req.Params.Q)
+	phone := phonePattern(req.Params.Q)
 	out := customersapi.CustomerPage{Items: []customersapi.Customer{}}
 	err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		clubID := httpx.ClubID(ctx)
 		var rows []customerRow
 		if before > 0 {
 			list, err := q.AdminListCustomersBefore(ctx, store.AdminListCustomersBeforeParams{
-				ClubID: clubID, BeforeUserID: before, Search: search, PageSize: size + 1,
+				ClubID: clubID, BeforeUserID: before, Search: search, Phone: phone, PageSize: size + 1,
 			})
 			if err != nil {
 				return err
@@ -86,7 +119,7 @@ func (h *handlers) ListCustomers(ctx context.Context, req customersapi.ListCusto
 			}
 		} else {
 			list, err := q.AdminListCustomers(ctx, store.AdminListCustomersParams{
-				ClubID: clubID, AfterUserID: after, Search: search, PageSize: size + 1,
+				ClubID: clubID, AfterUserID: after, Search: search, Phone: phone, PageSize: size + 1,
 			})
 			if err != nil {
 				return err
@@ -113,7 +146,7 @@ func (h *handlers) ListCustomers(ctx context.Context, req customersapi.ListCusto
 		if search == "" {
 			total, err = q.AdminCountCustomersAll(ctx, clubID)
 		} else {
-			total, err = q.AdminCountCustomers(ctx, store.AdminCountCustomersParams{ClubID: clubID, Search: search})
+			total, err = q.AdminCountCustomers(ctx, store.AdminCountCustomersParams{ClubID: clubID, Search: search, Phone: phone})
 		}
 		if err != nil {
 			return err
