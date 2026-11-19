@@ -28,10 +28,13 @@ func TestAdminCustomersSearch(t *testing.T) {
 		e.exec("UPDATE users SET phone = $2, email = $3 WHERE id = $1", id, ph, em)
 		return id
 	}
+	// В email — метка теста буквами: цифры в запросе ищутся ещё и по телефону (от трёх цифр), а телефоны
+	// клиентов теста содержат номер теста.
+	tag := strings.Map(func(r rune) rune { return 'a' + r - '0' }, fmt.Sprint(seq))
 	ivan := phone(1)
-	add("Иван Петров", ivan, fmt.Sprintf("ivan%d@example.com", seq))
+	add("Иван Петров", ivan, "ivan."+tag+"@example.com")
 	dana := phone(2)
-	add("Дана Ахметова", dana, fmt.Sprintf("dana%d@example.com", seq))
+	add("Дана Ахметова", dana, "dana."+tag+"@example.com")
 	add("Ерлан", phone(3), "")
 	// Сотрудник с подходящим именем — не клиент.
 	e.staff("Иван Кассир", "cashier")
@@ -64,7 +67,7 @@ func TestAdminCustomersSearch(t *testing.T) {
 		{"иван", []string{"Иван Петров"}},
 		{local, []string{"Иван Петров"}},
 		{dana[7:10] + " " + dana[10:], []string{"Дана Ахметова"}},
-		{fmt.Sprintf("DANA%d@", seq), []string{"Дана Ахметова"}},
+		{"DANA." + strings.ToUpper(tag) + "@", []string{"Дана Ахметова"}},
 		{"  Ерлан  ", []string{"Ерлан"}},
 		{"", []string{"Дана Ахметова", "Ерлан", "Иван Петров"}},
 		// Меньше трёх цифр — телефон не ищется.
@@ -82,7 +85,7 @@ func TestAdminCustomersSearch(t *testing.T) {
 	}
 
 	// Keyset с поиском: страницы вперёд и назад остаются в пределах найденного.
-	q := fmt.Sprintf("%d@example", seq)
+	q := "." + tag + "@example"
 	p1, r1 := found(q, "limit=1")
 	next := num(r1.body["next_after_id"])
 	if len(p1) != 1 || next == 0 || num(r1.body["total"]) != 2 {
