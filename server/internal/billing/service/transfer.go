@@ -75,7 +75,7 @@ func (s *Service) TransferSeat(ctx context.Context, req TransferRequest) (Transf
 		var zones []int64
 		blocked := false
 		if from.CurrentSessionID != nil && target != nil && from.session().HasPaidSession(now) {
-			zones, err = allowedZones(ctx, q, req.ClubID, *from.CurrentSessionID)
+			zones, err = allowedZones(ctx, q, req.ClubID, *from.CurrentSessionID, from.ClubZoneID)
 			if err != nil {
 				return err
 			}
@@ -134,9 +134,15 @@ func (s *Service) TransferSeat(ctx context.Context, req TransferRequest) (Transf
 
 // allowedZones — SeatTransfers::allowedZoneIds() по частям сессии. Части до миграции 0006 (source NULL):
 // kind tariff — как покупка тарифа (запуск пакета от неё не отличить), kind minutes без зоны — пропускается
-// (зона неизвестна; см. open-questions/stage1-service.md SV-3).
-func allowedZones(ctx context.Context, q *store.Queries, clubID int64, sessionID string) ([]int64, error) {
+// (зона неизвестна; см. open-questions/stage1-service.md SV-3). fromZoneID — зона ПК клиента: тариф пересаживается
+// ещё и в зоны с уровнем не выше её уровня (BR-196).
+func allowedZones(ctx context.Context, q *store.Queries, clubID int64, sessionID string, fromZoneID int64) ([]int64, error) {
 	rows, err := q.ListSessionZonePurchases(ctx, store.ListSessionZonePurchasesParams{ClubID: clubID, SessionID: sessionID})
+	if err != nil {
+		return nil, err
+	}
+	// Laravel: SeatTransfers::allowedZoneIds() — ClubZone::query()->where('level', '<=', $level) (79d014f, 55e3878).
+	levelZones, err := q.ListLevelZoneIDs(ctx, store.ListLevelZoneIDsParams{ClubID: clubID, ZoneID: fromZoneID})
 	if err != nil {
 		return nil, err
 	}
@@ -155,5 +161,5 @@ func allowedZones(ctx context.Context, q *store.Queries, clubID int64, sessionID
 		}
 		purchases = append(purchases, zp)
 	}
-	return session.AllowedZones(purchases), nil
+	return session.AllowedZones(purchases, levelZones), nil
 }

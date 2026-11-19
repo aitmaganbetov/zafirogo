@@ -102,12 +102,14 @@ type ZoneInput struct {
 	Description  *string
 	Capacity     *int64
 	PricePerHour *int64
-	Icon         string
-	Theme        string
-	Status       string
-	IsFeatured   bool
-	SortOrder    int64
-	TariffIDs    []int64
+	// Level — уровень зоны 1…99; nil — без уровня (BR-196, Zafiro 79d014f).
+	Level      *int64
+	Icon       string
+	Theme      string
+	Status     string
+	IsFeatured bool
+	SortOrder  int64
+	TariffIDs  []int64
 }
 
 // Translator — перевод текстов журнала на язык клуба (httpx.Deps.T).
@@ -164,6 +166,15 @@ func validateZone(ctx context.Context, q *store.Queries, clubID int64, in *ZoneI
 			return rule("price_per_hour", "min", "0.01")
 		case *in.PricePerHour > 100_000_000:
 			return rule("price_per_hour", "max", "1000000")
+		}
+	}
+	// Laravel: app/Http/Requests/StoreClubZoneRequest.php rules() — 'level' => nullable|integer|min:1|max:99.
+	if in.Level != nil {
+		switch {
+		case *in.Level < 1:
+			return rule("level", "min", "1")
+		case *in.Level > 99:
+			return rule("level", "max", "99")
 		}
 	}
 	switch {
@@ -243,6 +254,23 @@ func tenge(t *int64) any {
 	return sign + strconv.FormatInt(v/100, 10) + "." + frac
 }
 
+// level16 — уровень зоны для колонки smallint (validateZone уже проверил 1…99).
+func level16(v *int64) *int16 {
+	if v == nil {
+		return nil
+	}
+	l := int16(*v) // #nosec G115 -- 1…99 после validateZone
+	return &l
+}
+
+func level64(v *int16) *int64 {
+	if v == nil {
+		return nil
+	}
+	l := int64(*v)
+	return &l
+}
+
 func idsList(ids []int64) string {
 	s := make([]string, len(ids))
 	for i, id := range ids {
@@ -264,8 +292,8 @@ func CreateZone(ctx context.Context, q *store.Queries, env Env, in ZoneInput) (i
 	now := env.Now
 	id, err := q.ClubMapInsertZone(ctx, store.ClubMapInsertZoneParams{
 		ClubID: env.ClubID, Name: in.Name, Description: in.Description, Capacity: in.Capacity,
-		PricePerHour: in.PricePerHour, Icon: in.Icon, Theme: in.Theme, Status: in.Status, IsFeatured: in.IsFeatured,
-		SortOrder: in.SortOrder, PositionX: 20 + offset%240, PositionY: 20 + offset%180, Now: &now,
+		PricePerHour: in.PricePerHour, Level: level16(in.Level), Icon: in.Icon, Theme: in.Theme, Status: in.Status,
+		IsFeatured: in.IsFeatured, SortOrder: in.SortOrder, PositionX: 20 + offset%240, PositionY: 20 + offset%180, Now: &now,
 	})
 	if err != nil {
 		return 0, err
@@ -304,7 +332,7 @@ func UpdateZone(ctx context.Context, q *store.Queries, env Env, zoneID int64, in
 	now := env.Now
 	if err := q.ClubMapUpdateZone(ctx, store.ClubMapUpdateZoneParams{
 		Name: in.Name, Description: in.Description, Capacity: in.Capacity, PricePerHour: in.PricePerHour,
-		Icon: in.Icon, Theme: in.Theme, Status: in.Status, IsFeatured: in.IsFeatured, SortOrder: in.SortOrder,
+		Level: level16(in.Level), Icon: in.Icon, Theme: in.Theme, Status: in.Status, IsFeatured: in.IsFeatured, SortOrder: in.SortOrder,
 		Now: &now, ClubID: env.ClubID, ID: zoneID,
 	}); err != nil {
 		return err
@@ -335,6 +363,7 @@ func UpdateZone(ctx context.Context, q *store.Queries, env Env, zoneID int64, in
 	diff("description", cur.Description, in.Description)
 	diff("capacity", cur.Capacity, in.Capacity)
 	diff("price_per_hour", tenge(cur.PricePerHour), tenge(in.PricePerHour))
+	diff("level", level64(cur.Level), in.Level)
 	diff("icon", cur.Icon, in.Icon)
 	diff("theme", cur.Theme, in.Theme)
 	diff("status", cur.Status, in.Status)

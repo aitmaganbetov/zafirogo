@@ -12,7 +12,7 @@ import { mergeLoad, mergeStates } from './useMapLive';
 
 const page: Page = {
   zones: [
-    { id: 1, name: 'VIP', description: 'Места', capacity: 8, price_per_hour_tiyn: 100000, icon: 'desktop', theme: 'green', status: 'available', is_featured: false, sort_order: 10, position_x: 20, position_y: 20, width: 390, height: 380, rotation: 0, tariff_ids: [] },
+    { id: 1, name: 'VIP', description: 'Места', capacity: 8, price_per_hour_tiyn: 100000, level: 3, icon: 'desktop', theme: 'green', status: 'available', is_featured: false, sort_order: 10, position_x: 20, position_y: 20, width: 390, height: 380, rotation: 0, tariff_ids: [] },
     { id: 2, name: 'Лаунж', description: null, capacity: null, price_per_hour_tiyn: null, icon: 'couch', theme: 'purple', status: 'available', is_featured: false, sort_order: 20, position_x: 500, position_y: 20, width: 300, height: 185, rotation: 90, tariff_ids: [] },
   ],
   computers: [
@@ -78,6 +78,30 @@ describe('ClubMapPage', () => {
     expect(document.querySelector('.cm-zone.sofa.rotated-90')).not.toBeNull();
     expect(document.querySelector('.cm-capacity')?.textContent).toContain('8');
     expect(document.getElementById('map-canvas')?.style.height).toBe('430px');
+  });
+
+  // GS-575 (BR-196, Zafiro 79d014f): уровень зоны в форме зоны — заполняется при редактировании, пустое — null.
+  it('edits the zone level in the zone form', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input) => Promise.resolve(json((input as Request).method === 'GET' ? page : { message: 'Зона обновлена.' })));
+    setup();
+    fireEvent.click(document.querySelector('.cm-zone .edit-zone')!);
+    const level = document.getElementById('zone-level') as HTMLInputElement;
+    expect(level.value).toBe('3');
+    expect(level.placeholder).toBe('Без уровня');
+    expect([level.min, level.max, level.step]).toEqual(['1', '99', '1']);
+    const sent = async (value: string) => {
+      fetchSpy.mockClear();
+      fireEvent.click(document.querySelector('.cm-zone .edit-zone')!); // модалка закрывается после сохранения
+      fireEvent.change(level, { target: { value } });
+      fireEvent.submit(document.getElementById('zone-form')!);
+      const put = () => fetchSpy.mock.calls.map((c) => c[0] as Request).find((r) => r.method === 'PUT');
+      await waitFor(() => expect(put()).toBeDefined());
+      const req = put()!;
+      expect(new URL(req.url).pathname).toBe('/api/club-map/1');
+      return ((await req.json()) as { level: number | null }).level;
+    };
+    expect(await sent('')).toBeNull();
+    expect(await sent('5')).toBe(5);
   });
 
   it('selects a PC and shows its information', () => {

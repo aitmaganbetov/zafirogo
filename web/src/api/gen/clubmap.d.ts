@@ -377,6 +377,11 @@ export interface components {
              * @description Цена часа (поминутная продажа), тиыны 1…100 000 000; null — не продаётся поминутно.
              */
             price_per_hour_tiyn?: number | null;
+            /**
+             * Format: int64
+             * @description Уровень зоны 1…99; null — без уровня. Тариф пересаживается в зоны того же или более низкого уровня (BR-196).
+             */
+            level?: number | null;
             icon: string;
             theme: string;
             status: string;
@@ -452,6 +457,8 @@ export interface components {
             capacity?: number | null;
             /** Format: int64 */
             price_per_hour_tiyn?: number | null;
+            /** Format: int64 */
+            level?: number | null;
             icon: string;
             theme: string;
             status: string;

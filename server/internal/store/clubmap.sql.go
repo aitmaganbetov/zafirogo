@@ -654,11 +654,11 @@ func (q *Queries) ClubMapInsertComputer(ctx context.Context, arg ClubMapInsertCo
 }
 
 const clubMapInsertZone = `-- name: ClubMapInsertZone :one
-INSERT INTO club_zones (club_id, name, description, capacity, price_per_hour, icon, theme, status, is_featured,
+INSERT INTO club_zones (club_id, name, description, capacity, price_per_hour, level, icon, theme, status, is_featured,
                         sort_order, position_x, position_y, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5,
-        $6, $7, $8, $9, $10,
-        $11, $12, $13, $13)
+        $6, $7, $8, $9, $10, $11,
+        $12, $13, $14, $14)
 RETURNING id
 `
 
@@ -668,6 +668,7 @@ type ClubMapInsertZoneParams struct {
 	Description  *string    `json:"description"`
 	Capacity     *int64     `json:"capacity"`
 	PricePerHour *int64     `json:"price_per_hour"`
+	Level        *int16     `json:"level"`
 	Icon         string     `json:"icon"`
 	Theme        string     `json:"theme"`
 	Status       string     `json:"status"`
@@ -686,6 +687,7 @@ func (q *Queries) ClubMapInsertZone(ctx context.Context, arg ClubMapInsertZonePa
 		arg.Description,
 		arg.Capacity,
 		arg.PricePerHour,
+		arg.Level,
 		arg.Icon,
 		arg.Theme,
 		arg.Status,
@@ -753,7 +755,7 @@ func (q *Queries) ClubMapLockComputer(ctx context.Context, arg ClubMapLockComput
 }
 
 const clubMapLockZone = `-- name: ClubMapLockZone :one
-SELECT id, name, description, capacity, price_per_hour, icon, theme, status, is_featured, sort_order,
+SELECT id, name, description, capacity, price_per_hour, level, icon, theme, status, is_featured, sort_order,
        position_x, position_y, width, height, rotation
 FROM club_zones
 WHERE club_id = $1 AND id = $2
@@ -771,6 +773,7 @@ type ClubMapLockZoneRow struct {
 	Description  *string `json:"description"`
 	Capacity     *int64  `json:"capacity"`
 	PricePerHour *int64  `json:"price_per_hour"`
+	Level        *int16  `json:"level"`
 	Icon         string  `json:"icon"`
 	Theme        string  `json:"theme"`
 	Status       string  `json:"status"`
@@ -792,6 +795,7 @@ func (q *Queries) ClubMapLockZone(ctx context.Context, arg ClubMapLockZoneParams
 		&i.Description,
 		&i.Capacity,
 		&i.PricePerHour,
+		&i.Level,
 		&i.Icon,
 		&i.Theme,
 		&i.Status,
@@ -1232,10 +1236,10 @@ func (q *Queries) ClubMapUpdateComputerLayout(ctx context.Context, arg ClubMapUp
 const clubMapUpdateZone = `-- name: ClubMapUpdateZone :exec
 UPDATE club_zones
 SET name = $1, description = $2, capacity = $3,
-    price_per_hour = $4, icon = $5, theme = $6,
-    status = $7, is_featured = $8, sort_order = $9,
-    updated_at = $10
-WHERE club_id = $11 AND id = $12
+    price_per_hour = $4, level = $5, icon = $6, theme = $7,
+    status = $8, is_featured = $9, sort_order = $10,
+    updated_at = $11
+WHERE club_id = $12 AND id = $13
 `
 
 type ClubMapUpdateZoneParams struct {
@@ -1243,6 +1247,7 @@ type ClubMapUpdateZoneParams struct {
 	Description  *string    `json:"description"`
 	Capacity     *int64     `json:"capacity"`
 	PricePerHour *int64     `json:"price_per_hour"`
+	Level        *int16     `json:"level"`
 	Icon         string     `json:"icon"`
 	Theme        string     `json:"theme"`
 	Status       string     `json:"status"`
@@ -1259,6 +1264,7 @@ func (q *Queries) ClubMapUpdateZone(ctx context.Context, arg ClubMapUpdateZonePa
 		arg.Description,
 		arg.Capacity,
 		arg.PricePerHour,
+		arg.Level,
 		arg.Icon,
 		arg.Theme,
 		arg.Status,
@@ -1451,7 +1457,7 @@ func (q *Queries) ClubMapZoneTariffs(ctx context.Context, clubID int64) ([]ClubM
 
 const clubMapZones = `-- name: ClubMapZones :many
 
-SELECT id, name, description, capacity, price_per_hour, icon, theme, status, is_featured, sort_order,
+SELECT id, name, description, capacity, price_per_hour, level, icon, theme, status, is_featured, sort_order,
        position_x, position_y, width, height, rotation
 FROM club_zones
 WHERE club_id = $1
@@ -1464,6 +1470,7 @@ type ClubMapZonesRow struct {
 	Description  *string `json:"description"`
 	Capacity     *int64  `json:"capacity"`
 	PricePerHour *int64  `json:"price_per_hour"`
+	Level        *int16  `json:"level"`
 	Icon         string  `json:"icon"`
 	Theme        string  `json:"theme"`
 	Status       string  `json:"status"`
@@ -1494,6 +1501,7 @@ func (q *Queries) ClubMapZones(ctx context.Context, clubID int64) ([]ClubMapZone
 			&i.Description,
 			&i.Capacity,
 			&i.PricePerHour,
+			&i.Level,
 			&i.Icon,
 			&i.Theme,
 			&i.Status,

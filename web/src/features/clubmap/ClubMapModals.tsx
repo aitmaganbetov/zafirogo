@@ -65,6 +65,7 @@ export function ZoneModal({ state, tariffs, onClose, onSubmit, onInvalid }: {
     set('description', zone?.description ?? '');
     set('capacity', zone?.capacity != null ? String(zone.capacity) : '');
     set('price_per_hour', zone?.price_per_hour_tiyn != null ? tiynToInput(zone.price_per_hour_tiyn) : '');
+    set('level', zone?.level != null ? String(zone.level) : '');
     set('icon', zone?.icon ?? 'desktop');
     set('theme', zone?.theme ?? 'neutral');
     set('status', zone?.status ?? 'available');
@@ -87,11 +88,13 @@ export function ZoneModal({ state, tariffs, onClose, onSubmit, onInvalid }: {
       price = p.tiyn;
     }
     const capacity = str('capacity').trim();
+    const level = str('level').trim();
     void onSubmit(zone, {
       name: str('name'),
       description: str('description') || null,
       capacity: capacity === '' ? null : Number(capacity),
       price_per_hour_tiyn: price,
+      level: level === '' ? null : Number(level),
       icon: str('icon'),
       theme: str('theme'),
       status: str('status'),
@@ -110,6 +113,7 @@ export function ZoneModal({ state, tariffs, onClose, onSubmit, onInvalid }: {
             <div className="cm-field"><label>{t('Название')}</label><input id="zone-name" name="name" maxLength={100} required /></div>
             <div className="cm-field"><label>{t('Количество мест')}</label><input id="zone-capacity" type="number" name="capacity" min={0} max={10000} /></div>
             <div className="cm-field full"><label htmlFor="zone-price-per-hour">{t('Цена за час')}</label><input id="zone-price-per-hour" type="number" name="price_per_hour" min="0.01" max="1000000" step="0.01" placeholder={t('Не продаётся поминутно')} /><small className="cm-field-hint">{t('Клиенты покупают в агенте любое число минут: цена за минуту — цена часа / 60.')}</small></div>
+            <div className="cm-field full"><label htmlFor="zone-level">{t('Уровень зоны')}</label><input id="zone-level" type="number" name="level" min="1" max="99" step="1" placeholder={t('Без уровня')} /><small className="cm-field-hint">{t('Гость с тарифом может сам пересесть в зону того же или более низкого уровня. Поминутное время переносится только в своей зоне.')}</small></div>
             <div className="cm-field full"><label>{t('Описание')}</label><textarea id="zone-description" name="description" maxLength={180}></textarea></div>
             <div className="cm-field"><label>{t('Иконка')}</label><select id="zone-icon" name="icon">{ICONS.map(([v, l]) => <option key={v} value={v}>{t(l)}</option>)}</select></div>
             <div className="cm-field"><label>{t('Цвет карточки')}</label><select id="zone-theme" name="theme">{THEMES.map(([v, l]) => <option key={v} value={v}>{t(l)}</option>)}</select></div>

@@ -64,7 +64,7 @@ func (s *Service) SeatMap(ctx context.Context, clubID, userID, fromComputerID in
 		if !from.HasPaidSession(now) || from.SessionUserID == nil || *from.SessionUserID != userID {
 			return session.ErrTransferNotOwnSession
 		}
-		zones, err := allowedZones(ctx, q, clubID, *from.SessionID)
+		zones, err := allowedZones(ctx, q, clubID, *from.SessionID, from.ZoneID)
 		if err != nil {
 			return err
 		}

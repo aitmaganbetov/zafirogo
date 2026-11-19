@@ -661,6 +661,7 @@ type Zone struct {
 	Icon             string  `json:"icon"`
 	Id               int64   `json:"id"`
 	IsFeatured       bool    `json:"is_featured"`
+	Level            *int64  `json:"level,omitempty"`
 	Name             string  `json:"name"`
 	PositionX        int64   `json:"position_x"`
 	PositionY        int64   `json:"position_y"`
@@ -686,7 +687,10 @@ type ZoneInput struct {
 	Description *string `json:"description,omitempty"`
 	Icon        string  `json:"icon"`
 	IsFeatured  bool    `json:"is_featured"`
-	Name        string  `json:"name"`
+
+	// Level Уровень зоны 1…99; null — без уровня. Тариф пересаживается в зоны того же или более низкого уровня (BR-196).
+	Level *int64 `json:"level,omitempty"`
+	Name  string `json:"name"`
 
 	// PricePerHourTiyn Цена часа (поминутная продажа), тиыны 1…100 000 000; null — не продаётся поминутно.
 	PricePerHourTiyn *int64   `json:"price_per_hour_tiyn,omitempty"`

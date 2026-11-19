@@ -364,7 +364,7 @@ func (h *handlers) GetClubMap(ctx context.Context, _ clubmapapi.GetClubMapReques
 		}
 		out.Zones = append(out.Zones, clubmapapi.Zone{
 			Id: z.ID, Name: z.Name, Description: z.Description, Capacity: z.Capacity, PricePerHourTiyn: z.PricePerHour,
-			Icon: z.Icon, Theme: z.Theme, Status: z.Status, IsFeatured: z.IsFeatured, SortOrder: z.SortOrder,
+			Level: zoneLevel(z.Level), Icon: z.Icon, Theme: z.Theme, Status: z.Status, IsFeatured: z.IsFeatured, SortOrder: z.SortOrder,
 			PositionX: z.PositionX, PositionY: z.PositionY, Width: z.Width, Height: z.Height, Rotation: int64(z.Rotation),
 			TariffIds: ids,
 		})
@@ -406,10 +406,18 @@ func (h *handlers) env(ctx context.Context) clubmap.Env {
 
 func zoneInput(b clubmapapi.ZoneInput) clubmap.ZoneInput {
 	return clubmap.ZoneInput{
-		Name: b.Name, Description: b.Description, Capacity: b.Capacity, PricePerHour: b.PricePerHourTiyn,
+		Name: b.Name, Description: b.Description, Capacity: b.Capacity, PricePerHour: b.PricePerHourTiyn, Level: b.Level,
 		Icon: b.Icon, Theme: b.Theme, Status: b.Status, IsFeatured: b.IsFeatured, SortOrder: b.SortOrder,
 		TariffIDs: deref(b.TariffIds),
 	}
+}
+
+func zoneLevel(v *int16) *int64 {
+	if v == nil {
+		return nil
+	}
+	l := int64(*v)
+	return &l
 }
 
 func deref[T any](p *[]T) []T {

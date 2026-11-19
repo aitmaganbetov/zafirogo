@@ -450,6 +450,7 @@ CREATE TABLE `club_zones` (
   `description` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `capacity` int unsigned DEFAULT NULL,
   `price_per_hour` decimal(12,2) DEFAULT NULL,
+  `level` tinyint unsigned DEFAULT NULL,
   `icon` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'desktop',
   `theme` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'neutral',
   `status` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'available',

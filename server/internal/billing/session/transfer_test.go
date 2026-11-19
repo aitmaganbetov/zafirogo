@@ -31,7 +31,7 @@ func TestTransferGS103(t *testing.T) {
 		{Computer{ID: 7, ZoneID: zoneHall, LastSeenAt: online}, true, false}, // бронь 11:00–12:00 в остатке сессии
 	}
 	// Журнал: tariff.purchased {session_id sess-1}; тариф «Hall» только для Hall.
-	zones := AllowedZones([]ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{zoneHall}}})
+	zones := AllowedZones([]ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{zoneHall}}}, nil)
 	if !slices.Equal(zones, []int64{zoneHall}) {
 		t.Fatalf("zones = %v", zones)
 	}
@@ -72,7 +72,7 @@ func TestTransferGS103(t *testing.T) {
 // GAP-035 — поминутное время пересаживается только в своей зоне.
 func TestTransferGAP035(t *testing.T) {
 	from := Computer{ID: 1, ZoneID: zoneHall, LastSeenAt: at(0), SessionID: str("s"), SessionUserID: i64(customer), SessionEndsAt: at(time.Hour)}
-	zones := AllowedZones([]ZonePurchase{{ID: 1, Source: SourceMinutes, ZoneID: zoneHall}})
+	zones := AllowedZones([]ZonePurchase{{ID: 1, Source: SourceMinutes, ZoneID: zoneHall}}, nil)
 	vip := Computer{ID: 20, ZoneID: zoneVIP, LastSeenAt: at(0)}
 	hall := Computer{ID: 21, ZoneID: zoneHall, LastSeenAt: at(0)}
 	t.Run("GAP-035", func(t *testing.T) {
@@ -117,7 +117,89 @@ func TestAllowedZones(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := AllowedZones(tc.in); !slices.Equal(got, tc.want) || (got == nil) != (tc.want == nil) {
+			if got := AllowedZones(tc.in, nil); !slices.Equal(got, tc.want) || (got == nil) != (tc.want == nil) {
+				t.Errorf("= %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// GS-574 «a tariff moves to a zone of the same or a lower level, time by the minute stays in its zone» (BR-196,
+// Zafiro 79d014f, 55e3878): тариф действует в VIP1 (уровень 3) — свободны VIP2 (3) и Hall (1), не Top (4) и не зона
+// без уровня; поминутное время, купленное в VIP1 последним, остаётся в VIP1 при любом уровне.
+func TestAllowedZonesLevelsGS574(t *testing.T) {
+	const (
+		vip1  int64 = 11 // уровень 3, ПК клиента
+		vip2  int64 = 12 // уровень 3
+		hall  int64 = 13 // уровень 1
+		top   int64 = 14 // уровень 4
+		plain int64 = 15 // без уровня
+	)
+	// ListLevelZoneIDs(VIP1): level <= 3.
+	levelZones := []int64{vip1, vip2, hall}
+	tariff := ZonePurchase{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{vip1}}
+	minutes := ZonePurchase{ID: 2, Source: SourceMinutes, ZoneID: vip1}
+	online := at(-10 * time.Second)
+	from := Computer{ID: 1, ZoneID: vip1, LastSeenAt: online, SessionID: str("sess-1"), SessionUserID: i64(customer), SessionEndsAt: at(time.Hour)}
+	pcs := []Computer{from,
+		{ID: 2, ZoneID: vip2, LastSeenAt: online},
+		{ID: 3, ZoneID: hall, LastSeenAt: online},
+		{ID: 4, ZoneID: top, LastSeenAt: online},
+		{ID: 5, ZoneID: plain, LastSeenAt: online},
+	}
+	tests := []struct {
+		name      string
+		purchases []ZonePurchase
+		want      map[int64]bool // ПК → available
+	}{
+		{"GS-574/тариф-тот-же-и-ниже-уровень", []ZonePurchase{tariff}, map[int64]bool{1: false, 2: true, 3: true, 4: false, 5: false}},
+		{"GS-574/поминутка-только-своя-зона", []ZonePurchase{tariff, minutes}, map[int64]bool{1: false, 2: false, 3: false, 4: false, 5: false}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			zones := AllowedZones(tc.purchases, levelZones)
+			for _, pc := range pcs {
+				if got := ListedAsFree(pc, from.ID, zones, false, t0); got != tc.want[pc.ID] {
+					t.Errorf("карта: ПК %d available = %v, want %v", pc.ID, got, tc.want[pc.ID])
+				}
+				if pc.ID == from.ID {
+					continue
+				}
+				target := pc
+				_, err := PlanTransfer(from, &target, customer, zones, false, t0)
+				if ok := err == nil; ok != tc.want[pc.ID] {
+					t.Errorf("пересадка: ПК %d err = %v, want ok %v", pc.ID, err, tc.want[pc.ID])
+				}
+				if err != nil && !errors.Is(err, ErrTransferUnavailable) {
+					t.Errorf("пересадка: ПК %d err = %v", pc.ID, err)
+				}
+			}
+		})
+	}
+}
+
+// BR-196: зоны уровня добавляются только к зонам тарифа; тариф без зон или удалённый — по-прежнему любая зона,
+// у текущей зоны нет уровня (levelZones пуст) — только зоны тарифа.
+func TestAllowedZonesLevels(t *testing.T) {
+	tariff := func(zones ...int64) ZonePurchase {
+		return ZonePurchase{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: zones}
+	}
+	tests := []struct {
+		name   string
+		in     []ZonePurchase
+		levels []int64
+		want   []int64
+	}{
+		{"BR-196/зона-без-уровня", []ZonePurchase{tariff(zoneVIP)}, nil, []int64{zoneVIP}},
+		{"BR-196/объединение-без-повторов", []ZonePurchase{tariff(zoneVIP, 3)}, []int64{zoneHall, zoneVIP}, []int64{zoneVIP, 3, zoneHall}},
+		{"BR-196/тариф-без-зон", []ZonePurchase{tariff()}, []int64{zoneHall}, nil},
+		{"BR-196/тариф-удалён", []ZonePurchase{{ID: 1, Source: SourceTariff, TariffZoneIDs: []int64{zoneVIP}}}, []int64{zoneHall}, nil},
+		{"BR-196/нет-покупок", nil, []int64{zoneHall}, nil},
+		{"BR-196/поминутка", []ZonePurchase{{ID: 1, Source: SourceMinutes, ZoneID: zoneVIP}}, []int64{zoneHall, zoneVIP}, []int64{zoneVIP}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AllowedZones(tc.in, tc.levels); !slices.Equal(got, tc.want) || (got == nil) != (tc.want == nil) {
 				t.Errorf("= %v, want %v", got, tc.want)
 			}
 		})

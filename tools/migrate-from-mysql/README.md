@@ -125,6 +125,7 @@ go run ./cmd/migrate-from-mysql purge  --club zafiro-arena --confirm zafiro-aren
 | `club_subscriptions` | до `go-live` — `suspended` (клуб закрыт), статус после `go-live` — в записи аудита переноса (S5-M3-2); скидка клуба (`discount_percent`, `discount_until`, `discount_note`, 0035) — как есть |
 | `subscription_invoices` (0035) | счета клуба за подписку — с клубом (UQ-23): id сохраняется, значит номер `ZF-…` не меняется; суммы × 100, `reseller_percent` → `reseller_bp`; неоплаченный счёт переносится неоплаченным. По каждому оплаченному счёту — запись `invoice_paid` журнала денег платформы (и `reseller_accrual`, если у счёта есть реселлер и начисление), см. «Деньги платформы» |
 | `club_zones.devices`, `club_photos` (0036) | как есть; файлы фото — расширение `files` (ниже) |
+| `club_zones.level` (0041) | как есть (`tinyint unsigned` → `smallint`); значение вне 1…99 нарушает `club_zones_level_check` — ошибка вставки с id строки (старая форма такого не записывала) |
 | `computer_reservations` (0037) | брони из приложения: `from_app`, `tariff_id`, `code` — как есть; `paid_main_cents`, `paid_bonus_cents` — уже тиыны, **без × 100** |
 | `club_memberships` (Q-027), `club_invitations` | как есть |
 | `member_balances` | строка с нулями (новый id: роль платформы вставляет только `club_id, user_id`, даты — 0004), остаток — проводкой `migration_opening_balance` (см. «Деньги в ledger») |

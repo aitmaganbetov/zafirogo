@@ -786,3 +786,18 @@ AND reseller_id IS NULL`); счёт выставляется и отменяет
 ещё раз. Ключ «Весь клуб — в одном окне» (в старом заменён на вариант с дефисом) остаётся в
 `db/seed/translations-new.*.json`, пока его использует `LandingPage.tsx`. Семь ключей экрана «код брони» добавлены
 во встроенные переводы агента (`agent/src/Zafiro.Agent.UI/Frontend/i18n/*.json`).
+
+## 18. Уровень зоны (0041, Zafiro 79d014f, 55e3878)
+
+| Миграция | Laravel | Что |
+|---|---|---|
+| `0041_club_zones_level.sql` | `2026_11_19_100000_add_level_to_club_zones` | `club_zones.level smallint NULL`, `CHECK (level BETWEEN 1 AND 99)` |
+
+- Тип — как у прочих `unsignedTinyInteger` (§2); диапазон CHECK — правило формы `StoreClubZoneRequest`
+  (`nullable|integer|min:1|max:99`), в MySQL колонка принимала 0…255. `NULL` — зона без уровня.
+- Смысл — правило пересадки BR-196: тариф пересаживается ещё и в зоны клуба с `level ≤ level` зоны ПК клиента
+  (`db/queries/sessions.sql` `ListLevelZoneIDs`). Индекса нет: зон в клубе единицы–десятки, выборка идёт по
+  `club_zones_club_id_id_unique`.
+- Перенос (`migrate-from-mysql`): колонка с той же парой имён — как есть; значение вне 1…99 — ошибка вставки с id строки
+  (старая форма такого не записывала). `testdata/schema.sql` пересобран `tools/migrate-from-mysql/dump-schema.sh`
+  (демо-данные не менялись). Проверено `up → down → up` (интеграционные тесты).

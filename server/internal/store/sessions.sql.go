@@ -142,6 +142,41 @@ func (q *Queries) InsertTimePackage(ctx context.Context, arg InsertTimePackagePa
 	return id, err
 }
 
+const listLevelZoneIDs = `-- name: ListLevelZoneIDs :many
+SELECT z.id
+FROM club_zones z
+JOIN club_zones cur ON cur.club_id = z.club_id AND cur.id = $1
+WHERE z.club_id = $2 AND cur.level IS NOT NULL AND z.level <= cur.level
+ORDER BY z.id
+`
+
+type ListLevelZoneIDsParams struct {
+	ZoneID int64 `json:"zone_id"`
+	ClubID int64 `json:"club_id"`
+}
+
+// Зоны клуба с уровнем не выше уровня зоны zone_id (зона ПК клиента); у неё нет уровня — пусто.
+// Laravel: app/Services/SeatTransfers.php allowedZoneIds() — ClubZone::query()->where('level', '<=', $level)->pluck('id').
+func (q *Queries) ListLevelZoneIDs(ctx context.Context, arg ListLevelZoneIDsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listLevelZoneIDs, arg.ZoneID, arg.ClubID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSessionPurchases = `-- name: ListSessionPurchases :many
 
 SELECT id, user_id, kind, tariff_id, name, minutes, main_cents, bonus_cents, expires_at

@@ -108,3 +108,84 @@ func TestGetSeatMap(t *testing.T) {
 	_, err = own.guest().GetSeatMap(ctx, &agentv1.GetSeatMapRequest{})
 	wantReason(t, err, codes.PermissionDenied, agentv1.ErrorCode_ERROR_CODE_FEATURE_DISABLED)
 }
+
+// GS-574 (BR-196, Zafiro 79d014f, 55e3878; GuestFeaturesTest.php «a tariff moves to a zone of the same or a lower
+// level, time by the minute stays in its zone»): тариф действует только в VIP1 (уровень 3) — карта и пересадка
+// открывают VIP2 (3) и Hall (1), но не Top (4) и не зону без уровня; после покупки минут в VIP1 — только VIP1.
+func TestSeatMapZoneLevelsGS574(t *testing.T) {
+	h := newHarness(t, harnessOpts{noLimits: true, settings: `{"guests": {"allow_guest_self_transfer": true}}`})
+	phone := uniqPhone()
+	h.customer("Арман", phone, "password", 500000, 0)
+	zone := func(name string, level any, price any) int64 {
+		return h.int(`INSERT INTO club_zones (club_id, name, level, price_per_hour, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, now(), now()) RETURNING id`, h.club, name, level, price)
+	}
+	vip1, vip2, hall, top := zone("VIP1", 3, 60000), zone("VIP2", 3, nil), zone("Hall1", 1, nil), zone("Top", 4, nil)
+	from, inVip2, inHall, inTop, inPlain := h.enrollPC(), h.enrollPC(), h.enrollPC(), h.enrollPC(), h.enrollPC()
+	for i, p := range []*pc{from, inVip2, inHall, inTop, inPlain} {
+		p.connect("boot-level-"+string(rune('a'+i)), 0)
+	}
+	for p, z := range map[*pc]int64{from: vip1, inVip2: vip2, inHall: hall, inTop: top} {
+		h.exec("UPDATE club_computers SET club_zone_id = $2 WHERE id = $1", p.id, z)
+	}
+	// inPlain остаётся в зоне харнеса «Hall» — без уровня.
+	tariff := h.int(`INSERT INTO tariffs (club_id, name, duration_minutes, price, currency, payment_method, is_active, created_at, updated_at)
+		VALUES ($1, 'VIP1', 120, 10000, 'KZT', 'main_or_bonus', true, now(), now()) RETURNING id`, h.club)
+	h.exec("INSERT INTO club_zone_tariff (club_zone_id, tariff_id, club_id) VALUES ($1, $2, $3)", vip1, tariff, h.club)
+	ctx := withToken(from.mustLogin(phone, "password"))
+	if _, err := from.guest().PurchaseTariff(ctx, &agentv1.PurchaseTariffRequest{IdempotencyKey: key(), TariffId: tariff,
+		BalanceSource: agentv1.BalanceSource_BALANCE_SOURCE_MAIN}); err != nil {
+		t.Fatal(err)
+	}
+	check := func(name string, want map[int64]bool) {
+		t.Helper()
+		m, err := from.guest().GetSeatMap(ctx, &agentv1.GetSeatMapRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[int64]bool{}
+		for _, s := range m.GetSeats() {
+			if _, ok := want[s.GetComputer().GetComputerId()]; ok {
+				got[s.GetComputer().GetComputerId()] = s.GetAvailable()
+			}
+		}
+		for id, w := range want {
+			if got[id] != w {
+				t.Errorf("%s: pc %d available = %v, want %v", name, id, got[id], w)
+			}
+		}
+		// Карта и пересадка согласованы: недоступный ПК — отказ.
+		for id, w := range want {
+			if w || id == from.id {
+				continue
+			}
+			_, err := from.guest().TransferSeat(ctx, &agentv1.TransferSeatRequest{IdempotencyKey: key(), TargetComputerId: id})
+			wantReason(t, err, codes.FailedPrecondition, agentv1.ErrorCode_ERROR_CODE_SEAT_UNAVAILABLE)
+		}
+	}
+	t.Run("GS-574/тариф", func(t *testing.T) {
+		check("тариф", map[int64]bool{from.id: false, inVip2.id: true, inHall.id: true, inTop.id: false, inPlain.id: false})
+	})
+	t.Run("GS-574/поминутно", func(t *testing.T) {
+		if _, err := from.guest().PurchaseMinutes(ctx, &agentv1.PurchaseMinutesRequest{IdempotencyKey: key(), Minutes: 10,
+			BalanceSource: agentv1.BalanceSource_BALANCE_SOURCE_MAIN}); err != nil {
+			t.Fatal(err)
+		}
+		check("поминутно", map[int64]bool{from.id: false, inVip2.id: false, inHall.id: false, inTop.id: false, inPlain.id: false})
+	})
+	t.Run("GS-574/уровень-текущей-зоны-снят", func(t *testing.T) {
+		// Ещё один тариф последним: зона ПК клиента без уровня — только зоны тарифа.
+		if _, err := from.guest().PurchaseTariff(ctx, &agentv1.PurchaseTariffRequest{IdempotencyKey: key(), TariffId: tariff,
+			BalanceSource: agentv1.BalanceSource_BALANCE_SOURCE_MAIN}); err != nil {
+			t.Fatal(err)
+		}
+		check("тариф, уровни", map[int64]bool{inVip2.id: true, inHall.id: true, inTop.id: false})
+		h.exec("UPDATE club_zones SET level = NULL WHERE id = $1", vip1)
+		check("тариф, без уровня", map[int64]bool{inVip2.id: false, inHall.id: false, inTop.id: false, inPlain.id: false})
+		// Пересадка на открытый уровнем ПК проходит.
+		h.exec("UPDATE club_zones SET level = 3 WHERE id = $1", vip1)
+		if _, err := from.guest().TransferSeat(ctx, &agentv1.TransferSeatRequest{IdempotencyKey: key(), TargetComputerId: inHall.id}); err != nil {
+			t.Fatalf("transfer to a lower level: %v", err)
+		}
+	})
+}

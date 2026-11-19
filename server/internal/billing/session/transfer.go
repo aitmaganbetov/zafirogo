@@ -35,14 +35,16 @@ type ZonePurchase struct {
 	TariffZoneIDs []int64 // зоны тарифа; пусто — все
 }
 
-// AllowedZones — зоны, куда можно пересесть; nil — любая зона.
+// AllowedZones — зоны, куда можно пересесть; nil — любая зона. levelZoneIDs — зоны клуба с уровнем не выше
+// уровня текущей зоны клиента (store.ListLevelZoneIDs); у текущей зоны нет уровня — пусто.
 //
-// Laravel: app/Services/SeatTransfers.php allowedZoneIds() (стр. 135–152), BR-035:
+// Laravel: app/Services/SeatTransfers.php allowedZoneIds() (стр. 136–157), BR-035, BR-196:
 // последняя по id запись журнала tariff.purchased|time.purchased этой сессии; поминутное время —
-// только своя зона; тариф не найден или без зон — любая; иначе зоны тарифа.
+// только своя зона; тариф не найден или без зон — любая; иначе зоны тарифа ∪ зоны уровня
+// (array_values(array_unique([...зоны тарифа, ...зоны уровня])), Zafiro 79d014f, 55e3878).
 // Решение Q-007/OQ-BR-04 (docs/DECISIONS.md) — источник не журнал, а покупки сессии; смысл тот же, пакеты
 // не учитываются.
-func AllowedZones(purchases []ZonePurchase) []int64 {
+func AllowedZones(purchases []ZonePurchase, levelZoneIDs []int64) []int64 {
 	var last *ZonePurchase
 	for i := range purchases {
 		p := &purchases[i]
@@ -62,7 +64,13 @@ func AllowedZones(purchases []ZonePurchase) []int64 {
 	if !last.TariffFound || len(last.TariffZoneIDs) == 0 {
 		return nil
 	}
-	return slices.Clone(last.TariffZoneIDs)
+	zones := slices.Clone(last.TariffZoneIDs)
+	for _, id := range levelZoneIDs {
+		if !slices.Contains(zones, id) {
+			zones = append(zones, id)
+		}
+	}
+	return zones
 }
 
 // FreeForTransfer — целевой ПК свободен для пересадки (проверка внутри transfer()).

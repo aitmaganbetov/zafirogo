@@ -810,6 +810,7 @@ transfer: оба ПК FOR UPDATE по id; target != from;
   берёт тариф `withTrashed` — зоны удалённого тарифа действуют. Разница переносится как есть (решение S1-SES-03:
   в Go `session.ZonePurchase.TariffFound` = найден и не удалён).
 - [ ] Перенести; зону последней покупки брать из таблицы покупок, а не из журнала (OQ-BR-04).
+- Zafiro 79d014f, 55e3878: тариф пересаживается ещё и в зоны с уровнем не выше уровня текущей зоны — [BR-196](#br-196).
 
 <a id="br-036"></a>
 ### BR-036. Heartbeat агента и состояние ПК — P2
@@ -2176,3 +2177,33 @@ $balance = (float) $reseller->earned - (float) $reseller->paid_out;
 тарифом, кроме отменённых (по одной на ПК). Бронь на N ПК при остатке меньше N — «Тариф «:tariff» осталось купить на
 :count ПК.»; отменённая бронь лимит освобождает; запуск брони продажу не добавляет. Go: `GetTariffSales`,
 `GuestListTariffs`, `AppBookingTariffs` (один и тот же счёт в покупке агента и в брони).
+
+---
+
+## 19. Уровни зон и пересадка (Zafiro 79d014f, 55e3878)
+
+<a id="br-196"></a>
+### BR-196. Уровень зоны: тариф пересаживается в зону того же или более низкого уровня — P2
+
+**Код:** `app/Services/SeatTransfers.php` `allowedZoneIds()` (стр. 136–157); `app/Http/Requests/StoreClubZoneRequest.php`
+(`level`); `resources/views/club-map/index.blade.php` (поле «Уровень зоны» формы зоны);
+`database/migrations/2026_11_19_100000_add_level_to_club_zones.php`.
+- Уровень зоны задаёт клуб в форме зоны на карте клуба: целое 1…99 или пусто («Без уровня», `NULL`). 0 и > 99 —
+  ошибка поля `level`. Изменение — в журнале `zone.updated` (`level: «было → стало»`, пусто — «—»).
+- Правило зон пересадки (дополняет BR-035):
+```
+allowedZoneIds(from):
+    last = последняя покупка сессии (tariff | minutes; пакеты не учитываются)
+    last — поминутное время → [зона покупки]                 // уровень не важен
+    тариф не найден (удалён) или без зон → null (любая зона)  // уровень не важен
+    level = from.zone.level
+    levelZones = level == null ? [] : зоны клуба с level ≤ level   // зоны без уровня не входят
+    → array_values(array_unique([...зоны тарифа, ...levelZones]))
+```
+- Одно правило для карты свободных мест (`SeatMap`, `GetSeatMap` агента) и для самой пересадки (`TransferSeat`):
+  обе зовут `billing/service.allowedZones()` → `session.AllowedZones(покупки, ListLevelZoneIDs(зона ПК))`.
+- Уровень берётся у зоны **исходного ПК** на момент запроса (не у зоны покупки): клиент, уже пересевший ниже, дальше
+  пересаживается по уровню новой зоны — как в старом коде.
+- Go: `session.AllowedZones`, `TestAllowedZonesLevelsGS574`, `TestAllowedZonesLevels` (`billing/session`);
+  `TestSeatMapZoneLevelsGS574` (`agent/guestapi`, Postgres); форма — `TestClubMapZoneLevelGS575` (`http`, Postgres),
+  `ClubMapPage.test.tsx` «edits the zone level in the zone form».

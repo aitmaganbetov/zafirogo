@@ -3,7 +3,7 @@
 
 -- name: ClubMapZones :many
 -- ClubZoneController::index(): зоны клуба по sort_order, id (единицы–десятки на клуб).
-SELECT id, name, description, capacity, price_per_hour, icon, theme, status, is_featured, sort_order,
+SELECT id, name, description, capacity, price_per_hour, level, icon, theme, status, is_featured, sort_order,
        position_x, position_y, width, height, rotation
 FROM club_zones
 WHERE club_id = sqlc.arg(club_id)
@@ -80,15 +80,15 @@ SELECT count(*)::bigint FROM club_zones WHERE club_id = sqlc.arg(club_id);
 
 -- name: ClubMapInsertZone :one
 -- ClubZoneController::store(): зона со смещением позиции 20 + (n*30 % 240), 20 + (n*30 % 180).
-INSERT INTO club_zones (club_id, name, description, capacity, price_per_hour, icon, theme, status, is_featured,
+INSERT INTO club_zones (club_id, name, description, capacity, price_per_hour, level, icon, theme, status, is_featured,
                         sort_order, position_x, position_y, created_at, updated_at)
 VALUES (sqlc.arg(club_id), sqlc.arg(name), sqlc.narg(description), sqlc.narg(capacity), sqlc.narg(price_per_hour),
-        sqlc.arg(icon), sqlc.arg(theme), sqlc.arg(status), sqlc.arg(is_featured), sqlc.arg(sort_order),
+        sqlc.narg(level), sqlc.arg(icon), sqlc.arg(theme), sqlc.arg(status), sqlc.arg(is_featured), sqlc.arg(sort_order),
         sqlc.arg(position_x), sqlc.arg(position_y), sqlc.arg(now), sqlc.arg(now))
 RETURNING id;
 
 -- name: ClubMapLockZone :one
-SELECT id, name, description, capacity, price_per_hour, icon, theme, status, is_featured, sort_order,
+SELECT id, name, description, capacity, price_per_hour, level, icon, theme, status, is_featured, sort_order,
        position_x, position_y, width, height, rotation
 FROM club_zones
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id)
@@ -97,7 +97,7 @@ FOR UPDATE;
 -- name: ClubMapUpdateZone :exec
 UPDATE club_zones
 SET name = sqlc.arg(name), description = sqlc.narg(description), capacity = sqlc.narg(capacity),
-    price_per_hour = sqlc.narg(price_per_hour), icon = sqlc.arg(icon), theme = sqlc.arg(theme),
+    price_per_hour = sqlc.narg(price_per_hour), level = sqlc.narg(level), icon = sqlc.arg(icon), theme = sqlc.arg(theme),
     status = sqlc.arg(status), is_featured = sqlc.arg(is_featured), sort_order = sqlc.arg(sort_order),
     updated_at = sqlc.arg(now)
 WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);

@@ -52,6 +52,15 @@ LEFT JOIN tariffs t ON t.club_id = sp.club_id AND t.id = sp.tariff_id AND t.dele
 WHERE sp.club_id = sqlc.arg(club_id) AND sp.session_id = sqlc.arg(session_id)
 ORDER BY sp.id;
 
+-- name: ListLevelZoneIDs :many
+-- Зоны клуба с уровнем не выше уровня зоны zone_id (зона ПК клиента); у неё нет уровня — пусто.
+-- Laravel: app/Services/SeatTransfers.php allowedZoneIds() — ClubZone::query()->where('level', '<=', $level)->pluck('id').
+SELECT z.id
+FROM club_zones z
+JOIN club_zones cur ON cur.club_id = z.club_id AND cur.id = sqlc.arg(zone_id)
+WHERE z.club_id = sqlc.arg(club_id) AND cur.level IS NOT NULL AND z.level <= cur.level
+ORDER BY z.id;
+
 -- name: ExpireDueSessions :many
 -- Платформенный запрос (пул zafiro_platform, все клубы): ClubComputerSessions::expireAll() —
 -- UPDATE … WHERE session_ends_at <= now() по всем клубам, без расчёта возврата (GAP-005, Q-010).

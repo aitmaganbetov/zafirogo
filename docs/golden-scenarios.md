@@ -3239,3 +3239,29 @@ Go-тесты: `server/internal/reservations` `TestAppBooking/GS-5xx…` (Postgr
 | e872af0 | `SubscriptionTest.php` — «a new club is reported to the platform telegram chat» | `http` `TestTelegram_NewClubReported` |
 | 75d1174 | `SuperadminCabinetTest.php` — `days` строкой | не нужен: `days` в REST — целое JSON (`stage3_g6` — продление) |
 
+
+### Уровни зон и пересадка (`GuestFeaturesTest.php`, Zafiro 79d014f, 55e3878)
+
+Правило — BR-196 (дополняет BR-035 / GS-103). Денег не двигает: пересадка переносит ту же сессию.
+
+#### GS-574 · P2 · `billing` · `TestAllowedZonesLevelsGS574`
+**Тест:** `GuestFeaturesTest.php` — «a tariff moves to a zone of the same or a lower level, time by the minute stays in its zone»
+- **Дано:** пересадка включена; зоны VIP1 (уровень 3, 600 ₸/ч), VIP2 (3), Hall (1), Top (4), Plain (без уровня), по одному ПК
+  в сети; на ПК в VIP1 — сессия клиента ещё на час; тариф «VIP1» (120 мин, 100 ₸) действует только в VIP1, куплен в этой сессии.
+- **Действие:** карта пересадки с ПК в VIP1; затем покупка поминутного времени в VIP1 и снова карта.
+- **Ожидается:** после тарифа доступны VIP2 и Hall; свой ПК, Top и Plain — нет. После поминутной покупки (последняя
+  покупка сессии) — ни один ПК (время по минутам остаётся в своей зоне при любом уровне). Пересадка на недоступный
+  ПК — «Этот ПК уже занят или ваш тариф на нём не действует. Выберите другой.»
+- **Go:** `billing/session` `TestAllowedZonesLevelsGS574/GS-574…` (карта и `PlanTransfer`), `TestAllowedZonesLevels`
+  (зона без уровня → только зоны тарифа; тариф без зон или удалён → любая зона); `agent/guestapi`
+  `TestSeatMapZoneLevelsGS574/GS-574…` (Postgres: `GetSeatMap` и `TransferSeat` согласованы; уровень текущей зоны снят →
+  только зоны тарифа; пересадка в зону ниже проходит).
+
+#### GS-575 · P3 · `clubmap` · `TestClubMapZoneLevelGS575`
+**Тест:** `GuestFeaturesTest.php` — «the club sets a zone level on the map»
+- **Дано:** зона VIP1 без уровня.
+- **Действие:** сохранение формы зоны с `level` 3; затем пусто; затем 0.
+- **Ожидается:** на карте поле «Уровень зоны»; уровень 3 сохраняется и возвращается картой (в старом — `data-level="3"`);
+  пусто → `NULL`; 0 → ошибка поля `level` («The level field must be at least 1.»), 100 — «must not be greater than 99».
+- **Go:** `http` `TestClubMapZoneLevelGS575` (Postgres, журнал `zone.updated` `level: «— → 3»`); web — `ClubMapPage.test.tsx`
+  «edits the zone level in the zone form» (значение подставляется при редактировании, пусто → `null`).

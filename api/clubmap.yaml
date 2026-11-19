@@ -580,6 +580,11 @@ components:
           format: int64
           nullable: true
           description: Цена часа (поминутная продажа), тиыны 1…100 000 000; null — не продаётся поминутно.
+        level:
+          type: integer
+          format: int64
+          nullable: true
+          description: Уровень зоны 1…99; null — без уровня. Тариф пересаживается в зоны того же или более низкого уровня (BR-196).
         icon:
           type: string
         theme:
@@ -725,6 +730,10 @@ components:
           format: int64
           nullable: true
         price_per_hour_tiyn:
+          type: integer
+          format: int64
+          nullable: true
+        level:
           type: integer
           format: int64
           nullable: true

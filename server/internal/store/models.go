@@ -502,6 +502,8 @@ type ClubZone struct {
 	ClubID       int64      `json:"club_id"`
 	// Оборудование зоны, заполненное клубом: ключи cpu, gpu, ram, monitor, keyboard, mouse, headset, chair, значения ≤ 120; пустое — NULL (Laravel: 2026_11_14_100000_create_club_profile)
 	Devices json.RawMessage `json:"devices"`
+	// Уровень зоны 1…99, задаёт клуб; NULL — без уровня. Тариф пересаживается в зоны своего тарифа и в зоны с уровнем ≤ уровня текущей зоны клиента (Laravel: SeatTransfers::allowedZoneIds(), 2026_11_19_100000_add_level_to_club_zones)
+	Level *int16 `json:"level"`
 }
 
 type ClubZoneTariff struct {

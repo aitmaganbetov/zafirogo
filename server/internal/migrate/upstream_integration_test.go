@@ -50,6 +50,8 @@ func TestMigrateUpstream2026_11(t *testing.T) {
 	execMy(t, my, `UPDATE clubs SET city = 'aktobe', address = 'пр. Абилкайыр хана, 1', reseller_id = 5, reseller_attached_at = ?,
 		profile = '{"description":"Клуб у парка","phone":"+7 700 000 00 00","hours":"Круглосуточно","instagram":"asia.game"}' WHERE id = 1`, at(-60*time.Hour))
 	execMy(t, my, `UPDATE club_zones SET devices = '{"monitor":"ASUS 240 Гц","mouse":"Logitech G102"}' WHERE id = 1`)
+	// Уровень зоны (0041, Zafiro 79d014f): tinyint unsigned → smallint как есть; у остальных зон — NULL.
+	execMy(t, my, `UPDATE club_zones SET level = 3 WHERE id = 1`)
 	execMy(t, my, "UPDATE club_subscriptions SET discount_percent = 15, discount_until = '2026-12-31', discount_note = 'Первый клуб города' WHERE club_id = 1")
 	// Счета: оплаченный с реселлером (GAP-040: 4810 ₸ × 12,35 % = 594,04), оплаченный после удаления реселлера
 	// (reseller_id NULL, начисление осталось — BR-189), отменённый, неоплаченный.
@@ -206,6 +208,9 @@ func TestMigrateUpstream2026_11(t *testing.T) {
 	}
 	if got := scalarPG[string](t, owner, "SELECT (devices->>'monitor') || '|' || (devices->>'mouse') || '|' || (SELECT count(*) FROM club_zones WHERE club_id = 1 AND devices IS NOT NULL) FROM club_zones WHERE id = 1"); got != "ASUS 240 Гц|Logitech G102|1" {
 		t.Fatalf("club_zones.devices: %s", got)
+	}
+	if got := scalarPG[string](t, owner, "SELECT string_agg(id || ':' || coalesce(level::text, '-'), ' ' ORDER BY id) FROM club_zones WHERE club_id = 1 AND (id = 1 OR level IS NOT NULL)"); got != "1:3" {
+		t.Fatalf("club_zones.level: %s", got)
 	}
 	// Счета: id (номер ZF-…) сохранён, суммы в тиынах, проценты в базисных пунктах, статусы и даты как были.
 	if got := scalarPG[string](t, owner, `SELECT string_agg(concat_ws(':', id, months, computers, price_per_computer, discount_percent, amount, coalesce(reseller_id::text, '-'),

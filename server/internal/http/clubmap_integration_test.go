@@ -139,6 +139,46 @@ func TestClubMapZones(t *testing.T) {
 	}
 }
 
+// GS-575 (BR-196, Zafiro 79d014f, 55e3878; GuestFeaturesTest.php «the club sets a zone level on the map»): уровень
+// зоны 1…99 задаётся в форме зоны и возвращается картой; пустое — без уровня; 0 и 100 — ошибка поля level.
+func TestClubMapZoneLevelGS575(t *testing.T) {
+	e, _ := newMapEnv(t)
+	_, owner := e.staff("Владелец", "owner")
+	z := num(e.post(owner, "/api/club-map", zoneBody("VIP1", map[string]any{"theme": "purple"})).body["id"])
+	if n := e.scalar("SELECT count(*) FROM club_zones WHERE id = $1 AND level IS NULL", z); n != 1 {
+		t.Fatal("new zone without a level")
+	}
+	level := func() any {
+		for _, raw := range e.get(owner, "/api/club-map").body["zones"].([]any) {
+			if zone := raw.(map[string]any); num(zone["id"]) == z {
+				return zone["level"]
+			}
+		}
+		t.Fatal("zone missing on the map")
+		return nil
+	}
+	path := fmt.Sprintf("/api/club-map/%d", z)
+	expect(t, e.send("PUT", owner, path, zoneBody("VIP1", map[string]any{"theme": "purple", "level": 3})), 200, "level 3")
+	if l := level(); l != float64(3) {
+		t.Fatalf("level = %v", l)
+	}
+	if d := e.activityDetails("zone.updated"); d["level"] != "— → 3" {
+		t.Fatalf("zone.updated details = %v", d)
+	}
+	expect(t, e.send("PUT", owner, path, zoneBody("VIP1", map[string]any{"theme": "purple", "level": nil})), 200, "no level")
+	if l := level(); l != nil {
+		t.Fatalf("level = %v, want null", l)
+	}
+	expectField(t, e.send("PUT", owner, path, zoneBody("VIP1", map[string]any{"theme": "purple", "level": 0})), "level", "The level field must be at least 1.")
+	expectField(t, e.send("PUT", owner, path, zoneBody("VIP1", map[string]any{"theme": "purple", "level": 100})), "level", "The level field must not be greater than 99.")
+	expectField(t, e.post(owner, "/api/club-map", zoneBody("Z", map[string]any{"level": 0})), "level", "The level field must be at least 1.")
+	r := e.post(owner, "/api/club-map", zoneBody("Hall", map[string]any{"level": 1}))
+	expect(t, r, http.StatusCreated, "create with level")
+	if n := e.scalar("SELECT level FROM club_zones WHERE id = $1", num(r.body["id"])); n != 1 {
+		t.Fatalf("created level = %d", n)
+	}
+}
+
 // Решение Q-018: зону с идущей сессией не удалить; тарифы, оставшиеся без зон, выключаются.
 func TestClubMapDeleteZoneQ018(t *testing.T) {
 	e, _ := newMapEnv(t)
