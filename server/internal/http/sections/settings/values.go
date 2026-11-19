@@ -14,6 +14,7 @@ import (
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/bonus"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
+	"github.com/aitmaganbetov/zafirogo/server/internal/shelltheme"
 )
 
 // Секции настроек (SaveSettingsRequest: section in club, finances, guests).
@@ -31,6 +32,8 @@ var sectionFields = map[string][]string{
 		"session_idle_timeout", "pc_action_after_session_end", "pc_restart_after_session_end",
 		"session_auto_terminate_when_pc_unavailable", "booking_interval", "app_booking_enabled", "app_booking_cancel",
 		"max_cashiers_on_shift", "max_operators_on_shift", "agent_idle_logout_minutes", "agent_shop_enabled", "agent_auto_update",
+		// Тема оформления ПК (Laravel: SettingsController::save() $fields['club'], коммит e38b764).
+		"agent_shell_theme",
 	},
 	sectionFinances: {
 		"currency", "loyalty_enabled", "loyalty_levels", "topup_bonus_enabled", "topup_bonus_levels", "discount_scope",
@@ -79,6 +82,8 @@ var defaults = map[string]map[string]json.RawMessage{
 		"agent_idle_logout_minutes": raw("5"), // GuestFeatures::DEFAULT_IDLE_LOGOUT_MINUTES
 		"agent_shop_enabled":        raw("true"),
 		"agent_auto_update":         raw("true"),
+		// Тема оформления ПК: оболочка гостя и экран входа (ShellThemes::DEFAULT).
+		"agent_shell_theme": raw(`"` + shelltheme.Default + `"`),
 	},
 	sectionFinances: {
 		"currency":                   raw(`"KZT"`),
@@ -108,8 +113,8 @@ func raw(s string) json.RawMessage { return json.RawMessage(s) }
 type clubSettings map[string]map[string]json.RawMessage
 
 // loadSettings — loadSettings(): array_replace_recursive(defaultSettings(), сохранённые), затем «минутные» поля
-// секции club (все, кроме pc_action_after_session_end, agent_shop_enabled, agent_auto_update, app_booking_enabled,
-// app_booking_cancel) — minutes().
+// секции club (все, кроме pc_action_after_session_end, agent_shop_enabled, agent_auto_update, agent_shell_theme,
+// app_booking_enabled, app_booking_cancel) — minutes().
 // Секции и ключи, которых нет в defaultSettings(), сохраняются (array_replace_recursive их не теряет).
 func loadSettings(stored []byte) clubSettings {
 	out := clubSettings{}
@@ -139,7 +144,7 @@ func loadSettings(stored []byte) clubSettings {
 	}
 	for _, f := range sectionFields[sectionClub] {
 		if f == "pc_action_after_session_end" || f == "agent_shop_enabled" || f == "agent_auto_update" ||
-			f == "app_booking_enabled" || f == "app_booking_cancel" {
+			f == "agent_shell_theme" || f == "app_booking_enabled" || f == "app_booking_cancel" {
 			continue
 		}
 		out[sectionClub][f] = encodeNumber(minutes(out[sectionClub][f]))

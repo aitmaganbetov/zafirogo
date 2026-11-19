@@ -129,6 +129,9 @@ message Snapshot {
   string agent_version = 14;
   // Язык текстов сервера (zafiro-locale): выбранный гостем (agent.SetLocale), иначе язык клуба, иначе язык ПК.
   string locale = 15;
+  // Тема клуба для оболочки и экрана входа (ClubConfig.shell_theme): только цвета "#rrggbb" (служба проверила);
+  // до Welcome — сохранённая с прошлого подключения. Нет — стандартная тема.
+  zafiro.agent.v1.ShellTheme shell_theme = 16;
 }
 
 // Язык, выбранный гостем на экране (только из ClubConfig.languages; пусто — сбросить к языку клуба). Сбрасывается

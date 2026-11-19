@@ -219,3 +219,43 @@ func TestMinutesAndNumber(t *testing.T) {
 		}
 	}
 }
+
+// Тема ПК (SaveSettingsRequest: nullable|in:ShellThemes::keys(); loadSettings: не «минутное» поле; по умолчанию
+// standard). Старый tests/Feature/ShellThemeTest.php «only the listed themes are accepted».
+func TestShellThemeSetting(t *testing.T) {
+	base := `"session_idle_timeout":"15","pc_restart_after_session_end":"0.5","session_auto_terminate_when_pc_unavailable":"5","booking_interval":"30"`
+	for body, wantErr := range map[string]bool{
+		`{` + base + `,"agent_shell_theme":"red"}`:                      false,
+		`{` + base + `,"agent_shell_theme":"standard"}`:                 false,
+		`{` + base + `,"agent_shell_theme":""}`:                         false, // ConvertEmptyStringsToNull → null
+		`{` + base + `}`:                                                false,
+		`{` + base + `,"agent_shell_theme":"url(javascript:alert(1))"}`: true,
+		`{` + base + `,"agent_shell_theme":"Red"}`:                      true,
+		`{` + base + `,"agent_shell_theme":["red"]}`:                    true,
+		`{` + base + `,"agent_shell_theme":1}`:                          true,
+	} {
+		_, fe := validate(sectionClub, mustInput(t, body))
+		if got := fe.Has("agent_shell_theme"); got != wantErr {
+			t.Errorf("%s: ошибка %v, ожидалась %v", body, got, wantErr)
+		}
+	}
+
+	s := loadSettings(nil)
+	if got := string(s[sectionClub]["agent_shell_theme"]); got != `"standard"` {
+		t.Fatalf("по умолчанию = %s", got)
+	}
+	changes, err := apply(s, sectionClub, mustInput(t, `{"agent_shell_theme":"red"}`), nil)
+	if err != nil || len(changes) != 1 || changes[0].readable != "standard → red" {
+		t.Fatalf("apply = %+v, %v", changes, err)
+	}
+	if got := loadSettings([]byte(`{"club":{"agent_shell_theme":"red"}}`))[sectionClub]["agent_shell_theme"]; string(got) != `"red"` {
+		t.Fatalf("сохранённая тема = %s", got)
+	}
+	if v := settingsView(loadSettings([]byte(`{"club":{"agent_shell_theme":null}}`))).Club.AgentShellTheme; v != "standard" {
+		t.Fatalf("null → %q", v)
+	}
+	opts := shellThemeOptions()
+	if len(opts) != 7 || opts[0].Key != "standard" || opts[0].Accent != "#8b5cf6" || opts[3].Key != "red" || opts[3].Bg1 != "#1f0709" {
+		t.Fatalf("свотчи = %+v", opts)
+	}
+}

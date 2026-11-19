@@ -9,6 +9,7 @@ using Zafiro.Agent.Core.Guest;
 using Zafiro.Agent.Core.Health;
 using Zafiro.Agent.Core.Platform;
 using Zafiro.Agent.Core.Journal;
+using Zafiro.Agent.Core.Persistence;
 using Zafiro.Agent.Core.Transport;
 using Zafiro.Agent.Core.Updates;
 using Zafiro.Agent.Ipc.V1;
@@ -42,6 +43,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
     private readonly DeviceInfo _device;
     private readonly HealthMonitor _health;
     private readonly HealthGate _healthGate = new();
+    private readonly ShellThemeStore _shellTheme;
 
     private AgentCredentials? _creds;
     private AgentChannel? _channel;
@@ -73,6 +75,8 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
         var dir = string.IsNullOrEmpty(options.DataDirectory) ? null : options.DataDirectory;
         Commands = new CommandJournalStore(dir is null ? null : Path.Combine(dir, "commands.pb"));
         Events = new EventJournalStore(dir is null ? null : Path.Combine(dir, "events.pb"));
+        _shellTheme = new ShellThemeStore(dir is null ? null : Path.Combine(dir, "shell-theme.pb"));
+        State.RestoreShellTheme(_shellTheme.Saved);
         Guest = new GuestApi(() => _channel?.Invoker, State, options, _time, this);
         _bootId = platform.GetBootId();
         _device = platform.GetDeviceInfo(options.AgentVersion, options.Diskless);
@@ -535,7 +539,21 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
     private void OnStateChanged()
     {
         _statusSignal.Writer.TryWrite(true);
+        RememberShellTheme();
         RaiseUi(new Event { Snapshot = State.BuildSnapshot() });
+    }
+
+    /// <summary>Тема клуба сменилась (Welcome, ConfigChanged) — на диск, чтобы после перезагрузки ПК экран входа был в ней.</summary>
+    private void RememberShellTheme()
+    {
+        try
+        {
+            _shellTheme.Save(State.ShellTheme);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _log.LogWarning("shell theme not saved: {Error}", ex.Message);
+        }
     }
 
     private void RaiseUi(Event e)

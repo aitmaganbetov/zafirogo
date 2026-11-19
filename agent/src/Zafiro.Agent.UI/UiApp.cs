@@ -71,6 +71,7 @@ internal sealed class UiApp : Application
         }
 
         _ui.Changed += ApplyView;
+        _ui.ActivateRequested += () => _window?.BringToFront();
         _ipc.EventReceived += ev => Dispatcher.BeginInvoke(() => OnServiceEvent(ev));
         _ipc.ConnectionChanged += connected => Dispatcher.BeginInvoke(() => OnConnection(connected));
         _keyboard.StaffShortcut += () => Dispatcher.BeginInvoke(() => _window?.PostLocalEvent("staffPin"));

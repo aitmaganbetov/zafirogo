@@ -40,7 +40,7 @@ const settings = (extra: Partial<ClubSettings> = {}): ClubSettings => ({
     club: {
       session_idle_timeout: 15, pc_action_after_session_end: 'none', pc_restart_after_session_end: 0.5,
       session_auto_terminate_when_pc_unavailable: 5, booking_interval: 30, max_cashiers_on_shift: 0, max_operators_on_shift: 0,
-      agent_idle_logout_minutes: 0, agent_shop_enabled: true, agent_auto_update: true,
+      agent_idle_logout_minutes: 0, agent_shop_enabled: true, agent_auto_update: true, agent_shell_theme: 'standard',
     },
     finances: {
       currency: 'KZT', loyalty_enabled: false, loyalty_levels: [], topup_bonus_enabled: false, topup_bonus_levels: [], discount_scope: 'all',
@@ -52,6 +52,7 @@ const settings = (extra: Partial<ClubSettings> = {}): ClubSettings => ({
   club_time: '15.10.2026 12:00', agent_pin_set_at: null, agent_staff_minutes: 15, can_manage_agent_pin: true, logo_url: null, signin_image_url: null,
   city: null, address: null,
   cities: [{ key: 'aktau', name: 'Актау' }, { key: 'aktobe', name: 'Актобе' }, { key: 'almaty', name: 'Алматы' }],
+  shell_themes: [],
   ...extra,
 } as ClubSettings);
 

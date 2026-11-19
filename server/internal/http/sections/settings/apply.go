@@ -52,7 +52,7 @@ func apply(s clubSettings, section string, in input, levels map[string]bonus.Val
 			readable = readableLevels(prev) + " → " + readableLevels(lv)
 		case field == "bonus_max_percent" || field == "auto_billing_pause_minutes":
 			after = encodeNumber(phpNumber{i: phpIntCast(v)})
-		default: // currency, pc_action_after_session_end, discount_scope — как пришло
+		default: // currency, pc_action_after_session_end, discount_scope, agent_shell_theme — как пришло
 			after = v
 		}
 		sec[field] = after

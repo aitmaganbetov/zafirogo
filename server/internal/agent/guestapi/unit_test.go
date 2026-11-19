@@ -77,6 +77,22 @@ func TestClubSettings(t *testing.T) {
 	}
 }
 
+// ShellThemes::colors(settings.club.agent_shell_theme ?? null): ключ темы → цвета; нет, null, standard, неизвестный
+// ключ, не строка — без темы (агент в своей).
+func TestClubSettingsShellTheme(t *testing.T) {
+	th := parseClubSettings([]byte(`{"club": {"agent_shell_theme": "green"}}`)).shellTheme()
+	if th.GetAccent() != "#16a34a" || th.GetAccent_2() != "#4ade80" || th.GetSoft() != "#86efac" || th.GetHighlight() != "#bef264" ||
+		th.GetBg_0() != "#030805" || th.GetBg_1() != "#061a0e" {
+		t.Fatalf("green = %+v", th)
+	}
+	for _, raw := range []string{``, `{"club": {}}`, `{"club": {"agent_shell_theme": null}}`, `{"club": {"agent_shell_theme": "standard"}}`,
+		`{"club": {"agent_shell_theme": "Red"}}`, `{"club": {"agent_shell_theme": 3}}`, `{"club": {"agent_shell_theme": {"accent": "#000000"}}}`} {
+		if th := parseClubSettings([]byte(raw)).shellTheme(); th != nil {
+			t.Errorf("%s: %+v", raw, th)
+		}
+	}
+}
+
 func TestPHPBool(t *testing.T) {
 	for raw, want := range map[string]bool{`true`: true, `"1"`: true, `"On"`: true, `" yes "`: true, `1`: true, `0`: false,
 		`"0"`: false, `"abc"`: false, `false`: false, `[]`: false, `2`: false} {

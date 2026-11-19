@@ -134,11 +134,14 @@ type ClubSettingsPage struct {
 	ClubName string  `json:"club_name"`
 
 	// ClubTime «Сейчас в клубе» — d.m.Y H:i в поясе клуба.
-	ClubTime       string       `json:"club_time"`
-	LogoUrl        *string      `json:"logo_url"`
-	Settings       ClubSettings `json:"settings"`
-	SigninImageUrl *string      `json:"signin_image_url"`
-	Timezone       string       `json:"timezone"`
+	ClubTime string       `json:"club_time"`
+	LogoUrl  *string      `json:"logo_url"`
+	Settings ClubSettings `json:"settings"`
+
+	// ShellThemes Темы оформления ПК в порядке ShellThemes::names() со цветами свотча (ShellThemes::swatch()).
+	ShellThemes    []ShellThemeOption `json:"shell_themes"`
+	SigninImageUrl *string            `json:"signin_image_url"`
+	Timezone       string             `json:"timezone"`
 
 	// TimezonesAll Все пояса по смещению (группа «Все часовые пояса»).
 	TimezonesAll []TimezoneOption `json:"timezones_all"`
@@ -201,7 +204,10 @@ type ResellerCodeRequest struct {
 type SettingsClubSection struct {
 	AgentAutoUpdate        bool    `json:"agent_auto_update"`
 	AgentIdleLogoutMinutes float64 `json:"agent_idle_logout_minutes"`
-	AgentShopEnabled       bool    `json:"agent_shop_enabled"`
+
+	// AgentShellTheme Тема оформления на ПК — ключ из shell_themes (club.agent_shell_theme, по умолчанию standard; Laravel app/Support/ShellThemes.php). Сохранённое неизвестное значение отдаётся как есть (ни одна тема не выбрана).
+	AgentShellTheme  string `json:"agent_shell_theme"`
+	AgentShopEnabled bool   `json:"agent_shop_enabled"`
 
 	// AppBookingCancel Гость может отменить бронь до начала с возвратом денег (club.app_booking_cancel, по умолчанию да).
 	AppBookingCancel bool `json:"app_booking_cancel"`
@@ -251,6 +257,21 @@ type SettingsMessage struct {
 
 // SettingsSaveRequest Поля секции (как поля формы settings.save). Неизвестные поля игнорируются.
 type SettingsSaveRequest map[string]interface{}
+
+// ShellThemeOption defines model for ShellThemeOption.
+type ShellThemeOption struct {
+	// Accent Цвет "#rrggbb" (левая полоска свотча).
+	Accent string `json:"accent"`
+
+	// Accent2 Цвет "#rrggbb" (правая полоска свотча).
+	Accent2 string `json:"accent_2"`
+
+	// Bg1 Цвет "#rrggbb" (фон свотча).
+	Bg1 string `json:"bg_1"`
+
+	// Key standard, blue, green, red, orange, teal, pink.
+	Key string `json:"key"`
+}
 
 // StaffTimeRequest defines model for StaffTimeRequest.
 type StaffTimeRequest struct {

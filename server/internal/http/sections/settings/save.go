@@ -14,6 +14,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/bonus"
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
+	"github.com/aitmaganbetov/zafirogo/server/internal/shelltheme"
 )
 
 // input — поля запроса после TrimStrings + ConvertEmptyStringsToNull (только верхний уровень; уровни
@@ -82,6 +83,8 @@ var enums = map[string][]string{
 	"pc_action_after_session_end": {"none", "restart", "shutdown"},
 	"currency":                    {"KZT", "RUB", "$"},
 	"discount_scope":              {"tariffs", "hourly", "all"}, // PaymentRules::DISCOUNT_SCOPES
+	// SaveSettingsRequest: 'agent_shell_theme' => ['nullable', Rule::in(ShellThemes::keys())].
+	"agent_shell_theme": shelltheme.Keys(),
 }
 
 // validate — ошибки полей секции (все сразу, как FormRequest). Возвращает уровни после prepareForValidation().

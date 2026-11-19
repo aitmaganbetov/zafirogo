@@ -13,6 +13,7 @@ import { AppBookingCard } from './AppBookingCard';
 import { ResellerCard } from './ResellerCard';
 import { SettingsAnchors } from './SettingsAnchors';
 import { SettingsForm } from './SettingsForm';
+import { ShellThemeField } from './ShellThemeField';
 import { useSettingsResult } from './status';
 
 /*
@@ -164,6 +165,7 @@ export function ClubSettingsPage() {
               </div>
               <p className="mt-1 text-xs text-gray-500">{t('Новая версия агента ставится сама, когда ПК свободен: никто не вошёл и нет оплаченной сессии. На бездисковой системе обновление пропадает после перезагрузки — выключите автообновление и обновите агент в образе на сервере загрузки.')}</p>
             </div>
+            <ShellThemeField value={club.agent_shell_theme} themes={data.shell_themes} />
           </div>
         </SettingsCard>
 

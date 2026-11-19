@@ -429,6 +429,8 @@ export interface components {
             agent_idle_logout_minutes: number;
             agent_shop_enabled: boolean;
             agent_auto_update: boolean;
+            /** @description Тема оформления на ПК — ключ из shell_themes (club.agent_shell_theme, по умолчанию standard; Laravel app/Support/ShellThemes.php). Сохранённое неизвестное значение отдаётся как есть (ни одна тема не выбрана). */
+            agent_shell_theme: string;
             /** @description Бронь из гостевого приложения включена (club.app_booking_enabled, по умолчанию выключена). */
             app_booking_enabled: boolean;
             /** @description Гость может отменить бронь до начала с возвратом денег (club.app_booking_cancel, по умолчанию да). */
@@ -567,6 +569,18 @@ export interface components {
             address: string | null;
             /** @description Города по названию на языке клуба (Cities::options()). */
             cities: components["schemas"]["CityOption"][];
+            /** @description Темы оформления ПК в порядке ShellThemes::names() со цветами свотча (ShellThemes::swatch()). */
+            shell_themes: components["schemas"]["ShellThemeOption"][];
+        };
+        ShellThemeOption: {
+            /** @description standard, blue, green, red, orange, teal, pink. */
+            key: string;
+            /** @description Цвет "#rrggbb" (левая полоска свотча). */
+            accent: string;
+            /** @description Цвет "#rrggbb" (правая полоска свотча). */
+            accent_2: string;
+            /** @description Цвет "#rrggbb" (фон свотча). */
+            bg_1: string;
         };
         LanguageItem: {
             code: string;

@@ -56,6 +56,12 @@ public sealed class UiController
     /// <summary>Вид или режим киоска изменились.</summary>
     public event Action? Changed;
 
+    /// <summary>
+    /// Гость снова открыл ярлык «Zafiro», а окно уже показано (лаунчер за игрой, экран входа): окно выводится вперёд
+    /// (старый агент: App.ShowShell(), коммит 71db8d6). Скрытое окно открывается через <see cref="Changed"/>.
+    /// </summary>
+    public event Action? ActivateRequested;
+
     /// <summary>Новый снимок службы.</summary>
     public void OnSnapshot(Snapshot snapshot)
     {
@@ -85,7 +91,9 @@ public sealed class UiController
     public void RequestLauncher()
     {
         _launcherRequested = true;
+        var before = View;
         Recompute();
+        if (before != UiView.Hidden && View != UiView.Hidden) ActivateRequested?.Invoke();
     }
 
     /// <summary>«Вернуться к игре»: лаунчер скрывается, если экран не нужен (иначе — ничего).</summary>

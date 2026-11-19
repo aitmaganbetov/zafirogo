@@ -14,7 +14,7 @@
 | 40. Настройки: клуба, платформы, конфигурация | 64 |
 | 50. Фоновые задачи, очередь, события | 37 |
 | 60. Интеграции | 52 |
-| 70. Изменения старого проекта после 26.10.2026 | 14 |
+| 70. Изменения старого проекта после 26.10.2026 | 15 |
 
 
 ## 10. Экраны (resources/views) — инвентаризация
@@ -1137,6 +1137,10 @@ Middleware всех маршрутов: `auth`, `superadmin`; на отдель�
   - Дефолт: `true`.
   - Валидация: `nullable|boolean` (~54).
   - Используется: `app/Services/AgentUpdate.php` (`clubAllowsAutoUpdate()`, ~112–115) → `offerFor()` (см. 60-integrations, «Обновления агента»).
+- [x] **`club.agent_shell_theme`** — тема оформления ПК (оболочка гостя и экран входа агента; коммит старого `e38b764`).
+  - Дефолт: `standard` (`ShellThemes::DEFAULT`); значения — `ShellThemes::keys()`: standard, blue, green, red, orange, teal, pink.
+  - Валидация: `nullable|in:…` (`SaveSettingsRequest`); не «минутное» поле `loadSettings()`.
+  - Используется: heartbeat `club.shell_theme` = `ShellThemes::colors()` (`ClubComputerController::heartbeatResponse()`); в zafirogo — `ClubConfig.shell_theme` (`docs/agent-protocol.md` §15.6), `internal/shelltheme`.
 
 #### Колонки `clubs`, которые по смыслу — настройки клуба (редактируются на `/settings/club` и `/settings/languages`)
 
@@ -1213,6 +1217,7 @@ Middleware всех маршрутов: `auth`, `superadmin`; на отдель�
 | club.agent_idle_logout_minutes | минуты (num) | 5 | 0…1440 |
 | club.agent_shop_enabled | bool | true | |
 | club.agent_auto_update | bool | true | |
+| club.agent_shell_theme | enum | standard | standard/blue/green/red/orange/teal/pink |
 | finances.currency | enum | KZT | KZT/RUB/$ |
 | finances.loyalty_enabled | bool | false | |
 | finances.loyalty_levels | JSON `[{spent,percent}]` | [] | ≤20, spent 0.01…999999999 ₸, percent 0.01…100 |
@@ -1663,3 +1668,11 @@ Middleware всех маршрутов: `auth`, `superadmin`; на отдель�
 - [ ] Слой совместимости `server/internal/http/legacy` отдаёт все маршруты, которые вызывает `mobileclient` на
       `a680bab`: каталог (2), брони (6), вход с `club_id` (таблица в `upstream-2026-11.md` §2.З).
 - [ ] Форматы сумм в ответах: брони — строки «900.00», каталог — числа тенге (`price_from`, `price_per_hour`).
+
+### 70.9. Второй пакет (a680bab → 71db8d6)
+
+- [x] Уровни зон и пересадка по уровню (79d014f, 55e3878) — миграция 0041, BR-196, GS-574/575.
+- [x] Поиск клиентов по имени, email, телефону (35c36a0) — `GET /api/customers?q=`, индекс 0043.
+- [x] Тема ПК клуба (e38b764) — `club.agent_shell_theme`, `ClubConfig.shell_theme`.
+- [x] Карточка входа 380 px (8094b1d), ярлык открывает запущенную оболочку (71db8d6).
+- [ ] Проверка темы, карточки входа и ярлыка на Windows 10/11 (владелец, §14.9).

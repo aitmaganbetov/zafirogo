@@ -610,7 +610,8 @@ components:
       type: object
       required: [session_idle_timeout, pc_action_after_session_end, pc_restart_after_session_end,
         session_auto_terminate_when_pc_unavailable, booking_interval, max_cashiers_on_shift, max_operators_on_shift,
-        agent_idle_logout_minutes, agent_shop_enabled, agent_auto_update, app_booking_enabled, app_booking_cancel]
+        agent_idle_logout_minutes, agent_shop_enabled, agent_auto_update, app_booking_enabled, app_booking_cancel,
+        agent_shell_theme]
       properties:
         session_idle_timeout:
           type: number
@@ -640,6 +641,11 @@ components:
           type: boolean
         agent_auto_update:
           type: boolean
+        agent_shell_theme:
+          type: string
+          description: >-
+            Тема оформления на ПК — ключ из shell_themes (club.agent_shell_theme, по умолчанию standard; Laravel
+            app/Support/ShellThemes.php). Сохранённое неизвестное значение отдаётся как есть (ни одна тема не выбрана).
         app_booking_enabled:
           type: boolean
           description: Бронь из гостевого приложения включена (club.app_booking_enabled, по умолчанию выключена).
@@ -848,7 +854,7 @@ components:
     ClubSettingsPage:
       type: object
       required: [club_name, settings, timezone, timezones_kazakhstan, timezones_all, club_time, agent_pin_set_at,
-        agent_staff_minutes, can_manage_agent_pin, logo_url, signin_image_url, city, address, cities]
+        agent_staff_minutes, can_manage_agent_pin, logo_url, signin_image_url, city, address, cities, shell_themes]
       properties:
         club_name:
           type: string
@@ -898,6 +904,27 @@ components:
           description: Города по названию на языке клуба (Cities::options()).
           items:
             $ref: "#/components/schemas/CityOption"
+        shell_themes:
+          type: array
+          description: Темы оформления ПК в порядке ShellThemes::names() со цветами свотча (ShellThemes::swatch()).
+          items:
+            $ref: "#/components/schemas/ShellThemeOption"
+    ShellThemeOption:
+      type: object
+      required: [key, accent, accent_2, bg_1]
+      properties:
+        key:
+          type: string
+          description: standard, blue, green, red, orange, teal, pink.
+        accent:
+          type: string
+          description: Цвет "#rrggbb" (левая полоска свотча).
+        accent_2:
+          type: string
+          description: Цвет "#rrggbb" (правая полоска свотча).
+        bg_1:
+          type: string
+          description: Цвет "#rrggbb" (фон свотча).
     LanguageItem:
       type: object
       required: [code, name, is_enabled]

@@ -21,6 +21,7 @@ import (
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/clubtz"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
+	"github.com/aitmaganbetov/zafirogo/server/internal/shelltheme"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -194,6 +195,25 @@ func (cs clubSettings) guestFeatures() *agentv1.GuestFeatures {
 	}
 }
 
+// shellTheme — цвета темы ПК клуба (ClubComputerController::heartbeatResponse(): 'shell_theme' =>
+// ShellThemes::colors(settings.club.agent_shell_theme ?? null)); nil — стандартная тема агента.
+// Laravel: app/Support/ShellThemes.php ShellThemes::colors() — не строка (или null) — null.
+func (cs clubSettings) shellTheme() *agentv1.ShellTheme {
+	v, ok := cs.value("club", "agent_shell_theme")
+	if !ok {
+		return nil
+	}
+	var key string
+	if json.Unmarshal(v, &key) != nil {
+		return nil
+	}
+	c := shelltheme.For(key)
+	if c == nil {
+		return nil
+	}
+	return &agentv1.ShellTheme{Accent: c.Accent, Accent_2: c.Accent2, Soft: c.Soft, Highlight: c.Highlight, Bg_0: c.Bg0, Bg_1: c.Bg1}
+}
+
 // clubInfo — клуб ПК: название, настройки, часовой пояс, PIN выхода.
 type clubInfo struct {
 	id       int64
@@ -241,6 +261,7 @@ func (s *Server) clubConfig(ci clubInfo, languages []store.GuestEnabledLanguages
 		StaffMinutes:            uint32(max(ci.row.AgentStaffMinutes, 0)), // #nosec G115 -- неотрицательное после max
 		AutoBilling:             cs.rules.AutoBilling,
 		AutoBillingPauseMinutes: uint32(max(cs.rules.AutoBillingPauseMinutes, 0)), // #nosec G115 -- 0…60 (PaymentRules)
+		ShellTheme:              cs.shellTheme(),
 	}
 	for _, l := range languages {
 		cfg.Languages = append(cfg.Languages, &agentv1.Language{Code: l.Code, Name: l.Name})

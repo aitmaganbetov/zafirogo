@@ -75,10 +75,21 @@
     document.body.dataset.screen = setup ? 'setup' : login ? 'login' : launcher ? 'launcher' : '';
   };
 
+  // Тема клуба (оболочка и экран входа): цвета из снимка службы — переменными на <html> поверх стандартных из CSS;
+  // стандартная тема — переменные снимаются. Смена темы в настройках клуба приходит новым снимком (ConfigChanged).
+  const applyShellTheme = (theme) => {
+    const style = document.documentElement.style;
+    Z.shellThemeVars(theme).forEach(([name, color]) => {
+      if (color) style.setProperty(name, color);
+      else style.removeProperty(name);
+    });
+  };
+
   const applySnapshot = (next) => {
     const previous = snapshot;
     snapshot = next;
     if (previous?.guest && !next.guest) chosenLocale = null;
+    applyShellTheme(next?.shellTheme);
     showScreen();
     const locale = effectiveLocale();
     if (locale !== i18n.locale || Z.int64(next.translationsVersion) !== loadedVersion) loadTranslations(locale);

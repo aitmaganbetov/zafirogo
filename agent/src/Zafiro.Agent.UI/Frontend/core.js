@@ -241,6 +241,30 @@
     return Number.isNaN(ms) ? null : ms;
   };
 
+  // ---------------------------------------------------------------------------------------------
+  // Тема клуба (настройки клуба → «Агент ПК», Snapshot.shell_theme): цвета → CSS-переменные.
+  // ---------------------------------------------------------------------------------------------
+
+  const SHELL_COLOR = /^#[0-9a-f]{6}$/i;
+  const SHELL_KEYS = ['accent', 'accent2', 'soft', 'highlight', 'bg0', 'bg1'];
+  // Оболочка (styles.css, main.js старого агента: shellThemeVars) и экран входа (lock.css — кисти Theme*Brush окна
+  // ClubSetupWindow старого агента: окно — bg_0, рамка — bg_1, кнопки — accent, подзаголовок и ссылки — soft).
+  const SHELL_VARS = [
+    ['accent', '--accent'], ['accent2', '--accent-2'], ['soft', '--soft'], ['highlight', '--highlight'],
+    ['bg0', '--bg-0'], ['bg1', '--bg-1'],
+    ['bg0', '--lock-window'], ['bg1', '--lock-panel'], ['accent', '--lock-accent'], ['soft', '--lock-kicker'], ['soft', '--lock-link']
+  ];
+
+  /**
+   * Тема (proto JSON ShellTheme) → [[переменная, цвет | null]]. Цвет попадает в CSS, поэтому только "#rrggbb"; нет темы
+   * или хоть один цвет не такой — null для всех (стандартная тема из CSS, как у службы ShellThemes.Normalize).
+   */
+  const shellThemeVars = (theme) => {
+    const valid = Boolean(theme) && typeof theme === 'object' &&
+      SHELL_KEYS.every((key) => typeof theme[key] === 'string' && SHELL_COLOR.test(theme[key]));
+    return SHELL_VARS.map(([key, name]) => [name, valid ? theme[key].toLowerCase() : null]);
+  };
+
   return {
     int64,
     formatAmount,
@@ -255,6 +279,7 @@
     normalizePhone,
     formatLocalPhone,
     durationSeconds,
-    timestampMs
+    timestampMs,
+    shellThemeVars
   };
 });

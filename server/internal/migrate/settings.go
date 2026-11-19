@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/aitmaganbetov/zafirogo/server/internal/shelltheme"
 )
 
 // Поля clubs.settings по секциям — как SettingsController::save() ($fields) старого проекта и экран настроек
@@ -16,6 +18,7 @@ var (
 			"session_idle_timeout", "pc_action_after_session_end", "pc_restart_after_session_end",
 			"session_auto_terminate_when_pc_unavailable", "booking_interval", "max_cashiers_on_shift",
 			"max_operators_on_shift", "agent_idle_logout_minutes", "agent_shop_enabled", "agent_auto_update",
+			"agent_shell_theme",
 		},
 		"finances": {
 			"currency", "loyalty_enabled", "loyalty_levels", "topup_bonus_enabled", "topup_bonus_levels", "discount_scope",
@@ -100,6 +103,9 @@ func (r *run) checkSettingsJSON(stored []byte) {
 					"минуты строкой вместо числа (читается как SettingsController::minutes())")
 			case slices.Contains(settingsBooleans, key) && !isJSONBool(v):
 				r.rep.add(Warning, CodeSettingsFormat, "clubs", "settings", path+"="+string(v), "", "флаг не boolean")
+			case section == "club" && key == "agent_shell_theme" && !validShellTheme(v):
+				r.rep.add(Warning, CodeSettingsFormat, "clubs", "settings", path+"="+string(v), "",
+					"неизвестная тема ПК (агент покажет стандартную, как ShellThemes::colors() старого)")
 			}
 		}
 	}
@@ -133,6 +139,16 @@ func (r *run) checkLevels(path, threshold string, v json.RawMessage) {
 		}
 		seen[key] = true
 	}
+}
+
+// validShellTheme — null или ключ из ShellThemes::keys() (SaveSettingsRequest: nullable|in).
+func validShellTheme(v json.RawMessage) bool {
+	t := bytes.TrimSpace(v)
+	if string(t) == "null" {
+		return true
+	}
+	var key string
+	return json.Unmarshal(t, &key) == nil && shelltheme.Valid(key)
 }
 
 func isJSONNumber(v json.RawMessage) bool {

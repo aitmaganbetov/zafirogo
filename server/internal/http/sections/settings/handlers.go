@@ -15,6 +15,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/clubtz"
 	settingsapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/settings"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
+	"github.com/aitmaganbetov/zafirogo/server/internal/shelltheme"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -74,6 +75,8 @@ func (h *handlers) GetClubSettings(ctx context.Context, _ settingsapi.GetClubSet
 		City:    prof.City,
 		Address: prof.Address,
 		Cities:  h.cityOptions(ctx),
+		// Раздел «Агент ПК»: свотчи тем (club.blade.php: ShellThemes::names() + swatch()).
+		ShellThemes: shellThemeOptions(),
 	}
 	if row.PinSet {
 		out.AgentPinSetAt = row.AgentExitPinChangedAt
@@ -87,6 +90,26 @@ func (h *handlers) GetClubSettings(ctx context.Context, _ settingsapi.GetClubSet
 		out.SigninImageUrl = &u
 	}
 	return settingsapi.GetClubSettings200JSONResponse(out), nil
+}
+
+// shellThemeValue — выбранная тема для формы: old('agent_shell_theme', $settings['club']['agent_shell_theme'] ??
+// ShellThemes::DEFAULT) (null — стандартная; иное значение — как есть, ни одна тема не отмечена).
+func shellThemeValue(r json.RawMessage) string {
+	if jsonKind(r) == 'n' {
+		return shelltheme.Default
+	}
+	return phpString(r)
+}
+
+// shellThemeOptions — темы в порядке ShellThemes::names() с цветами ShellThemes::swatch().
+func shellThemeOptions() []settingsapi.ShellThemeOption {
+	keys := shelltheme.Keys()
+	out := make([]settingsapi.ShellThemeOption, 0, len(keys))
+	for _, k := range keys {
+		sw := shelltheme.Swatch(k)
+		out = append(out, settingsapi.ShellThemeOption{Key: k, Accent: sw.Accent, Accent2: sw.Accent2, Bg1: sw.Bg1})
+	}
+	return out
 }
 
 // clubLocation — CurrentClub::timezone(): неизвестный пояс — UTC.
@@ -118,6 +141,7 @@ func settingsView(s clubSettings) settingsapi.ClubSettings {
 			AgentIdleLogoutMinutes:                toFloat(c["agent_idle_logout_minutes"]),
 			AgentShopEnabled:                      truthy(c["agent_shop_enabled"]),
 			AgentAutoUpdate:                       truthy(c["agent_auto_update"]),
+			AgentShellTheme:                       shellThemeValue(c["agent_shell_theme"]),
 			AppBookingEnabled:                     truthy(c["app_booking_enabled"]),
 			AppBookingCancel:                      truthy(c["app_booking_cancel"]),
 		},

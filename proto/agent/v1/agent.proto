@@ -601,6 +601,27 @@ message ClubConfig {
   bool auto_billing = 12;
   // Пауза после входа до старта автобиллинга, минуты (PaymentRules::autoBillingPauseMinutes).
   uint32 auto_billing_pause_minutes = 13;
+  // Цвета оболочки гостя и экрана входа — тема клуба (настройки клуба → «Агент ПК», club.agent_shell_theme).
+  // Не задано — стандартная тема агента. Смена темы приходит в ConfigChanged без перезапуска агента.
+  ShellTheme shell_theme = 14;
+}
+
+// Тема оформления ПК клуба. Старый аналог: club.shell_theme ответа heartbeat (app/Support/ShellThemes.php
+// ShellThemes::colors()). Сервер присылает сами цвета — новая тема на сервере не требует выпуска агента.
+// Каждый цвет — "#rrggbb"; агент проверяет формат и при любом неверном цвете показывает стандартную тему.
+message ShellTheme {
+  // Кнопки и активный пункт меню (белый текст на нём).
+  string accent = 1;
+  // Выделение и кнопка тарифа (тёмный текст на нём).
+  string accent_2 = 2;
+  // Подзаголовки, ссылки, бонусы.
+  string soft = 3;
+  // Магазин (тёмный текст на нём).
+  string highlight = 4;
+  // Фон сверху.
+  string bg_0 = 5;
+  // Фон снизу.
+  string bg_1 = 6;
 }
 
 // Подтверждение события агента.

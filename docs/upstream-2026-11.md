@@ -1368,3 +1368,15 @@ bonus = "0.00")` — гость и токен приложения `mobile`.
 | П4 (Г) | `BookFromApp`, `CancelBooking`, `StartBooking`, `StartBookingByCode`; операции `reservation_payment` / `reservation_refund`; уникальность кода среди броней клуба (GAP-058 — в схеме её нет); настройки `app_booking_*` |
 | П5 (Д) | суперадмин и кабинет реселлера; привязка по коду пулом платформы; выплата с `idempotency_key` и строкой журнала; хост реселлера |
 | все | подписи новых событий журнала (GAP-052), `docs/business-rules.md`, `docs/golden-scenarios.md` |
+
+## 10. Второй пакет: a680bab → 71db8d6 (16.11.2026, 6 коммитов) — перенесён 19.11.2026
+
+| Коммит старого | Что | В zafirogo |
+|---|---|---|
+| `79d014f`, `55e3878` | Уровень зоны; тариф пересаживается в зоны того же или более низкого уровня | Миграция `0041`, BR-196, GS-574/575, `billing/service.allowedZones` (карта мест и пересадка); решения — `open-questions/upstream2-zone-levels.md` |
+| `35c36a0` | Поиск клиентов по имени, email, телефону в любом формате | `GET /api/customers?q=`, индекс `0043`; решения — `open-questions/upstream2-search.md` |
+| `e38b764` | Цветовая тема ПК клуба | `club.agent_shell_theme`, `ClubConfig.shell_theme` (push через `ConfigChanged`), агент; решения — `open-questions/upstream2-themes.md`, протокол — `agent-protocol.md` §15.6 |
+| `8094b1d` | Карточка входа 380 px | `lock.css` агента |
+| `71db8d6` | Ярлык открывает запущенную оболочку | UI агента выводит окно вперёд |
+
+Новые ключи переводов — в `database/translations` старого проекта (импорт), в `db/seed` не добавлялись.

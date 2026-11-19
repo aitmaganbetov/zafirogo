@@ -31,11 +31,21 @@ public sealed class AgentState
     private DateTimeOffset? _renewAfterOverride;
     private AutoBillingStatus? _autoBilling;
     private string? _guestLocale;
+    private ShellTheme? _shellTheme;
 
     public AgentState(TimeProvider? time = null) => _time = time ?? TimeProvider.System;
 
     /// <summary>Версия агента (Snapshot.agent_version — профиль лаунчера, AG-17).</summary>
     public string AgentVersion { get; init; } = "";
+
+    /// <summary>Действующая тема клуба (проверенная, ShellThemes.Normalize); null — стандартная.</summary>
+    public ShellTheme? ShellTheme
+    {
+        get
+        {
+            lock (_gate) return _shellTheme?.Clone();
+        }
+    }
 
     /// <summary>Язык ПК из настроек (Agent:Locale) — пока нет языка гостя и языка клуба.</summary>
     public string FallbackLocale { get; init; } = "ru";
@@ -228,6 +238,7 @@ public sealed class AgentState
             _computer = w.Computer?.Clone();
             _config = w.Config?.Clone();
             _clubName = w.Config?.ClubName ?? _clubName;
+            if (w.Config is not null) _shellTheme = ShellThemes.Normalize(w.Config.ShellTheme);
             if (w.ServerTime is not null) _clockOffset = w.ServerTime.ToDateTimeOffset() - _time.GetUtcNow();
             if (w.StatusInterval is not null && w.StatusInterval.ToTimeSpan() >= TimeSpan.FromSeconds(5)) _statusInterval = w.StatusInterval.ToTimeSpan();
             _session = w.Session?.Clone();
@@ -244,10 +255,24 @@ public sealed class AgentState
         lock (_gate) _clockOffset = serverTime.ToDateTimeOffset() - _time.GetUtcNow();
     }
 
+    /// <summary>
+    /// Тема клуба, сохранённая с прошлого подключения (AgentRuntime, файл shell-theme.pb): до Welcome экран входа уже в
+    /// ней, как у старого агента (AgentConfig.ShellTheme). Проверяется так же, как пришедшая с сервера; настройки клуба
+    /// уже получены — не трогает их тему.
+    /// </summary>
+    public void RestoreShellTheme(ShellTheme? saved) => Mutate(() =>
+    {
+        if (_config is not null) return false;
+        _shellTheme = ShellThemes.Normalize(saved);
+        return true;
+    });
+
     public void ApplyConfig(ClubConfig config) => Mutate(() =>
     {
         _config = config.Clone();
         if (!string.IsNullOrEmpty(config.ClubName)) _clubName = config.ClubName;
+        // Тема меняется push-ом (ConfigChanged) без перезапуска агента; неверный цвет — стандартная тема.
+        _shellTheme = ShellThemes.Normalize(config.ShellTheme);
         return true;
     });
 
@@ -474,6 +499,15 @@ public sealed class AgentState
         }
     }
 
+    /// <summary>Настройки клуба для UI: тема — только проверенная (непроверенные цвета страница не получает).</summary>
+    private ClubConfig? ConfigForUiLocked()
+    {
+        if (_config is null) return null;
+        var c = _config.Clone();
+        c.ShellTheme = _shellTheme?.Clone();
+        return c;
+    }
+
     /// <summary>Снимок для UI (без токена гостя).</summary>
     public Snapshot BuildSnapshot()
     {
@@ -485,7 +519,8 @@ public sealed class AgentState
                 State = ComputeStateLocked(),
                 Screen = ScreenLocked(),
                 Computer = _computer?.Clone(),
-                Config = _config?.Clone(),
+                Config = ConfigForUiLocked(),
+                ShellTheme = _shellTheme?.Clone(),
                 Session = HasSessionLocked() ? _session?.Clone() : null,
                 Guest = _guest?.User?.Clone(),
                 Balance = _guest?.Balance?.Clone(),

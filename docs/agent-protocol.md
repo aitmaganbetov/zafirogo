@@ -258,7 +258,7 @@ CI-секретах, открытый ключ вшит в агента.
 | ответ heartbeat: `wake_macs` | `Command.wake_on_lan` |
 | ответ heartbeat: `agent_update` | `Command.update_available` (+ подпись Ed25519) |
 | ответ heartbeat: `session`, `session_expired` | `Welcome.session`, `Command.start_session` / `end_session` |
-| ответ heartbeat: `club` (лого, языки, `guest_features`, `after_session`, `idle_logout_minutes`) | `Welcome.config`, `Command.config_changed` |
+| ответ heartbeat: `club` (лого, языки, `guest_features`, `after_session`, `idle_logout_minutes`, `shell_theme`) | `Welcome.config`, `Command.config_changed` (тема — `ClubConfig.shell_theme`, §15.6) |
 | ответ heartbeat: `club.translations_version` | `Welcome.translations_version`, `Command.translations_changed` |
 | ответ heartbeat: `customer` (баланс, заявки, чат) | `Command.balance_changed`, `guest_counters_changed`, `chat_message_received` |
 | запрос heartbeat: `fresh_boot` | `Hello.boot_id` |
@@ -1189,6 +1189,37 @@ RPC, поля и вид команды; `buf breaking` против прошло
   с первой сборки, в которой он есть (тема Ж; выпусков агента gRPC до неё не было). Сервер без этого RPC
   отвечает `UNIMPLEMENTED` — экран покажет «Не удалось проверить код…». Старый агент (REST) — с версии от
   13.11.2026 (UQ-24).
+
+### 15.6. Тема ПК клуба и ярлык «Zafiro» (ноябрь 2026)
+
+Источник — старый Laravel `71db8d6`: коммиты `e38b764` (тема: `app/Support/ShellThemes.php`, настройки клуба
+`agent_shell_theme`, `club.shell_theme` в heartbeat, `WindowsAgent/Frontend/{main.js,styles.css}`,
+`Services/ShellThemes.cs`, `ClubSetupWindow`), `8094b1d` (карточка входа 380 px), `71db8d6` (ярлык открывает
+запущенную оболочку). Решения — [`open-questions/upstream2-themes.md`](open-questions/upstream2-themes.md).
+
+- **Сервер.** Тема — ключ `clubs.settings.club.agent_shell_theme` (`standard`, `blue`, `green`, `red`, `orange`, `teal`,
+  `pink`; по умолчанию `standard`; миграции нет — настройки в jsonb, как в Laravel). Цвета — `internal/shelltheme`
+  (буквально `ShellThemes::COLORS`). Агенту уходят сами цвета: `ClubConfig.shell_theme` (`ShellTheme`: `accent`,
+  `accent_2`, `soft`, `highlight`, `bg_0`, `bg_1` — `#rrggbb`); `standard` и неизвестный ключ — поле не задано
+  (стандартная тема агента). Сохранение настроек секции `club` рассылает `ConfigChanged` ПК клуба в сети — тема
+  меняется без перезапуска агента и без ожидания heartbeat (в старом — до минуты).
+- **Служба.** `ShellThemes.Normalize` пропускает тему, только если все шесть цветов — `#rrggbb` (иначе стандартная, как
+  `ShellThemes.TryRead` старого агента); проверенная тема — в `Snapshot.shell_theme` и `Snapshot.config.shell_theme`
+  (непроверенные цвета UI не получает). Тема хранится в `shell-theme.pb` каталога данных службы (пишется только при
+  смене; стандартная — файла нет): после перезагрузки ПК экран входа в цветах клуба ещё до `Welcome`
+  (старый `AgentConfig.ShellTheme`).
+- **Страница.** `app.js` на каждый снимок ставит CSS-переменные на `<html>` (`Zafiro.shellThemeVars`, ещё раз проверяет
+  `#rrggbb`): оболочка — `--accent`, `--accent-2`, `--soft`, `--highlight`, `--bg-0`, `--bg-1` (`styles.css` старого
+  агента после `e38b764` без изменений); экран входа — `--lock-window` (bg_0), `--lock-panel` (bg_1), `--lock-accent`
+  (кнопки, текущий язык, рамка поля в фокусе; наведение на кнопки питания — он же с прозрачностью 80 %),
+  `--lock-kicker` и `--lock-link` (soft) — кисти `Theme*Brush` окна `ClubSetupWindow`. Стандартная тема — переменные
+  снимаются, действуют значения из CSS. Карточка входа — постоянные 380 px (`8094b1d`), QR 112 px, текст рядом
+  переносится.
+- **Ярлык «Zafiro»** (`--launcher`): UI уже работает — второй процесс отдаёт право на передний план
+  (`AllowSetForegroundWindow(ASFW_ANY)`) и сигналит `Local\ZafiroAgent.UI.Launcher`; работающий UI открывает лаунчер,
+  а если окно уже показано (лаунчер за игрой, экран входа) — разворачивает и выводит его вперёд
+  (`UiController.ActivateRequested`). Отдельного процесса или опроса ради этого нет: сигнал ждёт поток пула
+  (`RegisterWaitForSingleObject`), UI по-прежнему живёт, только пока нужен экран.
 
 ## 16. Здоровье ПК на сервере (Этап 7)
 

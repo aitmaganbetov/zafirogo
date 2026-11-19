@@ -266,6 +266,20 @@ func TestCheckSettings(t *testing.T) {
 	}
 }
 
+// Тема ПК (коммит старого e38b764): ключ из ShellThemes::keys() и null переносятся молча, другое — предупреждение.
+func TestCheckSettingsShellTheme(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		warn  bool
+	}{{`"red"`, false}, {`"standard"`, false}, {`null`, false}, {`"purple"`, true}, {`1`, true}} {
+		r := &run{o: &Options{}, rep: newReport("plan"), club: club{ID: 1, Slug: "a"}}
+		r.checkSettingsJSON([]byte(`{"club":{"agent_shell_theme":` + tc.value + `}}`))
+		if got := len(r.rep.Find(CodeSettingsFormat)) > 0; got != tc.warn {
+			t.Errorf("agent_shell_theme=%s: предупреждение %v, ожидалось %v", tc.value, got, tc.warn)
+		}
+	}
+}
+
 func TestReportAggregates(t *testing.T) {
 	r := newReport("plan")
 	for i := range 7 {
