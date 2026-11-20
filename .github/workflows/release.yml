@@ -144,7 +144,7 @@ jobs:
           digest=$(docker inspect -f '{{index .RepoDigests 0}}' "$IMAGE:$VERSION" | cut -d@ -f2)
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "Опубликовано: \`$IMAGE:$VERSION@$digest\`" >> "$GITHUB_STEP_SUMMARY"
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         if: env.COSIGN_SIGN == 'true'
       - name: cosign sign + SBOM attestation (keyless)
         if: env.COSIGN_SIGN == 'true'
