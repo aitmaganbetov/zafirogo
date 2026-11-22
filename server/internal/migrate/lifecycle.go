@@ -73,7 +73,7 @@ func resolvePGClub(ctx context.Context, q pgQuerier, ref string) (pgClub, error)
 func lifecycleTx(ctx context.Context, pg *pgxpool.Pool, rep *Report, ref string, fn func(tx pgx.Tx, c pgClub) error) error {
 	return pgx.BeginTxFunc(ctx, pg, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		// Под той же блокировкой, что apply: перенос и удаление клуба не пересекаются (общие аккаунты).
-		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext('zafirogo:migrate-from-mysql'))"); err != nil {
+		if err := lockMigrations(ctx, tx); err != nil {
 			return err
 		}
 		c, err := resolvePGClub(ctx, tx, ref)
@@ -154,10 +154,7 @@ func purgeableUsers(ctx context.Context, tx pgx.Tx, clubID int64, rep *Report) (
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, "SELECT set_config('app.club_id', $1, true)", strconv.FormatInt(clubID, 10)); err != nil {
-		return nil, err
-	}
-	asPlatform, err := setPlatformRole(ctx, tx)
+	asPlatform, err := asClub(ctx, tx, clubID)
 	if err != nil {
 		return nil, err
 	}
@@ -285,10 +282,7 @@ func GoLive(ctx context.Context, pg *pgxpool.Pool, ref string) (*Report, error) 
 				"клуб уже открыт для работы")
 			return ErrClubState
 		}
-		if _, err := tx.Exec(ctx, "SELECT set_config('app.club_id', $1, true)", strconv.FormatInt(c.ID, 10)); err != nil {
-			return err
-		}
-		if _, err := setPlatformRole(ctx, tx); err != nil {
+		if _, err := asClub(ctx, tx, c.ID); err != nil {
 			return err
 		}
 		var after []byte

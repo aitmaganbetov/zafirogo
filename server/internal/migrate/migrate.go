@@ -178,13 +178,10 @@ func Apply(ctx context.Context, my *sql.DB, pg *pgxpool.Pool, o Options) (*Repor
 	err = pgx.BeginTxFunc(ctx, pg, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		r.pg, r.write = tx, true
 		// Переносы клубов — по одному: аккаунты общие (users), их слияние не должно гоняться.
-		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext('zafirogo:migrate-from-mysql'))"); err != nil {
+		if err := lockMigrations(ctx, tx); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, "SELECT set_config('app.club_id', $1, true)", strconv.FormatInt(r.club.ID, 10)); err != nil {
-			return err
-		}
-		asPlatform, err := setPlatformRole(ctx, tx)
+		asPlatform, err := asClub(ctx, tx, r.club.ID)
 		if err != nil {
 			return err
 		}
@@ -272,10 +269,7 @@ func Verify(ctx context.Context, my *sql.DB, pg *pgxpool.Pool, o Options) (*Repo
 	defer r.src.Close()
 	err = pgx.BeginTxFunc(ctx, pg, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		r.pg = tx
-		if _, err := tx.Exec(ctx, "SELECT set_config('app.club_id', $1, true)", strconv.FormatInt(r.club.ID, 10)); err != nil {
-			return err
-		}
-		if _, err := setPlatformRole(ctx, tx); err != nil {
+		if _, err := asClub(ctx, tx, r.club.ID); err != nil {
 			return err
 		}
 		var exists bool
@@ -321,6 +315,21 @@ func (r *run) analyze(ctx context.Context, tx pgx.Tx, asPlatform bool, tables ..
 		}
 	}
 	return nil
+}
+
+// lockMigrations — блокировка переноса до конца транзакции: переносы клубов, платформенный шаг и удаление клуба идут
+// по одному (аккаунты общие, их слияние не должно гоняться).
+func lockMigrations(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext('zafirogo:migrate-from-mysql'))")
+	return err
+}
+
+// asClub — app.club_id клуба до конца транзакции и роль платформы (setPlatformRole), если логин в ней состоит.
+func asClub(ctx context.Context, tx pgx.Tx, clubID int64) (asPlatform bool, err error) {
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.club_id', $1, true)", strconv.FormatInt(clubID, 10)); err != nil {
+		return false, err
+	}
+	return setPlatformRole(ctx, tx)
 }
 
 // setPlatformRole — SET LOCAL ROLE zafiro_platform, если логин в ней состоит (PD-9: data-миграции под ролью

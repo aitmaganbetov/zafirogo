@@ -117,7 +117,7 @@ func PlatformApply(ctx context.Context, my *sql.DB, pg *pgxpool.Pool, o Platform
 	}
 	err = pgx.BeginTxFunc(ctx, pg, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		p.r.pg, p.r.write, p.mode = tx, true, modeApply
-		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtext('zafirogo:migrate-from-mysql'))"); err != nil {
+		if err := lockMigrations(ctx, tx); err != nil {
 			return err
 		}
 		asPlatform, err := setPlatformRole(ctx, tx)

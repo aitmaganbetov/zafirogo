@@ -559,122 +559,16 @@ const insertReservation = `INSERT INTO computer_reservations (id, club_id, club_
 // rest — заказы, брони, новости, задачи, чат, журнал (без движения денег: заказы с ПК — готовые записи).
 func (s *seeder) rest(ctx context.Context) error {
 	for _, c := range s.f.Clubs {
-		err := s.tenantTx(ctx, c.ID, func(tx pgx.Tx, q *store.Queries) error {
-			for _, o := range s.f.ShopOrders {
-				if o.ClubID != c.ID {
-					continue
-				}
-				lines := make([]shop.Line, len(o.Items))
-				for i, it := range o.Items {
-					price, err := tiyn(&it.Price)
-					if err != nil {
-						return err
-					}
-					lines[i] = shop.Line{ProductID: it.ProductID, Name: it.Name, Quantity: it.Quantity, Price: price,
-						Total: price * money.Tiyn(it.Quantity)}
-				}
-				items, err := shop.EncodeItems(lines)
-				if err != nil {
-					return err
-				}
-				amount, err := tiyn(&o.Amount)
-				if err != nil {
-					return err
-				}
-				handled, err := timePtr(o.HandledAt)
-				if err != nil {
-					return err
-				}
-				updated := s.created(o.CreatedAt)
-				if handled != nil {
-					updated = *handled
-				}
-				if _, err := tx.Exec(ctx, `INSERT INTO shop_orders (id, club_id, user_id, club_computer_id, computer_name, items, amount,
-					status, handled_by, handled_at, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-					o.ID, o.ClubID, o.UserID, o.ComputerID, o.ComputerName, items, int64(amount), o.Status, o.HandledBy, handled,
-					s.created(o.CreatedAt), updated); err != nil {
-					return fmt.Errorf("заказ %d: %w", o.ID, err)
-				}
-			}
-			for _, r := range s.f.Reservations {
-				if r.ClubID != c.ID {
-					continue
-				}
-				var ts [4]*time.Time
-				for i, v := range []*string{&r.StartsAt, &r.EndsAt, r.ArrivedAt, r.CancelledAt} {
-					t, err := timePtr(v)
-					if err != nil {
-						return err
-					}
-					ts[i] = t
-				}
-				if _, err := tx.Exec(ctx, insertReservation,
-					r.ID, r.ClubID, r.ComputerID, r.UserID, r.CustomerName, r.CustomerPhone, r.Note, ts[0], ts[1], ts[2], ts[3],
-					r.CreatedBy, s.created(r.CreatedAt), r.FromApp, r.PaidMainCents, r.PaidBonusCents, r.Code); err != nil {
-					return fmt.Errorf("бронь %d: %w", r.ID, err)
-				}
-			}
-			for _, t := range s.f.TodoTasks {
-				if t.ClubID != c.ID {
-					continue
-				}
-				done, err := timePtr(t.DoneAt)
-				if err != nil {
-					return err
-				}
-				updated := s.created(t.CreatedAt)
-				if done != nil {
-					updated = *done
-				}
-				if _, err := tx.Exec(ctx, `INSERT INTO todo_tasks (id, club_id, title, due_on, created_by, done_at, done_by, created_at,
-					updated_at) VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9)`,
-					t.ID, t.ClubID, t.Title, t.DueOn, t.CreatedBy, done, t.DoneBy, s.created(t.CreatedAt), updated); err != nil {
-					return fmt.Errorf("задача %d: %w", t.ID, err)
-				}
-			}
-			for _, m := range s.f.ChatMessages {
-				if m.ClubID != c.ID {
-					continue
-				}
-				read, err := timePtr(m.ReadAt)
-				if err != nil {
-					return err
-				}
-				if _, err := tx.Exec(ctx, `INSERT INTO chat_messages (id, club_id, customer_id, author_id, from_staff, body,
-					club_computer_id, read_at, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
-					m.ID, m.ClubID, m.CustomerID, m.AuthorID, m.FromStaff, m.Body, m.ComputerID, read, s.created(m.CreatedAt)); err != nil {
-					return fmt.Errorf("сообщение %d: %w", m.ID, err)
-				}
-			}
-			for _, l := range s.f.QrLogins {
-				if l.ClubID != c.ID {
-					continue
-				}
-				expires, err := time.Parse(time.RFC3339, l.ExpiresAt)
-				if err != nil {
-					return fmt.Errorf("QR-вход %s: %w", l.ID, err)
-				}
-				sum := sha256.Sum256([]byte(l.Code)) // AgentQrLogin::hashCode(): hash('sha256', $code)
-				if _, err := tx.Exec(ctx, `INSERT INTO agent_qr_logins (id, club_id, club_computer_id, code_hash, expires_at,
-					created_at, updated_at) VALUES ($1::uuid, $2, $3, $4, $5, $6, $6)`,
-					l.ID, l.ClubID, l.ComputerID, hex.EncodeToString(sum[:]), expires, s.created(l.CreatedAt)); err != nil {
-					return fmt.Errorf("QR-вход %s: %w", l.ID, err)
-				}
-			}
-			for _, l := range s.f.ActivityLogs {
-				if l.ClubID != c.ID {
-					continue
-				}
-				var subjectType *string
-				if l.SubjectUserID != nil {
-					st := `App\Models\User`
-					subjectType = &st
-				}
-				if _, err := tx.Exec(ctx, `INSERT INTO activity_logs (club_id, event, description, user_id, subject_type, subject_id,
-					details, ip_address, user_agent, created_at, updated_at)
-					VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, '127.0.0.1', 'Zafiro visual seed', $8, $8)`,
-					l.ClubID, l.Event, l.Description, l.UserID, subjectType, l.SubjectUserID, jsonOrNil(l.Details),
-					s.created(l.CreatedAt)); err != nil {
+		err := s.tenantTx(ctx, c.ID, func(tx pgx.Tx, _ *store.Queries) error {
+			for _, seed := range []func(context.Context, pgx.Tx, int64) error{
+				s.shopOrders,
+				s.reservations,
+				s.todoTasks,
+				s.chatMessages,
+				s.qrLogins,
+				s.activityLogs,
+			} {
+				if err := seed(ctx, tx, c.ID); err != nil {
 					return err
 				}
 			}
@@ -703,6 +597,154 @@ func (s *seeder) rest(ctx context.Context) error {
 		}
 		return nil
 	})
+}
+
+// shopOrders — заказы с ПК (готовые записи, без движения денег) клуба clubID.
+func (s *seeder) shopOrders(ctx context.Context, tx pgx.Tx, clubID int64) error {
+	for _, o := range s.f.ShopOrders {
+		if o.ClubID != clubID {
+			continue
+		}
+		lines := make([]shop.Line, len(o.Items))
+		for i, it := range o.Items {
+			price, err := tiyn(&it.Price)
+			if err != nil {
+				return err
+			}
+			lines[i] = shop.Line{ProductID: it.ProductID, Name: it.Name, Quantity: it.Quantity, Price: price,
+				Total: price * money.Tiyn(it.Quantity)}
+		}
+		items, err := shop.EncodeItems(lines)
+		if err != nil {
+			return err
+		}
+		amount, err := tiyn(&o.Amount)
+		if err != nil {
+			return err
+		}
+		handled, err := timePtr(o.HandledAt)
+		if err != nil {
+			return err
+		}
+		updated := s.created(o.CreatedAt)
+		if handled != nil {
+			updated = *handled
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO shop_orders (id, club_id, user_id, club_computer_id, computer_name, items, amount,
+			status, handled_by, handled_at, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+			o.ID, o.ClubID, o.UserID, o.ComputerID, o.ComputerName, items, int64(amount), o.Status, o.HandledBy, handled,
+			s.created(o.CreatedAt), updated); err != nil {
+			return fmt.Errorf("заказ %d: %w", o.ID, err)
+		}
+	}
+	return nil
+}
+
+// reservations — брони клуба clubID.
+func (s *seeder) reservations(ctx context.Context, tx pgx.Tx, clubID int64) error {
+	for _, r := range s.f.Reservations {
+		if r.ClubID != clubID {
+			continue
+		}
+		var ts [4]*time.Time
+		for i, v := range []*string{&r.StartsAt, &r.EndsAt, r.ArrivedAt, r.CancelledAt} {
+			t, err := timePtr(v)
+			if err != nil {
+				return err
+			}
+			ts[i] = t
+		}
+		if _, err := tx.Exec(ctx, insertReservation,
+			r.ID, r.ClubID, r.ComputerID, r.UserID, r.CustomerName, r.CustomerPhone, r.Note, ts[0], ts[1], ts[2], ts[3],
+			r.CreatedBy, s.created(r.CreatedAt), r.FromApp, r.PaidMainCents, r.PaidBonusCents, r.Code); err != nil {
+			return fmt.Errorf("бронь %d: %w", r.ID, err)
+		}
+	}
+	return nil
+}
+
+// todoTasks — задачи клуба clubID.
+func (s *seeder) todoTasks(ctx context.Context, tx pgx.Tx, clubID int64) error {
+	for _, t := range s.f.TodoTasks {
+		if t.ClubID != clubID {
+			continue
+		}
+		done, err := timePtr(t.DoneAt)
+		if err != nil {
+			return err
+		}
+		updated := s.created(t.CreatedAt)
+		if done != nil {
+			updated = *done
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO todo_tasks (id, club_id, title, due_on, created_by, done_at, done_by, created_at,
+			updated_at) VALUES ($1, $2, $3, $4::date, $5, $6, $7, $8, $9)`,
+			t.ID, t.ClubID, t.Title, t.DueOn, t.CreatedBy, done, t.DoneBy, s.created(t.CreatedAt), updated); err != nil {
+			return fmt.Errorf("задача %d: %w", t.ID, err)
+		}
+	}
+	return nil
+}
+
+// chatMessages — чат гостей клуба clubID.
+func (s *seeder) chatMessages(ctx context.Context, tx pgx.Tx, clubID int64) error {
+	for _, m := range s.f.ChatMessages {
+		if m.ClubID != clubID {
+			continue
+		}
+		read, err := timePtr(m.ReadAt)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO chat_messages (id, club_id, customer_id, author_id, from_staff, body,
+			club_computer_id, read_at, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)`,
+			m.ID, m.ClubID, m.CustomerID, m.AuthorID, m.FromStaff, m.Body, m.ComputerID, read, s.created(m.CreatedAt)); err != nil {
+			return fmt.Errorf("сообщение %d: %w", m.ID, err)
+		}
+	}
+	return nil
+}
+
+// qrLogins — QR-входы на ПК клуба clubID.
+func (s *seeder) qrLogins(ctx context.Context, tx pgx.Tx, clubID int64) error {
+	for _, l := range s.f.QrLogins {
+		if l.ClubID != clubID {
+			continue
+		}
+		expires, err := time.Parse(time.RFC3339, l.ExpiresAt)
+		if err != nil {
+			return fmt.Errorf("QR-вход %s: %w", l.ID, err)
+		}
+		sum := sha256.Sum256([]byte(l.Code)) // AgentQrLogin::hashCode(): hash('sha256', $code)
+		if _, err := tx.Exec(ctx, `INSERT INTO agent_qr_logins (id, club_id, club_computer_id, code_hash, expires_at,
+			created_at, updated_at) VALUES ($1::uuid, $2, $3, $4, $5, $6, $6)`,
+			l.ID, l.ClubID, l.ComputerID, hex.EncodeToString(sum[:]), expires, s.created(l.CreatedAt)); err != nil {
+			return fmt.Errorf("QR-вход %s: %w", l.ID, err)
+		}
+	}
+	return nil
+}
+
+// activityLogs — журнал действий клуба клуба clubID.
+func (s *seeder) activityLogs(ctx context.Context, tx pgx.Tx, clubID int64) error {
+	for _, l := range s.f.ActivityLogs {
+		if l.ClubID != clubID {
+			continue
+		}
+		var subjectType *string
+		if l.SubjectUserID != nil {
+			st := `App\Models\User`
+			subjectType = &st
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO activity_logs (club_id, event, description, user_id, subject_type, subject_id,
+			details, ip_address, user_agent, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, '127.0.0.1', 'Zafiro visual seed', $8, $8)`,
+			l.ClubID, l.Event, l.Description, l.UserID, subjectType, l.SubjectUserID, jsonOrNil(l.Details),
+			s.created(l.CreatedAt)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // sequences — identity-последовательности после вставки с явными id (иначе следующая вставка сервера получит занятый id).

@@ -39,8 +39,8 @@ const (
 )
 
 // substitute подставляет :name в текст (как __() Laravel: длинные ключи раньше коротких).
-// TODO(i18n): описание пишется на русском (ключ перевода); язык клуба — когда появится серверный
-// каталог переводов (docs/open-questions/stage2-wiring.md W-3).
+// TODO(i18n): описание пишется на русском (ключ перевода) с уже подставленными значениями; перевод при показе —
+// решение W-3 (docs/open-questions/stage2-wiring.md, EV-7: хранить ключ и параметры).
 func substitute(text string, params map[string]string) string {
 	if len(params) == 0 {
 		return text

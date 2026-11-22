@@ -148,7 +148,7 @@ func serveGzip(w http.ResponseWriter, r *http.Request, name string, v *variant) 
 	h.Set("Content-Length", strconv.Itoa(len(v.gz)))
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
-		_, _ = w.Write(v.gz)
+		_, _ = w.Write(v.gz) // #nosec G705 -- сжатый файл вшитой сборки (fs.FS), а не данные запроса
 	}
 }
 
@@ -168,133 +168,149 @@ func etagMatch(header, etag string) bool {
 
 // Handler возвращает http.Handler, отдающий SPA из fsys.
 func Handler(fsys fs.FS, opts ...Option) http.Handler {
-	var o options
+	h := &spa{fsys: fsys, fileServer: http.FileServerFS(fsys), variants: map[string]*variant{}}
 	for _, fn := range opts {
-		fn(&o)
+		fn(&h.o)
 	}
 	index, err := fs.ReadFile(fsys, "index.html")
 	if err != nil {
 		index = []byte(placeholder)
 	}
-	cabinetIndex := bytes.Replace(index, []byte("<html"), []byte("<html data-superadmin-host"), 1)
-	indexVariant, cabinetVariant := newVariant("index.html", index), newVariant("index.html", cabinetIndex)
-	resellerIndex := bytes.Replace(index, []byte("<html"), []byte("<html data-reseller-host"), 1)
-	resellerVariant := newVariant("index.html", resellerIndex)
-	fileServer := http.FileServerFS(fsys)
-	var site *siteIndex
-	if o.site {
-		site = newSiteIndex(index, o.siteTexts, o.publicURL)
+	h.index = index
+	h.cabinetIndex = bytes.Replace(index, []byte("<html"), []byte("<html data-superadmin-host"), 1)
+	h.indexVariant, h.cabinetVariant = newVariant("index.html", index), newVariant("index.html", h.cabinetIndex)
+	h.resellerIndex = bytes.Replace(index, []byte("<html"), []byte("<html data-reseller-host"), 1)
+	h.resellerVariant = newVariant("index.html", h.resellerIndex)
+	if h.o.site {
+		h.site = newSiteIndex(index, h.o.siteTexts, h.o.publicURL)
 	}
+	return h
+}
+
+// spa — обработчик Handler: index.html (общий, кабинетов суперадмина и реселлера, страницы сайта) и файлы сборки.
+type spa struct {
+	o          options
+	fsys       fs.FS
+	fileServer http.Handler
+	site       *siteIndex
+
+	index, cabinetIndex, resellerIndex            []byte
+	indexVariant, cabinetVariant, resellerVariant *variant
 
 	// variants — файлы сборки по имени: набор конечен (вшитая ФС), сжатие — один раз на файл.
-	var (
-		mu       sync.RWMutex
-		variants = map[string]*variant{}
-	)
-	variantOf := func(name string) *variant {
-		mu.RLock()
-		v, ok := variants[name]
-		mu.RUnlock()
-		if ok {
-			return v
-		}
-		data, err := fs.ReadFile(fsys, name)
-		if err != nil {
-			return nil
-		}
-		v = newVariant(name, data) // вне блокировки: сжатие большого файла — десятки миллисекунд
-		mu.Lock()
-		defer mu.Unlock()
-		if prev, ok := variants[name]; ok {
-			return prev
-		}
-		variants[name] = v
+	mu       sync.RWMutex
+	variants map[string]*variant
+}
+
+func (h *spa) variantOf(name string) *variant {
+	h.mu.RLock()
+	v, ok := h.variants[name]
+	h.mu.RUnlock()
+	if ok {
 		return v
 	}
+	data, err := fs.ReadFile(h.fsys, name)
+	if err != nil {
+		return nil
+	}
+	v = newVariant(name, data) // вне блокировки: сжатие большого файла — десятки миллисекунд
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if prev, ok := h.variants[name]; ok {
+		return prev
+	}
+	h.variants[name] = v
+	return v
+}
 
-	// serveIndex — index.html для пути p ("" — общий, без заголовков сайта).
-	serveIndex := func(w http.ResponseWriter, r *http.Request, p string) {
+// serveIndex — index.html для пути p ("" — общий, без заголовков сайта).
+func (h *spa) serveIndex(w http.ResponseWriter, r *http.Request, p string) {
+	o := &h.o
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Add("Vary", "Accept-Encoding")
+	body, v := h.index, h.indexVariant
+	siteHost := true // на хостах кабинетов суперадмина и реселлера сайт не показывается (L-1)
+	if o.cabinetDomain != "" || o.resellerDomain != "" {
+		w.Header().Add("Vary", "Host")
+		switch {
+		case o.cabinetDomain != "" && sameHost(r.Host, o.cabinetDomain):
+			body, v, siteHost = h.cabinetIndex, h.cabinetVariant, false
+		case o.resellerDomain != "" && sameHost(r.Host, o.resellerDomain):
+			body, v, siteHost = h.resellerIndex, h.resellerVariant, false
+		}
+	}
+	if h.site != nil && siteHost {
+		if b, sv, ok := h.site.page(r, p); ok {
+			// Заголовки страницы зависят от языка гостя и адреса сайта (og:image).
+			w.Header().Add("Vary", "Accept-Language")
+			if o.cabinetDomain == "" && o.resellerDomain == "" {
+				w.Header().Add("Vary", "Host")
+			}
+			body, v = b, sv
+		}
+	}
+	if v.gz != nil && acceptsGzip(r) {
+		serveGzip(w, r, "index.html", v)
+		return
+	}
+	w.Header().Set("ETag", v.etag)
+	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(body))
+}
+
+// serveFile — файл сборки name: кэширование по виду файла, сжатый вариант, если клиент принимает gzip.
+func (h *spa) serveFile(w http.ResponseWriter, r *http.Request, name string) {
+	switch {
+	case strings.HasPrefix(name, "assets/"):
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	case name == "sw.js":
+		// Сервис-воркер: новая версия должна подхватываться сразу (перепроверка по ETag — 304 без тела).
 		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Add("Vary", "Accept-Encoding")
-		body, v := index, indexVariant
-		siteHost := true // на хостах кабинетов суперадмина и реселлера сайт не показывается (L-1)
-		if o.cabinetDomain != "" || o.resellerDomain != "" {
-			w.Header().Add("Vary", "Host")
-			switch {
-			case o.cabinetDomain != "" && sameHost(r.Host, o.cabinetDomain):
-				body, v, siteHost = cabinetIndex, cabinetVariant, false
-			case o.resellerDomain != "" && sameHost(r.Host, o.resellerDomain):
-				body, v, siteHost = resellerIndex, resellerVariant, false
+	default:
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+	}
+	if v := h.variantOf(name); v != nil {
+		if v.gz != nil {
+			w.Header().Add("Vary", "Accept-Encoding")
+			if acceptsGzip(r) {
+				serveGzip(w, r, name, v)
+				return
 			}
-		}
-		if site != nil && siteHost {
-			if b, sv, ok := site.page(r, p); ok {
-				// Заголовки страницы зависят от языка гостя и адреса сайта (og:image).
-				w.Header().Add("Vary", "Accept-Language")
-				if o.cabinetDomain == "" && o.resellerDomain == "" {
-					w.Header().Add("Vary", "Host")
-				}
-				body, v = b, sv
-			}
-		}
-		if v.gz != nil && acceptsGzip(r) {
-			serveGzip(w, r, "index.html", v)
-			return
 		}
 		w.Header().Set("ETag", v.etag)
-		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(body))
 	}
+	h.fileServer.ServeHTTP(w, r)
+}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-			return
-		}
-		p := path.Clean("/" + r.URL.Path)
-		if p == "/api" || strings.HasPrefix(p, "/api/") {
-			http.NotFound(w, r)
-			return
-		}
-		if p == "/" || p == "/index.html" {
-			serveIndex(w, r, "/")
-			return
-		}
-		name := strings.TrimPrefix(p, "/")
-		if path.Base(name) == ".gitkeep" {
-			http.NotFound(w, r)
-			return
-		}
-		if st, err := fs.Stat(fsys, name); err == nil && !st.IsDir() {
-			switch {
-			case strings.HasPrefix(name, "assets/"):
-				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-			case name == "sw.js":
-				// Сервис-воркер: новая версия должна подхватываться сразу (перепроверка по ETag — 304 без тела).
-				w.Header().Set("Cache-Control", "no-cache")
-			default:
-				w.Header().Set("Cache-Control", "public, max-age=3600")
-			}
-			if v := variantOf(name); v != nil {
-				if v.gz != nil {
-					w.Header().Add("Vary", "Accept-Encoding")
-					if acceptsGzip(r) {
-						serveGzip(w, r, name, v)
-						return
-					}
-				}
-				w.Header().Set("ETag", v.etag)
-			}
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-		if path.Ext(name) != "" {
-			http.NotFound(w, r)
-			return
-		}
-		serveIndex(w, r, p)
-	})
+func (h *spa) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	p := path.Clean("/" + r.URL.Path)
+	if p == "/api" || strings.HasPrefix(p, "/api/") {
+		http.NotFound(w, r)
+		return
+	}
+	if p == "/" || p == "/index.html" {
+		h.serveIndex(w, r, "/")
+		return
+	}
+	name := strings.TrimPrefix(p, "/")
+	if path.Base(name) == ".gitkeep" {
+		http.NotFound(w, r)
+		return
+	}
+	if st, err := fs.Stat(h.fsys, name); err == nil && !st.IsDir() {
+		h.serveFile(w, r, name)
+		return
+	}
+	if path.Ext(name) != "" {
+		http.NotFound(w, r)
+		return
+	}
+	h.serveIndex(w, r, p)
 }
 
 // sameHost — имя хоста запроса (без порта) совпадает с domain без учёта регистра.

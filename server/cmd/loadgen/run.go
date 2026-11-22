@@ -146,18 +146,7 @@ func cmdRun(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if *clubsLimit > 0 {
-		kept := creds[:0]
-		for _, c := range creds {
-			if c.Club <= *clubsLimit {
-				kept = append(kept, c)
-			}
-		}
-		creds = kept
-	}
-	if *limit > 0 && *limit < len(creds) {
-		creds = creds[:*limit]
-	}
+	creds = limitCreds(creds, *clubsLimit, *limit)
 	clubs := map[int]int{}
 	for _, c := range creds {
 		clubs[c.Club]++
@@ -262,40 +251,66 @@ func cmdRun(ctx context.Context, args []string) error {
 		if mode == "" {
 			continue
 		}
-		target := map[string]string{"graceful": "app1", "kill": "app2"}[mode]
-		if target == "" {
-			return fmt.Errorf("-restart: неизвестный режим %q", mode)
+		if err := r.restartApp(ctx, *project, mode, len(pcs), events); err != nil {
+			return err
 		}
-		name := *project + "-" + target + "-1"
-		r.stats.beginPhase("restart-" + mode)
-		t0 := time.Now()
-		rec := r.watchRecovery(len(pcs), 5*time.Minute)
-		var cmd *exec.Cmd
-		if mode == "graceful" {
-			cmd = exec.CommandContext(ctx, "docker", "stop", "-t", "45", name) // #nosec G204
-		} else {
-			cmd = exec.CommandContext(ctx, "docker", "kill", name) // #nosec G204
-		}
-		if b, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("%s: %w %s", cmd.String(), err, b)
-		}
-		events["restart_"+mode+"_stop_s"] = time.Since(t0).Seconds()
-		res := <-rec
-		events["restart_"+mode+"_min_up"] = res.minUp
-		events["restart_"+mode+"_recovered_s"] = res.recovered.Seconds()
-		fmt.Printf("run: %s %s: минимум на связи %d, все снова на связи через %s\n", mode, target, res.minUp, res.recovered.Round(100*time.Millisecond))
-		t1 := time.Now()
-		if b, err := exec.CommandContext(ctx, "docker", "start", name).CombinedOutput(); err != nil { // #nosec G204
-			return fmt.Errorf("docker start %s: %w %s", name, err, b)
-		}
-		waitReady(ctx, target, 2*time.Minute)
-		events["restart_"+mode+"_start_ready_s"] = time.Since(t1).Seconds()
 		r.stats.beginPhase("after-" + mode)
 		if !sleepCtx(ctx, *settle) {
 			break
 		}
 	}
 	return r.finish(*out, mon, events, stopAll, &wg)
+}
+
+// limitCreds — ПК клубов с номером ≤ clubs (0 — все клубы), не больше pcs (0 — все).
+func limitCreds(creds []pcCred, clubs, pcs int) []pcCred {
+	if clubs > 0 {
+		kept := creds[:0]
+		for _, c := range creds {
+			if c.Club <= clubs {
+				kept = append(kept, c)
+			}
+		}
+		creds = kept
+	}
+	if pcs > 0 && pcs < len(creds) {
+		creds = creds[:pcs]
+	}
+	return creds
+}
+
+// restartApp — сценарий (б): остановить инстанс (graceful — docker stop app1, kill — docker kill app2), замерить
+// провал и восстановление потоков total ПК, запустить инстанс снова и дождаться готовности. Замеры — в events.
+func (r *runner) restartApp(ctx context.Context, project, mode string, total int, events map[string]any) error {
+	target := map[string]string{"graceful": "app1", "kill": "app2"}[mode]
+	if target == "" {
+		return fmt.Errorf("-restart: неизвестный режим %q", mode)
+	}
+	name := project + "-" + target + "-1"
+	r.stats.beginPhase("restart-" + mode)
+	t0 := time.Now()
+	rec := r.watchRecovery(total, 5*time.Minute)
+	var cmd *exec.Cmd
+	if mode == "graceful" {
+		cmd = exec.CommandContext(ctx, "docker", "stop", "-t", "45", name) // #nosec G204
+	} else {
+		cmd = exec.CommandContext(ctx, "docker", "kill", name) // #nosec G204
+	}
+	if b, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: %w %s", cmd.String(), err, b)
+	}
+	events["restart_"+mode+"_stop_s"] = time.Since(t0).Seconds()
+	res := <-rec
+	events["restart_"+mode+"_min_up"] = res.minUp
+	events["restart_"+mode+"_recovered_s"] = res.recovered.Seconds()
+	fmt.Printf("run: %s %s: минимум на связи %d, все снова на связи через %s\n", mode, target, res.minUp, res.recovered.Round(100*time.Millisecond))
+	t1 := time.Now()
+	if b, err := exec.CommandContext(ctx, "docker", "start", name).CombinedOutput(); err != nil { // #nosec G204
+		return fmt.Errorf("docker start %s: %w %s", name, err, b)
+	}
+	waitReady(ctx, target, 2*time.Minute)
+	events["restart_"+mode+"_start_ready_s"] = time.Since(t1).Seconds()
+	return nil
 }
 
 type recovery struct {

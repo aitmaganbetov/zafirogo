@@ -119,25 +119,8 @@ func cmdPrepare(ctx context.Context, args []string) error {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-			if err == nil {
-				var der []byte
-				der, err = x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
-				if err == nil {
-					var csr *x509.CertificateRequest
-					if csr, err = x509.ParseCertificateRequest(der); err == nil {
-						issued[i], err = ca.Issue(pki.IssueRequest{CSR: csr, ClubID: p.club, ComputerID: p.id})
-					}
-				}
-			}
-			if err == nil {
-				var kd []byte
-				if kd, err = x509.MarshalPKCS8PrivateKey(key); err == nil {
-					creds[i] = pcCred{Club: int(p.club), PC: int(p.id % 10000), ComputerID: p.id, ZoneID: p.zone, CertPEM: issued[i].CertPEM,
-						KeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kd}))}
-				}
-			}
-			if err != nil {
+			var err error
+			if creds[i], issued[i], err = issuePC(ca, p.club, p.id, p.zone); err != nil {
 				select {
 				case errc <- err:
 				default:
@@ -156,26 +139,12 @@ func cmdPrepare(ctx context.Context, args []string) error {
 		byClub[p.club] = append(byClub[p.club], i)
 	}
 	for club, idx := range byClub {
-		err := pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, "SELECT set_config('app.club_id', $1, true)", strconv.FormatInt(club, 10)); err != nil {
-				return err
-			}
-			// Повторный prepare: прежние сертификаты набора отзываются (как повторный Enroll).
-			if _, err := tx.Exec(ctx, `UPDATE agent_certificates SET revoked_at = now(), revoke_reason = 'reenrolled', changed_at = now()
-				WHERE club_id = $1 AND revoked_at IS NULL`, club); err != nil {
-				return err
-			}
-			q := store.New(tx)
-			for _, i := range idx {
-				is := issued[i]
-				if err := q.InsertAgentCertificate(ctx, store.InsertAgentCertificateParams{Serial: is.Serial, ClubID: club,
-					ClubComputerID: pcs[i].id, SpkiSha256: is.SPKISHA256, NotBefore: is.NotBefore, NotAfter: is.NotAfter, IssuedVia: "enroll"}); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-		if err != nil {
+		certs := make([]pki.Issued, 0, len(idx))
+		computers := make([]int64, 0, len(idx))
+		for _, i := range idx {
+			certs, computers = append(certs, issued[i]), append(computers, pcs[i].id)
+		}
+		if err := storeCertificates(ctx, pool, club, computers, certs); err != nil {
 			return fmt.Errorf("сертификаты клуба %d: %w", club, err)
 		}
 	}
@@ -214,6 +183,54 @@ func cmdPrepare(ctx context.Context, args []string) error {
 		}
 	}
 	return nil
+}
+
+// issuePC — ключ ПК и сертификат от staging-CA (как Enroll: CSR → pki.CA.Issue).
+func issuePC(ca *pki.CA, club, id, zone int64) (pcCred, pki.Issued, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return pcCred{}, pki.Issued{}, err
+	}
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
+	if err != nil {
+		return pcCred{}, pki.Issued{}, err
+	}
+	csr, err := x509.ParseCertificateRequest(der)
+	if err != nil {
+		return pcCred{}, pki.Issued{}, err
+	}
+	issued, err := ca.Issue(pki.IssueRequest{CSR: csr, ClubID: club, ComputerID: id})
+	if err != nil {
+		return pcCred{}, pki.Issued{}, err
+	}
+	kd, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return pcCred{}, pki.Issued{}, err
+	}
+	return pcCred{Club: int(club), PC: int(id % 10000), ComputerID: id, ZoneID: zone, CertPEM: issued.CertPEM,
+		KeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kd}))}, issued, nil
+}
+
+// storeCertificates — строки agent_certificates выпущенных сертификатов ПК клуба (computers[i] — ПК certs[i]).
+// Повторный prepare: прежние сертификаты набора отзываются (как повторный Enroll).
+func storeCertificates(ctx context.Context, pool *pgxpool.Pool, club int64, computers []int64, certs []pki.Issued) error {
+	return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.club_id', $1, true)", strconv.FormatInt(club, 10)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE agent_certificates SET revoked_at = now(), revoke_reason = 'reenrolled', changed_at = now()
+			WHERE club_id = $1 AND revoked_at IS NULL`, club); err != nil {
+			return err
+		}
+		q := store.New(tx)
+		for i, is := range certs {
+			if err := q.InsertAgentCertificate(ctx, store.InsertAgentCertificateParams{Serial: is.Serial, ClubID: club,
+				ClubComputerID: computers[i], SpkiSha256: is.SPKISHA256, NotBefore: is.NotBefore, NotAfter: is.NotAfter, IssuedVia: "enroll"}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // enrollSampleRun — K регистраций по одноразовым кодам (зона «Не назначена»); печатает p50/p95 выдачи кода и Enroll. Зарегистрированные ПК

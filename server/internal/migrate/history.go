@@ -149,124 +149,20 @@ func (r *run) balanceLabels(ctx context.Context) (map[string]string, error) {
 // balanceHistory — Q-005: остаток каждого клиента против суммы движений по истории старой базы (только MySQL,
 // тот же снимок). Расхождения — предупреждение и список в Report.BalanceHistory.
 func (r *run) balanceHistory(ctx context.Context) error {
-	history := map[int64]*historyDelta{}
-	add := func(uid int64, main, bonus string) error {
-		m, err := tiynFromDecimal(main)
-		if err != nil {
-			return err
-		}
-		b, err := tiynFromDecimal(bonus)
-		if err != nil {
-			return err
-		}
-		d := history[uid]
-		if d == nil {
-			d = &historyDelta{}
-			history[uid] = d
-		}
-		d.main += m
-		d.bonus += b
-		return nil
-	}
-	for _, mv := range historyMovements {
-		if err := r.scanMovements(ctx, mv.sql, bindClub(mv.args, r.club.ID), add); err != nil {
-			return fmt.Errorf("mysql: balance history (%s): %w", mv.name, err)
-		}
-	}
-	labels, err := r.balanceLabels(ctx)
+	history, err := r.historyDeltas(ctx)
 	if err != nil {
 		return err
 	}
-	rows, err := r.src.conn.QueryContext(ctx, ownerTopUpsSQL, r.club.ID, morphUser)
+	diffs, clients, matched, err := r.balanceDiffs(ctx, history)
 	if err != nil {
-		return fmt.Errorf("mysql: balance history (owner top-up): %w", err)
-	}
-	for rows.Next() {
-		var subject sql.NullInt64
-		var label, sum string
-		if err := rows.Scan(&subject, &label, &sum); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if !subject.Valid {
-			continue
-		}
-		uid := subject.Int64
-		switch labels[strings.ToLower(strings.TrimSpace(label))] {
-		case "balance":
-			err = add(uid, sum, "0")
-		case "bonus_balance":
-			err = add(uid, "0", sum)
-		default:
-			r.rep.add(Warning, CodeBalanceHistory, "activity_logs", "details.balance_type", label, strconv.FormatInt(uid, 10),
-				"пополнение владельцем без кассы: поле баланса по подписи не определяется — в пересчёт не вошло")
-		}
-		if err != nil {
-			_ = rows.Close()
-			return err
-		}
-	}
-	_ = rows.Close()
-	if err := rows.Err(); err != nil {
 		return err
 	}
-
-	balances, err := r.src.conn.QueryContext(ctx, "SELECT user_id, balance, bonus_balance FROM member_balances WHERE club_id = ? ORDER BY user_id", r.club.ID)
-	if err != nil {
-		return fmt.Errorf("mysql: balances: %w", err)
-	}
-	var diffs []BalanceHistoryDiff
-	var clients, matched int64
-	var sumMain, sumBonus int64
-	seen := map[int64]bool{}
-	for balances.Next() {
-		var uid int64
-		var main, bonus string
-		if err := balances.Scan(&uid, &main, &bonus); err != nil {
-			_ = balances.Close()
-			return err
+	var sumMain, sumBonus int64 // только клиенты со строкой баланса
+	for _, d := range diffs {
+		if !d.NoBalanceRow {
+			sumMain += d.DiffMain
+			sumBonus += d.DiffBonus
 		}
-		m, err := tiynFromDecimal(main)
-		if err != nil {
-			_ = balances.Close()
-			return err
-		}
-		b, err := tiynFromDecimal(bonus)
-		if err != nil {
-			_ = balances.Close()
-			return err
-		}
-		clients++
-		seen[uid] = true
-		h := history[uid]
-		if h == nil {
-			h = &historyDelta{}
-		}
-		d := BalanceHistoryDiff{UserID: uid, Main: int64(m), Bonus: int64(b), HistoryMain: int64(h.main), HistoryBonus: int64(h.bonus)}
-		d.DiffMain, d.DiffBonus = d.Main-d.HistoryMain, d.Bonus-d.HistoryBonus
-		if d.DiffMain == 0 && d.DiffBonus == 0 {
-			matched++
-			continue
-		}
-		sumMain += d.DiffMain
-		sumBonus += d.DiffBonus
-		diffs = append(diffs, d)
-	}
-	_ = balances.Close()
-	if err := balances.Err(); err != nil {
-		return err
-	}
-	orphans := make([]int64, 0)
-	for uid, h := range history {
-		if !seen[uid] && (h.main != 0 || h.bonus != 0) {
-			orphans = append(orphans, uid)
-		}
-	}
-	sort.Slice(orphans, func(i, j int) bool { return orphans[i] < orphans[j] })
-	for _, uid := range orphans {
-		h := history[uid]
-		diffs = append(diffs, BalanceHistoryDiff{UserID: uid, HistoryMain: int64(h.main), HistoryBonus: int64(h.bonus),
-			DiffMain: -int64(h.main), DiffBonus: -int64(h.bonus), NoBalanceRow: true})
 	}
 
 	r.rep.BalanceHistory = diffs
@@ -284,6 +180,134 @@ func (r *run) balanceHistory(ctx context.Context) error {
 		r.rep.add(Warning, CodeBalanceHistory, "member_balances", "", "", strconv.FormatInt(d.UserID, 10), msg)
 	}
 	return nil
+}
+
+// historyDeltas — сумма движений по истории старой базы для каждого клиента.
+func (r *run) historyDeltas(ctx context.Context) (map[int64]*historyDelta, error) {
+	history := map[int64]*historyDelta{}
+	add := func(uid int64, main, bonus string) error {
+		m, b, err := tiynPair(main, bonus)
+		if err != nil {
+			return err
+		}
+		d := history[uid]
+		if d == nil {
+			d = &historyDelta{}
+			history[uid] = d
+		}
+		d.main += m
+		d.bonus += b
+		return nil
+	}
+	for _, mv := range historyMovements {
+		if err := r.scanMovements(ctx, mv.sql, bindClub(mv.args, r.club.ID), add); err != nil {
+			return nil, fmt.Errorf("mysql: balance history (%s): %w", mv.name, err)
+		}
+	}
+	if err := r.ownerTopUps(ctx, add); err != nil {
+		return nil, err
+	}
+	return history, nil
+}
+
+// ownerTopUps — пополнения владельцем без кассы: поле баланса определяется по подписи (balanceLabels); не
+// определилось — предупреждение, в пересчёт не входит.
+func (r *run) ownerTopUps(ctx context.Context, add func(uid int64, main, bonus string) error) error {
+	labels, err := r.balanceLabels(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := r.src.conn.QueryContext(ctx, ownerTopUpsSQL, r.club.ID, morphUser)
+	if err != nil {
+		return fmt.Errorf("mysql: balance history (owner top-up): %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var subject sql.NullInt64
+		var label, sum string
+		if err := rows.Scan(&subject, &label, &sum); err != nil {
+			return err
+		}
+		if !subject.Valid {
+			continue
+		}
+		uid := subject.Int64
+		switch labels[strings.ToLower(strings.TrimSpace(label))] {
+		case "balance":
+			err = add(uid, sum, "0")
+		case "bonus_balance":
+			err = add(uid, "0", sum)
+		default:
+			r.rep.add(Warning, CodeBalanceHistory, "activity_logs", "details.balance_type", label, strconv.FormatInt(uid, 10),
+				"пополнение владельцем без кассы: поле баланса по подписи не определяется — в пересчёт не вошло")
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// balanceDiffs — клиенты, чей остаток member_balances не равен сумме движений (по user_id), затем клиенты с
+// движениями, но без строки баланса (по user_id); clients — строк баланса, matched — из них совпавших.
+func (r *run) balanceDiffs(ctx context.Context, history map[int64]*historyDelta) (diffs []BalanceHistoryDiff, clients, matched int64, err error) {
+	rows, err := r.src.conn.QueryContext(ctx, "SELECT user_id, balance, bonus_balance FROM member_balances WHERE club_id = ? ORDER BY user_id", r.club.ID)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("mysql: balances: %w", err)
+	}
+	defer rows.Close()
+	seen := map[int64]bool{}
+	for rows.Next() {
+		var uid int64
+		var main, bonus string
+		if err := rows.Scan(&uid, &main, &bonus); err != nil {
+			return nil, 0, 0, err
+		}
+		m, b, err := tiynPair(main, bonus)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		clients++
+		seen[uid] = true
+		h := history[uid]
+		if h == nil {
+			h = &historyDelta{}
+		}
+		d := BalanceHistoryDiff{UserID: uid, Main: int64(m), Bonus: int64(b), HistoryMain: int64(h.main), HistoryBonus: int64(h.bonus)}
+		d.DiffMain, d.DiffBonus = d.Main-d.HistoryMain, d.Bonus-d.HistoryBonus
+		if d.DiffMain == 0 && d.DiffBonus == 0 {
+			matched++
+			continue
+		}
+		diffs = append(diffs, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, 0, err
+	}
+	orphans := make([]int64, 0)
+	for uid, h := range history {
+		if !seen[uid] && (h.main != 0 || h.bonus != 0) {
+			orphans = append(orphans, uid)
+		}
+	}
+	sort.Slice(orphans, func(i, j int) bool { return orphans[i] < orphans[j] })
+	for _, uid := range orphans {
+		h := history[uid]
+		diffs = append(diffs, BalanceHistoryDiff{UserID: uid, HistoryMain: int64(h.main), HistoryBonus: int64(h.bonus),
+			DiffMain: -int64(h.main), DiffBonus: -int64(h.bonus), NoBalanceRow: true})
+	}
+	return diffs, clients, matched, nil
+}
+
+// tiynPair — основной и бонусный остатки (DECIMAL MySQL) в тиынах.
+func tiynPair(main, bonus string) (m, b money.Tiyn, err error) {
+	if m, err = tiynFromDecimal(main); err != nil {
+		return 0, 0, err
+	}
+	if b, err = tiynFromDecimal(bonus); err != nil {
+		return 0, 0, err
+	}
+	return m, b, nil
 }
 
 func (r *run) scanMovements(ctx context.Context, q string, args []any, add func(uid int64, main, bonus string) error) error {

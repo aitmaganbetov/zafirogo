@@ -60,6 +60,74 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && (args[0] == "purge" || args[0] == "go-live") {
 		return runLifecycle(args, stdout, stderr)
 	}
+	c, code := parseRun(args, stderr)
+	if c == nil {
+		return code
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	my, err := openMySQL(c.mysqlDSN)
+	if err != nil {
+		fmt.Fprintf(stderr, "mysql: %v\n", err)
+		return exitError
+	}
+	defer func() { _ = my.Close() }()
+	pg, err := db.NewPool(ctx, c.pgDSN)
+	if err != nil {
+		fmt.Fprintf(stderr, "postgres: %v\n", err)
+		return exitError
+	}
+	defer pg.Close()
+
+	var report *migrate.Report
+	switch {
+	case c.platform && c.mode == "plan":
+		report, err = migrate.PlatformPlan(ctx, my, pg, c.popts)
+	case c.platform && c.mode == "apply":
+		report, err = migrate.PlatformApply(ctx, my, pg, c.popts)
+	case c.platform:
+		report, err = migrate.PlatformVerify(ctx, my, pg, c.popts)
+	case c.mode == "plan":
+		report, err = migrate.Plan(ctx, my, pg, c.opts)
+	case c.mode == "apply":
+		report, err = migrate.Apply(ctx, my, pg, c.opts)
+	default:
+		report, err = migrate.Verify(ctx, my, pg, c.opts)
+	}
+	printReport(report, c.jsonOut, stdout, stderr)
+	switch {
+	case errors.Is(err, migrate.ErrAlreadyMigrated):
+		fmt.Fprintln(stderr, "клуб уже перенесён: apply ничего не изменил")
+		return exitMigrated
+	case errors.Is(err, migrate.ErrBlocked):
+		fmt.Fprintln(stderr, "найдены блокеры: ничего не записано")
+		return exitBlocked
+	case errors.Is(err, migrate.ErrVerifyMismatch):
+		fmt.Fprintln(stderr, "сверка нашла расхождения")
+		return exitMismatch
+	case err != nil:
+		fmt.Fprintf(stderr, "ошибка: %v\n", err)
+		return exitError
+	case c.mode == "plan" && report != nil && report.Count(migrate.Blocker) > 0:
+		return exitBlocked
+	}
+	return exitOK
+}
+
+// runConfig — разобранные аргументы plan/apply/verify (клуба или платформы).
+type runConfig struct {
+	platform        bool
+	mode            string
+	mysqlDSN, pgDSN string
+	jsonOut         string
+	opts            migrate.Options
+	popts           migrate.PlatformOptions
+}
+
+// parseRun разбирает аргументы и читает файлы и ключи из окружения; nil — ошибка (уже выведена) с кодом выхода.
+func parseRun(args []string, stderr io.Writer) (*runConfig, int) {
 	platform := len(args) > 0 && args[0] == "platform"
 	if platform {
 		args = args[1:]
@@ -69,7 +137,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "       migrate-from-mysql platform plan|apply|verify [flags]")
 		fmt.Fprintln(stderr, "       migrate-from-mysql go-live --club <id|slug>")
 		fmt.Fprintln(stderr, "       migrate-from-mysql purge --club <id|slug> --confirm <slug>")
-		return exitUsage
+		return nil, exitUsage
 	}
 	mode := args[0]
 	fs := flag.NewFlagSet(mode, flag.ContinueOnError)
@@ -88,112 +156,56 @@ func run(args []string, stdout, stderr io.Writer) int {
 	batch := fs.Int("batch-size", 2000, "строк в одной вставке")
 	jsonOut := fs.String("json", "", "файл для отчёта в JSON")
 	if err := fs.Parse(args[1:]); err != nil {
-		return exitUsage
+		return nil, exitUsage
 	}
 	if (*clubRef == "" && !platform) || *mysqlDSN == "" || *pgDSN == "" {
 		fmt.Fprintln(stderr, "нужны --club, DSN MySQL и DSN Postgres (ZAFIRO_MIGRATE_MYSQL_DSN, ZAFIRO_MIGRATE_PG_DSN)")
-		return exitUsage
+		return nil, exitUsage
 	}
 	loc, err := time.LoadLocation(*sourceTZ)
 	if err != nil {
 		fmt.Fprintf(stderr, "--source-tz: %v\n", err)
-		return exitUsage
+		return nil, exitUsage
 	}
 	if *storage != "" {
 		if st, err := os.Stat(*storage); err != nil || !st.IsDir() { // #nosec G304 G703 -- путь задаёт оператор переноса
 			fmt.Fprintln(stderr, "--laravel-storage: нет такого каталога")
-			return exitUsage
+			return nil, exitUsage
 		}
 	}
 	if *thaw != "" && *thaw != "active" && *thaw != "trialing" {
 		fmt.Fprintln(stderr, "--thaw-subscription: active или trialing")
-		return exitUsage
+		return nil, exitUsage
 	}
 	laravelKeys, dataKeys, err := secretKeys()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return exitUsage
+		return nil, exitUsage
 	}
-	opts := migrate.Options{Club: *clubRef, SourceTZ: loc, APILogRetention: *retention, IDReserve: *reserve, BatchSize: *batch,
-		LaravelKeys: laravelKeys, DataKeys: dataKeys, LaravelStorage: *storage, ThawSubscription: *thaw}
+	c := &runConfig{platform: platform, mode: mode, mysqlDSN: *mysqlDSN, pgDSN: *pgDSN, jsonOut: *jsonOut,
+		opts: migrate.Options{Club: *clubRef, SourceTZ: loc, APILogRetention: *retention, IDReserve: *reserve, BatchSize: *batch,
+			LaravelKeys: laravelKeys, DataKeys: dataKeys, LaravelStorage: *storage, ThawSubscription: *thaw},
+		popts: migrate.PlatformOptions{SourceTZ: loc, IDReserve: *reserve, BatchSize: *batch, LaravelKeys: laravelKeys,
+			DataKeys: dataKeys, LaravelStorage: *storage},
+	}
 	if !*coreOnly {
-		opts.Extensions = migrate.DefaultExtensions()
+		c.opts.Extensions = migrate.DefaultExtensions()
 	}
 	if *legacySettings != "" {
 		b, err := os.ReadFile(*legacySettings) // #nosec G304 G703 -- путь задаёт оператор переноса
 		if err != nil {
 			fmt.Fprintf(stderr, "--legacy-settings: %v\n", err)
-			return exitUsage
+			return nil, exitUsage
 		}
-		opts.LegacySettingsFile = b
+		c.opts.LegacySettingsFile = b
 	}
-	popts := migrate.PlatformOptions{SourceTZ: loc, IDReserve: *reserve, BatchSize: *batch, LaravelKeys: laravelKeys,
-		DataKeys: dataKeys, LaravelStorage: *storage}
 	if platform && *seed != "" {
-		if popts.TranslationsSeed, err = i18n.LoadSeed(*seed); err != nil {
+		if c.popts.TranslationsSeed, err = i18n.LoadSeed(*seed); err != nil {
 			fmt.Fprintf(stderr, "--translations-seed: %v\n", err)
-			return exitUsage
+			return nil, exitUsage
 		}
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	my, err := openMySQL(*mysqlDSN)
-	if err != nil {
-		fmt.Fprintf(stderr, "mysql: %v\n", err)
-		return exitError
-	}
-	defer func() { _ = my.Close() }()
-	pg, err := db.NewPool(ctx, *pgDSN)
-	if err != nil {
-		fmt.Fprintf(stderr, "postgres: %v\n", err)
-		return exitError
-	}
-	defer pg.Close()
-
-	var report *migrate.Report
-	switch {
-	case platform && mode == "plan":
-		report, err = migrate.PlatformPlan(ctx, my, pg, popts)
-	case platform && mode == "apply":
-		report, err = migrate.PlatformApply(ctx, my, pg, popts)
-	case platform:
-		report, err = migrate.PlatformVerify(ctx, my, pg, popts)
-	case mode == "plan":
-		report, err = migrate.Plan(ctx, my, pg, opts)
-	case mode == "apply":
-		report, err = migrate.Apply(ctx, my, pg, opts)
-	default:
-		report, err = migrate.Verify(ctx, my, pg, opts)
-	}
-	if report != nil {
-		if werr := report.WriteText(stdout); werr != nil {
-			slog.Error("report", "err", werr)
-		}
-		if *jsonOut != "" {
-			if werr := writeJSON(*jsonOut, report); werr != nil {
-				fmt.Fprintf(stderr, "--json: %v\n", werr)
-			}
-		}
-	}
-	switch {
-	case errors.Is(err, migrate.ErrAlreadyMigrated):
-		fmt.Fprintln(stderr, "клуб уже перенесён: apply ничего не изменил")
-		return exitMigrated
-	case errors.Is(err, migrate.ErrBlocked):
-		fmt.Fprintln(stderr, "найдены блокеры: ничего не записано")
-		return exitBlocked
-	case errors.Is(err, migrate.ErrVerifyMismatch):
-		fmt.Fprintln(stderr, "сверка нашла расхождения")
-		return exitMismatch
-	case err != nil:
-		fmt.Fprintf(stderr, "ошибка: %v\n", err)
-		return exitError
-	case mode == "plan" && report != nil && report.Count(migrate.Blocker) > 0:
-		return exitBlocked
-	}
-	return exitOK
+	return c, exitOK
 }
 
 // runLifecycle — go-live и purge перенесённого клуба (только Postgres: MySQL не нужен).
@@ -226,16 +238,7 @@ func runLifecycle(args []string, stdout, stderr io.Writer) int {
 	} else {
 		report, err = migrate.GoLive(ctx, pg, *clubRef)
 	}
-	if report != nil {
-		if werr := report.WriteText(stdout); werr != nil {
-			slog.Error("report", "err", werr)
-		}
-		if *jsonOut != "" {
-			if werr := writeJSON(*jsonOut, report); werr != nil {
-				fmt.Fprintf(stderr, "--json: %v\n", werr)
-			}
-		}
-	}
+	printReport(report, *jsonOut, stdout, stderr)
 	switch {
 	case errors.Is(err, migrate.ErrConfirm):
 		fmt.Fprintln(stderr, "--confirm не совпадает со slug клуба: ничего не удалено")
@@ -248,6 +251,21 @@ func runLifecycle(args []string, stdout, stderr io.Writer) int {
 		return exitError
 	}
 	return exitOK
+}
+
+// printReport — отчёт текстом в stdout и, если задан --json, в файл. nil — нечего выводить.
+func printReport(report *migrate.Report, jsonOut string, stdout, stderr io.Writer) {
+	if report == nil {
+		return
+	}
+	if werr := report.WriteText(stdout); werr != nil {
+		slog.Error("report", "err", werr)
+	}
+	if jsonOut != "" {
+		if werr := writeJSON(jsonOut, report); werr != nil {
+			fmt.Fprintf(stderr, "--json: %v\n", werr)
+		}
+	}
 }
 
 // secretKeys — ключи из окружения (не из аргументов: их видно в списке процессов). Пустые переменные — nil
