@@ -39,6 +39,14 @@ describe('clubLocalToISO: время на часах клуба → UTC', () => 
   it('переход на летнее время: несуществующее время сдвигается вперёд', () => {
     // Берлин, 29.03.2026: 02:00 → 03:00.
     expect(clubLocalToISO('2026-03-29T02:30', 'Europe/Berlin')).toBe('2026-03-29T01:30:00.000Z');
+    // Пояса западнее UTC: Нью-Йорк, 08.03.2026 02:30 → 03:30 EDT (Carbon::parse), а не 01:30 EST.
+    expect(clubLocalToISO('2026-03-08T02:30', 'America/New_York')).toBe('2026-03-08T07:30:00.000Z');
+    // Южное полушарие: Сидней, 04.10.2026 02:30 → 03:30 AEDT.
+    expect(clubLocalToISO('2026-10-04T02:30', 'Australia/Sydney')).toBe('2026-10-03T16:30:00.000Z');
+  });
+  it('у границы перевода существующее время не сдвигается', () => {
+    expect(clubLocalToISO('2026-03-08T01:59', 'America/New_York')).toBe('2026-03-08T06:59:00.000Z');
+    expect(clubLocalToISO('2026-03-08T03:00', 'America/New_York')).toBe('2026-03-08T07:00:00.000Z');
   });
   it('пусто или мусор — null', () => {
     expect(clubLocalToISO('', 'UTC')).toBeNull();

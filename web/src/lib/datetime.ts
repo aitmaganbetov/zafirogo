@@ -122,5 +122,10 @@ export function clubLocalToISO(local: string, timeZone: string): string | null {
   };
   let utc = wall - offsetAt(wall);
   utc = wall - offsetAt(utc); // уточнение у границы перевода часов
+  if (utc + offsetAt(utc) !== wall) {
+    // Время в разрыве перевода часов: PHP берёт смещение до перевода, и время уходит вперёд (02:30 → 03:30)
+    // в любом полушарии. Сутки назад — гарантированно до перевода (переводы реже раза в двое суток).
+    utc = wall - offsetAt(wall - 86_400_000);
+  }
   return new Date(utc).toISOString();
 }
