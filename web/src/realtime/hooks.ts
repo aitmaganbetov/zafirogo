@@ -25,10 +25,13 @@ export function useRealtime(): void {
     const off = client.onReconnect((reauth) => {
       // После 4001 (staff.access_changed: роль/права изменились) — свежие права для меню и гардов (Me) сразу.
       if (reauth) void session.reloadMe().catch(() => undefined);
-      // Активные запросы — со случайной задержкой: после перезапуска инстанса все панели переподключаются разом.
+      // Активные запросы и Me — со случайной задержкой: после перезапуска инстанса все панели переподключаются разом.
+      // Me перечитывается при любом переподключении: права могли смениться, пока сокета не было (4001 приходит
+      // только открытым сокетам).
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
+        if (!reauth) void session.reloadMe().catch(() => undefined);
         void queryClient.invalidateQueries({ type: 'active' });
       }, Math.round(Math.random() * RECONNECT_JITTER_MS));
     });

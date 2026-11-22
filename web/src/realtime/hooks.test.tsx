@@ -3,7 +3,8 @@ import { act, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RealtimeClient } from './client';
 import { RealtimeContext } from './context';
-import { COMPUTER_TELEMETRY, INVALIDATE_WINDOW_MS, useInvalidateOn } from './hooks';
+import { session } from '../auth/session';
+import { COMPUTER_TELEMETRY, INVALIDATE_WINDOW_MS, RECONNECT_JITTER_MS, useInvalidateOn, useRealtime } from './hooks';
 
 /* FE-02: пачка событий WebSocket не должна превращаться в пачку REST-запросов. */
 
@@ -83,5 +84,57 @@ describe('useInvalidateOn', () => {
     view.unmount();
     await act(() => vi.advanceTimersByTimeAsync(INVALIDATE_WINDOW_MS * 2));
     expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+function Shell() {
+  useRealtime();
+  return null;
+}
+
+describe('useRealtime: переподключение', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function mount() {
+    const client = new RealtimeClient({ ticket: async () => 't' });
+    vi.spyOn(client, 'start').mockImplementation(() => undefined);
+    vi.spyOn(client, 'stop').mockImplementation(() => undefined);
+    let fire: (reauth: boolean) => void = () => undefined;
+    vi.spyOn(client, 'onReconnect').mockImplementation((fn) => {
+      fire = fn;
+      return () => undefined;
+    });
+    const reload = vi.spyOn(session, 'reloadMe').mockResolvedValue({} as Awaited<ReturnType<typeof session.reloadMe>>);
+    const qc = new QueryClient();
+    const view = render(
+      <QueryClientProvider client={qc}>
+        <RealtimeContext.Provider value={client}>
+          <Shell />
+        </RealtimeContext.Provider>
+      </QueryClientProvider>,
+    );
+    return { fire: (reauth: boolean) => fire(reauth), reload, view };
+  }
+
+  it('обычный разрыв: права (Me) перечитываются — могли смениться, пока сокета не было', async () => {
+    const { fire, reload, view } = mount();
+    act(() => fire(false));
+    expect(reload).not.toHaveBeenCalled(); // с разбросом, не разом со всеми панелями
+    await act(() => vi.advanceTimersByTimeAsync(RECONNECT_JITTER_MS + 1));
+    expect(reload).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it('4001 (права изменились): Me сразу и один раз', async () => {
+    const { fire, reload, view } = mount();
+    act(() => fire(true));
+    expect(reload).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTimeAsync(RECONNECT_JITTER_MS + 1));
+    expect(reload).toHaveBeenCalledTimes(1);
+    view.unmount();
   });
 });
