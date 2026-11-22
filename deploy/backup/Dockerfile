@@ -12,7 +12,9 @@
 # Стадию walg можно подменить готовым бинарником того же тега (BuildKit: --build-context walg=<каталог с out/wal-g>),
 # если у сборочной машины нет выхода на github.com; бинарник должен быть собран теми же командами.
 
-ARG GO_IMAGE=golang:1.25.14-trixie@sha256:2c4c60ef415fbfa5e90300722293bef36c5e63fae17570ce18f580af933dbd73
+# Go — та же версия, что server/go.mod (поддерживаемая ветка; аудит SEC-3: 1.25.14 вне поддержки, 15 уязвимостей
+# stdlib, в т.ч. crypto/x509 и HTTP-клиент — WAL-G ходит в S3 по TLS). Совпадение версий проверяет go.yml.
+ARG GO_IMAGE=golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d
 ARG PG_IMAGE=postgres:18.6@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
 
 FROM ${GO_IMAGE} AS walg
@@ -37,6 +39,8 @@ RUN --mount=type=secret,id=build_ca \
 FROM ${PG_IMAGE}
 COPY --from=walg --chmod=0755 /out/wal-g /usr/local/bin/wal-g
 COPY --chmod=0755 bin/ /usr/local/bin/
-# Каталог метрик (textfile для node_exporter) и рабочий каталог учений — владелец postgres.
-RUN install -d -o postgres -g postgres -m 0750 /var/lib/walg-metrics /var/lib/walg-drill \
+# Каталог метрик (textfile для node_exporter, читает его не postgres — 0755, метрики не секрет) и рабочий каталог
+# учений (0750) — владелец postgres.
+RUN install -d -o postgres -g postgres -m 0755 /var/lib/walg-metrics \
+ && install -d -o postgres -g postgres -m 0750 /var/lib/walg-drill \
  && wal-g --version

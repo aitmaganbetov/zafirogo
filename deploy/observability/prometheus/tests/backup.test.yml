@@ -1,0 +1,225 @@
+# Модульные тесты алертов бэкапа (аудит OPS-1): promtool test rules (deploy/observability/check.sh).
+# Ряды — как их отдаёт node_exporter из textfile (метки job="node", instance — node_exporter хоста БД).
+rule_files:
+  - ../rules/zafiro-backup.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Копия сделана в t=0 (время ряда — секунды от начала теста), дальше копий нет: через 26 ч + 10 мин — critical.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_backup_last_success_timestamp_seconds{job="node", instance="db1:9100"}'
+        values: '0x1600'
+      - series: 'zafiro_backup_last_run_success{job="node", instance="db1:9100"}'
+        values: '1x1600'
+      - series: 'zafiro_backup_last_run_timestamp_seconds{job="node", instance="db1:9100"}'
+        values: '0x1600'
+      - series: 'zafiro_backup_wal_verify_ok{job="node", instance="db1:9100"}'
+        values: '1x1600'
+      - series: 'zafiro_pg_archiver_collect_timestamp_seconds{job="node", instance="db1:9100"}'
+        values: '0+60x1600'
+      - series: 'zafiro_pg_archiver_up{job="node", instance="db1:9100"}'
+        values: '1x1600'
+    alert_rule_test:
+      - eval_time: 25h
+        alertname: ZafiroBackupTooOld
+        exp_alerts: []
+      - eval_time: 26h20m
+        alertname: ZafiroBackupTooOld
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Последняя успешная базовая копия Postgres — 1d 2h 20m 0s назад"
+              description: "PITR опирается на базовую копию: без свежей копии восстановление дольше, а при поломке цепочки WAL — с потерей данных."
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+      - eval_time: 26h20m
+        alertname: ZafiroBackupLastRunFailed
+        exp_alerts: []
+      - eval_time: 26h20m
+        alertname: ZafiroBackupMetricsMissing
+        exp_alerts: []
+      - eval_time: 26h20m
+        alertname: ZafiroArchiverMetricsStale
+        exp_alerts: []
+
+  # Цикл упал (копия не сделана): warning через 5 минут; проверка архива — прежнее значение, critical нет.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_backup_last_run_success{job="node", instance="db1:9100"}'
+        values: '1x5 0x20'
+      - series: 'zafiro_backup_wal_verify_ok{job="node", instance="db1:9100"}'
+        values: '1x25'
+      - series: 'zafiro_backup_last_success_timestamp_seconds{job="node", instance="db1:9100"}'
+        values: '0x25'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: ZafiroBackupLastRunFailed
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: ZafiroBackupLastRunFailed
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Последний цикл бэкапа Postgres завершился ошибкой"
+              description: "backup-run.sh: базовая копия, хранение или проверка архива упали. Журнал — docker compose logs backup."
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+      - eval_time: 12m
+        alertname: ZafiroWALVerifyFailed
+        exp_alerts: []
+
+  # Пропуск в архиве WAL — critical.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_backup_wal_verify_ok{job="node", instance="db1:9100"}'
+        values: '1x3 0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ZafiroWALVerifyFailed
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: ZafiroWALVerifyFailed
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Проверка архива WAL (wal-verify integrity timeline) не прошла"
+              description: "В архиве пропуск сегментов или другая линия времени: PITR за этот интервал невозможен. Нужна новая полная копия после устранения причины."
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+  # Метрик нет вовсе (textfile не подключён — исходная находка): warning через час, critical через 26 ч.
+  - interval: 10m
+    input_series:
+      - series: 'up{job="node", instance="db1:9100"}'
+        values: '1x200'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: ZafiroBackupMetricsMissing
+        exp_alerts: []
+      - eval_time: 2h
+        alertname: ZafiroBackupMetricsMissing
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Нет метрик бэкапа Postgres в Prometheus"
+              description: "node_exporter хоста БД не видит textfile из тома backup-metrics или сайдкар backup не запущен. Без метрик остальные алерты бэкапа молчат."
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+      - eval_time: 25h
+        alertname: ZafiroBackupNeverSucceeded
+        exp_alerts: []
+      - eval_time: 26h30m
+        alertname: ZafiroBackupNeverSucceeded
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Нет ни одной успешной базовой копии Postgres за 26 ч (метрика отсутствует)"
+              description: "Сайдкар backup не запущен, том backup-metrics не подключён к node_exporter (--collector.textfile.directory) или все копии падают."
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+  # archive_command падает с t=10m (истёк ключ S3): последняя ошибка свежее последней выгрузки, очередь растёт.
+  # Снимок раз в минуту: время ряда = секунды от начала теста.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_pg_archiver_last_archived_timestamp_seconds{job="node", instance="db1:9100"}'
+        values: '0+60x10 600x30'
+      - series: 'zafiro_pg_archiver_last_failed_timestamp_seconds{job="node", instance="db1:9100"}'
+        values: '0x10 660+60x30'
+      - series: 'zafiro_pg_archiver_ready_segments{job="node", instance="db1:9100"}'
+        values: '0x10 1+1x30'
+      - series: 'zafiro_pg_archiver_collect_timestamp_seconds{job="node", instance="db1:9100"}'
+        values: '0+60x40'
+      - series: 'zafiro_pg_archiver_up{job="node", instance="db1:9100"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ZafiroWALArchiveFailing
+        exp_alerts: []
+      - eval_time: 13m
+        alertname: ZafiroWALArchiveFailing
+        exp_alerts: []
+      - eval_time: 17m
+        alertname: ZafiroWALArchiveFailing
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "archive_command падает больше 5 минут — WAL не уходит в хранилище"
+              description: "RPO нарушен; pg_wal растёт на диске primary, при заполнении диска Postgres остановится. Частая причина — ключи или место в S3."
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+      # Выгрузки нет с 10-й минуты, очередь не пуста: 5 мин + for 2 мин.
+      - eval_time: 16m
+        alertname: ZafiroWALArchiveStalled
+        exp_alerts: []
+      - eval_time: 18m
+        alertname: ZafiroWALArchiveStalled
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Архив WAL стоит: 8 сегм. ждут выгрузки, успешной выгрузки не было больше 5 минут"
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+      # Очередь > 20 с 31-й минуты; 10 минут — ещё нет.
+      - eval_time: 35m
+        alertname: ZafiroWALArchiveBacklog
+        exp_alerts: []
+
+  # Простой без записи: выгрузок давно нет, но и очереди нет — не алертим.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_pg_archiver_last_archived_timestamp_seconds{job="node", instance="db1:9100"}'
+        values: '0x60'
+      - series: 'zafiro_pg_archiver_last_failed_timestamp_seconds{job="node", instance="db1:9100"}'
+        values: '0x60'
+      - series: 'zafiro_pg_archiver_ready_segments{job="node", instance="db1:9100"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: ZafiroWALArchiveStalled
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: ZafiroWALArchiveFailing
+        exp_alerts: []
+
+  # Длинная очередь при работающей выгрузке (не успевает): warning через 10 минут.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_pg_archiver_ready_segments{job="node", instance="db1:9100"}'
+        values: '30x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ZafiroWALArchiveBacklog
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Очередь архива WAL: 30 сегментов ждут выгрузки 10+ минут"
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+  # Сайдкар завис: снимок не обновляется (последний — t=10m) или Postgres ему не отвечает.
+  - interval: 1m
+    input_series:
+      - series: 'zafiro_pg_archiver_collect_timestamp_seconds{job="node", instance="db1:9100"}'
+        values: '0+60x10 600x30'
+      - series: 'zafiro_pg_archiver_up{job="node", instance="db1:9100"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: ZafiroArchiverMetricsStale
+        exp_alerts: []
+      - eval_time: 21m
+        alertname: ZafiroArchiverMetricsStale
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Метрики архивации WAL не обновляются (сайдкар backup или Postgres)"
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+  - interval: 1m
+    input_series:
+      - series: 'node_textfile_scrape_error{job="node", instance="db1:9100"}'
+        values: '0x5 1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: ZafiroBackupTextfileError
+        exp_alerts:
+          - exp_labels: {severity: warning, job: node, instance: "db1:9100"}
+            exp_annotations:
+              summary: "node_exporter не может прочитать textfile метрик (db1:9100)"
+              description: "Файл в томе backup-metrics повреждён или недоступен на чтение — метрики бэкапа устарели."
+              runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup

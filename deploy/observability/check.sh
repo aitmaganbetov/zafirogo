@@ -10,7 +10,10 @@ docker run --rm --entrypoint promtool \
 	-v "$dir/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
 	-v "$dir/prometheus/rules:/etc/prometheus/rules:ro" \
 	"$prom" check config /etc/prometheus/prometheus.yml
-docker run --rm --entrypoint promtool -v "$dir/prometheus:/w:ro" "$prom" test rules /w/tests/alerts.test.yml
+# Все модульные тесты правил (alerts — сервер, backup — резервные копии, аудит OPS-1).
+for t in "$dir"/prometheus/tests/*.test.yml; do
+	docker run --rm --entrypoint promtool -v "$dir/prometheus:/w:ro" "$prom" test rules "/w/tests/$(basename "$t")"
+done
 docker run --rm --entrypoint amtool -v "$dir/alertmanager:/w:ro" "$am" check-config /w/alertmanager.yml
 # Дашборды — корректный JSON с uid.
 for f in "$dir"/grafana/dashboards/*.json; do

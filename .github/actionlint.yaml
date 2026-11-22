@@ -1,0 +1,4 @@
+# actionlint (deploy.yml, job actionlint): метки self-hosted раннеров проекта.
+self-hosted-runner:
+  labels:
+    - zafiro-backup-drill # раннер учений восстановления в сети хранилища копий (backup-drill.yml, drill-prod)

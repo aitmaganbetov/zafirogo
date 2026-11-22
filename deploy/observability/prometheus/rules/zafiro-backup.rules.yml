@@ -1,0 +1,109 @@
+# Алерты резервного копирования Postgres (аудит OPS-1; что делать — docs/runbooks/restore.md §4,
+# docs/observability.md §5 «ZafiroBackup*»). Источник метрик — textfile node_exporter на хосте БД (том backup-metrics):
+#   walg.prom     — deploy/backup/bin/backup-run.sh (цикл базовой копии, раз в сутки);
+#   archiver.prom — deploy/backup/bin/backup-archiver-metrics.sh (pg_stat_archiver, раз в минуту).
+# Метки job/instance — node_exporter; агрегаты max/min — копия одна на кластер.
+# Проверка: promtool test rules tests/backup.test.yml (deploy/observability/check.sh).
+groups:
+  - name: zafiro.backup
+    rules:
+      # --- Базовые копии ---------------------------------------------------------------------------------------------
+      - alert: ZafiroBackupTooOld
+        # Копия раз в сутки + до 3 повторов через 30 мин: 26 ч — значит, за сутки ни одной успешной.
+        expr: time() - max(zafiro_backup_last_success_timestamp_seconds) > 26 * 3600
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "Последняя успешная базовая копия Postgres — {{ $value | humanizeDuration }} назад"
+          description: "PITR опирается на базовую копию: без свежей копии восстановление дольше, а при поломке цепочки WAL — с потерей данных."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+      - alert: ZafiroBackupNeverSucceeded
+        # Метрики есть (сайдкар работает), но ни одной успешной копии — или textfile не читается вовсе.
+        expr: absent(zafiro_backup_last_success_timestamp_seconds)
+        for: 26h
+        labels: {severity: critical}
+        annotations:
+          summary: "Нет ни одной успешной базовой копии Postgres за 26 ч (метрика отсутствует)"
+          description: "Сайдкар backup не запущен, том backup-metrics не подключён к node_exporter (--collector.textfile.directory) или все копии падают."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+      - alert: ZafiroBackupLastRunFailed
+        # Расписание повторит цикл (BACKUP_RETRIES); если все повторы неудачны — сработает ZafiroBackupTooOld.
+        expr: max(zafiro_backup_last_run_success) == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Последний цикл бэкапа Postgres завершился ошибкой"
+          description: "backup-run.sh: базовая копия, хранение или проверка архива упали. Журнал — docker compose logs backup."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+      - alert: ZafiroWALVerifyFailed
+        expr: min(zafiro_backup_wal_verify_ok) == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Проверка архива WAL (wal-verify integrity timeline) не прошла"
+          description: "В архиве пропуск сегментов или другая линия времени: PITR за этот интервал невозможен. Нужна новая полная копия после устранения причины."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+      - alert: ZafiroBackupMetricsMissing
+        expr: absent(zafiro_backup_last_run_timestamp_seconds) or absent(zafiro_pg_archiver_collect_timestamp_seconds)
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "Нет метрик бэкапа Postgres в Prometheus"
+          description: "node_exporter хоста БД не видит textfile из тома backup-metrics или сайдкар backup не запущен. Без метрик остальные алерты бэкапа молчат."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+      # --- Архив WAL (RPO ≤ 1 мин) --------------------------------------------------------------------------------
+      - alert: ZafiroWALArchiveFailing
+        # Последняя попытка archive_command неудачна (после успешной выгрузки last_archived снова больше).
+        expr: max(zafiro_pg_archiver_last_failed_timestamp_seconds) > max(zafiro_pg_archiver_last_archived_timestamp_seconds)
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "archive_command падает больше 5 минут — WAL не уходит в хранилище"
+          description: "RPO нарушен; pg_wal растёт на диске primary, при заполнении диска Postgres остановится. Частая причина — ключи или место в S3."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+      - alert: ZafiroWALArchiveStalled
+        # Есть сегменты к выгрузке, а успешной выгрузки не было 5 минут (archive_timeout 60 с). Простой без записи
+        # не алертит: сегментов в очереди тогда нет.
+        expr: |
+          max(zafiro_pg_archiver_ready_segments) > 0
+            and on() (time() - max(zafiro_pg_archiver_last_archived_timestamp_seconds)) > 300
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Архив WAL стоит: {{ $value }} сегм. ждут выгрузки, успешной выгрузки не было больше 5 минут"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+      - alert: ZafiroWALArchiveBacklog
+        # 20 сегментов × 16 МБ = 320 МБ невыгруженного WAL: выгрузка не успевает за записью.
+        expr: max(zafiro_pg_archiver_ready_segments) > 20
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Очередь архива WAL: {{ $value }} сегментов ждут выгрузки 10+ минут"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+      - alert: ZafiroArchiverMetricsStale
+        # Снимок раз в минуту; 5 минут без нового — сайдкар завис, или Postgres не отвечает сайдкару.
+        expr: |
+          time() - max(zafiro_pg_archiver_collect_timestamp_seconds) > 300
+            or max(zafiro_pg_archiver_up) == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Метрики архивации WAL не обновляются (сайдкар backup или Postgres)"
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup
+
+      - alert: ZafiroBackupTextfileError
+        expr: node_textfile_scrape_error == 1
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "node_exporter не может прочитать textfile метрик ({{ $labels.instance }})"
+          description: "Файл в томе backup-metrics повреждён или недоступен на чтение — метрики бэкапа устарели."
+          runbook_url: https://github.com/aitmaganbetov/zafirogo/blob/main/docs/observability.md#rb-backup

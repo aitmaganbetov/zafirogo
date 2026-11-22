@@ -47,7 +47,7 @@ Telegram Q-060) не меняется и работает параллельно
 | | `worker_errors_total` | `job` | записи журнала warn/error с атрибутом `job` или `worker`; завершение горутины с ошибкой |
 | | `worker_up` | `worker` (имя горутины app: `outbox-publisher`, `webhook-deliverer`, …) | обёртка `TrackWorker` |
 | | `worker_leader` (при сборе) | `job` | `pg_locks`: держит ли соединение этого инстанса лок задачи (лидер постоянного воркера — публикатора outbox) |
-| Пулы Postgres | `db_pool_{acquired,idle,total,max}_connections`, `db_pool_acquire_waits_total`, `db_pool_acquire_wait_seconds_total`, `db_pool_acquire_canceled_total` (при сборе) | `pool` = app / platform | `pgxpool.Stat()` |
+| Пулы Postgres | `db_pool_{acquired,idle,total,max}_connections`, `db_pool_acquire_waits_total`, `db_pool_acquire_wait_seconds_total`, `db_pool_acquire_canceled_total` (при сборе) | `pool` = app / platform / leader (сессионные advisory-блокировки лидерства воркеров, `database.lock_pool_max_conns`) | `pgxpool.Stat()` |
 | Запросы Postgres | `db_queries_total`, `db_query_errors_total`, `db_query_duration_seconds` | `pool`, `query` (имя sqlc, `begin`/`commit`/`rollback`, `raw`), `sqlstate` | трассировщик pgx |
 | Деньги | `ledger_operations_total` | `kind` (вид операции ledger, неизвестный — other), `result` = committed / rolled_back | `InsertLedgerTransaction` в транзакции + исход COMMIT/ROLLBACK этого соединения |
 | | `ledger_errors_total` | `query`, `reason` (имя ограничения или sqlstate) | ошибки запросов `*Ledger*`. Нехватку средств ledger проверяет до записи (`checkBalances`) — здесь в норме 0 |
@@ -85,8 +85,9 @@ Telegram Q-060) не меняется и работает параллельно
 
 ## 5. Алерты и первые шаги
 
-Правила — `deploy/observability/prometheus/rules/zafiro-alerts.rules.yml`, записи — `zafiro-records.rules.yml`,
-модульные тесты — `prometheus/tests/alerts.test.yml`. Проверка: `deploy/observability/check.sh` (promtool и amtool в Docker).
+Правила — `deploy/observability/prometheus/rules/zafiro-alerts.rules.yml` (сервер) и `zafiro-backup.rules.yml`
+(резервные копии, аудит OPS-1), записи — `zafiro-records.rules.yml`, модульные тесты — `prometheus/tests/*.test.yml`.
+Проверка: `deploy/observability/check.sh` (promtool и amtool в Docker; в CI — `deploy.yml`, job `observability`).
 `critical` — будит дежурного; `warning` — в рабочее время.
 
 <a id="rb-instance-down"></a>
@@ -167,8 +168,10 @@ p95 денежных эндпоинтов > 1 с или в 3 раза выше �
 <a id="rb-db-pool"></a>
 ### ZafiroDBPoolExhausted (critical), ZafiroDBPoolHigh (warning)
 Пул соединений занят, запросы ждут соединения.
-1. Какой пул (`app` — запросы клубов, `platform` — фоновые задачи). Долгие транзакции и блокировки — `pg_stat_activity`.
-2. Рост нагрузки — увеличить `pool_max_conns` в DSN (с учётом `max_connections` Postgres на все инстансы) или добавить инстанс.
+1. Какой пул (`app` — запросы клубов, `platform` — фоновые задачи, `leader` — блокировки лидерства воркеров:
+   по соединению на постоянную задачу, `database.lock_pool_max_conns`). Долгие транзакции и блокировки — `pg_stat_activity`.
+2. Рост нагрузки — увеличить `pool_max_conns` в DSN (с учётом `max_connections` Postgres на все инстансы: app + platform +
+   lock на каждый, `docs/deploy.md` §12) или добавить инстанс.
 
 <a id="rb-ledger-errors"></a>
 ### ZafiroLedgerErrors (critical), ZafiroLedgerRollbacks (warning)
@@ -223,6 +226,23 @@ p95 денежных эндпоинтов > 1 с или в 3 раза выше �
 Диск или память хоста. Диск: журналы Docker, WAL Postgres (архивирование WAL-G не успевает — см. docs по бэкапам O2),
 JetStream. Память процесса сервера сверх порога — снять профиль (`go tool pprof` на dev-копии) и перезапустить инстанс.
 
+<a id="rb-backup"></a>
+### Бэкап Postgres: ZafiroBackupTooOld, ZafiroBackupNeverSucceeded, ZafiroWALVerifyFailed, ZafiroWALArchiveFailing, ZafiroWALArchiveStalled (critical); ZafiroBackupLastRunFailed, ZafiroWALArchiveBacklog, ZafiroArchiverMetricsStale, ZafiroBackupMetricsMissing, ZafiroBackupTextfileError (warning)
+Метрики — textfile node_exporter хоста БД из тома `backup-metrics` (`walg.prom` — цикл копии, `archiver.prom` —
+`pg_stat_archiver` раз в минуту); таблица метрик — `docs/runbooks/restore.md` §4.
+1. **Архив WAL** (`ZafiroWALArchive*`): журнал Postgres — ошибки `archive_command` (`walg wal-push`): ключи S3 (срок,
+   права), место/квота бакета, сеть до S3. Пока архив стоит, RPO растёт, а `pg_wal` занимает диск primary — следить за
+   `zafiro_pg_wal_bytes` и `HostDiskWillFillIn24h`; **не удалять файлы из `pg_wal` вручную**. После устранения очередь
+   уходит сама (`zafiro_pg_archiver_ready_segments` → 0).
+2. **Копия** (`ZafiroBackupTooOld`, `LastRunFailed`): `docker compose logs backup` — какой шаг упал (`backup-push`,
+   хранение, `wal-verify`); повтор вручную — `docker compose … exec backup backup-run.sh` (`task backup:now`).
+3. **`ZafiroWALVerifyFailed`**: в архиве пропуск или другая линия времени — PITR в этом интервале невозможен. Устранить
+   причину (п. 1) и сразу сделать **полную** копию (`WALG_DELTA_MAX_STEPS=0 backup-run.sh`).
+4. **Метрик нет** (`MetricsMissing`, `NeverSucceeded`, `ArchiverMetricsStale`, `TextfileError`): запущен ли сайдкар
+   `backup`; смонтирован ли том `backup-metrics` в node_exporter и задан ли `--collector.textfile.directory`; права на
+   чтение (каталог 0755, файлы 0644). На staging без оверлея бэкапа `ZafiroBackupMetricsMissing` горит постоянно —
+   это правда: копий нет.
+
 ## 6. Дашборды
 
 `deploy/observability/grafana/dashboards` (провижининг из файлов, правки в UI не сохраняются):
@@ -242,13 +262,16 @@ deploy/observability/check.sh  # promtool/amtool без запуска стек�
 ```
 
 Оверлей добавляет `ZAFIRO_OBSERVABILITY_METRICS_LISTEN=:9090` инстансам (порт не публикуется), Prometheus
-(`127.0.0.1:19090`, хранение 15 дней), Alertmanager (`127.0.0.1:19093`), Grafana (`127.0.0.1:13000`), node-exporter.
+(`127.0.0.1:19090`, хранение 15 дней), Alertmanager (`127.0.0.1:19093`), Grafana (`127.0.0.1:13000`), node-exporter
+(с textfile-коллектором тома `backup-metrics` — метрики бэкапа, если подключён `deploy/backup/compose.backup.yml`).
+У сервисов — лимиты памяти и журнал с ротацией (аудит OPS-4).
 Версии — тег + digest, не моложе 14 дней (PD-4): Prometheus v3.15.0, Alertmanager v0.34.1, Grafana 13.1.8, node-exporter v1.12.1.
 Alertmanager на staging никуда не шлёт (receiver `null`); для прода — Telegram (`telegram_configs`, токен файлом,
 отдельный бот/чат от бота суперадминки) — шаблон закомментирован в `alertmanager/alertmanager.yml`.
 
 **Прод.** Prometheus — отдельный хост/ВМ (не на хосте приложения: падение хоста не должно глушить алерты), цели —
-по инстансу (file_sd/DNS), node-exporter на каждом сервере, экспортёры Postgres (postgres_exporter), NATS
+по инстансу (file_sd/DNS), node-exporter на каждом сервере (на хосте БД — с `--collector.textfile.directory` каталога
+метрик бэкапа), экспортёры Postgres (postgres_exporter; архив WAL уже покрыт `archiver.prom`), NATS
 (prometheus-nats-exporter, `-m 8222`) и blackbox для HTTPS балансировщика — по мере появления прод-окружения (вопрос OBS-4).
 
 **Loki (опционально).** Журналы уже JSON в stdout контейнера. Вариант без изменений в сервере: Grafana Loki + Promtail/Alloy,

@@ -49,6 +49,7 @@ jobs:
         # Конкретные образы раннеров (аудит BC-09): *-latest меняется без предупреждения.
         os: [windows-2025, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -82,6 +83,7 @@ jobs:
   integration:
     name: integration (Go server)
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -98,7 +100,7 @@ jobs:
         with:
           global-json-file: agent/global.json
       - name: goose
-        run: go install github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}
+        run: go install github.com/pressly/goose/v3/cmd/goose@"${GOOSE_VERSION}"
       - name: start server (compose + migrations + demo club + dev PKI)
         run: |
           env_file="$(tests/integration/server.sh start)"

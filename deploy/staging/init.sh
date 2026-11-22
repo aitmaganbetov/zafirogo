@@ -60,6 +60,34 @@ EOF
 	echo "staging: создан secrets/zafiro.yaml"
 fi
 
+# ---------- пароли зависимостей и DSN владельца схемы — файлами (аудит OPS-14) ----------
+# Аргументы команд и переменные контейнеров видны в `docker inspect`, `ps` хоста и конфигурации завершённого job.
+if [ ! -f secrets/goose_dsn ]; then
+	printf 'postgres://%s:%s@postgres:5432/%s?sslmode=disable' \
+		"${STG_DB_OWNER_USER}" "${STG_DB_OWNER_PASSWORD}" "${STG_POSTGRES_DB}" >secrets/goose_dsn
+	echo "staging: создан secrets/goose_dsn (job миграций)"
+fi
+if [ ! -f secrets/valkey.conf ]; then
+	printf '# staging: Valkey (сгенерировано deploy/staging/init.sh). Не коммитить.\nrequirepass %s\n' \
+		"${STG_VALKEY_PASSWORD}" >secrets/valkey.conf
+	echo "staging: создан secrets/valkey.conf"
+fi
+if [ ! -f secrets/nats.conf ]; then
+	cat >secrets/nats.conf <<EOF
+# staging: NATS JetStream, одиночный сервер (сгенерировано deploy/staging/init.sh). Не коммитить.
+port: 4222
+http_port: 8222
+jetstream {
+  store_dir: "/data"
+}
+authorization {
+  user: "zafiro"
+  password: "${STG_NATS_PASSWORD}"
+}
+EOF
+	echo "staging: создан secrets/nats.conf"
+fi
+
 # ---------- PKI агентов ----------
 p=secrets/pki
 if [ ! -f $p/server.key ]; then
@@ -136,5 +164,5 @@ fi
 
 # Файлы-секреты монтируются в контейнеры как есть (compose без swarm не меняет владельца): процесс zafiro
 # (uid 65532) и nginx должны их читать. Каталог secrets/ закрыт (0700) от других пользователей хоста.
-chmod 644 secrets/zafiro.yaml $p/agent-ca.pem $p/agent-ca.key $p/server.pem $p/server.key $p/root-ca.pem $w/tls.pem $w/tls.key $w/ca.pem
+chmod 644 secrets/zafiro.yaml secrets/goose_dsn secrets/valkey.conf secrets/nats.conf $p/agent-ca.pem $p/agent-ca.key $p/server.pem $p/server.key $p/root-ca.pem $w/tls.pem $w/tls.key $w/ca.pem
 chmod 600 $p/root-ca.key $w/ca.key

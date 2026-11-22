@@ -64,7 +64,7 @@ jobs:
             ~/.cache/zafirogo-visual/external
           key: visual-old-${{ hashFiles('legacy/Zafiro/package-lock.json', 'legacy/Zafiro/resources/**') }}
           restore-keys: visual-old-
-      - run: go install github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}
+      - run: go install github.com/pressly/goose/v3/cmd/goose@"${GOOSE_VERSION}"
       - run: npm ci --no-audit --no-fund
         working-directory: web
       - run: npx playwright install --with-deps chromium

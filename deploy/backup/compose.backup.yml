@@ -6,10 +6,12 @@
 # Что добавляет:
 #   * postgres — тот же postgres:18.6 + WAL-G (образ deploy/backup/Dockerfile, task backup:image) с архивом WAL
 #     (archive_command = wal-push, archive_timeout = 60 с: RPO ≤ 1 мин). ВНИМАНИЕ: `command` заменяет команду
-#     базового файла — его параметры (max_connections, shared_buffers из deploy/staging/compose.yaml) повторены
-#     здесь; меняете их там — поменяйте и здесь (BK-7). Postgres дополнительно подключается к сети default,
+#     базового файла — его параметры (deploy/staging/compose.yaml, docs/deploy.md §12) повторены здесь; меняете их
+#     там — поменяйте и здесь (BK-7). Лимиты ресурсов postgres — из базового файла. Postgres дополнительно подключается к сети default,
 #     где живут s3 и backup (staging держит сервисы в своей сети zafiro);
-#   * backup — сайдкар расписания: базовая копия раз в сутки, хранение, проверка архива (backup-scheduler.sh).
+#   * backup — сайдкар расписания: базовая копия раз в сутки, хранение, проверка архива (backup-scheduler.sh) и раз в
+#     минуту метрики архивации WAL (backup-archiver-metrics.sh). Метрики — textfile в томе backup-metrics: его читает
+#     node-exporter (deploy/observability), алерты — zafiro-backup.rules.yml (аудит OPS-1).
 #     Читает каталог данных только на чтение, к Postgres ходит по unix-сокету (общий том postgres-run);
 #   * s3, s3-init — S3-совместимое хранилище для staging (SeaweedFS, BK-2) и бакет копий.
 #     В проде хранилище — внешнее S3 в другом регионе/у другого провайдера (WALG_S3_PREFIX, WALG_S3_ENDPOINT).
@@ -18,15 +20,61 @@
 # На сервере БД — только ОТКРЫТЫЙ ключ OpenPGP: прочитать копии с него нельзя.
 # Пути — только абсолютные или через переменные: относительные пути compose считает от каталога ПЕРВОГО файла (-f).
 
+# Журнал с ротацией и лимиты ресурсов (аудит OPS-4), как в deploy/staging/compose.yaml.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   postgres:
     image: ${BACKUP_PG_IMAGE:-zafiro-postgres-walg:18.6-3.0.9}
+    # Те же параметры, что в deploy/staging/compose.yaml (docs/deploy.md §12 «Параметры Postgres», аудит DB-4) + WAL.
     command:
       - postgres
       - -c
-      - max_connections=${BACKUP_PG_MAX_CONNECTIONS:-300}
+      - max_connections=${BACKUP_PG_MAX_CONNECTIONS:-${STG_PG_MAX_CONNECTIONS:-300}}
       - -c
-      - shared_buffers=${BACKUP_PG_SHARED_BUFFERS:-256MB}
+      - shared_buffers=${BACKUP_PG_SHARED_BUFFERS:-${STG_PG_SHARED_BUFFERS:-1GB}}
+      - -c
+      - effective_cache_size=${STG_PG_EFFECTIVE_CACHE_SIZE:-3GB}
+      - -c
+      - work_mem=${STG_PG_WORK_MEM:-16MB}
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - max_wal_size=4GB
+      - -c
+      - min_wal_size=1GB
+      - -c
+      - wal_compression=lz4
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - autovacuum_vacuum_scale_factor=0.05
+      - -c
+      - autovacuum_analyze_scale_factor=0.02
+      - -c
+      - autovacuum_vacuum_cost_limit=2000
+      - -c
+      - log_lock_waits=on
+      - -c
+      - log_min_duration_statement=1s
+      # Серверный keepalive — те же значения, что у клиента pgx (docs/deploy.md §4): сессии исчезнувших клиентов
+      # закрываются за ≈ 1 мин и не держат блокировки и слоты max_connections.
+      - -c
+      - tcp_keepalives_idle=30
+      - -c
+      - tcp_keepalives_interval=10
+      - -c
+      - tcp_keepalives_count=3
+      - -c
+      - tcp_user_timeout=60000
       - -c
       - wal_level=replica
       - -c
@@ -57,6 +105,13 @@ services:
   backup:
     image: ${BACKUP_PG_IMAGE:-zafiro-postgres-walg:18.6-3.0.9}
     restart: unless-stopped
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1g
+          pids: 256
     user: postgres
     entrypoint: ["backup-scheduler.sh"]
     environment:
@@ -70,6 +125,8 @@ services:
       BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-12}
       WALG_DELTA_MAX_STEPS: ${WALG_DELTA_MAX_STEPS:-6}
       WALG_VERIFY_PAGE_CHECKSUMS: "true"
+      # Снимок pg_stat_archiver в textfile (archiver.prom) — раз в столько секунд (аудит OPS-1).
+      BACKUP_ARCHIVER_METRICS_INTERVAL: ${BACKUP_ARCHIVER_METRICS_INTERVAL:-60}
     secrets: [walg_s3_access_key, walg_s3_secret_key, walg_pgp_public]
     volumes:
       - postgres-data:/var/lib/postgresql:ro
@@ -82,6 +139,13 @@ services:
   s3:
     image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
     restart: unless-stopped
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1g
+          pids: 512
     command: ["server", "-dir=/data", "-ip.bind=0.0.0.0", "-master.volumeSizeLimitMB=1024", "-volume.minFreeSpace=${S3_MIN_FREE_SPACE:-1}",
               "-s3", "-s3.port=8333", "-s3.config=/run/secrets/s3_config"]
     secrets: [s3_config]
@@ -97,6 +161,7 @@ services:
   s3-init:
     image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
     restart: "no"
+    logging: *logging
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-

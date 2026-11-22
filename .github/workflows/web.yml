@@ -20,6 +20,7 @@ jobs:
   web:
     name: lint, typecheck, test, build
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,6 +54,7 @@ jobs:
   e2e:
     name: playwright e2e
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     needs: web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

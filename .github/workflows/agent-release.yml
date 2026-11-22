@@ -12,6 +12,12 @@
 # Переменные репозитория: AGENT_UPDATE_KEY_ID (key_id ключа), AGENT_UPDATE_PUBLIC_KEY (key_id:base64 — то же значение,
 # что в agent.update.public_keys сервера: подпись проверяется им до публикации), AGENT_ROOT_CA_PEM (корень CA Zafiro
 # для pinning, PEM — кладётся в установщик как root-ca.pem, AG-3).
+#
+# Защита ключей (аудит OPS-10; настройки GitHub, которые кодом не задать, — docs/deploy.md §10.1):
+#   * build   — сборка и тесты БЕЗ окружения и секретов (restore пакетов NuGet/npm не видит ключей);
+#   * guard   — выпуск только с тега agent-v* на коммите из main или вручную с main; любой другой ref — отказ;
+#   * package — Authenticode и установщик (окружение agent-release), sign — подпись Ed25519 манифеста (окружение
+#               agent-release): отдельные чистые раннеры, каждый ещё раз сверяет ref.
 name: agent-release
 
 on:
@@ -43,9 +49,9 @@ env:
 
 jobs:
   build:
-    name: build installer (windows)
+    name: build + tests (windows, без секретов)
     runs-on: windows-2025
-    environment: agent-release
+    timeout-minutes: 60
     outputs:
       version: ${{ steps.version.outputs.version }}
       channel: ${{ steps.version.outputs.channel }}
@@ -113,6 +119,68 @@ jobs:
           "$out/Zafiro.Agent.Service.exe" --version
           echo "PUBLISH_DIR=$out" >> "$GITHUB_ENV"
 
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: agent-publish
+          path: ${{ runner.temp }}/publish
+          if-no-files-found: error
+          retention-days: 1
+
+  # Выпуск — только с защищённого ref: тег agent-v* на коммите из main или ручной запуск с main. Ручной запуск с
+  # другой ветки выполнил бы её код (cmd/sign-update, установщик) с ключом подписи всех ПК.
+  guard:
+    name: ref — тег agent-v* из main или main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: ref и происхождение коммита
+        env:
+          REF: ${{ github.ref }}
+          REPO_FORK: ${{ github.event.repository.fork }}
+        run: |
+          if [ "$REPO_FORK" = true ]; then echo "::error::выпуск из форка запрещён"; exit 1; fi
+          case "$REF" in
+            refs/heads/main) ;;
+            refs/tags/agent-v*)
+              git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+                || { echo "::error::тег $REF указывает на коммит вне main"; exit 1; } ;;
+            *) echo "::error::выпуск агента разрешён только с main или тега agent-v* (получено $REF)"; exit 1 ;;
+          esac
+
+  package:
+    name: Authenticode + установщик (windows)
+    needs: [build, guard]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/agent-v')
+    runs-on: windows-2025
+    timeout-minutes: 30
+    environment: agent-release
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      REF: ${{ github.ref }}
+    steps:
+      - name: ref (повторная проверка перед секретами)
+        run: |
+          case "$REF" in refs/heads/main|refs/tags/agent-v*) ;; *) echo "::error::ref $REF"; exit 1 ;; esac
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: agent-publish
+          path: ${{ runner.temp }}/publish
+      - name: каталог публикации
+        run: |
+          out="$RUNNER_TEMP/publish"
+          test -f "$out/Zafiro.Agent.Service.exe" && test -f "$out/Zafiro.Agent.UI.exe" && test -f "$out/Frontend/index.html"
+          echo "PUBLISH_DIR=$out" >> "$GITHUB_ENV"
+
       - name: Authenticode (exe)
         env:
           CODESIGN_PFX: ${{ secrets.AGENT_CODESIGN_PFX }}
@@ -176,8 +244,10 @@ jobs:
 
   sign:
     name: sign and publish
-    needs: build
+    needs: [build, guard, package]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/agent-v')
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     environment: agent-release
     permissions:
       contents: write # создание выпуска agent-v<версия>
@@ -186,7 +256,11 @@ jobs:
       CHANNEL: ${{ needs.build.outputs.channel }}
       KEY_ID: ${{ vars.AGENT_UPDATE_KEY_ID }}
       EXPECT_PUBLIC_KEY: ${{ vars.AGENT_UPDATE_PUBLIC_KEY }}
+      REF: ${{ github.ref }}
     steps:
+      - name: ref (повторная проверка перед ключом подписи)
+        run: |
+          case "$REF" in refs/heads/main|refs/tags/agent-v*) ;; *) echo "::error::ref $REF"; exit 1 ;; esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

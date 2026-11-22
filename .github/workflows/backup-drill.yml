@@ -10,6 +10,9 @@ name: backup-drill
 # drill-prod — еженедельные учения на настоящих копиях: только при vars.BACKUP_DRILL_PROD == 'true',
 #   на self-hosted раннере в сети хранилища копий, секреты — в окружении GitHub `backup-drill`
 #   (S3 только на чтение + ЗАКРЫТЫЙ ключ OpenPGP). Восстановленная база не покидает раннер и удаляется.
+#   Только с main (расписание всегда с ветки по умолчанию; ручной запуск с другой ветки выполнил бы её
+#   restore-drill.sh с закрытым ключом всех копий — аудит OPS-10), не на PR, не из форка. Окружение `backup-drill`
+#   дополнительно ограничено веткой main и ревьюером — docs/deploy.md §10.1.
 
 on:
   workflow_dispatch:
@@ -56,7 +59,7 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
       - name: goose
-        run: go install github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}
+        run: go install github.com/pressly/goose/v3/cmd/goose@"${GOOSE_VERSION}"
       - name: образ Postgres + WAL-G
         run: docker build -t "$BACKUP_PG_IMAGE" deploy/backup
       - name: учения
@@ -75,11 +78,17 @@ jobs:
 
   drill-prod:
     name: учения на копиях прода (self-hosted)
-    if: vars.BACKUP_DRILL_PROD == 'true' && github.event_name != 'pull_request'
+    if: >-
+      vars.BACKUP_DRILL_PROD == 'true' && github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main' && !github.event.repository.fork
     runs-on: [self-hosted, linux, zafiro-backup-drill]
     environment: backup-drill
     timeout-minutes: 240
     steps:
+      - name: ref (повторная проверка перед секретами)
+        env:
+          REF: ${{ github.ref }}
+        run: test "$REF" = refs/heads/main || { echo "::error::drill-prod только с main (получено $REF)"; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -92,7 +101,7 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
       - name: goose
-        run: go install github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}
+        run: go install github.com/pressly/goose/v3/cmd/goose@"${GOOSE_VERSION}"
       - name: образ Postgres + WAL-G
         run: docker build -t "$BACKUP_PG_IMAGE" deploy/backup
       - name: секреты в файлы (только на время учений)

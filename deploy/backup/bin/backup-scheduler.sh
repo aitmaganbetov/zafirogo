@@ -23,6 +23,17 @@ until pg_isready -q -h "${PGHOST:-/var/run/postgresql}" -U "${POSTGRES_USER:-pos
   sleep 5
 done
 
+# Метрики архивации WAL (pg_stat_archiver, очередь сегментов) — раз в минуту, независимо от расписания копий:
+# сбой archive_command виден за минуты, а не при следующей копии (аудит OPS-1). Ошибка снимка не останавливает
+# расписание — её видно по zafiro_pg_archiver_up.
+ARCHIVER_INTERVAL="${BACKUP_ARCHIVER_METRICS_INTERVAL:-60}"
+(
+  while true; do
+    backup-archiver-metrics.sh || log "снимок pg_stat_archiver не удался (zafiro_pg_archiver_up 0)"
+    sleep "$ARCHIVER_INTERVAL"
+  done
+) &
+
 run_with_retries() {
   local i
   for ((i = 1; i <= RETRIES; i++)); do

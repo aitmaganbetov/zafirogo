@@ -1,17 +1,31 @@
 name: deploy
 
-# Конфигурация выкладки: балансировщик staging (deploy/staging/nginx) в закреплённом образе nginx из compose.yaml —
-# `nginx -t`, сжатие без двойного gzip, журнал доступа без токенов (deploy/staging/nginx-test.sh; docs/deploy.md §2).
+# Конфигурация выкладки (docs/deploy.md):
+#   nginx         — балансировщик staging в закреплённом образе nginx из compose.yaml: `nginx -t`, сжатие без двойного
+#                   gzip, журнал доступа без токенов, /healthz и /readyz закрыты снаружи (deploy/staging/nginx-test.sh);
+#   compose       — `docker compose config -q` всех compose-файлов и их сочетаний (staging, бэкап, наблюдаемость, dev);
+#   observability — promtool check config / test rules (в т.ч. алерты бэкапа), amtool, дашборды
+#                   (deploy/observability/check.sh; аудит OPS-17 — раньше не запускалась нигде);
+#   actionlint    — синтаксис и выражения workflow, shellcheck шагов run (аудит OPS-10/OPS-17);
+#   ops           — служебные бинарники образа (deploy/ops): vet, тесты, обёртка job миграций на настоящем Postgres
+#                   (параллельный запуск, lock_timeout и повтор при 55P03 — аудит OPS-7/OPS-20).
 on:
   push:
     branches: [main]
     paths:
-      - deploy/staging/**
-      - .github/workflows/deploy.yml
+      - deploy/**
+      - docker-compose.dev.yml
+      - Dockerfile
+      - tools/versions.env
+      - .github/**
   pull_request:
     paths:
-      - deploy/staging/**
-      - .github/workflows/deploy.yml
+      - deploy/**
+      - docker-compose.dev.yml
+      - Dockerfile
+      - db/migrations/**
+      - tools/versions.env
+      - .github/**
 
 permissions:
   contents: read
@@ -22,7 +36,7 @@ concurrency:
 
 jobs:
   nginx:
-    name: nginx staging (nginx -t, gzip, журнал без секретов)
+    name: nginx staging (nginx -t, gzip, журнал без секретов, служебные пути)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -30,3 +44,97 @@ jobs:
         with:
           persist-credentials: false
       - run: deploy/staging/nginx-test.sh
+
+  compose:
+    name: compose config (staging, backup, observability, dev)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: одноразовые секреты (как task staging:init) и docker compose config -q
+        run: |
+          sh deploy/staging/init.sh >/dev/null
+          sh deploy/observability/init.sh >/dev/null
+          b="$RUNNER_TEMP/backup-secrets"
+          mkdir -p "$b"
+          touch "$b/s3_access_key" "$b/s3_secret_key" "$b/walg_pgp_public.asc" "$b/s3.json"
+          export BACKUP_SECRETS_DIR="$b"
+          stg=(-f deploy/staging/compose.yaml --env-file deploy/staging/.env.staging)
+          docker compose "${stg[@]}" config -q
+          docker compose "${stg[@]}" -f deploy/backup/compose.backup.yml config -q
+          docker compose "${stg[@]}" -f deploy/observability/compose.observability.yml config -q
+          docker compose "${stg[@]}" -f deploy/backup/compose.backup.yml -f deploy/observability/compose.observability.yml config -q
+          export POSTGRES_PASSWORD=x ZAFIRO_DB_APP_PASSWORD=x ZAFIRO_DB_PLATFORM_PASSWORD=x VALKEY_PASSWORD=x
+          docker compose --env-file /dev/null -f docker-compose.dev.yml config -q
+          docker compose --env-file /dev/null -f docker-compose.dev.yml -f deploy/backup/compose.backup.yml config -q
+
+  actionlint:
+    name: actionlint (workflow + shellcheck)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: versions (tools/versions.env — единственное место версий инструментов)
+        shell: bash
+        run: grep -E '^[A-Z_]+=' tools/versions.env | tr -d '\r' >> "$GITHUB_ENV"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: deploy/ops/go.mod
+          cache: false
+      # shellcheck есть в образе раннера ubuntu-24.04 — actionlint проверяет им шаги run.
+      - run: go run github.com/rhysd/actionlint/cmd/actionlint@"${ACTIONLINT_VERSION}"
+
+  observability:
+    name: promtool, amtool, дашборды
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: deploy/observability/check.sh
+
+  ops:
+    name: deploy/ops (vet, тесты, job миграций на Postgres)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: versions (tools/versions.env — единственное место версий инструментов)
+        shell: bash
+        run: grep -E '^[A-Z_]+=' tools/versions.env | tr -d '\r' >> "$GITHUB_ENV"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: deploy/ops/go.mod
+          cache-dependency-path: deploy/ops/go.sum
+      - name: go mod tidy, vet, test
+        working-directory: deploy/ops
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -race -count=1 ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: deploy/ops
+          args: --config=../../.golangci.yml
+      - name: govulncheck, gosec
+        working-directory: deploy/ops
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@"${GOVULNCHECK_VERSION}"
+          govulncheck ./...
+          go install github.com/securego/gosec/v2/cmd/gosec@"${GOSEC_VERSION}"
+          gosec -quiet ./...
+      - name: zafiro-migrate на Postgres (db/migrations; параллельный job; lock_timeout + повтор)
+        run: |
+          go install github.com/pressly/goose/v3/cmd/goose@"${GOOSE_VERSION}"
+          deploy/ops/test-migrate.sh

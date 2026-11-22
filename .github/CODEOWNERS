@@ -1,0 +1,11 @@
+# Владелец обязательных ревью (аудит OPS-10): включается правилом защиты ветки main «Require review from Code Owners»
+# (docs/deploy.md §10.1). Здесь — то, что даёт доступ к ключам подписи, копиям базы и публикации образа:
+# workflow (окружения agent-release, release, backup-drill), выкладка и бэкап, подпись обновлений агента, миграции.
+/.github/                      @aitmaganbetov
+/deploy/                       @aitmaganbetov
+/Dockerfile                    @aitmaganbetov
+/.dockerignore                 @aitmaganbetov
+/tools/versions.env            @aitmaganbetov
+/server/cmd/sign-update/       @aitmaganbetov
+/agent/installer/              @aitmaganbetov
+/db/migrations/                @aitmaganbetov

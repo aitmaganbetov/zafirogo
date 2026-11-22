@@ -9,9 +9,27 @@
 # создаёт deploy/staging/init.sh, в git не попадают. Описание — docs/deploy.md, deploy/README.md.
 name: zafirogo-staging
 
+# Ресурсы и журналы (аудит OPS-4): лимиты памяти/CPU/процессов на каждый сервис — по docs/deploy.md §12 (5 000 ПК),
+# переопределяются STG_*_MEMORY/STG_*_CPUS в .env.staging; журнал json-file с ротацией (50 МБ × 5 на контейнер) —
+# без неё журнал Docker растёт без предела (каждый HTTP-запрос — запись info).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 x-app: &app
   image: ${STG_IMAGE:-zafiro:staging}
   restart: unless-stopped
+  logging: *logging
+  # HEALTHCHECK образа (zafiro-healthcheck → /healthz, аудит OPS-15): compose видит зависший процесс, балансировщик
+  # ждёт здоровых инстансов.
+  deploy:
+    resources:
+      limits:
+        cpus: "${STG_APP_CPUS:-2}"
+        memory: ${STG_APP_MEMORY:-2g}
+        pids: 4096
   depends_on:
     migrate:
       condition: service_completed_successfully
@@ -36,6 +54,8 @@ x-app: &app
     ZAFIRO_CONFIG_FILE: /run/secrets/zafiro_config
     ZAFIRO_LOG_LEVEL: info
     ZAFIRO_SHUTDOWN_TIMEOUT: 30s
+    # Мягкий предел кучи Go ≈ 90 % лимита памяти контейнера: GC работает чаще у предела, а не ловит OOM-kill.
+    GOMEMLIMIT: ${STG_APP_GOMEMLIMIT:-1800MiB}
     ZAFIRO_VALKEY_ADDR: valkey:6379
     # Доверенный прокси HTTP (X-Forwarded-For) и источник PROXY protocol для gRPC — только nginx.
     ZAFIRO_HTTP_TRUSTED_PROXIES: 172.29.66.10
@@ -63,6 +83,13 @@ services:
   postgres:
     image: ${STG_POSTGRES_IMAGE:-postgres:18.6@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4}
     restart: unless-stopped
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          cpus: "${STG_PG_CPUS:-2}"
+          memory: ${STG_PG_MEMORY:-4g}
+          pids: 1024
     # /dev/shm по умолчанию 64 МБ — параллельные запросы падают с «could not resize shared memory segment» (аудит, PB).
     shm_size: 1g
     environment:
@@ -76,7 +103,52 @@ services:
       ZAFIRO_DB_PLATFORM_USER: ${STG_DB_PLATFORM_USER:-zafiro_platform_login}
       ZAFIRO_DB_PLATFORM_PASSWORD: ${STG_DB_PLATFORM_PASSWORD:?}
       TZ: UTC
-    command: ["postgres", "-c", "max_connections=300", "-c", "shared_buffers=256MB"]
+    # Параметры — docs/deploy.md §12 «Параметры Postgres» (аудит DB-4), под лимит памяти 4 ГБ. Тот же список — в
+    # deploy/backup/compose.backup.yml (его `command` заменяет этот, BK-7): меняете здесь — поменяйте и там.
+    command:
+      - postgres
+      - -c
+      - max_connections=${STG_PG_MAX_CONNECTIONS:-300}
+      - -c
+      - shared_buffers=${STG_PG_SHARED_BUFFERS:-1GB}
+      - -c
+      - effective_cache_size=${STG_PG_EFFECTIVE_CACHE_SIZE:-3GB}
+      - -c
+      - work_mem=${STG_PG_WORK_MEM:-16MB}
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+      - -c
+      - max_wal_size=4GB
+      - -c
+      - min_wal_size=1GB
+      - -c
+      - wal_compression=lz4
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - autovacuum_vacuum_scale_factor=0.05
+      - -c
+      - autovacuum_analyze_scale_factor=0.02
+      - -c
+      - autovacuum_vacuum_cost_limit=2000
+      - -c
+      - log_lock_waits=on
+      - -c
+      - log_min_duration_statement=1s
+      # Серверный keepalive — те же значения, что у клиента pgx (docs/deploy.md §4): сессии исчезнувших клиентов
+      # закрываются за ≈ 1 мин и не держат блокировки и слоты max_connections.
+      - -c
+      - tcp_keepalives_idle=30
+      - -c
+      - tcp_keepalives_interval=10
+      - -c
+      - tcp_keepalives_count=3
+      - -c
+      - tcp_user_timeout=60000
     # Только для проверок с хоста (task staging:seed, staging:smoke); на реальном staging-сервере — без публикации.
     ports:
       - "127.0.0.1:15432:5432"
@@ -96,16 +168,26 @@ services:
   valkey:
     image: ${STG_VALKEY_IMAGE:-valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b}
     restart: unless-stopped
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: ${STG_VALKEY_MEMORY:-1g}
+          pids: 256
     # Сессии, лимиты, присутствие ПК: AOF — переживает перезапуск (потеря не теряет денег, docs/deploy.md §8).
-    command: ["valkey-server", "--appendonly", "yes", "--requirepass", "${STG_VALKEY_PASSWORD:?}", "--maxmemory-policy", "noeviction"]
-    environment:
-      REDISCLI_AUTH: ${STG_VALKEY_PASSWORD}
+    # Пароль — в файле-секрете valkey.conf (requirepass; init.sh), не в аргументах: аргументы видны в `docker inspect`
+    # и `ps` хоста (аудит OPS-14). noeviction без maxmemory не действует: предел — ≈ 75 % лимита контейнера, у предела
+    # запись отклоняется (OOM command not allowed), а не вытесняются сессии и лимиты (аудит OPS-4).
+    command: ["valkey-server", "/run/secrets/valkey_conf", "--appendonly", "yes", "--maxmemory", "${STG_VALKEY_MAXMEMORY:-768mb}", "--maxmemory-policy", "noeviction"]
+    secrets:
+      - valkey_conf
     ports:
       - "127.0.0.1:16379:6379"
     volumes:
       - valkey-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "valkey-cli ping | grep -q PONG"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$(sed -n 's/^requirepass //p' /run/secrets/valkey_conf) valkey-cli ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -115,8 +197,18 @@ services:
   nats:
     image: ${STG_NATS_IMAGE:-nats:2.15.2-alpine@sha256:823e7f1d6d8ffe3b30dbd73d4a06bbb939acf94929f7fdf224404da7a05bafb5}
     restart: unless-stopped
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: ${STG_NATS_MEMORY:-512m}
+          pids: 256
     # Одиночный сервер JetStream (staging). Прод — кластер из 3 (docs/deploy.md §7, events.stream.replicas=3).
-    command: ["-js", "-sd", "/data", "-m", "8222", "--user", "zafiro", "--pass", "${STG_NATS_PASSWORD:?}"]
+    # Конфигурация с паролем — файл-секрет nats.conf (init.sh), не аргумент --pass (аудит OPS-14).
+    command: ["-c", "/run/secrets/nats_conf"]
+    secrets:
+      - nats_conf
     volumes:
       - nats-data:/data
     healthcheck:
@@ -128,16 +220,32 @@ services:
       zafiro: {}
 
   # Job миграций: goose под владельцем схемы (PD-9), не под логинами приложения. Завершается — стартуют инстансы.
+  # zafiro-migrate (deploy/ops): advisory-блокировка от второго job, lock_timeout/statement_timeout и повтор при 55P03
+  # (аудит OPS-7, DB-1, OPS-20); DSN владельца — файл-секрет, не переменная (OPS-14). `task staging:migrate` — повтор.
   migrate:
     image: ${STG_IMAGE:-zafiro:staging}
-    entrypoint: ["/usr/local/bin/goose"]
+    entrypoint: ["/usr/local/bin/zafiro-migrate"]
     command: ["up"]
     restart: "no"
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 256m
+          pids: 128
+    # Одноразовый job: HEALTHCHECK образа (сервер на :8080) к нему не относится.
+    healthcheck:
+      disable: true
     environment:
-      GOOSE_DBSTRING: postgres://${STG_DB_OWNER_USER:-zafiro_owner}:${STG_DB_OWNER_PASSWORD:?}@postgres:5432/${STG_POSTGRES_DB:-zafiro}?sslmode=disable
+      GOOSE_DBSTRING_FILE: /run/secrets/goose_dsn
+      ZAFIRO_MIGRATE_LOCK_TIMEOUT: ${STG_MIGRATE_LOCK_TIMEOUT:-5s}
+      ZAFIRO_MIGRATE_STATEMENT_TIMEOUT: ${STG_MIGRATE_STATEMENT_TIMEOUT:-30min}
+    secrets:
+      - goose_dsn
     depends_on:
       postgres:
         condition: service_healthy
@@ -166,6 +274,13 @@ services:
   legacy:
     image: ${STG_NGINX_IMAGE:-nginx:1.30.5-alpine3.24@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94}
     restart: unless-stopped
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128m
+          pids: 128
     volumes:
       - ./legacy/default.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
@@ -174,7 +289,21 @@ services:
   lb:
     image: ${STG_NGINX_IMAGE:-nginx:1.30.5-alpine3.24@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94}
     restart: unless-stopped
-    depends_on: [app1, app2, legacy]
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          cpus: "${STG_LB_CPUS:-1}"
+          memory: ${STG_LB_MEMORY:-512m}
+          pids: 256
+    # Инстансы — здоровые по HEALTHCHECK образа (/healthz), а не просто запущенные (аудит OPS-15).
+    depends_on:
+      app1:
+        condition: service_healthy
+      app2:
+        condition: service_healthy
+      legacy:
+        condition: service_started
     ports:
       - "${STG_BIND:-127.0.0.1}:${STG_HTTP_PORT:-80}:80"
       - "${STG_BIND:-127.0.0.1}:${STG_HTTPS_PORT:-443}:443"
@@ -196,8 +325,10 @@ services:
       nofile:
         soft: ${STG_LB_NOFILE:-20000}
         hard: ${STG_LB_NOFILE:-20000}
+    # Обслуживание, а не только конфигурация (`nginx -t`): служебный location на :80 только для 127.0.0.1
+    # (nginx/http.d/zafiro.conf, /nginx-health), аудит OPS-15.
     healthcheck:
-      test: ["CMD-SHELL", "nginx -t -q"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -209,6 +340,13 @@ services:
 secrets:
   zafiro_config:
     file: ./secrets/zafiro.yaml
+  # Пароли зависимостей и DSN владельца схемы — файлами (init.sh), не переменными/аргументами (аудит OPS-14).
+  goose_dsn:
+    file: ./secrets/goose_dsn
+  valkey_conf:
+    file: ./secrets/valkey.conf
+  nats_conf:
+    file: ./secrets/nats.conf
   agent_ca_cert:
     file: ./secrets/pki/agent-ca.pem
   agent_ca_key:

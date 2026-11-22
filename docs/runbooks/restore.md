@@ -13,7 +13,7 @@
 
 | Сценарий | RPO (потеря данных) | RTO (цель) | Раздел |
 |---|---|---|---|
-| Потеря инстанса/диска БД | ≤ 1 мин (`archive_timeout = 60 s`) | ≤ 1 ч | [§6](#6-потеря-инстанса-бд) |
+| Потеря инстанса/диска БД | ≤ 1 мин (`archive_timeout = 60 s`) | ≤ 1 ч при 5 000 ПК; на 50 000 ПК — только с копиями каждые 4–6 ч или репликой (оценка ниже) | [§6](#6-потеря-инстанса-бд) |
 | Порча данных (ошибка, баг, ручной SQL) | всё после момента T — переносится вручную (§7.6) | ≤ 2 ч (с поиском T) | [§7](#7-порча-данных--pitr) |
 | Потеря региона/площадки | ≤ 1 мин + задержка выгрузки WAL | ≤ 4 ч | [§8](#8-потеря-региона) |
 | Потеря Valkey | 0 денег (повторный вход сотрудников) | минуты | [§9](#9-потеря-valkey) |
@@ -30,9 +30,23 @@
 | Архивация WAL под нагрузкой 2 100 tps | 25 сегментов за 30 с | без отставания, 0 ошибок |
 | Полные учения (латест + PITR, проверки, amcheck) | демо-база | ≈ 1 мин вместе с подъёмом окружения |
 
-Оценка для прода (уточнить на staging и в первых учениях `drill-prod`): база 20 ГБ при 100–200 МБ/с из S3 —
-загрузка 2–4 мин; WAL за сутки (1–5 ГБ) — 1–3 мин; с реакцией дежурного и проверками RTO укладывается в 1 ч.
-pgbench сжимается нетипично хорошо; реальные данные — в 3–5 раз хуже, время загрузки считать по несжатому объёму.
+Оценка для прода (аудит OPS-9; уточнить в первых учениях `drill-prod` — время проигрывания WAL в отчёте). Худший
+случай — сбой прямо перед суточной копией: проиграть WAL почти за сутки. Объём WAL — по нагрузочному тесту
+(`docs/deploy.md` §12), скорость проигрывания — замер выше (≈ 30 МБ/с, однопоточно; на NVMe и с
+`recovery_prefetch` — быстрее, но закладывать замер):
+
+| Масштаб | WAL в сутки | Загрузка копии | Проигрывание WAL (худший случай) | Итого с реакцией и проверками | RTO ≤ 1 ч |
+|---|---|---|---|---|---|
+| 5 000 ПК | ≈ 20 ГБ (0,85 ГБ/ч) | база 20 ГБ при 100–200 МБ/с из S3 — 2–4 мин | ≈ 11 мин | ≈ 30–40 мин | да |
+| 50 000 ПК, копия раз в сутки | ≈ 204 ГБ (8,5 ГБ/ч) | база ≈ 200 ГБ — 20–35 мин | **≈ 1,9 ч** | ≈ 2,5–3 ч | **нет** |
+| 50 000 ПК, копия (дельта) каждые 4 ч | ≤ 34 ГБ | 20–35 мин | ≈ 19 мин | ≈ 1 ч | на пределе |
+| горячая реплика (BK-4) | — | — | — (promote) | минуты | да |
+
+Вывод: суточная копия держит RTO 1 ч только до ≈ 2 ГБ WAL в час (≈ 10 000–15 000 ПК). Дальше — базовые копии
+(дельты) чаще: `BACKUP_AT` → расписание каждые 4–6 ч (CronJob или несколько запусков `backup-run.sh` в сутки; дельты
+дешёвые — читаются только изменённые страницы), а для RTO в минутах — горячая реплика (BK-4, решение владельца до
+выхода на целевой масштаб). pgbench сжимается нетипично хорошо; реальные данные — в 3–5 раз хуже, время загрузки
+считать по несжатому объёму.
 
 ## 2. Как устроен бэкап
 
@@ -81,12 +95,24 @@ Postgres (primary) ──archive_command: walg wal-push──▶ S3 (друго�
   хранилище есть зашифрованные им копии (до 12 месяцев — месячные копии). Учения проверяют оба ключа, пока живы старые копии.
 - Потеря закрытого ключа = потеря всех копий. Поэтому ключ в двух независимых местах, проверка — каждые учения.
 
-## 4. Мониторинг (передано O3)
+## 4. Мониторинг
 
-- `zafiro_backup_last_success_timestamp_seconds` (textfile в томе `backup-metrics`, для node_exporter) — алерт,
-  если старше 26 ч; `zafiro_backup_last_run_success == 0`; `zafiro_backup_wal_verify_ok == 0` — критично.
-- `pg_stat_archiver`: `failed_count` растёт, `now() - last_archived_time > 5 мин` при нагрузке — критично (RPO нарушен).
-- Размер `pg_wal` > 50 % тома — критично (S3 недоступен, диск кончится и Postgres остановится).
+Метрики — textfile в томе `backup-metrics`, их читает node_exporter хоста БД (`--collector.textfile.directory`;
+staging — `deploy/observability/compose.observability.yml`). Алерты —
+`deploy/observability/prometheus/rules/zafiro-backup.rules.yml`, тесты — `prometheus/tests/backup.test.yml`
+(аудит OPS-1; что делать — `docs/observability.md` §5 «Бэкап»).
+
+| Файл | Кто пишет | Метрики | Алерты |
+|---|---|---|---|
+| `walg.prom` | `backup-run.sh` (цикл копии) | `zafiro_backup_last_success_timestamp_seconds`, `_last_run_success`, `_last_run_timestamp_seconds`, `_last_run_duration_seconds`, `_wal_verify_ok` (только если проверка дошла до конца — сбой копии не выдаёт себя за сбой архива) | `ZafiroBackupTooOld` (> 26 ч, critical), `ZafiroBackupNeverSucceeded` (critical), `ZafiroBackupLastRunFailed` (warning), `ZafiroWALVerifyFailed` (critical) |
+| `archiver.prom` | `backup-archiver-metrics.sh` — раз в минуту из `backup-scheduler.sh` (`pg_stat_archiver`, `pg_ls_archive_statusdir`, `pg_ls_waldir`) | `zafiro_pg_archiver_failed_count`, `_last_archived_timestamp_seconds`, `_last_failed_timestamp_seconds`, `_ready_segments`, `zafiro_pg_wal_bytes`, `_up`, `_collect_timestamp_seconds` | `ZafiroWALArchiveFailing` (последняя попытка archive_command неудачна 5 мин, critical), `ZafiroWALArchiveStalled` (сегменты ждут, выгрузки нет 5 мин, critical), `ZafiroWALArchiveBacklog` (> 20 сегментов 10 мин), `ZafiroArchiverMetricsStale` |
+| — | node_exporter | `node_textfile_scrape_error`, отсутствие рядов | `ZafiroBackupMetricsMissing` (нет метрик 1 ч), `ZafiroBackupTextfileError` |
+
+- Рост `pg_wal` при неработающем архиве ловят `ZafiroWALArchiveStalled`/`Backlog` и `HostDiskWillFillIn24h` (диск хоста
+  БД); при заполнении `pg_wal` Postgres останавливается.
+- Проверено (22.11.2026): Postgres с `archive_command=false` → `archiver.prom` показал `failed_count 12`,
+  `ready_segments 2`, `last_failed > last_archived`; node_exporter от `nobody` прочитал файлы; при недоступном
+  Postgres снимок оставляет прежние значения и `zafiro_pg_archiver_up 0`.
 - Результат `backup-drill` — красный прогон — тикет дежурному.
 
 ## 5. Учения восстановления
@@ -198,7 +224,10 @@ Valkey с тем же паролем → инстансы переподключ
 Персистентность: JetStream file storage; в проде — кластер из 3 узлов и `ZAFIRO_EVENTS_STREAM_REPLICAS=3`; копий нет
 (источник правды — `outbox_events`). Действия:
 
-1. Поднять NATS (пустой) — инстансы создадут поток и потребителя (`outbox.EnsureStream`, `CreateOrUpdateConsumer`).
+1. Поднять NATS (пустой) — перезапуск инстансов не нужен: поток и потребителя они создают заново сами, в том числе
+   если поток пропал на работающем NATS (`outbox.EnsureStream`, `CreateOrUpdateConsumer`). Диск JetStream — не меньше
+   `events.stream.max_bytes` (по умолчанию 1 ГиБ) на узел: на меньшем поток не создастся (в журнале инстансов —
+   ошибка создания потока, `ZafiroOutboxLag`).
 2. Неопубликованные события (`published_at IS NULL`) публикатор отправит сам. Опубликованные, но не обработанные
    потребителем вебхуков, — переопубликовать (под владельцем схемы):
    ```sql

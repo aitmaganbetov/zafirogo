@@ -8,7 +8,8 @@ name: zafirogo-dev
 
 services:
   postgres:
-    image: postgres:18.6
+    # Тег + digest — те же, что в deploy/staging/compose.yaml (тег пересобирается выше по течению, BK-12; аудит OPS-22).
+    image: postgres:18.6@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
     restart: unless-stopped
     # /dev/shm по умолчанию 64 МБ — параллельные запросы падают с «could not resize shared memory segment» (аудит, PB).
     shm_size: 1g
@@ -35,7 +36,7 @@ services:
       start_period: 10s
 
   valkey:
-    image: valkey/valkey:9.1.3-alpine
+    image: valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
     restart: unless-stopped
     command: ["valkey-server", "--appendonly", "yes", "--requirepass", "${VALKEY_PASSWORD:?задайте VALKEY_PASSWORD в .env}"]
     environment:
@@ -51,7 +52,7 @@ services:
       retries: 20
 
   nats:
-    image: nats:2.15.2-alpine
+    image: nats:2.15.2-alpine@sha256:823e7f1d6d8ffe3b30dbd73d4a06bbb939acf94929f7fdf224404da7a05bafb5
     restart: unless-stopped
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:

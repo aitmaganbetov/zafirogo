@@ -3,7 +3,9 @@
 #   1. `nginx -t`;
 #   2. сжатие (аудит PB-11): несжатый JSON сжимается (gzip, Vary: Accept-Encoding), ответ, уже сжатый сервером,
 #      не сжимается второй раз, мелкий ответ и клиент без Accept-Encoding получают ответ как есть;
-#   3. журнал доступа (аудит A-05): токен приглашения, код входа на ПК и строка запроса (/ws?ticket=…) в него не попадают.
+#   3. журнал доступа (аудит A-05): токен приглашения, код входа на ПК и строка запроса (/ws?ticket=…) в него не попадают;
+#   4. служебное: /healthz и /readyz снаружи — 404 (аудит OPS-13), /nginx-health — 200 только с 127.0.0.1 (healthcheck
+#      compose, OPS-15), HTTP → 301.
 # Вместо zafiro и Laravel — заглушка на том же образе. Нужны docker, openssl. CI: .github/workflows/deploy.yml.
 #
 #   deploy/staging/nginx-test.sh            # образ — из compose.yaml (STG_NGINX_IMAGE переопределяет)
@@ -103,6 +105,17 @@ req staging.zafiro.test /api/big -H 'Accept-Encoding: gzip'
 req resseler.staging.zafiro.test /api/small
 [ "$(header 'HTTP/.* 200')" = 1 ] || fail "resseler.staging.zafiro.test: хост не обслуживается (server_name)"
 
+# --- проверки здоровья: снаружи закрыты (OPS-13), healthcheck балансировщика работает (OPS-15) ---
+for path in /healthz /readyz; do
+  req "$APP" "$path"
+  [ "$(header 'HTTP/.* 404')" = 1 ] || fail "$path доступен через балансировщик"
+done
+docker exec "$ID-lb" wget -q -O /dev/null http://127.0.0.1/nginx-health || fail "/nginx-health с 127.0.0.1 не отвечает"
+code=$(docker exec "$ID-lb" sh -c "curl -s -o /dev/null -w '%{http_code}' http://\$(hostname -i | cut -d' ' -f1)/nginx-health")
+[ "$code" = 403 ] || fail "/nginx-health не с 127.0.0.1: $code, ожидался 403"
+code=$(docker exec "$ID-lb" curl -s -o /dev/null -w '%{http_code}' -H "Host: $APP" http://127.0.0.1/login)
+[ "$code" = 301 ] || fail "HTTP → HTTPS: $code, ожидался 301"
+
 # --- журнал доступа ---
 TOKEN=Secr3tInviteT0ken0123456789abcdef
 CODE=Secr3tPcLoginC0de
@@ -126,4 +139,4 @@ for want in '"GET /api/invitations/\*\*\* HTTP' '"POST /api/invitations/\*\*\*/a
   grep -q "$want" "$WORK/log" || fail "в журнале нет строки $want"
 done
 
-echo "nginx-test: ok (nginx -t; gzip: $BIG_SIZE → $GZ_SIZE байт, без двойного сжатия; секретов в журнале нет)"
+echo "nginx-test: ok (nginx -t; gzip: $BIG_SIZE → $GZ_SIZE байт, без двойного сжатия; секретов в журнале нет; /healthz, /readyz закрыты)"

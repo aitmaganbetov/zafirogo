@@ -23,6 +23,7 @@ jobs:
   lint:
     name: vet, lint, security
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,6 +43,19 @@ jobs:
       - name: versions are defined once (tools/check-versions.sh)
         working-directory: .
         run: sh tools/check-versions.sh
+      # Одна версия Go везде (аудит SEC-3/SEC-4): server/go.mod, GO_VERSION в tools/versions.env, образ сборки сервера
+      # (Dockerfile) и WAL-G (deploy/backup/Dockerfile — бинарник в контейнере БД ходит в S3 по TLS).
+      - name: one Go version (go.mod, versions.env, Dockerfiles)
+        working-directory: .
+        run: |
+          mod=$(sed -n 's/^go \([0-9.]*\)$/\1/p' server/go.mod)
+          fail=0
+          for pair in "tools/versions.env:$GO_VERSION" \
+            "Dockerfile:$(sed -n 's/^ARG GO_IMAGE=golang:\([0-9.]*\)-.*/\1/p' Dockerfile)" \
+            "deploy/backup/Dockerfile:$(sed -n 's/^ARG GO_IMAGE=golang:\([0-9.]*\)-.*/\1/p' deploy/backup/Dockerfile)"; do
+            if [ "${pair#*:}" != "$mod" ]; then echo "::error::${pair%%:*}: Go ${pair#*:}, server/go.mod: $mod"; fail=1; fi
+          done
+          exit "$fail"
       - name: go vet
         run: |
           go vet ./...
@@ -54,11 +68,11 @@ jobs:
           args: --config=../.golangci.yml
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+          go install golang.org/x/vuln/cmd/govulncheck@"${GOVULNCHECK_VERSION}"
           govulncheck ./...
       - name: gosec
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
+          go install github.com/securego/gosec/v2/cmd/gosec@"${GOSEC_VERSION}"
           gosec -quiet -exclude-generated -exclude-dir=gen -exclude-dir=store ./...
 
   # Сгенерированный код и правила над исходниками (аудит BC-02): правило тенантности tenant-filter (sqlc vet),
@@ -67,6 +81,7 @@ jobs:
   generated:
     name: sqlc vet, buf lint/breaking, generated code is up to date
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,12 +96,12 @@ jobs:
           cache-dependency-path: server/go.sum
       - name: генераторы (версии — tools/versions.env)
         run: |
-          go install github.com/go-task/task/v3/cmd/task@${TASK_VERSION}
-          go install github.com/sqlc-dev/sqlc/cmd/sqlc@${SQLC_VERSION}
-          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@${OAPI_CODEGEN_VERSION}
-          go install github.com/bufbuild/buf/cmd/buf@${BUF_VERSION}
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION}
+          go install github.com/go-task/task/v3/cmd/task@"${TASK_VERSION}"
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@"${SQLC_VERSION}"
+          go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@"${OAPI_CODEGEN_VERSION}"
+          go install github.com/bufbuild/buf/cmd/buf@"${BUF_VERSION}"
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@"${PROTOC_GEN_GO_VERSION}"
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@"${PROTOC_GEN_GO_GRPC_VERSION}"
       - name: sqlc vet (tenant-filter), buf lint, sqlc / oapi-codegen / buf generate без диффа
         working-directory: .
         run: task gen:check:go
@@ -110,6 +125,7 @@ jobs:
   test:
     name: unit tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -125,6 +141,7 @@ jobs:
   translations:
     name: translations ru/kk/en
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -149,9 +166,11 @@ jobs:
   integration:
     name: integration tests + migrations
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     services:
       postgres:
-        image: postgres:18.6
+        # Тот же digest, что в docker-compose.dev.yml и deploy/staging (тег пересобирается выше по течению, BK-12).
+        image: postgres:18.6@sha256:979bccfde35445db618c65107d27d08c6c21339d8dc3ad4c830c6633947be0e4
         env:
           POSTGRES_DB: zafiro_test
           POSTGRES_USER: zafiro
@@ -180,7 +199,7 @@ jobs:
       - name: goose up (db/migrations)
         working-directory: .
         run: |
-          go install github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}
+          go install github.com/pressly/goose/v3/cmd/goose@"${GOOSE_VERSION}"
           goose -env=none -dir db/migrations postgres "$ZAFIRO_TEST_DATABASE_URL" up
           goose -env=none -dir db/migrations postgres "$ZAFIRO_TEST_DATABASE_URL" status
       - name: goose down-to 0 and up again (миграции обратимы)
@@ -198,6 +217,7 @@ jobs:
   build:
     name: build binary
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -214,7 +234,7 @@ jobs:
         working-directory: .
         run: |
           ./bin/zafiro & pid=$!
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8080/healthz; then break; fi
             sleep 0.5
           done

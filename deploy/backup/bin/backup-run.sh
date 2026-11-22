@@ -9,7 +9,8 @@
 #   * хранятся BACKUP_RETAIN_FULL (5) последних полных цепочек — это ≥ 28 суток PITR на любую секунду;
 #   * первая копия каждого месяца помечается постоянной и хранится BACKUP_KEEP_MONTHLY (12) месяцев;
 #   * архив WAL непрерывный (archive_timeout = 60 с): RPO ≤ 1 минуты.
-# Ошибка любого шага — код выхода ≠ 0 и метрика zafiro_backup_last_run_success 0 (алерт — O3).
+# Ошибка любого шага — код выхода ≠ 0 и метрика zafiro_backup_last_run_success 0. Метрики — textfile node_exporter
+# (том backup-metrics), алерты — deploy/observability/prometheus/rules/zafiro-backup.rules.yml (аудит OPS-1).
 set -euo pipefail
 
 : "${PGDATA:?PGDATA не задан}"
@@ -23,10 +24,14 @@ log() { printf '%s backup: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 
 started=$(date +%s)
 ok=0
-verify_ok=0
+# Пусто — проверка архива в этом цикле не дошла до конца (упала копия): метрика сохраняет прежнее значение, чтобы
+# сбой копии не выдавал себя за сбой архива WAL (у них разные алерты, аудит OPS-1).
+verify_ok=""
 write_metrics() {
   local now; now=$(date +%s)
   mkdir -p "$METRICS_DIR"
+  # node_exporter читает каталог не от postgres (nobody): каталог и файл — на чтение всем, метрики не секрет.
+  chmod 0755 "$METRICS_DIR" 2>/dev/null || true
   local tmp="$METRICS_DIR/.walg.prom.$$"
   {
     echo "# HELP zafiro_backup_last_run_timestamp_seconds Время окончания последнего цикла бэкапа."
@@ -38,9 +43,13 @@ write_metrics() {
     echo "# HELP zafiro_backup_last_run_duration_seconds Длительность последнего цикла бэкапа."
     echo "# TYPE zafiro_backup_last_run_duration_seconds gauge"
     echo "zafiro_backup_last_run_duration_seconds $((now - started))"
-    echo "# HELP zafiro_backup_wal_verify_ok 1 — архив WAL непрерывен от старейшей копии до текущего сегмента."
-    echo "# TYPE zafiro_backup_wal_verify_ok gauge"
-    echo "zafiro_backup_wal_verify_ok $verify_ok"
+    if [ -n "$verify_ok" ]; then
+      echo "# HELP zafiro_backup_wal_verify_ok 1 — архив WAL непрерывен от старейшей копии до текущего сегмента."
+      echo "# TYPE zafiro_backup_wal_verify_ok gauge"
+      echo "zafiro_backup_wal_verify_ok $verify_ok"
+    elif [ -f "$METRICS_DIR/walg.prom" ]; then
+      grep 'zafiro_backup_wal_verify_ok' "$METRICS_DIR/walg.prom" || true
+    fi
     if [ "$ok" = 1 ]; then
       echo "# HELP zafiro_backup_last_success_timestamp_seconds Время последней успешной базовой копии."
       echo "# TYPE zafiro_backup_last_success_timestamp_seconds gauge"
@@ -49,6 +58,7 @@ write_metrics() {
       grep '^zafiro_backup_last_success_timestamp_seconds\|^# .*zafiro_backup_last_success' "$METRICS_DIR/walg.prom" || true
     fi
   } > "$tmp"
+  chmod 0644 "$tmp"
   mv -f "$tmp" "$METRICS_DIR/walg.prom"
 }
 trap write_metrics EXIT
@@ -99,7 +109,7 @@ status="$(printf '%s' "$verify_json" | perl -MJSON::PP -e '
 log "проверка архива WAL: $status"
 case " $status " in
   *"integrity=OK"*"timeline=OK"*) verify_ok=1 ;;
-  *) log "ОШИБКА: архив WAL не прошёл проверку"; printf '%s\n' "$verify_json" >&2; exit 1 ;;
+  *) verify_ok=0; log "ОШИБКА: архив WAL не прошёл проверку"; printf '%s\n' "$verify_json" >&2; exit 1 ;;
 esac
 
 ok=1

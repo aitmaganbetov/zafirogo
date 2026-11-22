@@ -6,6 +6,7 @@
 | Каталог / файл | Что | Блок |
 |---|---|---|
 | `../Dockerfile`, `../.dockerignore` | образ: `zafiro` + `goose` + `migrate-from-mysql`, distroless, nonroot | O1 |
+| `ops/` | служебные бинарники образа: `zafiro-migrate` (job миграций: блокировка от параллельного запуска, `lock_timeout`, повтор при 55P03, DSN из файла) и `zafiro-healthcheck` (HEALTHCHECK); `ops/test-migrate.sh` — проверка на Postgres (CI `deploy.yml`) | аудит 22.11.2026 |
 | `staging/` | staging на docker compose: 2 инстанса, Postgres, Valkey, NATS, job миграций, nginx | O1 |
 | `staging/nginx-test.sh` | проверка конфигурации nginx в закреплённом образе: `nginx -t`, gzip, журнал без токенов (`task staging:nginx-test`, CI `deploy.yml`) | O1 |
 | `trivy-ignore.yaml` | исключения скана образа (CI `release.yml`) — с обоснованием и сроком | O1 |

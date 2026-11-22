@@ -14,6 +14,12 @@
 
 x-obs-hardening: &hardening
   restart: unless-stopped
+  # Журнал с ротацией (аудит OPS-4); лимиты памяти — у каждого сервиса.
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "3"
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
@@ -36,6 +42,12 @@ services:
 
   prometheus:
     <<: *hardening
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: ${OBS_PROMETHEUS_MEMORY:-2g}
+          pids: 256
     image: ${OBS_PROMETHEUS_IMAGE:-prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e}
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -56,6 +68,12 @@ services:
 
   alertmanager:
     <<: *hardening
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 256m
+          pids: 256
     image: ${OBS_ALERTMANAGER_IMAGE:-prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a}
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
@@ -73,6 +91,12 @@ services:
 
   grafana:
     <<: *hardening
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512m
+          pids: 256
     image: ${OBS_GRAFANA_IMAGE:-grafana/grafana:13.1.8@sha256:1a8e58976a6cd349d1ffdd27a14b92053816c7c60e6b7e157013e9bf0b9cec5f}
     depends_on:
       prometheus:
@@ -107,8 +131,16 @@ services:
 
   # Диск, память, CPU хоста (алерты HostDiskSpaceLow, HostMemoryLow). На хосте приложения в проде — свой
   # node-exporter на каждом сервере (systemd или контейнер с тем же набором флагов).
+  # textfile — метрики бэкапа Postgres из тома backup-metrics (deploy/backup: walg.prom — копии, archiver.prom —
+  # архив WAL; алерты zafiro-backup.rules.yml, аудит OPS-1). В проде — node-exporter хоста БД с тем же каталогом.
   node-exporter:
     <<: *hardening
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 128m
+          pids: 256
     image: ${OBS_NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0}
     pid: host
     command:
@@ -116,10 +148,14 @@ services:
       - --path.sysfs=/host/sys
       - --path.rootfs=/rootfs
       - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+)($$|/)
+      - --collector.textfile.directory=/var/lib/walg-metrics
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+      # Тот же именованный том, что у сайдкара backup (compose.backup.yml); без оверлея бэкапа — пустой, и алерт
+      # ZafiroBackupMetricsMissing напоминает, что копий нет.
+      - backup-metrics:/var/lib/walg-metrics:ro
 
 secrets:
   grafana_admin_password:
@@ -129,3 +165,4 @@ volumes:
   prometheus-data:
   alertmanager-data:
   grafana-data:
+  backup-metrics:

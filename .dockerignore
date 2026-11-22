@@ -9,6 +9,10 @@
 !tools/
 tools/*
 !tools/versions.env
+# Служебные бинарники образа (zafiro-migrate, zafiro-healthcheck) — только модуль deploy/ops, без остального deploy/.
+!deploy/
+deploy/*
+!deploy/ops/
 
 # Локальные артефакты внутри разрешённых каталогов
 web/node_modules
