@@ -5,7 +5,10 @@ package db_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -500,5 +503,249 @@ func TestUpstreamTablesPrivileges(t *testing.T) {
 	var n int64
 	if err := d.Platform.QueryRow(ctx, "SELECT count(*) FROM club_photos p JOIN club_photo_images i ON i.photo_id = p.id WHERE p.club_id = $1", clubA).Scan(&n); err != nil || n != 1 {
 		t.Errorf("zafiro_platform фото: %d, %v", n, err)
+	}
+}
+
+// Миграция 0045 (ревью 22.11.2026): снимок счёта пул клуба не подделает, чтение реселлера и счёта — по колонкам,
+// пул платформы не меняет фото клуба, состояние переноса и адрес клуба меняет только платформа, у журнала денег
+// платформы нет индексов чтения.
+func TestReviewGrantsGuards(t *testing.T) {
+	d := dbtest.New(t)
+	ctx := context.Background()
+	clubA, clubB := d.Club(t, "rv-a"), d.Club(t, "rv-b")
+	one := func(q string, args ...any) int64 {
+		t.Helper()
+		var id int64
+		if err := d.Owner.QueryRow(ctx, q, args...).Scan(&id); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		return id
+	}
+	code := func(err error) string {
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) {
+			return pg.Code
+		}
+		if err != nil {
+			return err.Error()
+		}
+		return ""
+	}
+	// inClub выполняет один запрос пула клуба в транзакции клуба и откатывает её.
+	inClub := func(club int64, q string, args ...any) error {
+		t.Helper()
+		tx, err := d.App.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.club_id', $1, true)", strconv.FormatInt(club, 10)); err != nil {
+			t.Fatal(err)
+		}
+		_, err = tx.Exec(ctx, q, args...)
+		return err
+	}
+	u1 := one("INSERT INTO users (name, phone, password, created_at, updated_at) VALUES ('r1', '+77010000201', 'x', now(), now()) RETURNING id")
+	u2 := one("INSERT INTO users (name, phone, password, created_at, updated_at) VALUES ('r2', '+77010000202', 'x', now(), now()) RETURNING id")
+	plan := one("INSERT INTO saas_plans (slug, name, price_monthly, created_at, updated_at) VALUES ('rv', 'RV', 2500000, now(), now()) RETURNING id")
+	off := one("INSERT INTO saas_plans (slug, name, price_monthly, is_active, created_at, updated_at) VALUES ('rv-off', 'RV off', 2500000, false, now(), now()) RETURNING id")
+	// Клуб A — у действующего реселлера r1 (12,35 %, скидка 10 %) и со своей скидкой 15 %; r2 — чужой реселлер.
+	r1 := one("INSERT INTO resellers (user_id, code, name, commission_bp, discount_percent, created_at, updated_at) VALUES ($1, 'rv-one', 'One', 1235, 10, now(), now()) RETURNING id", u1)
+	r2 := one("INSERT INTO resellers (user_id, code, name, commission_bp, discount_percent, created_at, updated_at) VALUES ($1, 'rv-two', 'Two', 5000, 90, now(), now()) RETURNING id", u2)
+	one("UPDATE clubs SET reseller_id = $1, reseller_attached_at = now() WHERE id = $2 RETURNING id", r1, clubA)
+	one("INSERT INTO club_subscriptions (club_id, saas_plan_id, status, started_at, discount_percent) VALUES ($1, $2, 'active', now(), 15) RETURNING id", clubA, plan)
+
+	// --- Счёт: снимок реселлера, цены и скидки ---
+	insert := `INSERT INTO subscription_invoices (club_id, saas_plan_id, months, computers, price_per_computer, discount_percent, amount,
+		reseller_id, reseller_bp, status, created_by, created_at, updated_at) VALUES ($1, $2, 1, 12, $3, $4, 25500000, $5, $6, 'pending', $7, now(), now())`
+	type invoice struct {
+		club, plan, price int64
+		discount          int
+		reseller, bp      any
+	}
+	good := invoice{clubA, plan, 2500000, 15, r1, 1235}
+	args := func(i invoice) []any { return []any{i.club, i.plan, i.price, i.discount, i.reseller, i.bp, u1} }
+	if err := inClub(clubA, insert, args(good)...); err != nil {
+		t.Errorf("zafiro_app выставил счёт со снимком своего клуба: %v", err)
+	}
+	for name, change := range map[string]func(*invoice){
+		"чужой реселлер":                        func(i *invoice) { i.reseller, i.bp = r2, 5000 },
+		"без реселлера при действующем":         func(i *invoice) { i.reseller, i.bp = nil, nil },
+		"свой реселлер без процента":            func(i *invoice) { i.bp = nil },
+		"заниженный процент реселлера":          func(i *invoice) { i.bp = 0 },
+		"завышенный процент реселлера":          func(i *invoice) { i.bp = 10000 },
+		"скидка больше скидок клуба":            func(i *invoice) { i.discount = 16 },
+		"скидка 100 %":                          func(i *invoice) { i.discount = 100 },
+		"цена не тарифа":                        func(i *invoice) { i.price = 100 },
+		"выключенный тариф":                     func(i *invoice) { i.plan = off },
+		"несуществующий тариф":                  func(i *invoice) { i.plan = 0 },
+		"клуб B с реселлером клуба A":           func(i *invoice) { i.club, i.discount = clubB, 0 },
+		"клуб B со скидкой, которой у него нет": func(i *invoice) { i.club, i.discount, i.reseller, i.bp = clubB, 10, nil, nil },
+	} {
+		i := good
+		change(&i)
+		if err := inClub(i.club, insert, args(i)...); code(err) != "42501" {
+			t.Errorf("zafiro_app, счёт — %s: %v, want 42501", name, err)
+		}
+	}
+	// Меньшая скидка — можно (скидка клуба могла истечь: срок считает сервер по поясу клуба).
+	smaller := good
+	smaller.discount = 10
+	if err := inClub(clubA, insert, args(smaller)...); err != nil {
+		t.Errorf("zafiro_app, счёт со скидкой реселлера: %v", err)
+	}
+	// Клуб без реселлера и без подписки: счёт без скидки и без реселлера.
+	if err := inClub(clubB, insert, args(invoice{clubB, plan, 2500000, 0, nil, nil})...); err != nil {
+		t.Errorf("zafiro_app, счёт клуба без реселлера: %v", err)
+	}
+	// Остановленный реселлер не даёт ни процента, ни скидки (SubscriptionBilling::discountFor()).
+	one("UPDATE resellers SET is_active = false WHERE id = $1 RETURNING id", r1)
+	if err := inClub(clubA, insert, args(good)...); code(err) != "42501" {
+		t.Errorf("zafiro_app, счёт с остановленным реселлером: %v", err)
+	}
+	if err := inClub(clubA, insert, args(invoice{clubA, plan, 2500000, 15, nil, nil})...); err != nil {
+		t.Errorf("zafiro_app, счёт без остановленного реселлера: %v", err)
+	}
+	one("UPDATE resellers SET is_active = true WHERE id = $1 RETURNING id", r1)
+	// Платформа (перенос, суперадмин) политикой не ограничена.
+	if _, err := d.Platform.Exec(ctx, insert, clubB, off, int64(100), 100, r2, 1, u1); err != nil {
+		t.Errorf("zafiro_platform счёт: %v", err)
+	}
+
+	// --- Чтение по колонкам ---
+	for name, q := range map[string]string{
+		"аккаунт реселлера":           "SELECT user_id FROM resellers",
+		"реселлер целиком":            "SELECT * FROM resellers",
+		"снимок процента в счёте":     "SELECT reseller_bp FROM subscription_invoices",
+		"начисление реселлеру":        "SELECT reseller_amount FROM subscription_invoices",
+		"реселлер счёта":              "SELECT reseller_id FROM subscription_invoices",
+		"кто подтвердил оплату":       "SELECT confirmed_by FROM subscription_invoices",
+		"кто выставил счёт":           "SELECT created_by FROM subscription_invoices",
+		"счёт целиком":                "SELECT * FROM subscription_invoices",
+		"отбор по скрытой колонке":    "SELECT id FROM subscription_invoices WHERE reseller_amount > 0",
+		"возврат скрытого из вставки": insert + " RETURNING reseller_bp",
+	} {
+		var a []any
+		if strings.HasPrefix(q, "INSERT") {
+			a = args(good)
+		}
+		if err := inClub(clubA, q, a...); code(err) != "42501" {
+			t.Errorf("zafiro_app, %s: %v, want 42501", name, err)
+		}
+	}
+	// То, что читают запросы панели клуба: ResellerOfClub, SubscriptionClubReseller, SubscriptionClubInvoices,
+	// SubscriptionInvoiceStatus, SubscriptionHasPendingInvoice, SubscriptionInsertInvoice … RETURNING id.
+	for name, q := range map[string]string{
+		"карточка реселлера": "SELECT r.name, r.code, r.discount_percent, r.is_active FROM clubs c JOIN resellers r ON r.id = c.reseller_id WHERE c.id = $1",
+		"снимок реселлера":   "SELECT r.id, r.commission_bp, r.discount_percent, r.is_active FROM clubs c JOIN resellers r ON r.id = c.reseller_id WHERE c.id = $1",
+		"счета клуба": `SELECT i.id, i.saas_plan_id, p.name, i.months, i.computers, i.price_per_computer, i.discount_percent, i.amount, i.status,
+			i.created_at, i.paid_at, i.period_ends_at FROM subscription_invoices i JOIN saas_plans p ON p.id = i.saas_plan_id WHERE i.club_id = $1 ORDER BY i.id DESC`,
+		"есть неоплаченный": "SELECT EXISTS (SELECT 1 FROM subscription_invoices WHERE club_id = $1 AND status = 'pending')",
+		"отмена своего":     "UPDATE subscription_invoices SET status = 'canceled', updated_at = now() WHERE club_id = $1 AND id = 0 AND status = 'pending'",
+	} {
+		if err := inClub(clubA, q, clubA); err != nil {
+			t.Errorf("zafiro_app, %s: %v", name, err)
+		}
+	}
+	if err := inClub(clubA, insert+" RETURNING id", args(good)...); err != nil {
+		t.Errorf("zafiro_app, счёт с RETURNING id: %v", err)
+	}
+	if _, err := d.Platform.Exec(ctx, "SELECT user_id, commission_bp FROM resellers UNION ALL SELECT confirmed_by, reseller_bp FROM subscription_invoices"); err != nil {
+		t.Errorf("zafiro_platform читает все колонки: %v", err)
+	}
+
+	// --- Фото клуба: пул платформы читает и добавляет, но не меняет и не удаляет ---
+	photo := one("INSERT INTO club_photos (club_id, path, created_at, updated_at) VALUES ($1, 'club-photos/1/rv.png', now(), now()) RETURNING id", clubA)
+	one("INSERT INTO club_photo_images (photo_id, club_id, content_type, data, created_at) VALUES ($1, $2, 'image/png', '\\x89504e47', now()) RETURNING photo_id", photo, clubA)
+	for name, q := range map[string]string{
+		"смена порядка фото": "UPDATE club_photos SET sort_order = 5 WHERE id = $1",
+		"удаление фото":      "DELETE FROM club_photos WHERE id = $1",
+		"подмена байтов":     "UPDATE club_photo_images SET data = '\\x00' WHERE photo_id = $1",
+		"удаление байтов":    "DELETE FROM club_photo_images WHERE photo_id = $1",
+	} {
+		if _, err := d.Platform.Exec(ctx, q, photo); code(err) != "42501" {
+			t.Errorf("zafiro_platform, %s: %v, want 42501", name, err)
+		}
+	}
+	var n int64
+	if err := d.Platform.QueryRow(ctx, "SELECT count(*) FROM club_photos p JOIN club_photo_images i ON i.club_id = p.club_id AND i.photo_id = p.id WHERE p.club_id = $1", clubA).Scan(&n); err != nil || n != 1 {
+		t.Errorf("zafiro_platform читает фото: %d, %v", n, err)
+	}
+	if _, err := d.Platform.Exec(ctx, "INSERT INTO club_photos (club_id, path, created_at, updated_at) VALUES ($1, 'club-photos/1/rv2.png', now(), now())", clubA); err != nil {
+		t.Errorf("zafiro_platform добавляет фото: %v", err)
+	}
+	// Клуб по-прежнему меняет и удаляет свои фото (обложка, удаление — ClubProfileController).
+	if err := inClub(clubA, "UPDATE club_photos SET sort_order = -1 WHERE club_id = $1 AND id = $2", clubA, photo); err != nil {
+		t.Errorf("zafiro_app обложка: %v", err)
+	}
+	if err := inClub(clubA, "DELETE FROM club_photos WHERE club_id = $1 AND id = $2", clubA, photo); err != nil {
+		t.Errorf("zafiro_app удаление фото: %v", err)
+	}
+
+	// --- clubs.migration_state и clubs.slug: только платформа ---
+	imported := one("INSERT INTO clubs (name, slug, migration_state, created_at, updated_at) VALUES ('imp', 'rv-imp', 'imported', now(), now()) RETURNING id")
+	for name, q := range map[string]string{
+		"открыл перенесённый клуб": "UPDATE clubs SET migration_state = 'live' WHERE id = $1",
+		"сменил адрес клуба":       "UPDATE clubs SET slug = 'rv-other' WHERE id = $1",
+	} {
+		if err := inClub(imported, q, imported); code(err) != "42501" {
+			t.Errorf("zafiro_app %s: %v, want 42501", name, err)
+		}
+	}
+	// Запись тех же значений и остальные колонки своего клуба — как раньше.
+	if err := inClub(imported, "UPDATE clubs SET slug = slug, migration_state = migration_state, timezone = 'Asia/Almaty', updated_at = now() WHERE id = $1", imported); err != nil {
+		t.Errorf("zafiro_app настройки своего клуба: %v", err)
+	}
+	if got := one("SELECT count(*) FROM clubs WHERE id = $1 AND migration_state = 'imported' AND slug = 'rv-imp'", imported); got != 1 {
+		t.Error("состояние переноса или адрес клуба изменились после отклонённых запросов пула клуба")
+	}
+	// Открытие клуба (go-live) — инструмент переноса: владелец схемы или SET ROLE zafiro_platform.
+	if _, err := d.Platform.Exec(ctx, "UPDATE clubs SET slug = 'rv-imp2' WHERE id = $1", imported); err != nil {
+		t.Errorf("zafiro_platform адрес клуба: %v", err)
+	}
+	if _, err := d.Platform.Exec(ctx, "UPDATE clubs SET migration_state = 'live' WHERE id = $1", imported); err != nil {
+		t.Errorf("zafiro_platform открытие клуба: %v", err)
+	}
+	again := one("INSERT INTO clubs (name, slug, migration_state, created_at, updated_at) VALUES ('imp', 'rv-imp3', 'imported', now(), now()) RETURNING id")
+	one("UPDATE clubs SET migration_state = 'live', slug = 'rv-imp4' WHERE id = $1 RETURNING id", again)
+	if _, err := d.Platform.Exec(ctx, "UPDATE clubs SET migration_state = 'imported' WHERE id = $1", again); code(err) != "42501" {
+		t.Errorf("live → imported: %v", err)
+	}
+
+	// --- Журнал денег платформы: только первичный ключ и ключ идемпотентности ---
+	if got := one("SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'platform_money_log'"); got != 2 {
+		t.Errorf("platform_money_log: индексов %d, want 2 (первичный ключ и ключ идемпотентности)", got)
+	}
+	if got := one("SELECT count(*) FROM pg_indexes WHERE indexname = 'platform_money_log_idempotency_key_unique'"); got != 1 {
+		t.Error("platform_money_log: нет уникального ключа идемпотентности")
+	}
+
+	// --- Откат и повтор миграции (up → down → up) ---
+	body, err := os.ReadFile(filepath.Join(dbtest.MigrationsDir(), "0045_review_grants_guards.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, down, ok := strings.Cut(string(body), "-- +goose Down")
+	if !ok {
+		t.Fatal("0045: нет секции Down")
+	}
+	_, up, _ = strings.Cut(up, "-- +goose Up")
+	if _, err := d.Owner.Exec(ctx, down); err != nil {
+		t.Fatalf("0045 down: %v", err)
+	}
+	if err := inClub(clubA, "SELECT user_id FROM resellers"); err != nil {
+		t.Errorf("после отката zafiro_app читает resellers целиком: %v", err)
+	}
+	if got := one("SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'platform_money_log'"); got != 6 {
+		t.Errorf("после отката индексов platform_money_log: %d, want 6", got)
+	}
+	if _, err := d.Owner.Exec(ctx, up); err != nil {
+		t.Fatalf("0045 up повторно: %v", err)
+	}
+	if err := inClub(clubA, "SELECT user_id FROM resellers"); code(err) != "42501" {
+		t.Errorf("после повторного наката zafiro_app читает аккаунт реселлера: %v", err)
+	}
+	if err := inClub(clubA, insert, args(invoice{clubA, plan, 2500000, 15, r2, 5000})...); code(err) != "42501" {
+		t.Errorf("после повторного наката счёт с чужим реселлером: %v", err)
 	}
 }

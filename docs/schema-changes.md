@@ -801,3 +801,85 @@ AND reseller_id IS NULL`); счёт выставляется и отменяет
 - Перенос (`migrate-from-mysql`): колонка с той же парой имён — как есть; значение вне 1…99 — ошибка вставки с id строки
   (старая форма такого не записывала). `testdata/schema.sql` пересобран `tools/migrate-from-mysql/dump-schema.sh`
   (демо-данные не менялись). Проверено `up → down → up` (интеграционные тесты).
+
+## 19. Права, политики и индексы после ревью 22.11.2026 (0045) и правила миграций на живой базе
+
+Миграция `0045_review_grants_guards.sql` — замечания полного ревью к 0034–0038. Колонок и таблиц не добавляет.
+
+| Что | Было | Стало | Зачем |
+|---|---|---|---|
+| `subscription_invoices`, политика вставки `app_insert_pending` (пул клуба) | `status = 'pending'` | ещё и: `reseller_id`, `reseller_bp` — действующий реселлер своего клуба и его процент (или оба NULL, если его нет); `price_per_computer` — цена включённого тарифа; `discount_percent` ≤ большей из скидки клуба и скидки реселлера | снимок счёта — деньги платформы: пул клуба не припишет счёт чужому реселлеру и не занизит процент или цену |
+| `resellers`: SELECT пула клуба | все колонки | `id, code, name, commission_bp, discount_percent, is_active` | аккаунт реселлера (`user_id`) клубу не нужен |
+| `subscription_invoices`: SELECT пула клуба | все колонки | `id, club_id, saas_plan_id, months, computers, price_per_computer, discount_percent, amount, status, created_at, paid_at, period_ends_at` | снимок процента, начисление реселлеру, кто выставил и подтвердил — не для клуба |
+| `club_photos`, `club_photo_images`: пул платформы | SELECT, INSERT, UPDATE, DELETE | SELECT, INSERT | каталог и отдача фото только читают |
+| `platform_money_log`: индексы | 4 индекса чтения + PK + ключ идемпотентности | PK + `platform_money_log_idempotency_key_unique` | сервер журнал только пишет; сверка переноса читает его разово (тысячи строк) |
+| `clubs.migration_state`, `clubs.slug` | пул клуба мог менять у своего клуба | только пул платформы и владелец схемы — триггер `clubs_platform_columns_guard` (как `clubs_reseller_guard`, 0034) | клуб не «откроет» себя сам в обход go-live и не сменит адрес |
+
+Что **не** ограничено и почему:
+
+- `amount` и `computers` счёта база не проверяет. Формула суммы живёт в одном месте — `server/internal/subscription`
+  (BR-180), вторая её копия в SQL разошлась бы с первой; число ПК меняет сам клуб. Оплату по сумме подтверждает
+  суперадмин.
+- Срок скидки клуба (`discount_until`) политика не считает — он зависит от часового пояса клуба; проверяется только
+  верхняя граница скидки.
+- `resellers.commission_bp` пулу клуба оставлен: снимок процента в счёт пишет транзакция клуба
+  (`SubscriptionClubReseller`), и политика вставки сверяет его под правами того же пула. В ответы панели клуба процент
+  не попадает (`ResellerOfClub`). Чтобы закрыть и его, снимок должна заполнять база (триггер `SECURITY DEFINER`), а
+  запрос — перестать читать процент; это изменение `server/internal/subscription`, отдельной задачей.
+- Политика сверяет снимок с текущими значениями. Если суперадмин меняет цену тарифа, процент или активность
+  реселлера в те миллисекунды, пока клуб выставляет счёт, вставка отклоняется (42501) — клуб повторяет действие.
+
+**Пересечение броней с интервалом** (`SeatMapBlockedComputers`, `starts_at < до AND ends_at > от`). Индекс
+`(club_id, starts_at)` давал только верхнюю границу, и запрос читал всю историю броней клуба. Выбран индекс по
+`ends_at` — частичный `computer_reservations_club_id_pending_ends_at_index` (миграция 0044; в 0045 второй такой же
+не создаётся). Нижняя граница по `starts_at` («от − максимальная длительность») отклонена: предел длительности есть
+только в формах (1440 минут с кассы, 720 в приложении), CHECK в базе нет, перенесённые из MySQL брони его не
+проходили — более длинная бронь молча перестала бы блокировать ПК. Замер (`EXPLAIN (ANALYZE, BUFFERS)`, клуб с
+50 тыс. прошедших броней и 20 будущими, тест `TestReservationOverlapSkipsHistory`):
+
+| | Индекс | Отброшено фильтром | Буферов | Время |
+|---|---|---|---|---|
+| до | `computer_reservations_club_computer_fk` (все строки клуба) | 50 017 | 809 | 4,6 мс |
+| после | `computer_reservations_club_id_pending_ends_at_index` | 18 | 3 | 0,04 мс |
+
+### 19.1. Правила миграций на живой базе
+
+Действуют с открытия первого клуба в zafirogo (go-live); 0037 и более ранние их не соблюдали — они применены на dev
+и staging и не переписываются.
+
+1. **Новое значение в CHECK** (`ledger_transactions_kind_check` и подобные) — не `DROP CONSTRAINT` + `ADD CONSTRAINT`
+   одной командой: так таблица перечитывается целиком под `ACCESS EXCLUSIVE`, и запись в журнал стоит. Вместо этого:
+
+   ```sql
+   ALTER TABLE ledger_transactions ADD CONSTRAINT ledger_transactions_kind_check_v2 CHECK (kind IN (…)) NOT VALID;
+   ALTER TABLE ledger_transactions VALIDATE CONSTRAINT ledger_transactions_kind_check_v2;  -- SHARE UPDATE EXCLUSIVE, запись идёт
+   ALTER TABLE ledger_transactions DROP CONSTRAINT ledger_transactions_kind_check;
+   ALTER TABLE ledger_transactions RENAME CONSTRAINT ledger_transactions_kind_check_v2 TO ledger_transactions_kind_check;
+   ```
+
+   У партиционированной таблицы то же самое: ограничение добавляется на родителя, проверка идёт по партициям.
+2. **Индекс на таблице с данными клубов** — `CREATE INDEX CONCURRENTLY` (и `DROP INDEX CONCURRENTLY`) в отдельном
+   файле миграции с пометкой `-- +goose NO TRANSACTION` в первой строке: `CONCURRENTLY` в транзакции не работает.
+   В таком файле — только эта команда и `IF NOT EXISTS` (прерванное построение оставляет индекс `INVALID`: его
+   удаляют и строят заново). На партиционированной таблице: `CREATE INDEX … ON ONLY родитель`, затем
+   `CONCURRENTLY` на каждой партиции и `ALTER INDEX … ATTACH PARTITION`. Тестовая база (`dbtest.Migrate`) выполняет
+   файл одной командой — для файла с `NO TRANSACTION` её нужно научить выполнять команды по одной.
+3. Небольшие платформенные таблицы (`saas_plans`, `resellers`, `platform_money_log`) — как раньше, в транзакции.
+
+### 19.2. Номера миграций
+
+Номера идут не подряд: 0008, 0015, 0017, 0020, 0021, 0023 и **0042** пропущены. 0042 был зарезервирован под
+`0042_club_shell_theme.sql` и не понадобился (тема оболочки — ключ `clubs.settings`, решение UT-1,
+`docs/open-questions/upstream2-themes.md`). Пропущенные номера **не занимать**: на базе, где уже применены более
+поздние версии, goose останавливается на такой миграции с ошибкой «missing migrations» (без `-allow-missing`).
+Новая миграция — всегда следующий номер после последнего файла.
+
+## 0044_review_bookings (ревью 22.11.2026)
+
+- `session_purchases.source`: добавлено значение `booking` — часть сессии от оплаченной брони из приложения (не влияет
+  на зоны пересадки, как `package`).
+- Индекс воркера `app-bookings:start`: `computer_reservations_app_pending_starts_at_index` (0040) заменён на
+  `computer_reservations_app_pending_ends_at_index (ends_at, id)` с тем же предикатом — история неявок не читается.
+- `computer_reservations_club_id_pending_ends_at_index (club_id, ends_at) WHERE cancelled_at IS NULL AND arrived_at IS NULL` —
+  пересечение ожидающих броней клуба с интервалом (`AppBookingBookedComputerIDs`, `SeatMapBlockedComputers`).
+- Замеры и обоснование — в комментарии миграции; решения — `docs/DECISIONS.md` («ревью 22.11.2026»).

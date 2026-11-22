@@ -34,6 +34,8 @@ WHERE club_id = sqlc.arg(club_id) AND id = sqlc.arg(id);
 -- name: SeatMapBlockedComputers :many
 -- ПК с чужой ожидающей бронью, пересекающей остаток сессии: то же условие, что GetBlockingReservation
 -- (ComputerReservations::blocking()), для всех ПК клуба одним запросом (в Laravel — запрос на каждый свободный ПК).
+-- Историю броней клуба не читает: «ends_at > начало» — по частичному индексу ожидающих броней (club_id, ends_at)
+-- computer_reservations_club_id_pending_ends_at_index (0044); условие «ожидающая» записано так же, как в индексе.
 SELECT DISTINCT club_computer_id
 FROM computer_reservations
 WHERE club_id = sqlc.arg(club_id)

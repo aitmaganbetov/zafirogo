@@ -69,6 +69,8 @@ type SeatMapBlockedComputersParams struct {
 
 // ПК с чужой ожидающей бронью, пересекающей остаток сессии: то же условие, что GetBlockingReservation
 // (ComputerReservations::blocking()), для всех ПК клуба одним запросом (в Laravel — запрос на каждый свободный ПК).
+// Историю броней клуба не читает: «ends_at > начало» — по частичному индексу ожидающих броней (club_id, ends_at)
+// computer_reservations_club_id_pending_ends_at_index (0044); условие «ожидающая» записано так же, как в индексе.
 func (q *Queries) SeatMapBlockedComputers(ctx context.Context, arg SeatMapBlockedComputersParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, seatMapBlockedComputers,
 		arg.ClubID,
