@@ -116,7 +116,7 @@ func rememberRule(text, field, rule, param string) {
 		key = k
 	}
 	params := map[string]string{"attribute": strings.ReplaceAll(field, "_", " "), "decimal": "0-2"}
-	for _, p := range []string{"min", "max", "value", "date"} {
+	for _, p := range []string{"min", "max", "value", "date", "format"} {
 		params[p] = param
 	}
 	ruleMsgs.LoadOrStore(text, Msg{Key: "validation." + key, Params: params, attribute: field})

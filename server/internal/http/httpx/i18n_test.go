@@ -62,3 +62,16 @@ func TestLocalizedErrors(t *testing.T) {
 		t.Fatalf("none: %q", *none.Message)
 	}
 }
+
+// date_format: в тексте подставляется :format (как Laravel 'date_format:Y-m-d' → «… формату Y-m-d.»), и на языке
+// клуба тоже — раньше ответ 422 содержал неподставленный «:format» (аудит 22.11.2026).
+func TestDateFormatRuleSubstitutesFormat(t *testing.T) {
+	if got := RuleMessage("date", "date_format", "Y-m-d"); got != "The date field must match the format Y-m-d." {
+		t.Fatalf("en: %q", got)
+	}
+	ru := fakeCatalog{"validation.date_format": "Поле «:attribute» должно соответствовать формату :format."}
+	r := RuleErrorWith("date", "date_format", "Y-m-d").localized(context.Background(), ru, "ru").Body.(apicommon.ValidationError)
+	if r.Message != "Поле «date» должно соответствовать формату Y-m-d." {
+		t.Fatalf("ru: %q", r.Message)
+	}
+}

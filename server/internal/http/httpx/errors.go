@@ -226,6 +226,7 @@ var ruleTemplates = map[string]string{
 	"boolean":        "The :attribute field must be true or false.",
 	"date":           "The :attribute field must be a valid date.",
 	"after_or_equal": "The :attribute field must be a date after or equal to :date.",
+	"date_format":    "The :attribute field must match the format :format.",
 }
 
 // ruleParams — значения :min/:max/:value правил форм старого кода (FormRequest rules()). Разделы с другими
@@ -275,7 +276,7 @@ func RuleMessage(field, rule, param string) string {
 	}
 	msg := strings.ReplaceAll(tpl, ":attribute", strings.ReplaceAll(field, "_", " "))
 	msg = strings.ReplaceAll(msg, ":decimal", "0-2") // replaceDecimal(): 'decimal:0,2' → "0-2"
-	for _, k := range []string{":min", ":max", ":value", ":date"} {
+	for _, k := range []string{":min", ":max", ":value", ":date", ":format"} {
 		msg = strings.ReplaceAll(msg, k, param)
 	}
 	rememberRule(msg, field, key, param)

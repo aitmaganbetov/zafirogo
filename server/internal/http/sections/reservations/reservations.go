@@ -139,7 +139,7 @@ func validateCommon(ctx context.Context, q *store.Queries, info club.Info, fe *h
 	if startsAt == "" {
 		fe.Rule("starts_at", "required", "")
 	} else if t, err := time.ParseInLocation(localLayout, startsAt, info.Loc); err != nil {
-		fe.Rule("starts_at", "date_format", "")
+		fe.Rule("starts_at", "date_format", `Y-m-d\TH:i`)
 	} else {
 		f.startsAt = t
 	}

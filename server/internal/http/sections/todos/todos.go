@@ -133,7 +133,7 @@ func (h *handlers) CreateTodo(ctx context.Context, req todosapi.CreateTodoReques
 		if req.Body.DueOn == "" {
 			fe.Rule("due_on", "required", "")
 		} else if d, ok := info.ParseDay(req.Body.DueOn); !ok {
-			fe.Rule("due_on", "date_format", "")
+			fe.Rule("due_on", "date_format", "Y-m-d")
 		} else if d.Before(info.StartOfDay(now)) {
 			fe.Add("due_on", msgPastDay)
 		} else {

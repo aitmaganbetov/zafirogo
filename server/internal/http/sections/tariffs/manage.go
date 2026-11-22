@@ -339,7 +339,7 @@ func validatePeriods(fe *httpx.FormErrors, field string, periods []tariffsapi.We
 			if v == "" {
 				fe.Rule(base+name, "required", "")
 			} else if !timeRe.MatchString(v) {
-				fe.Rule(base+name, "date_format", "")
+				fe.Rule(base+name, "date_format", "H:i")
 			}
 		}
 		day("start_day", p.StartDay)
