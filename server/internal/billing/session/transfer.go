@@ -41,7 +41,7 @@ type ZonePurchase struct {
 // AllowedZones — зоны, куда можно пересесть; nil — любая зона. levelZoneIDs — зоны клуба с уровнем не выше
 // уровня текущей зоны клиента (store.ListLevelZoneIDs); у текущей зоны нет уровня — пусто.
 //
-// Laravel: app/Services/SeatTransfers.php allowedZoneIds() (стр. 136–157), BR-035, BR-196:
+// Laravel: app/Services/SeatTransfers.php allowedZoneIds() (стр. 137–157), BR-035, BR-196:
 // последняя по id запись журнала tariff.purchased|time.purchased этой сессии; поминутное время —
 // только своя зона; тариф не найден или без зон — любая; иначе зоны тарифа ∪ зоны уровня
 // (array_values(array_unique([...зоны тарифа, ...зоны уровня])), Zafiro 79d014f, 55e3878).
@@ -116,7 +116,7 @@ type Transfer struct {
 
 // PlanTransfer — пересадка клиента userID с ПК from на target.
 //
-// Laravel: app/Services/SeatTransfers.php transfer() (стр. 83–120), ensureOwnSession() (122–127).
+// Laravel: app/Services/SeatTransfers.php transfer() (стр. 84–121), ensureOwnSession() (123–128).
 // Порядок проверок как в старом коде: тот же/несуществующий ПК → своя оплаченная сессия на исходном →
 // свободен ли целевой и подходит ли зона. target == nil — ПК не найден в клубе.
 func PlanTransfer(from Computer, target *Computer, userID int64, zones []int64, targetBlockedByBooking bool, now time.Time) (Transfer, error) {

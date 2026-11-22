@@ -797,9 +797,22 @@ func (q *Queries) SuperadminComputerCount(ctx context.Context) (int64, error) {
 }
 
 const superadminCountActivityLogs = `-- name: SuperadminCountActivityLogs :one
-SELECT count(*)::bigint FROM activity_logs
-WHERE ($1::bigint IS NULL OR club_id = $1::bigint)
-  AND ($2::text = '' OR event = $2::text)
+WITH capped AS (
+    SELECT count(*)::bigint AS n FROM (
+        SELECT 1 FROM activity_logs
+        WHERE ($1::bigint IS NULL OR club_id = $1::bigint)
+          AND ($2::text = '' OR event = $2::text)
+        LIMIT 100001
+    ) t
+)
+SELECT (CASE
+    WHEN capped.n <= 100000 OR $1::bigint IS NOT NULL OR $2::text <> '' THEN capped.n
+    ELSE greatest(capped.n, (
+        SELECT COALESCE(sum(greatest(c.reltuples, 0)), 0)::bigint
+        FROM pg_catalog.pg_inherits i JOIN pg_catalog.pg_class c ON c.oid = i.inhrelid
+        WHERE i.inhparent = 'activity_logs'::regclass))
+END)::bigint AS total
+FROM capped
 `
 
 type SuperadminCountActivityLogsParams struct {
@@ -807,11 +820,13 @@ type SuperadminCountActivityLogsParams struct {
 	Event  string `json:"event"`
 }
 
+// Аудит PERF-6: как SuperadminCountPlatformLogs; activity_logs партиционирована по месяцам — оценка без фильтров
+// суммирует reltuples партиций (статистику партиций ведёт autovacuum, у родителя её нет).
 func (q *Queries) SuperadminCountActivityLogs(ctx context.Context, arg SuperadminCountActivityLogsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, superadminCountActivityLogs, arg.ClubID, arg.Event)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
+	var total int64
+	err := row.Scan(&total)
+	return total, err
 }
 
 const superadminCountClubMembers = `-- name: SuperadminCountClubMembers :one
@@ -866,9 +881,19 @@ func (q *Queries) SuperadminCountPlatformEventSince(ctx context.Context, arg Sup
 }
 
 const superadminCountPlatformLogs = `-- name: SuperadminCountPlatformLogs :one
-SELECT count(*)::bigint FROM platform_logs
-WHERE ($1::bigint IS NULL OR club_id = $1::bigint)
-  AND ($2::text = '' OR event = $2::text)
+WITH capped AS (
+    SELECT count(*)::bigint AS n FROM (
+        SELECT 1 FROM platform_logs
+        WHERE ($1::bigint IS NULL OR club_id = $1::bigint)
+          AND ($2::text = '' OR event = $2::text)
+        LIMIT 100001
+    ) t
+)
+SELECT (CASE
+    WHEN capped.n <= 100000 OR $1::bigint IS NOT NULL OR $2::text <> '' THEN capped.n
+    ELSE greatest(capped.n, (SELECT c.reltuples::bigint FROM pg_catalog.pg_class c WHERE c.oid = 'platform_logs'::regclass))
+END)::bigint AS total
+FROM capped
 `
 
 type SuperadminCountPlatformLogsParams struct {
@@ -876,11 +901,14 @@ type SuperadminCountPlatformLogsParams struct {
 	Event  string `json:"event"`
 }
 
+// Аудит PERF-6 (docs/DECISIONS.md, аудит 22.11.2026): точный счёт до 100 000 строк (LIMIT во вложенном запросе —
+// не дальше 100 001 строки по индексу); больше — без фильтров оценка по статистике таблицы (pg_class.reltuples,
+// не меньше 100 001), с фильтром — 100 001. Раньше count(*) по всей таблице на каждой странице журнала.
 func (q *Queries) SuperadminCountPlatformLogs(ctx context.Context, arg SuperadminCountPlatformLogsParams) (int64, error) {
 	row := q.db.QueryRow(ctx, superadminCountPlatformLogs, arg.ClubID, arg.Event)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
+	var total int64
+	err := row.Scan(&total)
+	return total, err
 }
 
 const superadminCountPlatformNews = `-- name: SuperadminCountPlatformNews :one

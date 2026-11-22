@@ -59,3 +59,48 @@ describe('экран «Сервер»: сверка балансов с журн
     expect(screen.getByText(LABEL).nextElementSibling).toHaveTextContent('Расхождений: 1');
   });
 });
+
+/*
+ * Аудит CODE-3: журнал ошибок, не подключённый к экрану (log_errors: null), не выдаётся за «ошибок нет»; сроки
+ * сертификатов — как в Blade: дни (меньше 14 — красным), «Не удалось проверить», «Ещё не проверялся».
+ */
+describe('экран «Сервер»: журнал ошибок и сертификаты', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    session.clear();
+  });
+
+  const show = async (patch: Partial<typeof dashboardFixture>) => {
+    signIn('', [], { user: { id: 1, name: 'Супер Админ', phone: '+77010000001', is_superadmin: true }, club: null } as never);
+    mockApi({ 'GET /api/superadmin/dashboard': { ...dashboardFixture, ...patch } });
+    renderPage(<DashboardPage search={{}} />);
+    await screen.findByText('Последний бэкап');
+  };
+
+  it('журнал не подключён — честная надпись, а не «ошибок нет»', async () => {
+    await show({ log_errors: null });
+    expect(screen.getByText(/Журнал ошибок к этому экрану не подключён/)).toBeInTheDocument();
+    expect(screen.queryByText('Ошибок в логе нет.')).toBeNull();
+  });
+
+  it('журнал подключён и пуст — «Ошибок в логе нет.»', async () => {
+    await show({ log_errors: [] });
+    expect(screen.getByText('Ошибок в логе нет.')).toBeInTheDocument();
+  });
+
+  it('сроки сертификатов', async () => {
+    await show({
+      certificate_hosts: [
+        { host: 'zafiro.kz', days: 40, checked: true },
+        { host: 'admin.zafiro.kz', days: 3, checked: true },
+        { host: 'wiki.zafiro.kz', days: null, checked: true },
+        { host: 'new.zafiro.kz', days: null, checked: false },
+      ],
+    });
+    const value = (host: string) => screen.getByText(`SSL ${host}`).nextElementSibling;
+    expect(value('zafiro.kz')).not.toHaveClass('text-red-600');
+    expect(value('admin.zafiro.kz')).toHaveClass('text-red-600');
+    expect(value('wiki.zafiro.kz')).toHaveTextContent('Не удалось проверить');
+    expect(value('new.zafiro.kz')).toHaveTextContent('Ещё не проверялся');
+  });
+});

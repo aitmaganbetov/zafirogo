@@ -72,7 +72,7 @@ type Extension struct {
 
 // Extend — конец сессии после покупки minutes минут.
 //
-// Laravel: app/Services/AgentTariffPurchaseService.php sell() (стр. 271–273):
+// Laravel: app/Services/AgentTariffPurchaseService.php sell() (стр. 283–285):
 //
 //	$hasActiveSession = $computer->hasPaidSession();
 //	$sessionId = $hasActiveSession ? $computer->current_session_id : (string) Str::uuid();

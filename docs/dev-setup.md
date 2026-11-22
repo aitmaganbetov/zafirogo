@@ -64,8 +64,8 @@ NATS и gRPC. Нужен для смоук-теста собранного би�
 
 | Переменная | По умолчанию | Назначение |
 |---|---|---|
-| `ZAFIRO_ENV` | `dev` | dev / test / prod (prod требует все секреты и файлы PKI) |
-| `ZAFIRO_SHUTDOWN_TIMEOUT` | `30s` | бюджет graceful shutdown: readyz 503 → Drain агентов → gRPC/HTTP → воркеры → подключения |
+| `ZAFIRO_ENV` | `dev` | dev / test / prod (prod требует все секреты и файлы PKI). Не задан явно (ни переменной, ни `env` в файле), а `database.url` указывает не на localhost/loopback/unix-сокет — сервер не стартует (аудит OPS-18: бинарник вне образа не должен молча работать в dev со случайными ключами) |
+| `ZAFIRO_SHUTDOWN_TIMEOUT` | `30s` | бюджет graceful shutdown: readyz 503 → Drain агентов → gRPC/HTTP (не больше ⅔ бюджета, затем незавершённые запросы обрываются — аудит OPS-16) → воркеры → подключения |
 | `ZAFIRO_HTTP_ADDR` | `:8080` | адрес HTTP |
 | `ZAFIRO_HTTP_READ_HEADER_TIMEOUT` | `5s` | также `_READ_TIMEOUT` 30s, `_WRITE_TIMEOUT` 60s, `_IDLE_TIMEOUT` 120s |
 | `ZAFIRO_HTTP_REQUEST_TIMEOUT` | `30s` | дедлайн контекста обработчика (кроме `/ws`) |
@@ -74,7 +74,10 @@ NATS и gRPC. Нужен для смоук-теста собранного би�
 | `ZAFIRO_HTTP_PUBLIC_URL` | пусто | адрес сайта (`https://zafiro.kz`, без пути) для ссылок вне ответа на запрос: оповещения Telegram (без `superadmin.domain`), `og:image`, адрес входа реселлеров; пусто — оповещения без ссылки, из заголовка `Host` адрес не берётся |
 | `ZAFIRO_DATABASE_URL` \* | пусто | DSN логина ∈ `zafiro_app`; пусто — режим без зависимостей |
 | `ZAFIRO_DATABASE_PLATFORM_URL` \* | пусто | DSN логина ∈ `zafiro_platform`; обязателен вместе с `DATABASE_URL` |
-| `ZAFIRO_VALKEY_ADDR`, `ZAFIRO_VALKEY_PASSWORD` \* | `localhost:6379` | Valkey: сессии, лимиты, присутствие ПК |
+| `ZAFIRO_DATABASE_LOCK_POOL_MAX_CONNS` | `16` | отдельный пул (логин `PLATFORM_URL`) для advisory lock лидерства фоновых задач — см. «Пулы Postgres» ниже |
+| `ZAFIRO_VALKEY_ADDR`, `ZAFIRO_VALKEY_PASSWORD` \* | `localhost:6379` | Valkey: сессии, лимиты, присутствие ПК; в prod пароль обязателен |
+| `ZAFIRO_VALKEY_USERNAME` | пусто | пользователь ACL Valkey (`AUTH <user> <пароль>`); пусто — `default` |
+| `ZAFIRO_VALKEY_TLS`, `_TLS_CA_FILE`, `_TLS_SERVER_NAME` | `false`, пусто, пусто | TLS до Valkey (управляемый сервис, общая сеть): CA в PEM (пусто — системные корневые), имя в сертификате (пусто — хост из `ADDR`) |
 | `ZAFIRO_NATS_URL` \* | `nats://localhost:4222` | NATS JetStream: события, команды агентам |
 | `ZAFIRO_LOG_LEVEL` / `ZAFIRO_LOG_FORMAT` | `info` / `json` | debug…error / json, text |
 | `ZAFIRO_AUTH_SIGNING_KEYS` \* | dev: случайный | `kid:секрет[,kid2:секрет2]`, секрет ≥ 32 байт; первый подписывает |
@@ -95,6 +98,7 @@ NATS и gRPC. Нужен для смоук-теста собранного би�
 | `ZAFIRO_AGENT_GUEST_TOKEN_TTL`, `_IDEMPOTENCY_TTL`, `_QR_BASE_URL`, `_PUBLIC_BASE_URL`, `_QR_POLL_EVERY` | пакета (12h, 24h, `https://zafiro.kz`, = QR, 3s) | API гостя на ПК |
 | `ZAFIRO_AGENT_SWEEPER_INTERVAL`, `_RECONCILE_EVERY`, `_COMMAND_RETENTION` | `5s`, `5m`, `168h` | офлайн ПК и очистка команд |
 | `ZAFIRO_EVENTS_STREAM_MAX_AGE`, `_DUPLICATES`, `_REPLICAS` | `72h`, `10m`, `1` | поток `zafiro-events` |
+| `ZAFIRO_EVENTS_STREAM_MAX_BYTES` | `1073741824` (1 ГиБ) | предел размера потока в байтах; при заполнении удаляются самые старые события (0 — без предела) — см. «Поток событий» ниже |
 | `ZAFIRO_OUTBOX_BATCH_SIZE`, `_INTERVAL`, `_RETENTION` | `100`, `2s`, `24h` | публикатор outbox |
 | `ZAFIRO_WEBHOOKS_*` | | `REQUIRE_HTTPS` true, `ALLOW_PRIVATE_HOSTS` false, `TIMEOUT` 5s, `CONNECT_TIMEOUT` 3s, `BACKOFF` 10s,60s,300s,1800s,7200s, `DISABLE_AFTER` 20, `WORKERS` 8, `POLL_INTERVAL` 5s |
 | `ZAFIRO_REALTIME_*` | | `MAX_CONNS_PER_USER` 5, `SEND_BUFFER` 64, `PING_INTERVAL` 25s, `PING_TIMEOUT` 10s, `MAX_LIFETIME` 0, `ORIGIN_PATTERNS` |
@@ -106,6 +110,50 @@ NATS и gRPC. Нужен для смоук-теста собранного би�
 
 \* — секрет: тип `config.Secret`, в логах и `fmt` печатается `***` (у DSN виден только хост и база).
 В dev/test незаданные `AUTH_SIGNING_KEYS`, `ENROLL_CODE_PEPPER` и `SECURITY_DATA_KEYS` заменяются случайными до перезапуска (предупреждение в логе).
+
+### Проверки prod (аудит SEC-2, OPS-19)
+
+Ошибка запуска в `ZAFIRO_ENV=prod`: пустой `valkey.password`. Предупреждения при старте (`insecure or unbounded
+configuration`, сервер работает): `sslmode` в DSN не `require`/`verify-ca`/`verify-full` (pgx по умолчанию `prefer` —
+без проверки сертификата и с откатом на открытый канал), нет `pool_max_conns` в DSN, `valkey.tls` выключен, `nats.url`
+без учётных данных, `events.stream.max_bytes` = 0. В изолированной сети (staging: Postgres, Valkey и NATS в одной сети
+compose) предупреждения ожидаемы; в общей сети — `sslmode=verify-full` (+ `sslrootcert`), `ZAFIRO_VALKEY_TLS=true`,
+`tls://` у NATS.
+
+### Пулы Postgres
+
+- Рабочие пулы: `pool_max_conns` в DSN; без него — `max(16, 4 × GOMAXPROCS)`, не больше 256. `GOMAXPROCS` (Go ≥ 1.25)
+  учитывает квоту CPU контейнера (cgroup), в отличие от числа ядер узла (аудит OPS-8).
+- Пул локов лидерства (`database.lock_pool_max_conns`, аудит PERF-1): фоновые задачи (≈ 14) держат advisory lock весь
+  тик на соединении этого пула, а работу тика ведут в пуле `platform_url`. Раньше лок брался из того же пула, и при
+  `pool_max_conns` ≈ числу задач держатели локов занимали все слоты и ждали друг друга без срока (`/readyz` 503).
+  Бюджет соединений Postgres на инстанс: `pool_max_conns(url) + pool_max_conns(platform_url) + lock_pool_max_conns`.
+- TCP соединений с Postgres (аудит OPS-3, клиентская сторона): keepalive 30 с / 10 с × 3 и `TCP_USER_TIMEOUT` 60 с
+  (Linux) — обрыв без FIN/RST сервер приложения замечает примерно за минуту. Чтобы и Postgres снимал лок пропавшего
+  лидера за минуту, а не за ≈ 2 ч, нужны его параметры `tcp_keepalives_*` и `client_connection_check_interval`
+  (`docs/deploy.md`).
+
+### Поток событий (аудит OPS-12, OPS-2)
+
+`events.stream.max_bytes` ограничивает поток `zafiro-events` (Discard old: при заполнении удаляются самые старые
+события, публикация не останавливается). JetStream резервирует `max_bytes` при создании потока — NATS без столько
+свободного места (`max_file_store`, по умолчанию ≈ 75 % свободного диска) поток не создаст и сервер не стартует.
+Расчёт: сообщений в секунду × средний размер (≈ 0,4–0,5 КБ JSON) × `max_age`. Пример: 5 000 ПК ≈ 40 событий/с →
+≈ 1,4 ГБ в сутки, на 72 ч — ≈ 4–5 ГиБ; 50 000 ПК — ≈ 40–50 ГиБ (или меньше `max_age`). При меньшем пределе события старше
+предела раньше `max_age` теряют только отставшие потребители (WebSocket админки перечитывает состояние; потребитель
+вебхуков читает сразу). Диск NATS — с запасом не меньше `max_bytes × replicas`.
+
+Если поток пропал во время работы (NATS поднят пустым, потерян том), публикатор outbox создаёт его заново с теми же
+параметрами при первой неудачной публикации (не чаще раза в 30 с) — перезапуск инстансов не нужен.
+
+### Valkey: TLS, ACL, отказоустойчивость (аудит SEC-2, OPS-6)
+
+Сервер подключается к одному адресу `valkey.addr` — пользователем ACL (`valkey.username`) и по TLS (`valkey.tls`).
+Sentinel и кластер Valkey клиентом не поддерживаются. Отказоустойчивость — средствами адреса: управляемый
+Valkey/Redis с одним адресом основного узла (failover внутри сервиса) или прокси перед парой основной + реплика
+(например HAProxy с проверкой `role:master`). При потере Valkey вход в панель и `/readyz` отвечают 503 до его
+возвращения (переподключение — без перезапуска сервера). Поддержка Sentinel (`valkey.sentinel.*`) — отдельная задача,
+если управляемого сервиса или прокси не будет.
 
 
 ## Генерация кода

@@ -63,7 +63,7 @@ func (s *Service) RecordGuestSessionIncome(ctx context.Context, q *store.Queries
 // сессий занимает ПК (q — её Queries); смену он должен заблокировать первой (LockOpenShift), как
 // GuestSessions::sell() — повторная блокировка здесь ничего не ждёт.
 //
-// Laravel: app/Services/GuestSessions.php sell() (~стр. 36–94): открытая смена FOR UPDATE (нет → «Сначала откройте смену
+// Laravel: app/Services/GuestSessions.php sell() (~стр. 36–107): открытая смена FOR UPDATE (нет → «Сначала откройте смену
 // в кассе.», поле payment_method); приход {user_id = кассир, amount = Σ цен ПК (formatCents), description
 // «Гостевая сессия: :what, ПК :computers (:payment)» — формирует вызывающий}. В X/Z — вид «Гостевые сессии»
 // (income_kind = guest_session вместо журнала cash.income с details.computers, OQ-BR-04); вернуть нельзя.
@@ -125,7 +125,7 @@ func (s *Service) recordGuest(ctx context.Context, q *store.Queries, in GuestSes
 	if in.Computers != "" {
 		details["computers"], details["minutes"], details["tariff"] = in.Computers, in.Minutes, in.Tariff
 	}
-	// Laravel: GuestSessions::sell() (стр. 89–92) — журнал cash.income и computer.guest_session (без предмета)
+	// Laravel: GuestSessions::sell() (стр. 102–104) — журнал cash.income и computer.guest_session (без предмета)
 	// с одними details: amount — строка formatCents, способ оплаты — подписью.
 	tariff := in.Tariff
 	if tariff == "" {

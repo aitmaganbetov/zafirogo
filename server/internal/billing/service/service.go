@@ -109,13 +109,13 @@ func (e *Error) with(params map[string]string) *Error {
 
 // Ошибки старого кода, которых нет в чистых пакетах.
 var (
-	// AgentTariffPurchaseService::sell() (стр. 276–279): время заходит на чужую бронь.
+	// AgentTariffPurchaseService::sell() (стр. 305–308): время заходит на чужую бронь.
 	ErrBookedFrom = &Error{Code: "computer_booked", Field: "computer_id", Message: "ПК забронирован с :time. Выберите тариф короче или другой ПК."}
 	// ClubComputerSessions::end() (стр. 208–210).
 	ErrNoSuchSession = &Error{Code: "no_such_session", Field: "session_id", Message: "На компьютере нет такой активной сессии."}
-	// GuestSessions::sell() (стр. 190–193).
+	// GuestSessions::sell() (стр. 37–40).
 	ErrNoOpenShift = &Error{Code: "no_open_shift", Field: "payment_method", Message: "Сначала откройте смену в кассе."}
-	// GuestSessions::sell() (стр. 219–222).
+	// GuestSessions::sell() (стр. 78–81).
 	ErrGuestBookedFrom = &Error{Code: "guest_computer_booked", Field: "computer_ids", Message: "ПК :computer забронирован с :time."}
 )
 

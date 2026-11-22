@@ -123,6 +123,7 @@ func TestValidate(t *testing.T) {
 
 func TestLogValueRedactsSecrets(t *testing.T) {
 	cfg, err := Load("", environ(
+		"ZAFIRO_ENV=dev",
 		"ZAFIRO_DATABASE_URL=postgres://zafiro:supersecret@db:5432/zafiro",
 		"ZAFIRO_DATABASE_PLATFORM_URL=postgres://platform:platformsecret@db:5432/zafiro",
 		"ZAFIRO_VALKEY_PASSWORD=valkeysecret",
@@ -274,6 +275,7 @@ func TestValidateProd(t *testing.T) {
 		"ZAFIRO_AGENT_PKI_CA_KEY_FILE=/etc/zafiro/ca.key",
 		"ZAFIRO_AGENT_PKI_SERVER_CERT_FILE=/etc/zafiro/server.pem",
 		"ZAFIRO_AGENT_PKI_SERVER_KEY_FILE=/etc/zafiro/server.key",
+		"ZAFIRO_VALKEY_PASSWORD=topsecret-valkey",
 	}
 	cfg, err := Load("", environ(base...))
 	if err != nil {
@@ -315,6 +317,12 @@ func TestValidateProd(t *testing.T) {
 		"fixed now in prod":  append(base, "ZAFIRO_DEV_FIXED_NOW=2026-10-15T12:00:00+05:00"),
 		"disable workers":    append(base, "ZAFIRO_DEV_DISABLE_WORKERS=monitoring-flush"),
 		"totp replay":        append(base, "ZAFIRO_DEV_TOTP_ALLOW_REPLAY=true"),
+		// Аудит SEC-2/OPS-19: Valkey без пароля в prod; TLS без самого TLS; пустой CA-файл.
+		"no valkey password":  drop("ZAFIRO_VALKEY_PASSWORD="),
+		"tls opts w/o tls":    append(base, "ZAFIRO_VALKEY_TLS_SERVER_NAME=valkey.internal"),
+		"missing valkey ca":   append(base, "ZAFIRO_VALKEY_TLS=true", "ZAFIRO_VALKEY_TLS_CA_FILE=/nonexistent/ca.pem"),
+		"tiny stream limit":   append(base, "ZAFIRO_EVENTS_STREAM_MAX_BYTES=1000"),
+		"lock pool too small": append(base, "ZAFIRO_DATABASE_LOCK_POOL_MAX_CONNS=1"),
 	}
 	for name, env := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -572,5 +580,85 @@ func TestHTTPPublicURL(t *testing.T) {
 		if _, err := Load("", environ("ZAFIRO_HTTP_PUBLIC_URL="+bad)); err == nil || !strings.Contains(err.Error(), "http.public_url") {
 			t.Errorf("%s: %v", bad, err)
 		}
+	}
+}
+
+// Аудит OPS-18: без явного env (по умолчанию dev) и с базой не на локальном хосте сервер не стартует; локальная база,
+// режим без базы и явный env — как раньше.
+func TestImplicitDevEnvWithRemoteDatabase(t *testing.T) {
+	remote := []string{
+		"ZAFIRO_DATABASE_URL=postgres://app:topsecret@db.internal:5432/zafiro",
+		"ZAFIRO_DATABASE_PLATFORM_URL=postgres://platform:topsecret@db.internal:5432/zafiro",
+	}
+	_, err := Load("", environ(remote...))
+	if err == nil || !strings.Contains(err.Error(), "ZAFIRO_ENV") || strings.Contains(err.Error(), "topsecret") {
+		t.Fatalf("implicit dev with remote database: %v", err)
+	}
+	for name, env := range map[string][]string{
+		"explicit dev":  append([]string{"ZAFIRO_ENV=dev"}, remote...),
+		"localhost":     {"ZAFIRO_DATABASE_URL=postgres://a:p@localhost:5432/z", "ZAFIRO_DATABASE_PLATFORM_URL=postgres://b:p@127.0.0.1/z"},
+		"ipv6 loopback": {"ZAFIRO_DATABASE_URL=postgres://a:p@[::1]:5432/z", "ZAFIRO_DATABASE_PLATFORM_URL=postgres://b:p@[::1]/z"},
+		"unix socket":   {"ZAFIRO_DATABASE_URL=postgres:///z?host=/var/run/postgresql", "ZAFIRO_DATABASE_PLATFORM_URL=postgres://b:p@localhost/z"},
+		"standalone":    nil,
+	} {
+		if _, err := Load("", environ(env...)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "zafiro.yaml")
+	if err := os.WriteFile(path, []byte("env: test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path, environ(remote...)); err != nil {
+		t.Errorf("env from file: %v", err)
+	}
+	for _, dsn := range []string{"postgres://a:p@localhost,db.internal/z", "postgres://a:p@10.0.0.5/z"} {
+		if localPostgres(dsn) {
+			t.Errorf("%s: must not be local", dsn)
+		}
+	}
+}
+
+// Аудит OPS-19/SEC-2: допустимые, но небезопасные настройки prod — предупреждения (staging: sslmode=disable в
+// изолированной сети); dev — без предупреждений.
+func TestProdWarnings(t *testing.T) {
+	cfg := &Config{Env: "prod",
+		Database: Database{URL: "postgres://a:p@db/z?sslmode=disable", PlatformURL: "postgres://b:p@db/z?sslmode=verify-full&pool_max_conns=8"},
+		NATS:     NATS{URL: "nats://nats:4222"}, Events: Events{Stream: EventsStream{MaxBytes: 0}}}
+	got := strings.Join(cfg.Warnings(), "\n")
+	for _, want := range []string{"database.url: sslmode disable", "database.url: pool_max_conns", "valkey.tls", "nats.url", "events.stream.max_bytes"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("warning %q missing in:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{"database.platform_url", "p@"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("unexpected %q in:\n%s", unwanted, got)
+		}
+	}
+	cfg.Env = "dev"
+	if w := cfg.Warnings(); len(w) != 0 {
+		t.Errorf("dev warnings: %v", w)
+	}
+	if postgresSSLMode("host=db sslmode=verify-ca") != "verify-ca" || postgresSSLMode("postgres://db/z") != "" {
+		t.Error("postgresSSLMode")
+	}
+}
+
+// Аудит SEC-2/OPS-6: TLS Valkey — CA из файла, имя сервера из addr или tls_server_name.
+func TestValkeyTLSConfig(t *testing.T) {
+	if c, err := (Valkey{Addr: "v:6379"}).TLSConfig(); c != nil || err != nil {
+		t.Fatalf("tls off: %v %v", c, err)
+	}
+	c, err := (Valkey{Addr: "valkey.internal:6380", TLS: true}).TLSConfig()
+	if err != nil || c.ServerName != "valkey.internal" || c.RootCAs != nil || c.MinVersion < 0x0303 {
+		t.Fatalf("system roots: %+v %v", c, err)
+	}
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(path, []byte("not a pem"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (Valkey{Addr: "v:6379", TLS: true, TLSCAFile: path}).TLSConfig(); err == nil {
+		t.Fatal("bad CA file must fail")
 	}
 }

@@ -172,7 +172,7 @@ func tiynFromDecimal(s string) (money.Tiyn, error) {
 }
 
 // parseMySQLTime разбирает строку DATETIME/TIMESTAMP MySQL («2026-10-13 04:00:00[.ffffff]») в поясе loc.
-// Laravel пишет время строкой в config('app.timezone') (в старом проекте — UTC, config/app.php ~74);
+// Laravel пишет время строкой в config('app.timezone') (в старом проекте — UTC, config/app.php ~77);
 // TIMESTAMP MySQL при чтении в той же сессии возвращает ту же строку, поэтому пояс сессии не меняем.
 func parseMySQLTime(s string, loc *time.Location) (time.Time, error) {
 	if strings.HasPrefix(s, "0000-00-00") {

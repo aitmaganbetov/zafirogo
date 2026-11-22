@@ -10,6 +10,13 @@
 //   - Hold — постоянный воркер (публикатор outbox): ждать лидерства, держать его, пока работает fn.
 //
 // Пул должен подключаться ролью zafiro_platform (задачи по всем клубам). Advisory lock не зависит от RLS.
+//
+// Соединение с локом держится весь тик, а работа тика часто берёт ещё одно соединение того же рабочего пула
+// (db.InPlatformTx в сервисах). Если локи берутся из рабочего пула, держатели локов могут занять все его слоты
+// и ждать друг друга без срока (аудит PERF-1: pool_max_conns=4 → /readyz 503 через минуту после старта).
+// Поэтому у рабочего пула должен быть отдельный пул локов (UseLockPool, app.connect): соединения с локом берутся
+// из него, а работа тика — из рабочего пула, и цикла ожидания нет. Без регистрации — прежнее поведение
+// (лок в рабочем пуле; так работают тесты пакетов, которым это не важно).
 package leader
 
 import (
@@ -17,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,9 +43,31 @@ type Lock struct {
 // Conn — выделенное соединение, держащее лок. Не использовать после Release.
 func (l *Lock) Conn() *pgxpool.Conn { return l.conn }
 
-// TryAcquire берёт выделенное соединение и пытается взять лок задачи name. Лок занят — (nil, nil).
+// lockPools — рабочий пул → пул локов (UseLockPool).
+var lockPools sync.Map // *pgxpool.Pool → *pgxpool.Pool
+
+// UseLockPool задаёт пул локов: локи задач, которые вызывают TryAcquire/RunOnce/Hold с рабочим пулом work, держатся на соединениях
+// пула locks (тот же логин, свой предел соединений). Возвращает отмену регистрации. Соединение с локом по-прежнему
+// отдаётся fn — запросы на нём не занимают слот рабочего пула.
+func UseLockPool(work, locks *pgxpool.Pool) (undo func()) {
+	lockPools.Store(work, locks)
+	return func() { lockPools.CompareAndDelete(work, locks) }
+}
+
+// LockPoolFor — пул, из которого берутся соединения с локом для рабочего пула work (сам work, если пул локов не задан).
+func LockPoolFor(work *pgxpool.Pool) *pgxpool.Pool {
+	if p, ok := lockPools.Load(work); ok {
+		if locks, ok := p.(*pgxpool.Pool); ok {
+			return locks
+		}
+	}
+	return work
+}
+
+// TryAcquire берёт выделенное соединение (из пула локов, см. UseLockPool) и пытается взять лок задачи name.
+// Лок занят — (nil, nil).
 func TryAcquire(ctx context.Context, pool *pgxpool.Pool, name string) (*Lock, error) {
-	conn, err := pool.Acquire(ctx)
+	conn, err := LockPoolFor(pool).Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("leader: acquire connection: %w", err)
 	}

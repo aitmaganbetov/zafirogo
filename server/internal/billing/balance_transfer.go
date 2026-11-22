@@ -156,7 +156,39 @@ type ConfirmTransferCodeParams struct {
 	Now          time.Time
 	// VerifyCode сравнивает код с transfer_codes.code_hash (bcrypt, Hash::check в старом коде).
 	VerifyCode func(codeHash, code string) bool
-	Actor      BalanceActor
+	// Checked — результат PrecheckTransferCode (проверка хэша до транзакции, аудит PERF-3). Совпал id кода под
+	// блокировкой — VerifyCode внутри транзакции не вызывается; иначе (код сменился, nil) — вызывается как раньше.
+	Checked *TransferCodeCheck
+	Actor   BalanceActor
+}
+
+// TransferCodeCheck — проверенный до транзакции код перевода: id строки transfer_codes и совпал ли хэш.
+type TransferCodeCheck struct {
+	ID    int64
+	Match bool
+}
+
+// PrecheckTransferCode проверяет хэш кода (Argon2id/bcrypt — десятки миллисекунд CPU и семафор хэшера) до
+// транзакции перевода, чтобы не держать на это время соединение и блокировку строки кода (аудит PERF-3). read —
+// короткая транзакция вызывающего (тот же клуб и пользователь): в ней читается последний неистёкший код; сам хэш
+// проверяется после её завершения. nil — проверять нечего (кода нет, попытки исчерпаны, другая дружба или сумма,
+// ошибка чтения): решает ConfirmFriendTransferCode как раньше. Правила не меняются: под блокировкой код, попытки,
+// дружба и сумма проверяются заново, а результат используется, только если id кода тот же.
+func PrecheckTransferCode(ctx context.Context, read func(fn func(q *store.Queries) error) error, p ConfirmTransferCodeParams) *TransferCodeCheck {
+	if p.VerifyCode == nil {
+		return nil
+	}
+	cents := money.ParseTransferAmount(p.AmountInput)
+	var code store.LockLatestTransferCodeRow
+	err := read(func(q *store.Queries) error {
+		var err error
+		code, err = q.LockLatestTransferCode(ctx, store.LockLatestTransferCodeParams{ClubID: p.ClubID, UserID: p.UserID, Now: p.Now})
+		return err
+	})
+	if err != nil || code.Attempts >= TransferCodeMaxAttempts || code.FriendshipID != p.FriendshipID || code.AmountCents != int64(cents) {
+		return nil
+	}
+	return &TransferCodeCheck{ID: code.ID, Match: p.VerifyCode(code.CodeHash, p.Code)}
 }
 
 // ConfirmFriendTransferCode — перевод по коду из Telegram.
@@ -181,7 +213,7 @@ func ConfirmFriendTransferCode(ctx context.Context, q *store.Queries, p ConfirmT
 	if code.Attempts >= TransferCodeMaxAttempts {
 		return FriendTransferResult{}, &BalanceError{Field: "code", Message: msgTransferCodeWrong}
 	}
-	if code.FriendshipID != p.FriendshipID || code.AmountCents != int64(cents) || !p.VerifyCode(code.CodeHash, p.Code) {
+	if code.FriendshipID != p.FriendshipID || code.AmountCents != int64(cents) || !p.codeMatches(code) {
 		return FriendTransferResult{}, &TransferCodeMismatchError{CodeID: code.ID}
 	}
 	res, err := FriendTransfer(ctx, q, FriendTransferParams{
@@ -195,6 +227,14 @@ func ConfirmFriendTransferCode(ctx context.Context, q *store.Queries, p ConfirmT
 		return FriendTransferResult{}, fmt.Errorf("billing: delete transfer codes: %w", err)
 	}
 	return res, nil
+}
+
+// codeMatches — хэш кода совпал: результат PrecheckTransferCode для того же id, иначе VerifyCode.
+func (p ConfirmTransferCodeParams) codeMatches(code store.LockLatestTransferCodeRow) bool {
+	if p.Checked != nil && p.Checked.ID == code.ID {
+		return p.Checked.Match
+	}
+	return p.VerifyCode(code.CodeHash, p.Code)
 }
 
 // RecordTransferCodeAttempt засчитывает неверную попытку кода (attempts + 1) — в своей транзакции,

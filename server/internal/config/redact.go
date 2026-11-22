@@ -57,6 +57,8 @@ func (c *Config) LogValue() slog.Value {
 		slog.String("database_url", RedactURL(c.Database.URL.Reveal())),
 		slog.String("database_platform_url", RedactURL(c.Database.PlatformURL.Reveal())),
 		slog.String("valkey_addr", c.Valkey.Addr),
+		slog.String("valkey_username", c.Valkey.Username),
+		slog.Bool("valkey_tls", c.Valkey.TLS),
 		slog.Any("valkey_password", c.Valkey.Password),
 		slog.String("nats_url", RedactURL(c.NATS.URL.Reveal())),
 		slog.String("log_level", c.Log.Level),

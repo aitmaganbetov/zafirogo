@@ -1730,9 +1730,14 @@ components:
             $ref: '#/components/schemas/TableSize'
         log_errors:
           type: array
+          nullable: true
+          description: Последние ошибки журнала сервера (ErrorLog::recent()). null — журнал ошибок на экран не подключён
+            (экран пишет «не подключено», а не «ошибок нет»; аудит CODE-3).
           items:
             $ref: '#/components/schemas/LogError'
         certificate_hosts:
+          description: Сроки HTTPS-сертификатов доменов платформы (Certificates::hosts()/cached()); проверка — не чаще
+            раза в час, в фоне, экран не ждёт сети (аудит CODE-3).
           type: array
           items:
             $ref: '#/components/schemas/CertificateHost'

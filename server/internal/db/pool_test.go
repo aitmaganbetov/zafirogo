@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// Размер пула по умолчанию — max(16, 4 × CPU), а не умолчание pgx max(4, CPU) (нагрузочный тест O4,
+// Размер пула по умолчанию — max(16, 4 × GOMAXPROCS), а не умолчание pgx max(4, CPU) (нагрузочный тест O4,
 // docs/load-test.md §4); явный pool_max_conns в DSN — как задан.
 func TestParsePoolConfigMaxConns(t *testing.T) {
-	want := int32(max(16, 4*runtime.NumCPU()))
+	want := int32(min(max(16, 4*runtime.GOMAXPROCS(0)), 256))
 	for _, tc := range []struct {
 		name, dsn string
 		want      int32
@@ -30,5 +30,20 @@ func TestParsePoolConfigMaxConns(t *testing.T) {
 	}
 	if DefaultMaxConns() < 16 {
 		t.Fatalf("DefaultMaxConns = %d", DefaultMaxConns())
+	}
+}
+
+// Аудит OPS-8: размер пула следует GOMAXPROCS (квота CPU контейнера), а не числу ядер узла.
+func TestDefaultMaxConnsFollowsGOMAXPROCS(t *testing.T) {
+	prev := runtime.GOMAXPROCS(0)
+	t.Cleanup(func() { runtime.GOMAXPROCS(prev) })
+	for _, tc := range []struct {
+		procs int
+		want  int32
+	}{{1, 16}, {2, 16}, {8, 32}, {33, 132}, {100, 256}} {
+		runtime.GOMAXPROCS(tc.procs)
+		if got := DefaultMaxConns(); got != tc.want {
+			t.Errorf("GOMAXPROCS=%d (NumCPU=%d): DefaultMaxConns = %d, want %d", tc.procs, runtime.NumCPU(), got, tc.want)
+		}
 	}
 }

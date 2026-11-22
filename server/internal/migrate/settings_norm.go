@@ -247,7 +247,7 @@ func formatNumber(f float64) json.RawMessage {
 
 var firstNumber = regexp.MustCompile(`[\d]+(?:[.,][\d]+)?`)
 
-// screenMinutes — SettingsController::minutes() (~416–426; новый сервер — settings/values.go minutes()):
+// screenMinutes — SettingsController::minutes() (~481–491; новый сервер — settings/values.go minutes()):
 // число — как есть; строка — первое число («30 сек» → 30, затем /60, если есть «сек»); прочее — 0.
 func screenMinutes(v json.RawMessage) float64 {
 	var s string

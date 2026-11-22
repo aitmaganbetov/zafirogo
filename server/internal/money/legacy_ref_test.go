@@ -11,7 +11,7 @@ import (
 // (oracle_test.go). Живут в тестовом файле: документируют старое поведение, но в бинарник не попадают.
 
 // LegacyAmountToCents — буквальный перенос AgentTariffPurchaseService::amountToCents()
-// (Laravel: app/Services/AgentTariffPurchaseService.php amountToCents(), стр. 385–390; BR-001):
+// (Laravel: app/Services/AgentTariffPurchaseService.php amountToCents(), стр. 477–482; BR-001):
 //
 //	[$whole, $fraction] = array_pad(explode('.', $amount, 2), 2, '00');
 //	return ((int) $whole * 100) + (int) str_pad(substr($fraction, 0, 2), 2, '0');
@@ -42,7 +42,7 @@ func LegacyAmountToCents(amount string) (int64, error) {
 }
 
 // LegacyFormatCents — буквальный перенос AgentTariffPurchaseService::formatCents()
-// (Laravel: app/Services/AgentTariffPurchaseService.php formatCents(), стр. 392–395):
+// (Laravel: app/Services/AgentTariffPurchaseService.php formatCents(), стр. 484–487):
 // sprintf('%d.%02d', intdiv($cents, 100), $cents % 100). Для отрицательных даёт "0.-50" и "-1.-50" —
 // старый баг (BR-001, §15.1 п. 1). Не используйте в новом коде (там Tiyn.Tenge()); функция — для
 // сверки со старыми ответами. Решение Q-004 (docs/DECISIONS.md).

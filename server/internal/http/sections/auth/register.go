@@ -22,6 +22,7 @@ import (
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth"
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/password"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
@@ -40,6 +41,8 @@ const (
 	msgPhoneTaken       = "Этот номер телефона уже зарегистрирован."
 	msgPasswordMin      = "Пароль должен содержать минимум 6 символов." // #nosec G101 -- текст ошибки, не секрет
 	msgPasswordMismatch = "Пароли не совпадают."                        // #nosec G101 -- текст ошибки, не секрет
+	// msgPasswordCommon — новый текст (аудит SEC-8): пароль владельца или сотрудника из списка самых частых.
+	msgPasswordCommon   = "Этот пароль слишком распространён. Придумайте другой." // #nosec G101 -- текст ошибки, не секрет
 	msgInviteOtherEmail = "Это приглашение предназначено для другого email."
 	msgAlreadyInClub    = "Аккаунт уже состоит в этом клубе."
 	// Записи журнала (ActivityLogger::record): готовый текст на языке клуба (новый клуб — ru).
@@ -108,6 +111,7 @@ func (h *handlers) Register(ctx context.Context, req authapi.RegisterRequestObje
 	}
 	h.validatePhone(ctx, pool, &fe, phone, auth.MsgPhoneRequired, auth.MsgPhoneInvalid, msgPhoneTaken)
 	validatePassword(&fe, pw, str(body.PasswordConfirmation), auth.MsgPasswordRequired, msgPasswordMin, msgPasswordMismatch)
+	rejectCommonPassword(&fe, pw)
 	if err := fe.Err(); err != nil {
 		return nil, err
 	}
@@ -219,6 +223,15 @@ func validatePassword(fe *httpx.FormErrors, pw, confirm, required, minMsg, misma
 	}
 	if pw != confirm {
 		fe.Add("password", mismatch)
+	}
+}
+
+// rejectCommonPassword — пароль владельца (регистрация клуба) или сотрудника (аккаунт по приглашению) из списка самых
+// частых — ошибка поля, если других ошибок у пароля нет (аудит SEC-8; в Laravel такой проверки не было — осознанное
+// отличие, docs/DECISIONS.md «Пароли персонала (аудит 22.11.2026)»).
+func rejectCommonPassword(fe *httpx.FormErrors, pw string) {
+	if !fe.Has("password") && utf8.RuneCountInString(pw) >= minPassword && password.IsCommon(pw) {
+		fe.Add("password", msgPasswordCommon)
 	}
 }
 
@@ -437,6 +450,7 @@ func (h *handlers) invitedAccount(ctx context.Context, pool db.Beginner, body au
 		httpx.RuleMessage("phone", "regex", ""), httpx.RuleMessage("phone", "unique", ""))
 	validatePassword(&fe, pw, str(body.PasswordConfirmation), httpx.RuleMessage("password", "required", ""),
 		httpx.RuleMessage("password", "min_string", "6"), httpx.RuleMessage("password", "confirmed", ""))
+	rejectCommonPassword(&fe, pw)
 	if err := fe.Err(); err != nil {
 		return "", "", "", err
 	}

@@ -49,7 +49,7 @@ var weekDays = map[string]int{"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, 
 //	start <= end: start <= m <= end; иначе (через конец недели): m >= start || m <= end
 //
 // Конец включительно до минуты: «до пн 06:00» действует весь пн 06:00:00–06:00:59.
-// Laravel: app/Support/WeeklyPeriods.php contains() (стр. 17–39) (BR-017, GAP-017).
+// Laravel: app/Support/WeeklyPeriods.php contains() (стр. 19–41) (BR-017, GAP-017).
 func (p WeeklyPeriods) Contains(localNow time.Time) bool {
 	if len(p) == 0 {
 		return true

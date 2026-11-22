@@ -10,6 +10,19 @@ const Z = require('../../src/Zafiro.Agent.UI/Frontend/core.js');
 // Пробелы групп разрядов в Intl — неразрывные (U+00A0 / U+202F): сравниваем без них.
 const plain = (s) => s.replace(/[  ]/g, ' ');
 
+// UI-8 (аудит 22.11.2026): движок без данных CLDR для языка (ICU Chromium/WebView2 и kk) — форматы ru-RU.
+test('formatLocale: язык без данных в Intl → ru-RU, с данными — как есть', () => {
+  const rootIntl = { DateTimeFormat: class { constructor(locale) { this.locale = locale; } format() { return this.locale.startsWith('kk') ? 'M11' : 'November'; } } };
+  assert.equal(Z.formatLocale('kk-KZ', rootIntl), 'ru-RU');
+  assert.equal(Z.formatLocale('en-GB', rootIntl), 'en-GB');
+  const broken = { DateTimeFormat: class { constructor() { throw new RangeError('no locale'); } } };
+  assert.equal(Z.formatLocale('kk-KZ', broken), 'ru-RU');
+  // Node — полный ICU: kk с данными, формат свой (разделители как в ru).
+  assert.equal(Z.formatLocale('kk-KZ'), 'kk-KZ');
+  assert.equal(Z.formatLocale('ru-RU'), 'ru-RU');
+  assert.equal(plain(Z.formatAmount('12345678', 'kk-KZ')), '123 456,78');
+});
+
 test('int64: строки и числа proto JSON → безопасные целые', () => {
   assert.equal(Z.int64('150050'), 150050);
   assert.equal(Z.int64('-25'), -25);

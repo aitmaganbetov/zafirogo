@@ -34,6 +34,26 @@
     return { negative: tiyn < 0, whole: (abs - fraction) / 100, fraction };
   };
 
+  // UI-8 (аудит 22.11.2026): в ICU Chromium (и WebView2) нет данных kk — Intl для 'kk-KZ' отдаёт корневой формат
+  // («2026 M11 4 12:00», «123,456.78»), хотя supportedLocalesOf «поддерживает» kk. Язык без данных форматируется как
+  // ru-RU: разделители чисел kk и ru в CLDR совпадают («123 456,78»), даты на русском понятнее «M11». Признак — месяц
+  // корневым шаблоном («M11»). В Node (полный ICU) и в языках с данными — как есть.
+  const formatLocales = new Map();
+  const hasLocaleData = (intlLocale, intl) => {
+    try {
+      const month = new intl.DateTimeFormat(intlLocale, { month: 'long', timeZone: 'UTC' }).format(Date.UTC(2026, 10, 15));
+      return !/^M\d{1,2}$/.test(month);
+    } catch {
+      return false;
+    }
+  };
+  /** Язык для Intl.NumberFormat/DateTimeFormat: intlLocale, а без данных CLDR в движке — 'ru-RU'. */
+  const formatLocale = (intlLocale, intl = Intl) => {
+    if (intl !== Intl) return hasLocaleData(intlLocale, intl) ? intlLocale : 'ru-RU';
+    if (!formatLocales.has(intlLocale)) formatLocales.set(intlLocale, hasLocaleData(intlLocale, intl) ? intlLocale : 'ru-RU');
+    return formatLocales.get(intlLocale);
+  };
+
   const decimalSeparators = new Map();
   const decimalSeparator = (intlLocale) => {
     if (!decimalSeparators.has(intlLocale)) {
@@ -47,7 +67,8 @@
    * Сумма в тенге для показа: «1 500», «1 500,5», «12,05» — как toLocaleString(…, {maximumFractionDigits: 2})
    * старого агента (лишние нули дробной части не показываются), но из целых тиынов.
    */
-  const formatAmount = (tiyn, intlLocale) => {
+  const formatAmount = (tiyn, locale) => {
+    const intlLocale = formatLocale(locale);
     const value = int64(tiyn);
     const { negative, whole, fraction } = splitTiyn(value);
     let text = new Intl.NumberFormat(intlLocale, { maximumFractionDigits: 0 }).format(whole);
@@ -267,6 +288,7 @@
 
   return {
     int64,
+    formatLocale,
     formatAmount,
     formatPrice,
     parseAmount,

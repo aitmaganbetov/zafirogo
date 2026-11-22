@@ -34,7 +34,7 @@ type Tariff struct {
 }
 
 // EffectiveMinutes — сколько минут даёт тариф: с лимитом использования — min(длительность, лимит).
-// Laravel: app/Services/AgentTariffPurchaseService.php effectiveMinutes() (стр. 378–383) (BR-015).
+// Laravel: app/Services/AgentTariffPurchaseService.php effectiveMinutes() (стр. 470–475) (BR-015).
 func (t Tariff) EffectiveMinutes() int64 {
 	if t.UsageLimitEnabled && t.UsageLimitMinutes != nil {
 		return min(t.DurationMinutes, *t.UsageLimitMinutes)
@@ -44,7 +44,7 @@ func (t Tariff) EffectiveMinutes() int64 {
 
 // UsageExpiresAt — когда сгорает неиспользованное время купленного тарифа: now + usage_limit_minutes,
 // только у тарифа с лимитом использования; иначе nil.
-// Laravel: app/Services/AgentTariffPurchaseService.php purchase() (стр. 81–86) (BR-015).
+// Laravel: app/Services/AgentTariffPurchaseService.php purchase() (стр. 119) (BR-015).
 func (t Tariff) UsageExpiresAt(now time.Time) *time.Time {
 	if !t.UsageLimitEnabled || t.UsageLimitMinutes == nil {
 		return nil
@@ -72,7 +72,7 @@ func (t Tariff) ValidityEndsAt(now time.Time, loc *time.Location) (time.Time, bo
 
 // InZone — тариф действует в зоне: у тарифа нет зон или зона в списке. zoneID nil — ПК без зоны
 // (club_zone_id NULL): только тарифы без зон (whereKey(null) ничего не находит).
-// Laravel: AgentTariffPurchaseService::availableFor() (фильтр), purchase() (стр. 75–77), GuestSessions::priceFor().
+// Laravel: AgentTariffPurchaseService::availableFor() (фильтр), purchase() (стр. 109–111), GuestSessions::priceFor().
 func (t Tariff) InZone(zoneID *int64) bool {
 	if len(t.ZoneIDs) == 0 {
 		return true
@@ -103,7 +103,7 @@ const (
 // продажи не считаются. Решение Q-007 (docs/DECISIONS.md) — счётчик считает вызывающий по таблице покупок,
 // а не по журналу действий; здесь только сравнение.
 // Активность тарифа (is_active) и удаление проверяет запрос списка, как в старом коде.
-// Laravel: app/Services/AgentTariffPurchaseService.php isAvailable() (стр. 313–329) (BR-016, GAP-015).
+// Laravel: app/Services/AgentTariffPurchaseService.php isAvailable() (стр. 379–395) (BR-016, GAP-015).
 func (t Tariff) Availability(role string, purchaseCount int64, now time.Time, loc *time.Location) Unavailable {
 	if !t.OnSale(now, loc) {
 		return NotOnSale
@@ -132,7 +132,7 @@ type TariffOffer struct {
 }
 
 // Offer — тариф в списке агента.
-// Laravel: app/Services/AgentTariffPurchaseService.php representation() (стр. 341–359) (BR-013, BR-019).
+// Laravel: app/Services/AgentTariffPurchaseService.php representation() (стр. 433–451) (BR-013, BR-019).
 func (t Tariff) Offer(rules PaymentRules, discountPercent float64) (TariffOffer, error) {
 	price, err := TariffPrice(t, rules, discountPercent)
 	if err != nil {

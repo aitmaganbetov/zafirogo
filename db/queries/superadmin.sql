@@ -124,9 +124,22 @@ ORDER BY l.id DESC
 LIMIT sqlc.arg(page_size)::bigint OFFSET sqlc.arg(page_offset)::bigint;
 
 -- name: SuperadminCountPlatformLogs :one
-SELECT count(*)::bigint FROM platform_logs
-WHERE (sqlc.narg(club_id)::bigint IS NULL OR club_id = sqlc.narg(club_id)::bigint)
-  AND (sqlc.arg(event)::text = '' OR event = sqlc.arg(event)::text);
+-- Аудит PERF-6 (docs/DECISIONS.md, аудит 22.11.2026): точный счёт до 100 000 строк (LIMIT во вложенном запросе —
+-- не дальше 100 001 строки по индексу); больше — без фильтров оценка по статистике таблицы (pg_class.reltuples,
+-- не меньше 100 001), с фильтром — 100 001. Раньше count(*) по всей таблице на каждой странице журнала.
+WITH capped AS (
+    SELECT count(*)::bigint AS n FROM (
+        SELECT 1 FROM platform_logs
+        WHERE (sqlc.narg(club_id)::bigint IS NULL OR club_id = sqlc.narg(club_id)::bigint)
+          AND (sqlc.arg(event)::text = '' OR event = sqlc.arg(event)::text)
+        LIMIT 100001
+    ) t
+)
+SELECT (CASE
+    WHEN capped.n <= 100000 OR sqlc.narg(club_id)::bigint IS NOT NULL OR sqlc.arg(event)::text <> '' THEN capped.n
+    ELSE greatest(capped.n, (SELECT c.reltuples::bigint FROM pg_catalog.pg_class c WHERE c.oid = 'platform_logs'::regclass))
+END)::bigint AS total
+FROM capped;
 
 -- name: SuperadminActivityLogs :many
 -- ActivityLog::query()->withoutGlobalScope('club'): журналы всех клубов.
@@ -141,9 +154,24 @@ ORDER BY l.id DESC
 LIMIT sqlc.arg(page_size)::bigint OFFSET sqlc.arg(page_offset)::bigint;
 
 -- name: SuperadminCountActivityLogs :one
-SELECT count(*)::bigint FROM activity_logs
-WHERE (sqlc.narg(club_id)::bigint IS NULL OR club_id = sqlc.narg(club_id)::bigint)
-  AND (sqlc.arg(event)::text = '' OR event = sqlc.arg(event)::text);
+-- Аудит PERF-6: как SuperadminCountPlatformLogs; activity_logs партиционирована по месяцам — оценка без фильтров
+-- суммирует reltuples партиций (статистику партиций ведёт autovacuum, у родителя её нет).
+WITH capped AS (
+    SELECT count(*)::bigint AS n FROM (
+        SELECT 1 FROM activity_logs
+        WHERE (sqlc.narg(club_id)::bigint IS NULL OR club_id = sqlc.narg(club_id)::bigint)
+          AND (sqlc.arg(event)::text = '' OR event = sqlc.arg(event)::text)
+        LIMIT 100001
+    ) t
+)
+SELECT (CASE
+    WHEN capped.n <= 100000 OR sqlc.narg(club_id)::bigint IS NOT NULL OR sqlc.arg(event)::text <> '' THEN capped.n
+    ELSE greatest(capped.n, (
+        SELECT COALESCE(sum(greatest(c.reltuples, 0)), 0)::bigint
+        FROM pg_catalog.pg_inherits i JOIN pg_catalog.pg_class c ON c.oid = i.inhrelid
+        WHERE i.inhparent = 'activity_logs'::regclass))
+END)::bigint AS total
+FROM capped;
 
 -- name: SuperadminInsertPlatformLog :one
 -- PlatformLogger::record().

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"net"
 	"runtime"
 	"slices"
 	"strconv"
@@ -33,14 +34,17 @@ func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// DefaultMaxConns — размер пула, если в DSN нет pool_max_conns: max(16, 4 × CPU).
+// DefaultMaxConns — размер пула, если в DSN нет pool_max_conns: max(16, 4 × GOMAXPROCS), не больше 256.
+//
+// GOMAXPROCS, а не NumCPU (аудит OPS-8): с Go 1.25 GOMAXPROCS учитывает квоту CPU контейнера (cgroup), а NumCPU —
+// только ядра узла. На узле с 64 ядрами и лимитом 2 CPU NumCPU дал бы 256 соединений на пул.
 //
 // Умолчание pgx — max(4, CPU): на 4 vCPU это 4 соединения на пул, и нагрузочный тест O4 (docs/load-test.md §4)
 // показал обвал при 5 000 ПК на одном инстансе (после перезапуска второго): пул zafiro_app занят целиком, сотни
 // ожидающих (запись состояния ПК, карта клуба, покупки гостей), ответы 10–30 с вместо 20 мс. С 16 соединениями —
 // без ошибок, занято в пике 5. Явный pool_max_conns в DSN (docs/deploy.md «Ресурсы») имеет приоритет.
 func DefaultMaxConns() int32 {
-	return int32(min(max(16, 4*runtime.NumCPU()), 256)) // #nosec G115 -- ≤ 256
+	return int32(min(max(16, 4*runtime.GOMAXPROCS(0)), 256)) // #nosec G115 -- ≤ 256
 }
 
 // ParsePoolConfig — pgxpool.ParseConfig + размер пула по умолчанию (DefaultMaxConns), если DSN его не задаёт.
@@ -52,7 +56,31 @@ func ParsePoolConfig(dsn string) (*pgxpool.Config, error) {
 	if !strings.Contains(dsn, "pool_max_conns") {
 		cfg.MaxConns = DefaultMaxConns()
 	}
+	cfg.ConnConfig.DialFunc = keepaliveDialer(cfg.ConnConfig.ConnectTimeout).DialContext
 	return cfg, nil
+}
+
+// Параметры TCP соединений с Postgres (аудит OPS-3, клиентская сторона): обрыв без FIN/RST (гибель хоста, разрыв
+// сети) клиент замечает за KeepAliveIdle + KeepAliveCount × KeepAliveInterval ≈ 60 с на простаивающем соединении
+// и за UserTimeout — на соединении с неподтверждённой отправкой (иначе — повторы TCP ≈ 15 мин). Так бывший лидер
+// фоновой задачи узнаёт о потере лока, а запрос не висит на мёртвом соединении. Серверная сторона (лок держателя,
+// пропавшего без FIN) — tcp_keepalives_* и client_connection_check_interval Postgres (docs/deploy.md).
+const (
+	KeepAliveIdle     = 30 * time.Second
+	KeepAliveInterval = 10 * time.Second
+	KeepAliveCount    = 3
+	UserTimeout       = 60 * time.Second
+)
+
+// keepaliveDialer — net.Dialer pgconn (connect_timeout из DSN сохраняется) с KeepAliveConfig и TCP_USER_TIMEOUT (Linux).
+func keepaliveDialer(connectTimeout time.Duration) *net.Dialer {
+	return &net.Dialer{
+		Timeout: connectTimeout,
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable: true, Idle: KeepAliveIdle, Interval: KeepAliveInterval, Count: KeepAliveCount,
+		},
+		Control: setUserTimeout,
+	}
 }
 
 // PartitionedTables — таблицы с месячными партициями (0002_ledger.sql, 0003_audit.sql, 0011_events.sql, 0022_api_v1.sql,

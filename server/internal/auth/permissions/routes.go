@@ -1,7 +1,7 @@
 package permissions
 
 // RouteRights — право, которое нужно маршруту панели (по имени маршрута Laravel).
-// Laravel: app/Http/Middleware/RequireClubArea.php ROUTES (стр. 18–70), BR-144.
+// Laravel: app/Http/Middleware/RequireClubArea.php ROUTES (стр. 18–71), BR-144.
 // Новые эндпоинты админки (волна B) берут право отсюда по имени старого маршрута: так таблица
 // «маршрут → право» остаётся одной, а тест полноты (GS-254) проверяет, что каждое право существует.
 var RouteRights = []struct {

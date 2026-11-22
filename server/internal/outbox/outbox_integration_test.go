@@ -210,3 +210,56 @@ func TestOutboxRLS(t *testing.T) {
 		t.Fatalf("tables without RLS: %q %v", s, err)
 	}
 }
+
+// Аудит OPS-2: поток zafiro-events пропал во время работы (NATS поднят пустым) — публикатор создаёт его заново
+// с параметрами Stream и публикует накопленное; без перезапуска инстанса.
+func TestPublisherRecreatesMissingStream(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := dbtest.New(t)
+	n := natstest.New(t, outbox.StreamName)
+	club := d.Club(t, "outbox-restream")
+
+	p, err := outbox.NewPublisher(outbox.PublisherOptions{
+		Pool: d.Platform, JS: n.JS, Interval: 200 * time.Millisecond, RetryDelay: 100 * time.Millisecond,
+		LeaderRetry: 100 * time.Millisecond, StreamRecheck: 200 * time.Millisecond,
+		Stream: &outbox.StreamOptions{MaxBytes: 8 << 20},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { _ = p.Run(ctx); close(done) }()
+
+	first := addEvents(t, d, club, 1, "todo.changed")
+	waitPublished(t, d)
+	if err := n.JS.DeleteStream(ctx, outbox.StreamName); err != nil {
+		t.Fatal(err)
+	}
+
+	ids := addEvents(t, d, club, 3, "todo.changed")
+	waitPublished(t, d)
+	if got := streamIDs(t, n.JS); fmt.Sprint(got) != fmt.Sprint(ids) {
+		t.Fatalf("stream = %v, want %v (before deletion: %v)", got, ids, first)
+	}
+	s, err := n.JS.Stream(ctx, outbox.StreamName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mb := s.CachedInfo().Config.MaxBytes; mb != 8<<20 {
+		t.Fatalf("recreated stream MaxBytes = %d", mb)
+	}
+	cancel()
+	<-done
+}
+
+func waitPublished(t *testing.T, d *dbtest.DB) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for unpublished(t, d) != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("events were not published")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}

@@ -52,6 +52,7 @@ type Guest struct {
 	PC        int64
 	ExpiresAt time.Time
 	hash      string
+	born      time.Time // выдача токена (предел продлений — tokenMaxLife от неё)
 }
 
 // Tokens — токены гостя в Valkey.
@@ -202,7 +203,11 @@ func parseToken(m map[string]string) (Guest, time.Time, bool) {
 	if errors.Join(e1, e2, e3, e4) != nil || club <= 0 || pcID <= 0 || user <= 0 {
 		return Guest{}, time.Time{}, false
 	}
-	return Guest{UserID: user, ClubID: club, PC: pcID, ExpiresAt: time.Unix(exp, 0)}, time.Unix(used, 0), true
+	g := Guest{UserID: user, ClubID: club, PC: pcID, ExpiresAt: time.Unix(exp, 0)}
+	if born, err := strconv.ParseInt(m["born"], 10, 64); err == nil {
+		g.born = time.Unix(born, 0)
+	}
+	return g, time.Unix(used, 0), true
 }
 
 // Revoke отзывает токен гостя (выход, POST /api/auth/logout: currentAccessToken()->delete()).
@@ -400,6 +405,17 @@ func (t *Tokens) computerUser(ctx context.Context, computerID int64, renewFor st
 // ComputerUser — гость, вошедший на ПК сейчас (живой токен ПК); нулевой Guest — никто. Одно обращение к Valkey.
 func (t *Tokens) ComputerUser(ctx context.Context, computerID int64) (Guest, error) {
 	return t.computerUser(ctx, computerID, "", nil)
+}
+
+// renewDue — продление токена g что-то изменит (то же условие, что в computerUserScript): до конца срока меньше
+// половины и предел tokenMaxLife ещё не достигнут. По нему Hooks.ComputerGuest проверяет сессию в базе только тогда,
+// когда продлевать пора, — не на каждый Status.
+func (t *Tokens) renewDue(g Guest) bool {
+	now := t.now()
+	if g.UserID == 0 || !now.Before(g.ExpiresAt) || 2*g.ExpiresAt.Sub(now) >= t.ttl {
+		return false
+	}
+	return !g.born.IsZero() && g.born.Add(tokenMaxLife).After(g.ExpiresAt)
 }
 
 // ComputerUserRenew — ComputerUser с продлением: если токен ПК выдан гостю userID и до конца его срока осталось

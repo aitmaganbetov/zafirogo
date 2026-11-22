@@ -890,13 +890,18 @@ func (a *API) transferConfirm(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	p := httpx.Principal(ctx)
 	var res billing.FriendTransferResult
+	cp := billing.ConfirmTransferCodeParams{
+		ClubID: p.ClubID, UserID: p.UserID, FriendshipID: id, AmountInput: amount, Code: code, Now: a.d.NowFunc(),
+		VerifyCode: func(hash, code string) bool { _, err := a.o.Passwords.Verify(ctx, code, hash); return err == nil },
+		Actor:      guestActor(r),
+	}
+	// Хэш кода — до транзакции перевода (аудит PERF-3): соединение и блокировка кода не ждут Argon2id.
+	cp.Checked = billing.PrecheckTransferCode(ctx, func(fn func(q *store.Queries) error) error {
+		return a.d.Tx(ctx, func(_ context.Context, q *store.Queries) error { return fn(q) })
+	}, cp)
 	err := a.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		var err error
-		res, err = billing.ConfirmFriendTransferCode(ctx, q, billing.ConfirmTransferCodeParams{
-			ClubID: p.ClubID, UserID: p.UserID, FriendshipID: id, AmountInput: amount, Code: code, Now: a.d.NowFunc(),
-			VerifyCode: func(hash, code string) bool { _, err := a.o.Passwords.Verify(ctx, code, hash); return err == nil },
-			Actor:      guestActor(r),
-		})
+		res, err = billing.ConfirmFriendTransferCode(ctx, q, cp)
 		if err != nil || res.Ledger.Replayed {
 			return err
 		}

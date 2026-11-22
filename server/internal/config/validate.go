@@ -135,7 +135,21 @@ func (c *Config) validateConnections(p *problems) {
 			p.add("database.platform_url: должен быть другим логином, чем database.url (роли zafiro_platform и zafiro_app)")
 		}
 	}
+	if n := c.Database.LockPoolMaxConns; n < 2 || n > 256 {
+		p.add("database.lock_pool_max_conns: ожидается 2..256")
+	}
 	p.hostPort("valkey.addr", c.Valkey.Addr)
+	if c.Valkey.TLS {
+		if _, err := c.Valkey.TLSConfig(); err != nil {
+			p.check(err)
+		}
+	} else if c.Valkey.TLSCAFile != "" || c.Valkey.TLSServerName != "" {
+		p.add("valkey.tls_ca_file, valkey.tls_server_name: заданы без valkey.tls=true")
+	}
+	// Аудит SEC-2/OPS-19: в Valkey — сессии, refresh-семейства, билеты WebSocket; без пароля любой в сети читает их.
+	if c.Env == "prod" && !c.Standalone() && c.Valkey.Password.IsZero() {
+		p.add("valkey.password: обязателен в prod (requirepass или пользователь ACL с valkey.username)")
+	}
 	if !c.NATS.URL.IsZero() {
 		if u, err := url.Parse(c.NATS.URL.Reveal()); err != nil || u.Host == "" {
 			p.add("nats.url: некорректный URL")
@@ -278,6 +292,9 @@ func (c *Config) validateSites(p *problems) {
 func (c *Config) validateEvents(p *problems) {
 	if c.Events.Stream.Replicas < 1 || c.Events.Stream.Replicas > 5 {
 		p.add("events.stream.replicas: ожидается 1..5")
+	}
+	if mb := c.Events.Stream.MaxBytes; mb < 0 || (mb > 0 && mb < 1<<20) {
+		p.add("events.stream.max_bytes: 0 (без предела) или ≥ 1048576 (1 МиБ)")
 	}
 	if c.Outbox.BatchSize < 1 {
 		p.add("outbox.batch_size: должен быть ≥ 1")

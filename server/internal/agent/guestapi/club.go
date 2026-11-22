@@ -235,7 +235,7 @@ func loadClub(ctx context.Context, q *store.Queries, id identity.Identity) (club
 	return clubInfo{id: id.ClubID, row: row, settings: parseClubSettings(row.Settings), loc: clubtz.Location(row.Timezone)}, nil
 }
 
-// subscriptionActive — ClubSubscription::isActive() (app/Models/ClubSubscription.php стр. 31–35, BR-130).
+// subscriptionActive — ClubSubscription::isActive() (app/Models/ClubSubscription.php стр. 47–51, BR-130).
 func subscriptionActive(row store.GuestClubSubscriptionRow, now time.Time) bool {
 	switch row.Status {
 	case "active":

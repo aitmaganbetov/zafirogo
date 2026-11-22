@@ -74,7 +74,8 @@ type Options struct {
 	Passwords *password.Hasher
 	// Upstream — старый Laravel для клубов, ещё не переехавших (http://laravel.internal). nil — все клубы здесь.
 	Upstream *url.URL
-	// UpstreamHost — заголовок Host для Upstream (пусто — Host исходного запроса).
+	// UpstreamHost — заголовок Host для Upstream. Пусто: пересылка запроса (forward) — Host исходного запроса,
+	// запрос каталога (общий кэш) — хост адреса Upstream.
 	UpstreamHost string
 	// PublicBaseURL — адрес сайта для картинок (новости, товары): https://zafiro.kz.
 	PublicBaseURL string

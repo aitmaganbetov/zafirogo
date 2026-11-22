@@ -24,7 +24,7 @@ type Subject struct {
 	ClubKey  string // club-resolve (club_key или key)
 }
 
-// pc — ключ «ПК». Laravel: AppServiceProvider::agentRateLimitKey() (стр. 126–138): sha256 токена устройства,
+// pc — ключ «ПК». Laravel: AppServiceProvider::agentRateLimitKey() (стр. 131–143): sha256 токена устройства,
 // иначе id Sanctum-токена, иначе IP. В новом протоколе устройство — id ПК из сертификата mTLS,
 // токен пользователя — пользователь.
 func (s Subject) pc() string {
@@ -45,14 +45,22 @@ func (s Subject) userOrIP() string {
 	return "ip:" + s.IP
 }
 
-// digits — preg_replace('/\D+/', ”, $phone).
-func digits(s string) string {
-	return strings.Map(func(r rune) rune {
+// phoneKey — телефон в ключе лимита: номер, нормализованный как при входе (PhoneNumber::normalize(),
+// auth.NormalizePhone): цифры, 11 цифр с ведущей 7 или 8 — без неё. «7010000005», «+7 701 000 00 05» и
+// «87010000005» — один аккаунт и один ключ (аудит SEC-7). В Laravel ключ — только цифры
+// (preg_replace('/\D+/', ”, $phone)), и три записи одного номера давали три счётчика; осознанное отличие —
+// docs/DECISIONS.md «Лимиты входа и восстановления (аудит 22.11.2026)».
+func phoneKey(s string) string {
+	d := strings.Map(func(r rune) rune {
 		if r >= '0' && r <= '9' {
 			return r
 		}
 		return -1
 	}, s)
+	if len(d) == 11 && (d[0] == '7' || d[0] == '8') {
+		d = d[1:]
+	}
+	return d
 }
 
 func sha256hex(s string) string {
@@ -101,7 +109,7 @@ func Throttle(name string, n, minutes int) Rule {
 	return Rule{Name: name, Limits: []Limit{perMinutes(minutes, n, Subject.userOrIP)}}
 }
 
-// Именованные лимиты. Laravel: app/Providers/AppServiceProvider.php boot() (стр. 47–97); значения — точно
+// Именованные лимиты. Laravel: app/Providers/AppServiceProvider.php boot() (стр. 47–102); значения — точно
 // как в старом (docs/parts/20-api.md §1.1). Ключи — те же составные части (IP, телефон, ПК, клуб).
 const (
 	ClubComputers            = "club-computers"
@@ -120,7 +128,7 @@ const (
 	ClubComputerRegistration = "club-computer-registration"
 
 	// WebLogin и WebRegister — вход и регистрация в веб-панели. В старом лимита НЕ было
-	// (routes/web.php:158, 165 без throttle:; docs/open-questions/screens.md §1).
+	// (routes/web.php:192, 199 без throttle:; docs/open-questions/screens.md §1).
 	// Решение Q-052 (docs/DECISIONS.md): лимит включён по умолчанию, значения как у customer-login;
 	// выключить можно только явно (ratelimit.disable).
 	WebLogin    = "web-login"
@@ -196,7 +204,7 @@ func DefaultRules() []Rule {
 
 func phoneAndIP(perPhone, perIP int) []Limit {
 	return []Limit{
-		perMinute(perPhone, func(s Subject) string { return s.IP + "|" + digits(s.Phone) }),
+		perMinute(perPhone, func(s Subject) string { return s.IP + "|" + phoneKey(s.Phone) }),
 		perMinute(perIP, byIP),
 	}
 }

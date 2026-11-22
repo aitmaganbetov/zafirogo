@@ -70,7 +70,7 @@ func loadClub(ctx context.Context, q *store.Queries, clubID int64) (clubContext,
 	}, nil
 }
 
-// bookingGapMinutes — ComputerReservations::gapMinutes() (стр. 23–28):
+// bookingGapMinutes — ComputerReservations::gapMinutes() (стр. 43–48):
 //
 //	$value = settings()['club']['booking_interval'] ?? 30;
 //	return is_numeric($value) ? max(0, (int) round((float) $value)) : 30;
@@ -159,7 +159,7 @@ func (t tariffRow) toPricing(zoneIDs []int64) (pricing.Tariff, error) {
 const nonStringRole = "\x00non-string"
 
 // userRoles — tariffs.user_roles (каст 'array'): список строк; null/не массив — без ограничения.
-// Laravel: AgentTariffPurchaseService::isAvailable() (стр. 323–326).
+// Laravel: AgentTariffPurchaseService::isAvailable() (стр. 389–392).
 func userRoles(raw json.RawMessage) []string {
 	var list []json.RawMessage
 	if err := json.Unmarshal(raw, &list); err != nil {
@@ -262,7 +262,7 @@ func (c computerRow) pricing(now time.Time) pricing.Computer {
 // Брони (ComputerReservations)
 // ---------------------------------------------------------------------------
 
-// blocking — ComputerReservations::blocking() (стр. 93–101): чужая ожидающая бронь ПК, пересекающая
+// blocking — ComputerReservations::blocking() (стр. 116–124): чужая ожидающая бронь ПК, пересекающая
 // [now, until + интервал). userID 0 — гость (мешает любая бронь). nil — брони нет.
 func blocking(ctx context.Context, q *store.Queries, clubID, computerID, userID int64, gap int64, now, until time.Time) (*time.Time, error) {
 	r, err := q.GetBlockingReservation(ctx, store.GetBlockingReservationParams{
@@ -278,7 +278,7 @@ func blocking(ctx context.Context, q *store.Queries, clubID, computerID, userID 
 	return &r.StartsAt, nil
 }
 
-// markArrivedBy — ComputerReservations::markArrivedBy() (стр. 104–111).
+// markArrivedBy — ComputerReservations::markArrivedBy() (стр. 127–135).
 func markArrivedBy(ctx context.Context, q *store.Queries, clubID, computerID, userID int64, gap int64, now, until time.Time) error {
 	return q.MarkReservationsArrived(ctx, store.MarkReservationsArrivedParams{
 		ClubID: clubID, ComputerID: computerID, UserID: &userID, Now: &now,

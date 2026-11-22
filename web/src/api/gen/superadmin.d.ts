@@ -897,7 +897,9 @@ export interface components {
             selected_clubs: number[];
             channels: components["schemas"]["ChannelRow"][];
             tables: components["schemas"]["TableSize"][];
-            log_errors: components["schemas"]["LogError"][];
+            /** @description Последние ошибки журнала сервера (ErrorLog::recent()). null — журнал ошибок на экран не подключён (экран пишет «не подключено», а не «ошибок нет»; аудит CODE-3). */
+            log_errors: components["schemas"]["LogError"][] | null;
+            /** @description Сроки HTTPS-сертификатов доменов платформы (Certificates::hosts()/cached()); проверка — не чаще раза в час, в фоне, экран не ждёт сети (аудит CODE-3). */
             certificate_hosts: components["schemas"]["CertificateHost"][];
             backup: components["schemas"]["Backup"];
             ledger_reconcile: components["schemas"]["LedgerReconcile"];

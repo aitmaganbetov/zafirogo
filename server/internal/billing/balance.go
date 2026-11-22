@@ -122,7 +122,7 @@ type TopUpResult struct {
 //
 // Laravel: app/Services/CashRegisterService.php CashRegisterService::topUpBalance() (~стр. 100–143):
 // баланс FOR UPDATE (нет строки — 404); <balance_type> += amount; бонус только при balance_type = balance
-// (TopUpBonus::for(), стр. ~114); бонус — в bonus_balance, не кассовый приход.
+// (CashRegisterService::topUpBalance() стр. 114, TopUpBonus::for()); бонус — в bonus_balance, не кассовый приход.
 // Проводки: счёт клиента +amount / касса −amount (приход в кассу); бонус: member_bonus +bonus / bonus_fund −bonus.
 // Кассовый документ (cash_transactions) и журнал действий пишет вызывающий (пакет cash).
 func TopUp(ctx context.Context, q *store.Queries, p TopUpParams) (TopUpResult, error) {
@@ -326,7 +326,7 @@ const OwnerAdjustmentMax money.Tiyn = 1_000_000_000
 
 // ParseOwnerAdjustmentAmount — сумма пополнения/списания владельцем из формы.
 //
-// Laravel: app/Http/Controllers/UserController.php UserController::update() (~стр. 95, 113):
+// Laravel: app/Http/Controllers/UserController.php UserController::update() (~стр. 111, 125):
 // правило 'numeric', 'min:0.01', 'max:10000000'; затем $topUp = round((float) $data['top_up_amount'], 2).
 // Решение Q-002 (docs/DECISIONS.md): разбор строгий (money.ParseTenge): > 2 знаков после точки — ErrBalanceAmountDecimals
 // (422), а не round(…, 2) — было "1234.565" → 1234.57 (BR-058); экспонента, запятая — ErrBalanceAmountOutOfRange.
@@ -434,7 +434,7 @@ type InitialBalanceParams struct {
 
 // SetInitialBalance — начальный основной и бонусный баланс нового клиента (без кассы и бонуса).
 //
-// Laravel: app/Http/Controllers/UserController.php UserController::store() (~стр. 56–83): member_balances
+// Laravel: app/Http/Controllers/UserController.php UserController::store() (~стр. 70–97): member_balances
 // создаётся сразу с balance/bonus_balance из формы (право customer_money.update — у вызывающего).
 // Здесь строка member_balances уже создана с нулями, суммы — операцией initial_balance с ключом
 // "initial_balance:<user_id>". Нулевые суммы — без операции.

@@ -218,6 +218,11 @@ func (a *API) forward(w http.ResponseWriter, r *http.Request) bool {
 	if a.proxy == nil {
 		return false
 	}
+	// Заголовки лимита этого сервера (throttle до пересылки) не смешиваются с заголовками старого сервера: в ответе
+	// остаются только его X-RateLimit-* (ReverseProxy добавляет значения, а не заменяет).
+	h := w.Header()
+	h.Del("X-RateLimit-Limit")
+	h.Del("X-RateLimit-Remaining")
 	a.proxy.ServeHTTP(w, r)
 	return true
 }
@@ -632,9 +637,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	if elsewhere && a.forward(w, r) {
 		return
 	}
-	a.throttle(ratelimit.CustomerLogin)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		a.doLogin(w, r, b, user, clubs, found)
-	})).ServeHTTP(w, r)
+	a.doLogin(w, r, b, user, clubs, found)
 }
 
 // loginInput — поля LoginRequest после проверки.
@@ -951,7 +954,7 @@ func (a *API) recoveryPhone(w http.ResponseWriter, r *http.Request, b body) (str
 	return phone, true
 }
 
-// passwordRoute — маршрутизация по телефону (как вход) и лимит password-recovery.
+// passwordRoute — маршрутизация по телефону (как вход); лимит password-recovery — на маршруте, до неё (routes.go).
 func (a *API) passwordRoute(h func(w http.ResponseWriter, r *http.Request, b body)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		b := readBodyKeep(r)
@@ -964,9 +967,7 @@ func (a *API) passwordRoute(h func(w http.ResponseWriter, r *http.Request, b bod
 		if len(clubs) == 0 && a.forward(w, r) {
 			return
 		}
-		a.throttle(ratelimit.PasswordRecovery)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			h(w, r, b)
-		})).ServeHTTP(w, r)
+		h(w, r, b)
 	}
 }
 

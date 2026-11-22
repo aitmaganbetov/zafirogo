@@ -18,11 +18,17 @@ func Defaults() map[string]any {
 		"http.public_url":          "",
 		"database.url":             "",
 		"database.platform_url":    "",
-		"valkey.addr":              "localhost:6379",
-		"valkey.password":          "",
-		"nats.url":                 "nats://localhost:4222",
-		"log.level":                "info",
-		"log.format":               "json",
+		// Пул соединений с локами лидерства фоновых задач (аудит PERF-1).
+		"database.lock_pool_max_conns": 16,
+		"valkey.addr":                  "localhost:6379",
+		"valkey.username":              "",
+		"valkey.password":              "",
+		"valkey.tls":                   false,
+		"valkey.tls_ca_file":           "",
+		"valkey.tls_server_name":       "",
+		"nats.url":                     "nats://localhost:4222",
+		"log.level":                    "info",
+		"log.format":                   "json",
 
 		"auth.signing_keys":        []any{},
 		"auth.access_ttl":          "10m",
@@ -112,6 +118,9 @@ func Defaults() map[string]any {
 		"events.stream.max_age":    "72h",
 		"events.stream.duplicates": "10m",
 		"events.stream.replicas":   1,
+		// 1 ГиБ (аудит OPS-12). Больше места, чем есть у NATS, поток не получит: JetStream резервирует max_bytes при
+		// создании потока, поэтому умолчание небольшое; прод — по расчёту в docs/dev-setup.md.
+		"events.stream.max_bytes": int64(1 << 30),
 
 		"outbox.batch_size": 100,
 		"outbox.interval":   "2s",

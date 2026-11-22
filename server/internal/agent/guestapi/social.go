@@ -244,14 +244,19 @@ func (s *Server) verifyUserPassword(ctx context.Context, id identity.Identity, u
 // transferByCode — FriendTransferCodes::confirm(): неверный код засчитывает попытку отдельной транзакцией.
 func (s *Server) transferByCode(ctx context.Context, id identity.Identity, g Guest, req *agentv1.TransferBalanceRequest, code string) (*agentv1.TransferBalanceResponse, error) {
 	var res billing.FriendTransferResult
+	p := billing.ConfirmTransferCodeParams{
+		ClubID: id.ClubID, UserID: g.UserID, FriendshipID: req.GetFriendshipId(),
+		AmountInput: money.Tiyn(req.GetAmountTiyn()).Tenge(), Code: code, Now: s.o.Now(),
+		VerifyCode: func(hash, code string) bool { _, err := s.o.Passwords.Verify(ctx, code, hash); return err == nil },
+		Actor:      actor(ctx, g),
+	}
+	// Хэш кода — до транзакции перевода (аудит PERF-3): соединение и блокировка кода не ждут Argon2id.
+	p.Checked = billing.PrecheckTransferCode(ctx, func(fn func(q *store.Queries) error) error {
+		return db.InTenantTxWith(ctx, s.o.Pool, id.ClubID, db.Options{UserID: g.UserID}, fn)
+	}, p)
 	err := db.InTenantTxWith(ctx, s.o.Pool, id.ClubID, db.Options{UserID: g.UserID}, func(q *store.Queries) error {
 		var err error
-		res, err = billing.ConfirmFriendTransferCode(ctx, q, billing.ConfirmTransferCodeParams{
-			ClubID: id.ClubID, UserID: g.UserID, FriendshipID: req.GetFriendshipId(),
-			AmountInput: money.Tiyn(req.GetAmountTiyn()).Tenge(), Code: code, Now: s.o.Now(),
-			VerifyCode: func(hash, code string) bool { _, err := s.o.Passwords.Verify(ctx, code, hash); return err == nil },
-			Actor:      actor(ctx, g),
-		})
+		res, err = billing.ConfirmFriendTransferCode(ctx, q, p)
 		if err != nil {
 			return err
 		}

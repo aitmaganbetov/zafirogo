@@ -208,3 +208,64 @@ func TestPanickingWorkerDoesNotStopApp(t *testing.T) {
 		t.Fatal("Run did not stop")
 	}
 }
+
+// Аудит OPS-16: медленный HTTP-клиент не съедает бюджет остановки воркеров. Запрос висит дольше бюджета; воркеру на
+// остановку нужно 150 мс. Раньше HTTP Shutdown ждал до общего дедлайна, воркерам оставалось 0 и Run возвращал
+// errShutdownTimeout («some workers did not stop»); теперь серверам — ⅔ бюджета, затем Close.
+func TestSlowHTTPClientDoesNotStarveWorkers(t *testing.T) {
+	cfg, err := config.Load("", func() []string {
+		return []string{"ZAFIRO_ENV=test", "ZAFIRO_HTTP_ADDR=127.0.0.1:0", "ZAFIRO_SHUTDOWN_TIMEOUT=1200ms"}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a, err := Build(ctx, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := make(chan struct{})
+	defer close(release)
+	entered := make(chan struct{})
+	a.httpSrv.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(entered)
+		<-release // «медленный клиент»: запрос не завершается сам
+	})
+	var stopped atomic.Bool
+	a.workers = append(a.workers, namedWorker{"slow-stop", func(ctx context.Context) error {
+		<-ctx.Done()
+		time.Sleep(150 * time.Millisecond)
+		stopped.Store(true)
+		return nil
+	}})
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+	go func() {
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://"+a.HTTPAddr()+"/slow", nil)
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("slow request did not reach the handler")
+	}
+	start := time.Now()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+	if !stopped.Load() {
+		t.Fatal("worker was not waited for")
+	}
+	if took := time.Since(start); took > 1500*time.Millisecond {
+		t.Fatalf("shutdown took %v, budget 1.2s", took)
+	}
+}

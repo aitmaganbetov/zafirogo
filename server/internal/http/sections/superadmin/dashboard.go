@@ -108,12 +108,11 @@ func (h *handlers) SaDashboard(ctx context.Context, req superadminapi.SaDashboar
 	for _, t := range tables {
 		out.Tables = append(out.Tables, superadminapi.TableSize{Name: t.Name, Megabytes: phpNum(t.Megabytes, 1), Rows: t.Rows})
 	}
-	// Журнал ошибок (кольцевой буфер slog) и проверка сертификатов — Этап 4 (Q-060, PD-5): пока пусто.
-	out.LogErrors = []superadminapi.LogError{}
-	out.CertificateHosts = []superadminapi.CertificateHost{}
-	for _, host := range h.d.Superadmin.SSLHosts {
-		out.CertificateHosts = append(out.CertificateHosts, superadminapi.CertificateHost{Host: host})
-	}
+	// Журнал ошибок (ErrorLog::recent()) на экран не подключён: null — экран пишет «не подключено», а не «ошибок нет»
+	// (аудит CODE-3; ошибки сервера — в его журнале stdout). Сроки сертификатов — certificates.go, по настоящим часам
+	// (time() старого; срок сертификата не зависит от dev.fixed_now).
+	out.LogErrors = nil
+	out.CertificateHosts = h.certs.view(certificateHosts(h.d), time.Now())
 	out.Backup = backupOf(h.d.Superadmin.BackupPath, now, h.d.Locale(ctx))
 	return superadminapi.SaDashboard200JSONResponse(out), nil
 }

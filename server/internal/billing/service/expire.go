@@ -31,7 +31,8 @@ type ExpiredSession struct {
 // Laravel: app/Services/ClubComputerSessions.php expireAll() (стр. 189–195), команда
 // club-computers:expire-sessions (everyMinute, app/Console/Commands/ExpireComputerSessions.php).
 // Как в старом коде: только обнуление полей сессии ПК, БЕЗ settle() — ни возврата, ни пакетов,
-// части session_purchases остаются (их чистит суточная задача; GAP-005).
+// части session_purchases остаются (GAP-005); их удаляет через 8 дней очистка session-purchases:prune
+// (worker.DataRetention, запрос RetentionDeleteSessionPurchases, BR-034).
 // Решение Q-010 (docs/DECISIONS.md): в той же транзакции пишется журнал computer.session_expired (в старом журнала
 // не было) — от имени клиента сессии, у гостевой сессии — от имени владельца клуба (как computer.guest_session_reset).
 // meta — «запрос» системного действия (IP обязателен для журнала).

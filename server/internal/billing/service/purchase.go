@@ -167,7 +167,7 @@ func (s *Service) PurchaseTariff(ctx context.Context, req TariffPurchaseRequest)
 		if err != nil {
 			return err
 		}
-		// Laravel: AgentTariffPurchaseService::purchase() (стр. 89–98) — журнал tariff.purchased.
+		// Laravel: AgentTariffPurchaseService::purchase() (стр. 124–133) — журнал tariff.purchased.
 		if err := RecordActivity(ctx, q, activity.Entry{
 			ClubID: req.ClubID, Event: "tariff.purchased", Description: "Куплен тариф: " + t.Name,
 			UserID: req.UserID, SubjectType: SubjectTariff, SubjectID: t.ID,
@@ -244,8 +244,8 @@ type MinutesPurchaseRequest struct {
 
 // PurchaseMinutes — поминутная покупка.
 //
-// Laravel: app/Services/AgentTariffPurchaseService.php purchaseMinutes() (стр. 110–138), hourlyPrice()
-// (стр. 141–150), sell(). Порядок: ПК FOR UPDATE → зона (без блокировки) → нет цены часа → ensureComputerFor →
+// Laravel: app/Services/AgentTariffPurchaseService.php purchaseMinutes() (стр. 152–180), hourlyPrice()
+// (стр. 183–192), sell(). Порядок: ПК FOR UPDATE → зона (без блокировки) → нет цены часа → ensureComputerFor →
 // цена (скидка, если клуб применяет её к поминутке и у клиента есть членство) → sell().
 func (s *Service) PurchaseMinutes(ctx context.Context, req MinutesPurchaseRequest) (PurchaseResult, error) {
 	return s.purchaseMinutes(ctx, req, opMinutesPurchase, struct {
@@ -330,7 +330,7 @@ func (s *Service) purchaseMinutes(ctx context.Context, req MinutesPurchaseReques
 		if err != nil {
 			return err
 		}
-		// Laravel: AgentTariffPurchaseService::purchaseMinutes() (стр. 124–135) — журнал time.purchased;
+		// Laravel: AgentTariffPurchaseService::purchaseMinutes() (стр. 167–177) — журнал time.purchased;
 		// price_per_hour — hourlyPrice(): цена часа зоны со скидкой клиента (formatCents).
 		hourly, err := pricing.HourlyPrice(*zonePrice, club.rules, discount)
 		if err != nil {
@@ -472,7 +472,7 @@ func (s *Service) StartPackage(ctx context.Context, req PackageStartRequest) (Pu
 		} else if err := q.DeleteTimePackage(ctx, store.DeleteTimePackageParams{ClubID: req.ClubID, ID: pkg.ID}); err != nil {
 			return err
 		}
-		// Laravel: AgentTariffPurchaseService::startPackage() (стр. 193–197) — журнал time.package_started.
+		// Laravel: AgentTariffPurchaseService::startPackage() (стр. 236–240) — журнал time.package_started.
 		if err := RecordActivity(ctx, q, activity.Entry{
 			ClubID: req.ClubID, Event: "time.package_started",
 			Description: "Запущен абонемент " + pkg.Name + ": " + itoa(out.MinutesAdded) + " мин.",
@@ -594,7 +594,7 @@ type sale struct {
 	meta           map[string]any
 }
 
-// sell — вторая половина AgentTariffPurchaseService::sell() (стр. 271–310) после раскладки по балансам:
+// sell — вторая половина AgentTariffPurchaseService::sell() (стр. 302–329) после раскладки по балансам:
 // продление или новая сессия → бронь → списание → траты лояльности → часть сессии → сессия ПК.
 func (s *Service) sell(ctx context.Context, q *store.Queries, in sale) (PurchaseResult, error) {
 	pay := in.quote.Payment

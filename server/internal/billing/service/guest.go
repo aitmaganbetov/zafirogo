@@ -20,7 +20,7 @@ import (
 // Оба метода вызываются в транзакции сервиса (q — её запросы, app.club_id уже стоит).
 type CashRecorder interface {
 	// LockOpenShift блокирует открытую смену клуба:
-	// CashShift::query()->where('status', 'open')->lockForUpdate()->first() (GuestSessions::sell() стр. 190).
+	// CashShift::query()->where('status', 'open')->lockForUpdate()->first() (GuestSessions::sell() стр. 37).
 	// Нет открытой смены — ok = false (сервис вернёт «Сначала откройте смену в кассе.»).
 	LockOpenShift(ctx context.Context, q *store.Queries, clubID int64) (shiftID int64, ok bool, err error)
 
@@ -30,7 +30,7 @@ type CashRecorder interface {
 	// Refs.CashShiftID/CashTransactionID, тот же ключ идемпотентности) с её аудитом.
 	// Amount может быть 0 (тариф за 0): старый код всё равно создавал приход 0.00; проводок тогда нет.
 	// Сервис захватывает ключ раньше (billing_requests), поэтому повтор сюда не доходит.
-	// Laravel: GuestSessions::sell() стр. 233–245 ($shift->transactions()->create(), журнал cash.income и
+	// Laravel: GuestSessions::sell() стр. 96–104 ($shift->transactions()->create(), журнал cash.income и
 	// computer.guest_session).
 	RecordGuestSessionIncome(ctx context.Context, q *store.Queries, in GuestIncome) (GuestIncomeResult, error)
 }
@@ -98,7 +98,7 @@ type GuestSessionResult struct {
 
 // SellGuestSession — гостевая сессия на выбранных ПК, оплата в открытую смену.
 //
-// Laravel: app/Services/GuestSessions.php sell() (стр. 187–249), priceFor() (стр. 251–266):
+// Laravel: app/Services/GuestSessions.php sell() (стр. 34–108), priceFor() (стр. 110–125):
 // открытая смена FOR UPDATE → активный тариф (без блокировки) в продаже и в периоде действия →
 // ПК FOR UPDATE по id (не все найдены → «Выберите ПК на карте клуба.») → для каждого ПК: цена → занят →
 // бронь (чужая любая, гость = 0) → сессия (продление гостевой — тот же id) → один приход в кассу на сумму.

@@ -76,21 +76,11 @@ func Start(ctx context.Context) (d *DB, cleanup func(), err error) {
 	}()
 	adminDSN := os.Getenv("ZAFIRO_TEST_DATABASE_URL")
 	if adminDSN == "" {
-		ctr, err := tcpostgres.Run(ctx, PostgresImage,
-			tcpostgres.WithDatabase("zafiro_test"),
-			tcpostgres.WithUsername("zafiro"),
-			tcpostgres.WithPassword("zafiro"),
-			testcontainers.WithWaitStrategy(
-				wait.ForLog("database system is ready to accept connections").
-					WithOccurrence(2).WithStartupTimeout(60*time.Second)),
-		)
-		if err != nil {
-			return nil, cleanup, fmt.Errorf("dbtest: start postgres: %w", err)
-		}
-		cleanups = append(cleanups, func() { _ = testcontainers.TerminateContainer(ctr) })
-		if adminDSN, err = ctr.ConnectionString(ctx, "sslmode=disable"); err != nil {
+		var stop func()
+		if adminDSN, stop, err = StartServer(ctx); err != nil {
 			return nil, cleanup, err
 		}
+		cleanups = append(cleanups, stop)
 	}
 	dsn, err := freshDatabase(ctx, adminDSN)
 	if err != nil {
@@ -143,6 +133,34 @@ func Start(ctx context.Context) (d *DB, cleanup func(), err error) {
 	return &DB{Owner: owner, App: app, Platform: platform, AppDSN: appDSN}, cleanup, nil
 }
 
+// StartServer поднимает отдельный контейнер Postgres (PostgresImage) и возвращает DSN суперпользователя. Для тестов,
+// которым нужен свой сервер даже при общем ZAFIRO_TEST_DATABASE_URL (например, откат миграций удаляет общие для
+// кластера роли).
+func StartServer(ctx context.Context) (adminDSN string, stop func(), err error) {
+	ctr, err := tcpostgres.Run(ctx, PostgresImage,
+		tcpostgres.WithDatabase("zafiro_test"),
+		tcpostgres.WithUsername("zafiro"),
+		tcpostgres.WithPassword("zafiro"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).WithStartupTimeout(60*time.Second)),
+	)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("dbtest: start postgres: %w", err)
+	}
+	stop = func() { _ = testcontainers.TerminateContainer(ctr) }
+	if adminDSN, err = ctr.ConnectionString(ctx, "sslmode=disable"); err != nil {
+		stop()
+		return "", func() {}, err
+	}
+	return adminDSN, stop, nil
+}
+
+// FreshDatabase создаёт пустую базу на сервере adminDSN (без миграций) и возвращает её DSN.
+func FreshDatabase(ctx context.Context, adminDSN string) (string, error) {
+	return freshDatabase(ctx, adminDSN)
+}
+
 // MigrationsDir — каталог db/migrations репозитория.
 func MigrationsDir() string {
 	_, file, _, _ := runtime.Caller(0)
@@ -152,9 +170,16 @@ func MigrationsDir() string {
 
 // Migrate применяет секции «-- +goose Up» всех миграций по порядку (как goose up).
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
-	files, err := filepath.Glob(filepath.Join(MigrationsDir(), "*.sql"))
+	return MigrateDir(ctx, pool, MigrationsDir())
+}
+
+// MigrateDir — то же для каталога dir. Файл с «-- +goose NO TRANSACTION» выполняется по одной команде, как у goose:
+// CREATE INDEX CONCURRENTLY в транзакции (а несколько команд одной строкой простого протокола — неявная транзакция)
+// не работает (docs/schema-changes.md §19.1 п. 2, аудит DB-3).
+func MigrateDir(ctx context.Context, pool *pgxpool.Pool, dir string) error {
+	files, err := filepath.Glob(filepath.Join(dir, "*.sql"))
 	if err != nil || len(files) == 0 {
-		return fmt.Errorf("dbtest: migrations not found in %s: %w", MigrationsDir(), err)
+		return fmt.Errorf("dbtest: migrations not found in %s: %w", dir, err)
 	}
 	sort.Strings(files)
 	for _, f := range files {
@@ -162,35 +187,97 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		if err != nil {
 			return err
 		}
-		// Exec без аргументов — простой протокол: несколько команд в одной строке.
-		if _, err := pool.Exec(ctx, upSection(string(body))); err != nil {
+		if err := ExecSection(ctx, pool, ParseMigration(string(body)).Up); err != nil {
 			return fmt.Errorf("dbtest: migration %s: %w", filepath.Base(f), err)
 		}
 	}
 	return nil
 }
 
-func upSection(sql string) string {
-	var b strings.Builder
-	inUp := false
+// Migration — секции файла goose.
+type Migration struct {
+	// NoTransaction — пометка «-- +goose NO TRANSACTION»: команды выполняются по одной, вне транзакции.
+	NoTransaction bool
+	Up, Down      Section
+}
+
+// Section — секция Up или Down: текст целиком и команды по отдельности (границы — как у goose: «;» в конце строки,
+// блок StatementBegin…StatementEnd — одна команда).
+type Section struct {
+	SQL           string
+	Statements    []string
+	NoTransaction bool
+}
+
+// ParseMigration разбирает файл миграции goose.
+func ParseMigration(sql string) Migration {
+	var m Migration
+	var cur *Section
+	var stmt strings.Builder
+	inBlock := false
+	flush := func() {
+		if cur != nil && strings.TrimSpace(stmt.String()) != "" {
+			cur.Statements = append(cur.Statements, strings.TrimSpace(stmt.String()))
+		}
+		stmt.Reset()
+	}
 	for _, line := range strings.Split(sql, "\n") {
 		trimmed := strings.TrimSpace(line)
 		switch {
+		case strings.HasPrefix(trimmed, "-- +goose NO TRANSACTION"):
+			m.NoTransaction = true
+			continue
 		case strings.HasPrefix(trimmed, "-- +goose Up"):
-			inUp = true
+			flush()
+			cur = &m.Up
 			continue
 		case strings.HasPrefix(trimmed, "-- +goose Down"):
-			inUp = false
+			flush()
+			cur = &m.Down
+			continue
+		case strings.HasPrefix(trimmed, "-- +goose StatementBegin"):
+			flush()
+			inBlock = true
+			continue
+		case strings.HasPrefix(trimmed, "-- +goose StatementEnd"):
+			inBlock = false
+			flush()
 			continue
 		case strings.HasPrefix(trimmed, "-- +goose"):
 			continue
 		}
-		if inUp {
-			b.WriteString(line)
-			b.WriteByte('\n')
+		if cur == nil {
+			continue
+		}
+		cur.SQL += line + "\n"
+		if strings.HasPrefix(trimmed, "--") && stmt.Len() == 0 {
+			continue // комментарий между командами
+		}
+		stmt.WriteString(line)
+		stmt.WriteByte('\n')
+		if !inBlock && strings.HasSuffix(trimmed, ";") {
+			flush()
 		}
 	}
-	return b.String()
+	flush()
+	m.Up.NoTransaction, m.Down.NoTransaction = m.NoTransaction, m.NoTransaction
+	return m
+}
+
+// ExecSection выполняет секцию: целиком (простой протокол — одна неявная транзакция, как goose в транзакции) или,
+// для NO TRANSACTION, по одной команде.
+func ExecSection(ctx context.Context, pool *pgxpool.Pool, sec Section) error {
+	if !sec.NoTransaction {
+		// Exec без аргументов — простой протокол: несколько команд в одной строке.
+		_, err := pool.Exec(ctx, sec.SQL)
+		return err
+	}
+	for _, st := range sec.Statements {
+		if _, err := pool.Exec(ctx, st); err != nil {
+			return fmt.Errorf("%w (команда: %.80s)", err, st)
+		}
+	}
+	return nil
 }
 
 // freshDatabase создаёт отдельную базу (миграции не мешают другим тестам на том же сервере).

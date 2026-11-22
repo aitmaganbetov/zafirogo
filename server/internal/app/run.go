@@ -80,8 +80,12 @@ func (a *App) Run(ctx context.Context) error {
 		cause = errors.New("subsystem failed")
 	}
 	a.log.Info("shutting down", "timeout", a.cfg.ShutdownTimeout, "cause", errString(cause))
-	deadline := time.Now().Add(a.cfg.ShutdownTimeout)
-	a.shutdownServers(deadline)
+	start := time.Now()
+	deadline := start.Add(a.cfg.ShutdownTimeout)
+	// Серверам (HTTP Shutdown, Drain агентов, GracefulStop) — не больше ⅔ бюджета, затем Close/Stop: медленный клиент
+	// HTTP не должен съесть время воркеров и закрытия пулов (аудит OPS-16 — раньше выход с кодом 1 и сообщением
+	// о воркерах, хотя виноват был HTTP).
+	a.shutdownServers(serversDeadline(start, a.cfg.ShutdownTimeout))
 
 	cancelWorkers()
 	if a.metricsSrv != nil {
@@ -114,6 +118,11 @@ func (a *App) Run(ctx context.Context) error {
 	return nil
 }
 
+// serversDeadline — срок остановки серверов: ⅔ бюджета остановки (остальное — воркеры, фоновые задачи, закрытие).
+func serversDeadline(start time.Time, budget time.Duration) time.Time {
+	return start.Add(budget * 2 / 3)
+}
+
 // shutdownServers: readyz → 503; HTTP Shutdown параллельно с Drain агентов; затем stream.Close и
 // GracefulStop gRPC (по дедлайну — Stop).
 //
@@ -131,7 +140,7 @@ func (a *App) shutdownServers(deadline time.Time) {
 	go func() {
 		defer close(httpDone)
 		if err := a.httpSrv.Shutdown(ctx); err != nil {
-			a.log.Warn("http shutdown", "err", err)
+			a.log.Warn("http shutdown: requests did not finish in time, closing connections", "err", err)
 			_ = a.httpSrv.Close()
 		}
 	}()
@@ -141,7 +150,7 @@ func (a *App) shutdownServers(deadline time.Time) {
 			a.log.Warn("grpc listener close", "err", err)
 		}
 		within := a.cfg.Agent.Stream.DrainWithin
-		// Окно переподключения не дольше половины бюджета: остальное — на воркеры и закрытие.
+		// Окно переподключения не дольше половины срока серверов (⅓ бюджета): остальное — на GracefulStop, воркеры и закрытие.
 		if half := time.Until(deadline) / 2; within > half {
 			within = half
 		}

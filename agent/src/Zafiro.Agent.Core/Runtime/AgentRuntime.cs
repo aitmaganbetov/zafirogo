@@ -868,7 +868,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
     {
         var u = cmd.UpdateAvailable;
         if (!_platform.Capabilities.SelfUpdate || _installer is null) return CommandOutcome.Fail(ErrorCode.CommandUnsupported);
-        var rejection = _updates.Verify(u);
+        var rejection = _updates.Verify(u, _options.AgentVersion); // подпись, хост и не ниже/не равна своей версии (SEC-5)
         if (rejection != UpdateRejection.None)
         {
             _log.LogWarning("update {Version} rejected before download: {Reason}", u.Version, rejection);

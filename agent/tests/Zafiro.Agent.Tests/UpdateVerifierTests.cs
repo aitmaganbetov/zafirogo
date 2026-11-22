@@ -1,7 +1,11 @@
 using System.Text;
 using System.Text.Json;
 using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
+using Microsoft.Extensions.Logging.Abstractions;
+using Zafiro.Agent.Core;
 using Zafiro.Agent.Core.Updates;
+using Zafiro.Agent.Tests.Support;
 using Zafiro.Agent.V1;
 
 namespace Zafiro.Agent.Tests;
@@ -132,4 +136,70 @@ public class UpdateVerifierTests
     [InlineData("k1")]
     [InlineData("k1:AAAA")]
     public void Неверный_формат_ключей_ошибка(string spec) => Assert.Throws<FormatException>(() => UpdateVerifier.ParseKeys(spec));
+    // SEC-5 (аудит 22.11.2026): защита от отката — подписанный, но не более новый выпуск не ставится.
+    [Theory]
+    [InlineData("2.0.1", "2.0.0", true)]
+    [InlineData("2.0.10", "2.0.9", true)]
+    [InlineData("2.1.0", "2.0.99", true)]
+    [InlineData("10.0.0", "9.9.9", true)]
+    [InlineData("2.0.1", "2.0.1", false)]
+    [InlineData("2.0.1-beta", "2.0.1", false)]
+    [InlineData("2.0.0", "2.0.1", false)]
+    [InlineData("1.9.9", "2.0.0", false)]
+    [InlineData("1.0.0", "2.3.4", false)]
+    [InlineData("v3.0.0", "2.0.0", false)]
+    [InlineData("3.0", "2.0.0", false)]
+    [InlineData("", "2.0.0", false)]
+    [InlineData("99999999999999999999.0.0", "2.0.0", false)]
+    [InlineData("2.0.1", "dev", true)]
+    [InlineData("2.0.1", "", true)]
+    public void Версия_новее_установленной(string candidate, string current, bool newer) =>
+        Assert.Equal(newer, UpdateVerifier.IsNewer(candidate, current));
+
+    [Fact]
+    public void Подписанный_выпуск_не_новее_своей_версии_отклоняется()
+    {
+        var (u, keys) = Vector(); // 2.0.1, подпись верная
+        var v = new UpdateVerifier(keys);
+        Assert.Equal(UpdateRejection.None, v.Verify(u, "2.0.0"));
+        Assert.Equal(UpdateRejection.NotNewer, v.Verify(u, "2.0.1"));
+        Assert.Equal(UpdateRejection.NotNewer, v.Verify(u, "3.0.0"));
+        // Неверная подпись — по-прежнему BadSignature, а не NotNewer.
+        Assert.Equal(UpdateRejection.BadSignature, v.Verify(new UpdateAvailable(u) { Channel = "beta" }, "3.0.0"));
+    }
+
+    [Fact]
+    public async Task Агент_не_откатывается_на_подписанную_старую_версию()
+    {
+        var (u, keys) = Vector();
+        using var dir = new TempDir();
+        using var pki = new TestPki();
+        var platform = new FakePlatform();
+        var handler = new CountingHandler();
+        var installer = new UpdateInstaller(platform, new HttpClient(handler), ["github.com"], NullLogger.Instance);
+        await using var rt = Runtimes.Create(dir.Path, platform, pki, keys, installer,
+            options: new AgentOptions { EnrollEndpoint = "localhost:1", AgentVersion = "3.1.0" });
+        var cmd = new Command
+        {
+            CommandId = Guid.CreateVersion7().ToString(), Seq = 1, IssuedAt = Timestamp.FromDateTimeOffset(DateTimeOffset.UtcNow),
+            UpdateAvailable = new UpdateAvailable(u) { InstallNow = true },
+        };
+        var r = await rt.HandleCommandAsync(cmd, CancellationToken.None);
+        Assert.Equal(CommandStatus.Failed, r.Status);
+        Assert.Equal(ErrorCode.UpdateVerificationFailed, r.ErrorCode);
+        await Task.Delay(100);
+        Assert.Equal(0, handler.Requests);
+        Assert.Equal(0, platform.Installs);
+    }
+
+    private sealed class CountingHandler : HttpMessageHandler
+    {
+        public int Requests;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref Requests);
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
+        }
+    }
 }

@@ -37,7 +37,7 @@ type RefundResult struct {
 // Refund — возврат прихода открытой смены (BR-055): продажа возвращает товары на склад, пополнение снимает сумму
 // (и оставшийся бонус за него) с баланса клиента; деньги уходят из кассы расходом смены.
 //
-// Laravel: app/Services/CashRegisterService.php refund() (~стр. 150–205): открытая смена FOR UPDATE; приход FOR UPDATE
+// Laravel: app/Services/CashRegisterService.php refund() (~стр. 150–204): открытая смена FOR UPDATE; приход FOR UPDATE
 // (findOrFail); проверки по порядку (cash.CheckRefund): вид возврата, смена прихода открыта, ещё не возвращён, в кассе
 // хватает (float, CQ-3); продажа — returnToStock() по строкам чека (товар FOR UPDATE по id или, в старых чеках, по имени;
 // удалённый/ненайденный — пропуск; услуги — пропуск); пополнение — баланс FOR UPDATE, «Клиент уже потратил часть
@@ -141,7 +141,7 @@ func (s *Service) Refund(ctx context.Context, q *store.Queries, p RefundParams) 
 		}
 		out.TopUp = &res
 		details["balance_field"], details["new_balance"], details["bonus_taken_back"] = string(field), int64(res.NewBalance), int64(res.BonusTakenBack)
-		// Laravel: refund() (стр. 187–190) — журнал user.balance_refunded, если клиент есть.
+		// Laravel: refund() (стр. 188–190) — журнал user.balance_refunded, если клиент есть.
 		journal["balance_field"], journal["new_balance"], journal["bonus_taken_back"] =
 			string(field), billingsvc.PHPFloat(res.NewBalance), billingsvc.PHPFloat(res.BonusTakenBack)
 		names, err := userNames(ctx, q, p.ClubID, top.UserID)

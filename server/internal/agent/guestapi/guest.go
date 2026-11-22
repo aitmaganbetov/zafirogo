@@ -267,7 +267,7 @@ func tariffFromRow(r store.GuestListTariffsRow) (pricing.Tariff, error) {
 const nonStringRole = "\x00non-string"
 
 // userRoles — tariffs.user_roles (каст 'array'); null/не массив — без ограничения
-// (AgentTariffPurchaseService::isAvailable() стр. 323–326; как billing/service.userRoles).
+// (AgentTariffPurchaseService::isAvailable() стр. 389–392; как billing/service.userRoles).
 func userRoles(raw json.RawMessage) []string {
 	var list []json.RawMessage
 	if err := json.Unmarshal(raw, &list); err != nil {

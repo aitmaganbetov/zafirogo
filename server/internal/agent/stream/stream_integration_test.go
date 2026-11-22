@@ -610,3 +610,45 @@ func TestSeqOrderUnderConcurrentSends(t *testing.T) {
 		}
 	}
 }
+
+// CODE-13 (аудит 22.11.2026): агент отправил итог и сразу закрыл поток (Drain, перезагрузка) — итог записывается,
+// даже если запись в Postgres ещё шла, когда контекст потока отменился. Агент считает итог доставленным после
+// отправки: потерянный итог досылкой не восстанавливается. Строка команды заблокирована, пока поток закрывается.
+func TestResultRecordedWhenStreamClosesRightAfter(t *testing.T) {
+	ctx := context.Background()
+	club := testEnv.club(t)
+	pc := testEnv.computer(t, club, 3)
+	in := testEnv.instance(t, "a", nil)
+
+	a, _ := in.connect(t, club, pc, nil)
+	id, err := in.svc.Commands().Send(ctx, club, pc, reboot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := a.command(3 * time.Second)
+	if cmd == nil || cmd.GetCommandId() != id {
+		t.Fatalf("command: %v", cmd)
+	}
+	lock, err := testEnv.db.Owner.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Rollback(ctx) }()
+	if _, err := lock.Exec(ctx, "SELECT 1 FROM agent_commands WHERE command_id = $1 FOR UPDATE", id); err != nil {
+		t.Fatal(err)
+	}
+	a.result(cmd, agentv1.CommandStatus_COMMAND_STATUS_SUCCEEDED)
+	eventually(t, 5*time.Second, "result write waits for the row lock", func() bool {
+		var n int
+		_ = testEnv.db.Owner.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE wait_event_type = 'Lock' AND query ILIKE '%agent_commands%'`).Scan(&n)
+		return n > 0
+	})
+	a.hangUp()
+	eventually(t, 3*time.Second, "stream closed", func() bool { return in.svc.LocalStreams() == 0 })
+	time.Sleep(100 * time.Millisecond) // отмена контекста потока дошла до запроса
+	if err := lock.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 3*time.Second, "result recorded", func() bool { return cmdStatus(t, id) == "succeeded" })
+}

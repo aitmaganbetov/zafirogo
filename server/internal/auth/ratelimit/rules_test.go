@@ -11,7 +11,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
 )
 
-// Значения — docs/parts/20-api.md §1.1 (AppServiceProvider::boot, стр. 47–97).
+// Значения — docs/parts/20-api.md §1.1 (AppServiceProvider::boot, стр. 47–102).
 func TestNamedRuleValues(t *testing.T) {
 	type lim struct {
 		max    int
@@ -84,7 +84,7 @@ func TestKeys(t *testing.T) {
 		rules[r.Name] = r
 	}
 	s := Subject{IP: "10.0.0.1", Phone: "+7 (701) 111-22-33"}
-	if got := rules[CustomerLogin].Limits[0].Key(s); got != "10.0.0.1|77011112233" {
+	if got := rules[CustomerLogin].Limits[0].Key(s); got != "10.0.0.1|7011112233" {
 		t.Errorf("customer-login key %q", got)
 	}
 	if got := rules[CustomerLogin].Limits[1].Key(s); got != "10.0.0.1" {
@@ -112,6 +112,29 @@ func TestKeys(t *testing.T) {
 	thr := rules["chat.reply"].Limits[0].Key
 	if thr(Subject{IP: "1.1.1.1", UserID: 4}) != "user:4" || thr(Subject{IP: "1.1.1.1"}) != "ip:1.1.1.1" {
 		t.Error("throttle key")
+	}
+}
+
+// Аудит SEC-7: ключ «IP + телефон» — по нормализованному номеру (как вход), а не по цифрам ввода: три записи
+// одного номера — один счётчик у customer-login, password-recovery, web-login и web-register.
+func TestPhoneKeyNormalized(t *testing.T) {
+	rules := map[string]Rule{}
+	for _, r := range DefaultRules() {
+		rules[r.Name] = r
+	}
+	for _, name := range []string{CustomerLogin, PasswordRecovery, WebLogin, WebRegister} {
+		key := rules[name].Limits[0].Key
+		want := key(Subject{IP: "10.0.0.1", Phone: "+77010000005"})
+		for _, phone := range []string{"7010000005", "77010000005", "87010000005", "+7 (701) 000-00-05", "8 701 000 00 05"} {
+			if got := key(Subject{IP: "10.0.0.1", Phone: phone}); got != want {
+				t.Errorf("%s: %q → %q, want %q", name, phone, got, want)
+			}
+		}
+		// Другой номер и другой IP — другие ключи; 12 цифр не обрезаются.
+		if key(Subject{IP: "10.0.0.1", Phone: "+77010000006"}) == want || key(Subject{IP: "10.0.0.2", Phone: "+77010000005"}) == want ||
+			key(Subject{IP: "10.0.0.1", Phone: "877010000005"}) == want {
+			t.Errorf("%s: distinct subjects share a key", name)
+		}
 	}
 }
 

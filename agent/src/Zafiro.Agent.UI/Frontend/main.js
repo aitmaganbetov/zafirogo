@@ -213,7 +213,7 @@
 
   // Суммы — целые тиыны; показ — в тенге (Zafiro.formatPrice, без float).
   const formatPrice = (tiyn, currency = 'KZT') => Z.formatPrice(tiyn, intlLocale(), currency);
-  const formatDateTime = (value) => new Intl.DateTimeFormat(intlLocale(), { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+  const formatDateTime = (value) => new Intl.DateTimeFormat(Z.formatLocale(intlLocale()), { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 
   // Часы сервера минус часы ПК: оставшееся время не зависит от неверных часов ПК.
   let clockOffset = 0;

@@ -17,6 +17,8 @@ public enum UpdateRejection
     BadSignature,
     /// <summary>Хост установщика не из списка разрешённых.</summary>
     HostNotAllowed,
+    /// <summary>Версия не новее установленной (защита от отката, аудит 22.11.2026 SEC-5).</summary>
+    NotNewer,
 }
 
 /// <summary>
@@ -83,6 +85,57 @@ public sealed class UpdateVerifier
         return Org.BouncyCastle.Math.EC.Rfc8032.Ed25519.Verify(sig, 0, pub, 0, msg, 0, msg.Length)
             ? UpdateRejection.None
             : UpdateRejection.BadSignature;
+    }
+
+    /// <summary>
+    /// <see cref="Verify(UpdateAvailable)"/> и защита от отката: версия должна быть новее установленной
+    /// <paramref name="currentVersion"/> (аудит 22.11.2026, SEC-5). Подпись не содержит срока, поэтому однажды подписанный
+    /// старый (уязвимый) выпуск годен навсегда; от отката защищал только сервер (рассылает лишь устаревшим ПК), а подпись
+    /// задумана как защита именно от скомпрометированного сервера. Признака «разрешённый откат» в протоколе нет
+    /// (docs/agent-protocol.md §6) — откат только переустановкой вручную.
+    /// </summary>
+    public UpdateRejection Verify(UpdateAvailable u, string currentVersion)
+    {
+        var r = Verify(u);
+        if (r != UpdateRejection.None) return r;
+        return IsNewer(u.Version, currentVersion) ? UpdateRejection.None : UpdateRejection.NotNewer;
+    }
+
+    /// <summary>
+    /// <paramref name="candidate"/> новее <paramref name="current"/>: сравниваются числа префикса <c>major.minor.patch</c>,
+    /// как isOutdated сервера (server/internal/http/sections/superadmin/release.go). Версия-кандидат без такого префикса —
+    /// не новее (не ставится); текущая без префикса (сборка разработчика) — любая версия с префиксом новее.
+    /// </summary>
+    public static bool IsNewer(string? candidate, string? current)
+    {
+        if (!TryParseVersion(candidate, out var c)) return false;
+        if (!TryParseVersion(current, out var cur)) return true;
+        for (var i = 0; i < 3; i++)
+        {
+            if (c[i] != cur[i]) return c[i] > cur[i];
+        }
+
+        return false;
+    }
+
+    private static bool TryParseVersion(string? v, out long[] parts)
+    {
+        parts = new long[3];
+        if (string.IsNullOrEmpty(v)) return false;
+        var pos = 0;
+        for (var i = 0; i < 3; i++)
+        {
+            var start = pos;
+            while (pos < v.Length && v[pos] is >= '0' and <= '9') pos++;
+            if (pos == start || !long.TryParse(v.AsSpan(start, pos - start), NumberStyles.None, CultureInfo.InvariantCulture, out parts[i])) return false;
+            if (i < 2)
+            {
+                if (pos >= v.Length || v[pos] != '.') return false;
+                pos++;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Те же правила, что validateUpdate сервера (update.go).</summary>

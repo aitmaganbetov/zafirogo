@@ -20,7 +20,7 @@ import (
 // access — гостевые маршруты (middleware guest): входа нет.
 var access = httpx.Access{Public: []string{"GetPasswordRecovery", "SendPasswordRecoveryCode", "ResetPasswordByCode"}}
 
-// limits — throttle:password-recovery (routes/web.php:161, 163): 10/мин на IP и телефон, 30/мин на IP.
+// limits — throttle:password-recovery (routes/web.php:195, 197): 10/мин на IP и телефон, 30/мин на IP.
 var limits = map[string]string{
 	"POST /api/forgot-password": ratelimit.PasswordRecovery,
 	"POST /api/reset-password":  ratelimit.PasswordRecovery,

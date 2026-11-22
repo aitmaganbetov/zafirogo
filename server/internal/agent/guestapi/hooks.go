@@ -82,7 +82,7 @@ func (h *Hooks) CompleteWelcome(ctx context.Context, id identity.Identity, w *ag
 }
 
 // FreshBoot — новый Hello.boot_id: время, проданное на кассе гостю без аккаунта, не переживает перезагрузку ПК.
-// Laravel: app/Services/ClubComputerSessions.php resetGuestSession() (стр. 162–175) — только гостевая
+// Laravel: app/Services/ClubComputerSessions.php resetGuestSession() (стр. 162–174) — только гостевая
 // оплаченная сессия; журнал computer.guest_session_reset от имени владельца клуба. Платная сессия клиента
 // не трогается (GS-077).
 func (h *Hooks) FreshBoot(ctx context.Context, id identity.Identity) error {
@@ -189,18 +189,52 @@ func (h *Hooks) ConfigChanged(ctx context.Context, id identity.Identity) (*agent
 }
 
 // ComputerGuest — stream.GuestVerifier: гость, вошедший на ПК по живому токену гостя этого ПК и клуба (0 — никто).
-// По нему стрим проверяет Status.signed_in_user_id (аудит безопасности A-01). ПК сообщает заявленного гостя в
-// идущей сессии (inSession) — срок его токена и состояния автобиллинга ПК продлевается (Tokens.ComputerUserRenew).
+// По нему стрим проверяет Status.signed_in_user_id (аудит безопасности A-01).
+//
+// Продление (Tokens.ComputerUserRenew: срок токена и состояния автобиллинга ПК): ПК сообщает заявленного гостя в
+// идущей сессии (inSession) И по записи сервера на этом ПК идёт оплаченная сессия этого гостя (club_computers:
+// current_session_user_id = гость, не гостевая с кассы, конец в будущем — activeSession). Одного заявления ПК мало
+// (аудит 22.11.2026, SEC-6): ПК с сертификатом мог держать токен гостя, ушедшего без «Выйти», до 30 дней вместо 12 ч.
+// База читается, только когда продлевать пора (меньше половины срока) — не на каждый Status. Сбой чтения базы — гость
+// подтверждён по токену, продления нет (следующий Status попробует снова).
 func (h *Hooks) ComputerGuest(ctx context.Context, clubID, computerID, claimed int64, inSession bool) (int64, error) {
-	var g Guest
-	var err error
-	if inSession && claimed > 0 {
-		g, err = h.s.tokens.ComputerUserRenew(ctx, computerID, claimed, h.s.abKey(computerID))
-	} else {
-		g, err = h.s.tokens.ComputerUser(ctx, computerID)
-	}
+	t := h.s.tokens
+	g, err := t.ComputerUser(ctx, computerID)
 	if err != nil || g.ClubID != clubID {
 		return 0, err
 	}
+	if !inSession || claimed <= 0 || g.UserID != claimed || !t.renewDue(g) {
+		return g.UserID, nil
+	}
+	ok, err := h.guestSessionOn(ctx, clubID, computerID, claimed)
+	if err != nil {
+		h.s.o.Log.WarnContext(ctx, "guest token not renewed: session check failed", "club_id", clubID, "computer_id", computerID, "err", err)
+		return g.UserID, nil
+	}
+	if !ok {
+		return g.UserID, nil
+	}
+	if g, err = t.ComputerUserRenew(ctx, computerID, claimed, h.s.abKey(computerID)); err != nil || g.ClubID != clubID {
+		return 0, err
+	}
 	return g.UserID, nil
+}
+
+// guestSessionOn — на ПК по записи сервера идёт оплаченная сессия гостя userID (ClubComputer::hasPaidSession(),
+// сессия клиента, не гостевая с кассы).
+func (h *Hooks) guestSessionOn(ctx context.Context, clubID, computerID, userID int64) (bool, error) {
+	var on bool
+	err := db.InTenantTx(ctx, h.s.o.Pool, clubID, func(q *store.Queries) error {
+		row, err := q.GuestComputer(ctx, store.GuestComputerParams{ClubID: clubID, ID: computerID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		as := activeSession(row, h.s.o.Now())
+		on = as != nil && !as.GetGuest() && as.GetUserId() == userID
+		return nil
+	})
+	return on, err
 }

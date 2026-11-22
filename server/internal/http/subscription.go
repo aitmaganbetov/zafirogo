@@ -20,7 +20,7 @@ import (
 // Middleware `subscription` = RequireActiveSubscription (bootstrap/app.php): разделы панели клуба — только при
 // активной подписке выбранного клуба; иначе JSON 402 «Подписка клуба не активна.» (страницы SPA по 402 уводят на
 // /billing, как redirect()->route('billing.show')). В старом его нет у billing.show, auth.logout, clubs.switch,
-// notifications.* (routes/web.php:169–176) и у маршрутов вне группы клуба (вход, приглашения, QR-вход, публичные).
+// notifications.* (routes/web.php:203–215) и у маршрутов вне группы клуба (вход, приглашения, QR-вход, публичные).
 
 // MsgSubscriptionInactive — RequireActiveSubscription: __('Подписка клуба не активна.').
 const MsgSubscriptionInactive = "Подписка клуба не активна."

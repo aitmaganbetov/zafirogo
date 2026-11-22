@@ -14,7 +14,8 @@ import (
 )
 
 // Ревью 22.11.2026: гость, сидящий дольше срока токена (12 ч), не выпадает из присутствия и не получает выход: пока
-// ПК сообщает его в Status идущей сессии, срок токена продлевается (docs/agent-protocol.md §4). Без сессии — нет.
+// ПК сообщает его в Status идущей сессии и по записи сервера идёт его сессия на этом ПК, срок токена продлевается
+// (docs/agent-protocol.md §4). Без сессии — нет.
 func TestGuestTokenRenewedWhileInSession(t *testing.T) {
 	h := newHarness(t, harnessOpts{noLimits: true})
 	phone := uniqPhone()
@@ -53,7 +54,29 @@ func TestGuestTokenRenewedWhileInSession(t *testing.T) {
 	if g, err := h.srv.Tokens().Lookup(ctx, token); err != nil || !g.ExpiresAt.Equal(exp) {
 		t.Fatalf("token without a session: %+v, %v; want expiry %v", g, err, exp)
 	}
-	// Идёт сессия — срок продлён на полный от текущего времени.
+	// SEC-6 (аудит 22.11.2026): ПК заявляет идущую сессию, а по записи сервера её нет (или она чужая, гостевая с
+	// кассы, кончилась) — не продлевается: одного заявления ПК мало.
+	notRenewed := func(what string) {
+		t.Helper()
+		if g, err := h.srv.Tokens().Lookup(ctx, token); err != nil || !g.ExpiresAt.Equal(exp) {
+			t.Fatalf("%s: %+v, %v; want expiry %v", what, g, err, exp)
+		}
+	}
+	send(agentv1.ComputerState_COMPUTER_STATE_IN_SESSION, "claimed-1")
+	notRenewed("no session on the server")
+	other := h.customer("Другой", uniqPhone(), "password", 0, 0)
+	h.abSetSession(p.id, other, false, h.clock.Now().Add(time.Hour))
+	send(agentv1.ComputerState_COMPUTER_STATE_IN_SESSION, "claimed-2")
+	notRenewed("session of another customer")
+	h.abSetSession(p.id, 0, true, h.clock.Now().Add(time.Hour))
+	send(agentv1.ComputerState_COMPUTER_STATE_IN_SESSION, "claimed-3")
+	notRenewed("cashier guest session")
+	h.abSetSession(p.id, user, false, h.clock.Now().Add(-time.Minute))
+	send(agentv1.ComputerState_COMPUTER_STATE_IN_SESSION, "claimed-4")
+	notRenewed("session already over")
+
+	// Идёт сессия этого гостя — срок продлён на полный от текущего времени.
+	h.abSetSession(p.id, user, false, h.clock.Now().Add(10*time.Hour))
 	send(agentv1.ComputerState_COMPUTER_STATE_IN_SESSION, "s-1")
 	g, err := h.srv.Tokens().Lookup(ctx, token)
 	if err != nil || !g.ExpiresAt.Equal(h.clock.Now().Add(12*time.Hour)) {
@@ -61,6 +84,7 @@ func TestGuestTokenRenewedWhileInSession(t *testing.T) {
 	}
 	// 13 часов после входа: токен жив, гость остаётся в присутствии.
 	h.clock.advance(6 * time.Hour)
+	h.abSetSession(p.id, user, false, h.clock.Now().Add(time.Hour))
 	send(agentv1.ComputerState_COMPUTER_STATE_IN_SESSION, "s-2")
 	if _, err := h.srv.Tokens().Lookup(ctx, token); err != nil {
 		t.Fatalf("token 13 hours after sign-in: %v", err)

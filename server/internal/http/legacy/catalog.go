@@ -319,11 +319,11 @@ func (a *API) catalogIndex(w http.ResponseWriter, r *http.Request) {
 // catalogClient — то из запроса, что нужно запросу к старому серверу. Снимается до расчёта: расчёт может пережить
 // запрос, который его начал.
 type catalogClient struct {
-	remoteAddr, forwardedFor, host string
+	remoteAddr, forwardedFor string
 }
 
 func catalogClientOf(r *http.Request) catalogClient {
-	return catalogClient{remoteAddr: r.RemoteAddr, forwardedFor: r.Header.Get("X-Forwarded-For"), host: r.Host}
+	return catalogClient{remoteAddr: r.RemoteAddr, forwardedFor: r.Header.Get("X-Forwarded-For")}
 }
 
 func (a *API) buildCatalogIndex(ctx context.Context, from catalogClient, city, locale string) ([]byte, bool, error) {
@@ -497,11 +497,10 @@ func (a *API) upstreamCatalog(ctx context.Context, from catalogClient, city, loc
 		}
 		req.Header.Set("X-Forwarded-For", ip)
 	}
-	switch {
-	case a.o.UpstreamHost != "":
+	// Host — mobile.upstream_host, иначе хост адреса апстрима (не Host клиента: ответ ложится в общий кэш каталога,
+	// и клиент с подставным Host мог бы подменить клубы старого сервера для всех; аудит SEC-9).
+	if a.o.UpstreamHost != "" {
 		req.Host = a.o.UpstreamHost
-	case from.host != "":
-		req.Host = from.host
 	}
 	res, err := a.upstreamClient.Do(req)
 	if err != nil {

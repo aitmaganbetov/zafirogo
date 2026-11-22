@@ -44,6 +44,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/secretbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/webhook"
 	"github.com/aitmaganbetov/zafirogo/server/internal/worker"
+	"github.com/aitmaganbetov/zafirogo/server/internal/worker/leader"
 )
 
 // wiring — части, которые шаги buildCore создают для следующих шагов (а не для App).
@@ -72,6 +73,9 @@ type wiring struct {
 func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	for _, k := range a.cfg.Generated {
 		a.log.Warn("secret is not configured, a random one is used until restart (dev only)", "key", k)
+	}
+	for _, msg := range a.cfg.Warnings() {
+		a.log.Warn("insecure or unbounded configuration", "detail", msg)
 	}
 	w := &wiring{ro: ro}
 	for _, step := range []func(context.Context, *wiring) error{
@@ -105,15 +109,28 @@ func (a *App) connect(ctx context.Context, _ *wiring) error {
 		return errors.New("database.platform_url: не удалось подключиться (проверьте DSN логина zafiro_platform)")
 	}
 	a.closers = append(a.closers, a.PlatformPool.Close)
+	// Локи лидерства фоновых задач — в своём пуле того же логина (аудит PERF-1): держатель лока не занимает слот пула
+	// платформы, в котором идёт работа тика, и задачи не ждут друг друга по кругу при малом pool_max_conns.
+	if a.LockPool, err = newLockPool(ctx, cfg.Database.PlatformURL.Reveal(), int32(cfg.Database.LockPoolMaxConns), // #nosec G115 -- 2..256 (Validate)
+		a.Obs.NewPgxTracer("leader")); err != nil {
+		return errors.New("database.platform_url: не удалось открыть пул локов задач (проверьте DSN логина zafiro_platform)")
+	}
+	a.closers = append(a.closers, a.LockPool.Close, leader.UseLockPool(a.PlatformPool, a.LockPool))
 	a.I18n = i18n.NewCatalog(a.PlatformPool)
 	a.closers = append(a.closers, a.I18n.Close) // закрывается раньше пула (closers — в обратном порядке)
 	if err := checkRoles(ctx, a.AppPool, a.PlatformPool); err != nil {
 		return err
 	}
 
+	valkeyTLS, err := cfg.Valkey.TLSConfig()
+	if err != nil {
+		return err
+	}
 	if a.Valkey, err = valkey.NewClient(valkey.ClientOption{
 		InitAddress: []string{cfg.Valkey.Addr},
+		Username:    cfg.Valkey.Username,
 		Password:    cfg.Valkey.Password.Reveal(),
+		TLSConfig:   valkeyTLS, // аудит SEC-2/OPS-6: управляемый Valkey/Redis, общая сеть
 		// Клиентский кэш (RESP3 tracking) не нужен: ключи короткоживущие, читаются точечно.
 		DisableCache: true,
 	}); err != nil {
@@ -141,13 +158,21 @@ func (a *App) connect(ctx context.Context, _ *wiring) error {
 		return fmt.Errorf("jetstream: %w", err)
 	}
 	a.JS = a.Obs.WrapJetStream(a.JS) // спаны и счётчики публикации outbox и потребителей
-	if _, err := outbox.EnsureStream(ctx, a.JS, outbox.StreamOptions{
-		MaxAge: cfg.Events.Stream.MaxAge, Duplicates: cfg.Events.Stream.Duplicates, Replicas: cfg.Events.Stream.Replicas,
-	}); err != nil {
+	if _, err := outbox.EnsureStream(ctx, a.JS, streamOptions(cfg)); err != nil {
 		return fmt.Errorf("events stream: %w", err)
 	}
 	return nil
 }
+
+// streamOptions — параметры потока событий из events.stream.* (при старте и при пересоздании публикатором, OPS-2).
+func streamOptions(cfg *config.Config) outbox.StreamOptions {
+	return outbox.StreamOptions{
+		MaxAge: cfg.Events.Stream.MaxAge, Duplicates: cfg.Events.Stream.Duplicates, Replicas: cfg.Events.Stream.Replicas,
+		MaxBytes: cfg.Events.Stream.MaxBytes, // аудит OPS-12
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
 
 // buildAuth — хэши паролей, сессии админки, сервис авторизации, лимиты запросов.
 func (a *App) buildAuth(_ context.Context, w *wiring) error {
@@ -363,6 +388,8 @@ func (a *App) buildEvents(_ context.Context, w *wiring) error {
 	if w.publisher, err = outbox.NewPublisher(outbox.PublisherOptions{
 		Pool: a.PlatformPool, JS: a.JS, BatchSize: cfg.Outbox.BatchSize, Interval: cfg.Outbox.Interval,
 		Retention: cfg.Outbox.Retention, Log: log,
+		// Поток пропал во время работы (NATS поднят пустым) — публикатор создаёт его заново (аудит OPS-2).
+		Stream: ptr(streamOptions(cfg)),
 	}); err != nil {
 		return fmt.Errorf("outbox: %w", err)
 	}
@@ -469,6 +496,10 @@ func (a *App) buildWorkers(_ context.Context, w *wiring) error {
 				"computer_health_events": cfg.Agent.Health.EventRetention,
 				"computer_health_hourly": cfg.Agent.Health.HourlyRetention},
 		}).Run},
+		// Построчная очистка (integrations:prune, session-purchases:prune, agent-qr-logins:prune; A2 §8) — сроки старого
+		// кода, тот же часовой период, что у integrations:prune; срок ключей — тот же, что проверяет /api/v1.
+		{"data-retention", (&worker.DataRetention{Platform: a.PlatformPool, Interval: cfg.Workers.LogRetention.Interval,
+			IdempotencyKeys: cfg.Integrations.IdempotencyRetention, Log: log}).Run},
 	}
 	var err error
 	if a.workers, err = withoutWorkers(a.workers, cfg.Dev.DisableWorkers); err != nil {

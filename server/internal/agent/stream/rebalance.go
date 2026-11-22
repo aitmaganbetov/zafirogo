@@ -86,6 +86,16 @@ func rebalanceRelease(local int, counts []int, active bool, o RebalanceOptions) 
 	return min(excess, o.Batch), true
 }
 
+// rampingUp — число своих потоков за последний интервал выросло больше чем на MinExcess/2 (prev < 0 — прежнего замера
+// нет): идёт массовое подключение (старт клуба/платформы, оба инстанса растут). Пока так, перебалансировка не
+// начинается: запись соседа отстаёт до 3 интервалов, и растущий инстанс, сравнивая свой свежий счётчик с устаревшим
+// чужим, отправлял Drain при уже равных долях — лишние переподключения TLS (аудит 22.11.2026, PERF-2: нагрузочный
+// прогон 1 000 ПК — 200 лишних Drain при снимках 500/500). Начатую перебалансировку рост не останавливает (её
+// инстанс отпускает потоки, а не набирает).
+func rampingUp(local, prev int, o RebalanceOptions) bool {
+	return prev < 0 || local-prev > o.MinExcess/2
+}
+
 // streamsKey — hash Valkey «инстанс → число потоков|срок (Unix мс)»: живые инстансы и их нагрузка.
 func (s *Service) streamsKey() string { return s.store.Prefix() + "streams" }
 
@@ -159,7 +169,7 @@ func (s *Service) RunRebalance(ctx context.Context) error {
 		return nil
 	}
 	defer s.unpublishStreams()
-	active := false
+	st := rebalanceState{prevLocal: -1}
 	t := time.NewTimer(0) // сразу: новый инстанс сразу виден остальным (с 0 потоков)
 	defer t.Stop()
 	for {
@@ -170,16 +180,35 @@ func (s *Service) RunRebalance(ctx context.Context) error {
 			return nil
 		case <-t.C:
 		}
-		active = s.rebalanceOnce(ctx, active)
+		s.rebalanceOnce(ctx, &st)
 		// Jitter ±20 %: инстансы не решают в одну и ту же секунду по одинаково устаревшим данным.
 		t.Reset(time.Duration(float64(o.Interval) * (0.8 + 0.4*rand.Float64()))) // #nosec G404 -- jitter, не секрет
 	}
 }
 
-// rebalanceOnce — один интервал: публикация, решение, Drain выбранным ПК. Возвращает новое значение active.
-func (s *Service) rebalanceOnce(ctx context.Context, active bool) bool {
+// rebalanceState — состояние перебалансировки между интервалами (только горутина RunRebalance).
+type rebalanceState struct {
+	active    bool // перебалансировка идёт (гистерезис rebalanceRelease)
+	prevLocal int  // потоки этого инстанса в прошлый интервал (-1 — замера не было), rampingUp
+}
+
+// decide — сколько потоков отпустить в этот интервал: rebalanceRelease, но начинать — не во время роста (rampingUp).
+func (st *rebalanceState) decide(local int, counts []int, o RebalanceOptions) int {
+	ramping := rampingUp(local, st.prevLocal, o)
+	st.prevLocal = local
+	if !st.active && ramping {
+		return 0
+	}
+	release, active := rebalanceRelease(local, counts, st.active, o)
+	st.active = active
+	return release
+}
+
+// rebalanceOnce — один интервал: публикация, решение, Drain выбранным ПК.
+func (s *Service) rebalanceOnce(ctx context.Context, st *rebalanceState) {
 	if s.closing.Load() {
-		return false // идёт плановая остановка: свой Drain уже разослан, запись снята
+		st.active = false // идёт плановая остановка: свой Drain уже разослан, запись снята
+		return
 	}
 	o := s.o.Rebalance
 	local := s.LocalStreams()
@@ -190,19 +219,21 @@ func (s *Service) rebalanceOnce(ctx context.Context, active bool) bool {
 		if ctx.Err() == nil {
 			s.o.Log.Warn("agent streams publish failed", "err", err)
 		}
-		return false
+		st.active = false
+		return
 	}
 	if s.closing.Load() {
 		s.unpublishStreams() // Drain начался во время записи: запись не должна пережить его
-		return false
+		st.active = false
+		return
 	}
-	release, active := rebalanceRelease(local, counts, active, o)
+	release := st.decide(local, counts, o)
 	if release == 0 {
-		return active
+		return
 	}
 	picked := s.pickMovable(release, s.o.Now(), o.Interval)
 	if len(picked) == 0 {
-		return active
+		return
 	}
 	msg := drainMsg(o.ReconnectWithin)
 	sent := 0
@@ -218,7 +249,6 @@ func (s *Service) rebalanceOnce(ctx context.Context, active bool) bool {
 	}
 	s.o.Log.Info("agent streams rebalance", "streams", local, "instances", len(counts), "total", total,
 		"release", release, "requested", sent)
-	return active
 }
 
 // pickMovable выбирает до n ПК, которых можно незаметно переподключить: стрим старше minAge, ПК простаивает

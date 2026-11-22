@@ -375,7 +375,7 @@ func isUniqueViolation(err error, constraint string) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && (constraint == "" || pgErr.ConstraintName == constraint)
 }
 
-// subscriptionActive — ClubSubscription::isActive() (app/Models/ClubSubscription.php стр. 31–35, BR-130):
+// subscriptionActive — ClubSubscription::isActive() (app/Models/ClubSubscription.php стр. 47–51, BR-130):
 // (active и (нет конца периода или он в будущем)) или (trialing и конец пробного периода в будущем).
 func subscriptionActive(status string, trialEndsAt, periodEndsAt *time.Time, now time.Time) bool {
 	switch status {

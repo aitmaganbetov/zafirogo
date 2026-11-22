@@ -351,7 +351,9 @@ export function DashboardPage({ search }: { readonly search: DashboardSearch }) 
           <h3 id="errors-title" className="mb-3 font-semibold text-gray-900 dark:text-white">
             {t('Последние ошибки в логе')}
           </h3>
-          {data.log_errors.length === 0 ? (
+          {data.log_errors == null ? (
+            <p className="text-sm text-gray-500">{t('Журнал ошибок к этому экрану не подключён: ошибки сервера пишутся в его журнал (stdout).')}</p>
+          ) : data.log_errors.length === 0 ? (
             <p className="text-sm text-gray-500">{t('Ошибок в логе нет.')}</p>
           ) : (
             data.log_errors.map((error, i) => (

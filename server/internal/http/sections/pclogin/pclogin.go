@@ -27,7 +27,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
-// access — middleware auth без current-club (routes/web.php:149–153): вход проверяет обработчик, клуб — клуб кода.
+// access — middleware auth без current-club (routes/web.php:183–187): вход проверяет обработчик, клуб — клуб кода.
 var access = httpx.Access{Public: []string{"GetPcLogin", "ApprovePcLogin"}}
 
 // limits — throttle:10,1,pc-login.approve (правило в auth/ratelimit).

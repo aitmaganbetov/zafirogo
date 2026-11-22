@@ -39,7 +39,7 @@ const seatMapFreeLimit = 200
 
 // SeatMap — карта для пересадки клиента userID с ПК fromComputerID.
 //
-// Laravel: app/Services/SeatTransfers.php map() (стр. 51–81) и freeSeatsFor() (стр. 24–43): зоны по sort_order, id;
+// Laravel: app/Services/SeatTransfers.php map() (стр. 52–82) и freeSeatsFor() (стр. 25–44): зоны по sort_order, id;
 // ПК по зоне и номеру (до 500); доступны только свободные ПК, где действует покупка сессии (allowedZoneIds()),
 // без чужой брони до конца сессии + интервал (ComputerReservations::blocking()). Нет своей оплаченной сессии на
 // исходном ПК — ensureOwnSession(): «На этом ПК нет вашей оплаченной сессии.»
@@ -60,7 +60,7 @@ func (s *Service) SeatMap(ctx context.Context, clubID, userID, fromComputerID in
 			return err
 		}
 		from := computerRow(fr).session()
-		// ensureOwnSession() (стр. 122–127).
+		// ensureOwnSession() (стр. 123–128).
 		if !from.HasPaidSession(now) || from.SessionUserID == nil || *from.SessionUserID != userID {
 			return session.ErrTransferNotOwnSession
 		}

@@ -1,8 +1,8 @@
 # Бизнес-правила Zafiro (Laravel) для переноса в zafirogo (Go)
 
 > Этап 0, задача 2. Источник правды — старый код `../Zafiro` (только чтение).
-> Все ссылки на код ведут к `/home/user/Zafiro/` (`app/...`). Номера строк — на момент Этапа 0
-> (коммит, склонированный оркестратором); если строка сдвинулась, ищите по имени метода.
+> Все ссылки на код ведут к `/home/user/Zafiro/` (`app/...`). Номера строк сверены с коммитом `71db8d6`
+> (аудит 22.11.2026, CODE-9); если строка сдвинулась, ищите по имени метода.
 > Открытые вопросы по этому документу: [`docs/open-questions/business-rules.md`](open-questions/business-rules.md).
 
 ## 0. Как читать документ
@@ -140,7 +140,7 @@
 <a id="br-001"></a>
 ### BR-001. Хранение сумм, `amountToCents` / `formatCents`, округление PHP — P1
 
-**Код:** `app/Services/AgentTariffPurchaseService.php` — `amountToCents()` (стр. 385–390), `formatCents()` (стр. 392–395);
+**Код:** `app/Services/AgentTariffPurchaseService.php` — `amountToCents()` (стр. 477–482), `formatCents()` (стр. 484–487);
 касты `decimal:2` в моделях `MemberBalance` (стр. 16–19), `Tariff` (стр. 27), `ClubZone` (стр. 22), `ClubMembership`
 (стр. 20), `Product`, `ClubService`, `CashShift`, `CashTransaction`, `ShopOrder`.
 
@@ -230,7 +230,7 @@ Friends.formatCents(c):  return (c<0 ? "-" : "") + sprintf("%d.%02d", intdiv(|c|
 ### BR-003. Настройки клуба: где читаются и значения по умолчанию — P1
 
 **Код:** `app/Services/CurrentClub.php` — `settings()` (стр. 71–82); `app/Http/Controllers/SettingsController.php` —
-`defaultSettings()` (стр. 331–376), `save()` (стр. 208–313), `loadSettings()` (стр. 315–329); `SaveSettingsRequest::rules()`.
+`defaultSettings()` (стр. 388–438), `save()` (стр. 260–370), `loadSettings()` (стр. 372–386); `SaveSettingsRequest::rules()`.
 
 - `clubs.settings` — JSON. Сервисы читают **сырой** JSON (`CurrentClub::settings()`), а не слитый с умолчаниями,
   поэтому у каждого сервиса **своё** умолчание (они совпадают с `defaultSettings()`).
@@ -271,7 +271,7 @@ Friends.formatCents(c):  return (c<0 ? "-" : "") + sprintf("%d.%02d", intdiv(|c|
 уровни — `PercentLevels::normalize()`; `bonus_max_percent`, `auto_billing_pause_minutes` — `(int)`; прочее как пришло.
 Пустые строки уровней (оба поля null) отбрасываются ещё до валидации (`SaveSettingsRequest::prepareForValidation()`).
 Изменения пишутся в журнал `settings.updated` с «было → стало».
-Чтение старых строковых значений «минут» (`minutes()`, стр. 416–426): из строки берётся первое число; если в тексте есть «сек» — делится на 60.
+Чтение старых строковых значений «минут» (`minutes()`, стр. 481–491): из строки берётся первое число; если в тексте есть «сек» — делится на 60.
 
 - [ ] В Go — типизированная структура настроек с теми же умолчаниями **на чтении** (не только при сохранении).
 - [ ] Перенос `legacy`-клуба с `settings.json` — уточнить (OQ-BR-03).
@@ -355,7 +355,7 @@ discount   = max((float) membership.discount, cumulative)                       
 <a id="br-012"></a>
 ### BR-012. Формула скидки `discounted()` — P1
 
-**Код:** `AgentTariffPurchaseService::discounted()` (стр. 371–376).
+**Код:** `AgentTariffPurchaseService::discounted()` (стр. 463–468).
 ```
 discounted(price int /*центы*/, percent float) int:
     bp = min(10000, max(0, (int) round(percent * 100)))         // базисные пункты
@@ -372,7 +372,7 @@ discounted(price int /*центы*/, percent float) int:
 <a id="br-013"></a>
 ### BR-013. Цена тарифа для клиента — P1
 
-**Код:** `AgentTariffPurchaseService::priceInCents()` (стр. 361–368); в выдаче агенту — `representation()` (стр. 341–359).
+**Код:** `AgentTariffPurchaseService::priceInCents()` (стр. 453–460); в выдаче агенту — `representation()` (стр. 433–451).
 ```
 price = amountToCents(tariff.price)
 if tariff.discount_enabled && discountOnTariffs():  price = discounted(price, LoyaltyProgram.discountFor(membership))
@@ -385,7 +385,7 @@ if tariff.discount_enabled && discountOnTariffs():  price = discounted(price, Lo
 <a id="br-014"></a>
 ### BR-014. Цена часа зоны и поминутная цена — P1
 
-**Код:** `AgentTariffPurchaseService::hourlyPrice()` (стр. 141–150), `minutesPriceInCents()` (стр. 206–209);
+**Код:** `AgentTariffPurchaseService::hourlyPrice()` (стр. 183–192), `minutesPriceInCents()` (стр. 250–253);
 `GuestMinutesController::show()` (стр. 20–43).
 ```
 hourlyPrice(user, zone) string:
@@ -409,7 +409,7 @@ purchaseMinutes: price = minutesPriceInCents(hourlyPrice(user, zone), minutes)
 <a id="br-015"></a>
 ### BR-015. Эффективные минуты тарифа (лимит использования) — P1
 
-**Код:** `AgentTariffPurchaseService::effectiveMinutes()` (стр. 378–383); `purchase()` стр. 81–86.
+**Код:** `AgentTariffPurchaseService::effectiveMinutes()` (стр. 470–475); `purchase()` стр. 114–119.
 ```
 effectiveMinutes(t) = (t.usage_limit_enabled && t.usage_limit_minutes != null)
                       ? min(t.duration_minutes, t.usage_limit_minutes) : t.duration_minutes
@@ -426,8 +426,8 @@ expires_at части (только тариф с лимитом) = now + usage_
 <a id="br-016"></a>
 ### BR-016. Доступность тарифа — P1
 
-**Код:** `AgentTariffPurchaseService::availableFor()` (стр. 34–56), `isAvailable()` (313–329), `purchaseCount()` (331–338);
-`Tariff::onSale()` (стр. 41–44), `Tariff::inValidityPeriod()` (47–50); `purchase()` стр. 69–77.
+**Код:** `AgentTariffPurchaseService::availableFor()` (стр. 36–52), `isAvailable()` (379–395), `purchaseCount()` (397–400);
+`Tariff::onSale()` (стр. 41–44), `Tariff::inValidityPeriod()` (47–50); `purchase()` стр. 103–111.
 ```
 isAvailable(t, membership, purchaseCount):
     if !WeeklyPeriods.contains(t.sale_periods, nowLocal) → false            // продажа
@@ -449,7 +449,7 @@ purchaseCount(t) = COUNT(activity_logs WHERE event='tariff.purchased' AND subjec
 <a id="br-017"></a>
 ### BR-017. Недельные периоды `WeeklyPeriods` — P1
 
-**Код:** `app/Support/WeeklyPeriods.php` — `contains()` (стр. 17–39), `isAlways()` (42–46), `minutes()` (48–51).
+**Код:** `app/Support/WeeklyPeriods.php` — `contains()` (стр. 19–41), `isAlways()` (90–94), `minutes()` (96–99).
 ```
 contains(periods, localNow):
     if periods не массив или пуст → true                       // «всегда»
@@ -494,7 +494,7 @@ endOf(periods, localNow):
 <a id="br-018"></a>
 ### BR-018. Выбор баланса: бонусный лимит, смешанная оплата — P1
 
-**Код:** `AgentTariffPurchaseService::sell()` (стр. 236–311, расчёт оплаты — стр. 238–269); `PaymentRules::bonusMaxPercent()` (35–40),
+**Код:** `AgentTariffPurchaseService::sell()` (стр. 281–340, расчёт оплаты — стр. 294–300 и `bonusPayment()` 346–376); `PaymentRules::bonusMaxPercent()` (35–40),
 `bonusLimitCents()` (84–87), `mixedPaymentAllowed()` (67–70).
 ```
 bonusMaxPercent = is_numeric(x) ? clamp((int)x, 0, 100) : 100         // x = finances.bonus_max_percent, умолч. 100
@@ -529,7 +529,7 @@ main -= mainPay; bonus -= bonusPay
 <a id="br-019"></a>
 ### BR-019. Что агент предлагает оплатить бонусами — P2
 
-**Код:** `PaymentRules::bonusPercentOffered()` (стр. 76–81); `representation()` стр. 352–355; `GuestMinutesController::show()`.
+**Код:** `PaymentRules::bonusPercentOffered()` (стр. 76–81); `representation()` стр. 445–446; `GuestMinutesController::show()`.
 ```
 percent = mainBalanceOnly ? 0 : bonusMaxPercent
 offered = (percent < 100 && !mixed) ? 0 : percent
@@ -541,8 +541,8 @@ bonus_allowed = offered > 0
 <a id="br-020"></a>
 ### BR-020. Покупка тарифа в агенте — P1
 
-**Код:** `AgentTariffPurchaseService::purchase()` (стр. 62–101), `sell()` (236–311), `ensureComputerFor()` (212–221);
-`AgentTariffController::purchase()` (стр. 91–107 в файле), `PurchaseAgentTariffRequest`.
+**Код:** `AgentTariffPurchaseService::purchase()` (стр. 96–143), `sell()` (281–340), `ensureComputerFor()` (256–265);
+`AgentTariffController::purchase()` (стр. 29–45), `PurchaseAgentTariffRequest`.
 
 **Алгоритм:**
 1. Контроллер: `computer_id` должен быть ПК текущего клуба; если у ПК есть `agent_token_hash`, заголовок `X-Agent-Token`
@@ -591,7 +591,7 @@ bonus_allowed = offered > 0
 <a id="br-021"></a>
 ### BR-021. Покупка минут (поминутно) — P1
 
-**Код:** `AgentTariffPurchaseService::purchaseMinutes()` (стр. 110–138); `GuestMinutesController::purchase()` (стр. 45–61).
+**Код:** `AgentTariffPurchaseService::purchaseMinutes()` (стр. 152–180); `GuestMinutesController::purchase()` (стр. 45–61).
 - Валидация: `minutes` 1…720, `balance` ∈ {main, bonus} или нет; проверка `X-Agent-Token` как в BR-020.
 - Блокировка ПК; зона ПК; `price_per_hour` null → ошибка; `ensureComputerFor`; `price = minutesPriceInCents(hourlyPrice(...), minutes)`.
 - Часть `kind=minutes`, `tariff_id=null`, `name = zone.name`, `expires_at=null`; `paymentMethod='main_or_bonus'`.
@@ -604,7 +604,7 @@ bonus_allowed = offered > 0
 ### BR-022. «Игра на весь баланс» — P1
 
 **Код:** `PaymentRules::wholeBalanceAllowed()` (стр. 61–64); `GuestMinutesController::show()` поле `whole_balance`;
-`WindowsAgent/Frontend/main.js` `affordableMinutes()` (~стр. 972–979), обработчик `minuteWholeBuy` (~стр. 988–999).
+`WindowsAgent/Frontend/main.js` `affordableMinutes()` (~стр. 972–979), обработчик `minuteWholeBuy` (~стр. 989–999).
 - Сервер только сообщает флаг; минуты считает **агент** и покупает обычной `purchaseMinutes(minutes, balance='main')`:
 ```
 hourCents = Math.round(price_per_hour * 100); balanceCents = Math.round(balance * 100)
@@ -621,7 +621,7 @@ while minutes > 0 && floor((hourCents*minutes + 30)/60) > balanceCents: minutes-
 ### BR-023. Автобиллинг с паузой — P1
 
 **Код:** `PaymentRules::autoBillingEnabled()` (стр. 47–50), `autoBillingPauseMinutes()` (53–58: `clamp((int)x, 0, 60)`, умолч. 5);
-агент `WindowsAgent/Frontend/main.js` (~стр. 1001–1046).
+агент `WindowsAgent/Frontend/main.js` (~стр. 1010–1046).
 - Сервер только отдаёт `auto_billing`, `auto_billing_pause_minutes`. Логика в агенте (раз в секунду):
   - работает, если клиент вошёл, нет активной сессии, не остановлено вручную, `auto_billing && available`, `affordableMinutes() > 0`;
   - после входа — ждёт паузу `pause*60000 мс` от первого «тика» без сессии, затем покупает `affordableMinutes()` минут с основного баланса;
@@ -633,7 +633,7 @@ while minutes > 0 && floor((hourCents*minutes + 30)/60) > balanceCents: minutes-
 <a id="br-024"></a>
 ### BR-024. Запуск сохранённого пакета — P1
 
-**Код:** `AgentTariffPurchaseService::startPackage()` (стр. 171–203), `packagesFor()` (153–163); `GuestPackageController`.
+**Код:** `AgentTariffPurchaseService::startPackage()` (стр. 214–247), `packagesFor()` (195–205); `GuestPackageController`.
 ```
 package = time_packages WHERE user_id = user FOR UPDATE (иначе 404)
 minutes = min(package.minutes_left, intdiv(max(0, expires_at - now (сек)), 60))
@@ -684,7 +684,7 @@ currentStatus: is_reserved || bookedNow → reserved; status='offline' → offli
 ### BR-031. Досрочное завершение сессии — P1
 
 **Код:** `ClubComputerSessions::end()` (стр. 203–229); контроллеры `ClubComputerController::endSession()` (агент/приложение,
-~стр. 413–427), `endSessions()` (карта клуба, ~стр. 356–375); маршруты `api.club-computers.session.end`,
+~стр. 429–442), `endSessions()` (карта клуба, ~стр. 372–390); маршруты `api.club-computers.session.end`,
 `api_staff computers.end-session` (роли `STAFF_ROLES`), `club-computers.end-sessions` (право `pc_control.delete`).
 ```
 транзакция; ПК FOR UPDATE
@@ -780,13 +780,16 @@ DELETE time_packages (все клубы) WHERE expires_at < now
 ```
 Также `agent-qr-logins:prune`: `DELETE agent_qr_logins WHERE expires_at < now − 1 день`.
 - Сессия, длящаяся > 8 дней, не теряет части (защищена условием NOT IN).
-- [ ] Перенести как фоновые задачи.
+- [x] Перенесено (аудит 22.11.2026, CODE-2): части сессий и QR-входы — воркер `data:retention`
+  (`worker.DataRetention`, запросы `db/queries/retention.sql`), пачками по 1 000, ежечасно (строка удаляется не раньше
+  срока); клубы в состоянии `imported` не чистятся. Тесты `TestSessionPurchasesPrune`, `TestAgentDataPrune`,
+  `TestDataRetentionBatches`. Сгорание пакетов — `time-packages:burn-expired` с ledger и журналом (Q-011).
 
 <a id="br-035"></a>
 ### BR-035. Пересадка на другой ПК — P1
 
-**Код:** `app/Services/SeatTransfers.php` — `freeSeatsFor()` (24–43), `map()` (51–81), `transfer()` (83–120),
-`ensureOwnSession()` (122–127), `allowedZoneIds()` (135–152); `Api/GuestSeatController.php`.
+**Код:** `app/Services/SeatTransfers.php` — `freeSeatsFor()` (25–44), `map()` (52–82), `transfer()` (84–121),
+`ensureOwnSession()` (123–128), `allowedZoneIds()` (137–157); `Api/GuestSeatController.php`.
 - Включается настройкой `guests.allow_guest_self_transfer` (иначе 403 «Эта возможность отключена в клубе.»).
 - Запрос — только с самого ПК (`X-Agent-Token` исходного ПК, как BR-020).
 ```
@@ -816,7 +819,7 @@ transfer: оба ПК FOR UPDATE по id; target != from;
 ### BR-036. Heartbeat агента и состояние ПК — P2
 
 **Код:** `ClubComputerSessions::heartbeat()` (45–65), `needsWrite()` (72–85), `changes()` (93–134), `sessionUpdates()` (143–156);
-`ClubComputerController::agentHeartbeat()` (~стр. 301–326), `heartbeat()` (user-token, ~274–292), `customerState()` (~335–354).
+`ClubComputerController::agentHeartbeat()` (~стр. 304–333), `heartbeat()` (user-token, ~274–292), `customerState()` (~342–357).
 - Запись в БД нужна, если: `fresh_boot`; сессия должна была закончиться; `last_seen_at` null или старше 20 с (`SEEN_WRITE_SECONDS`);
   или heartbeat что-то меняет. Иначе ответ без транзакции.
 - Поля: `last_seen_at=now`, `status='online'`, `remote_ip`; `agent_state` (если прислан; `in_session` сразу после истечения → `idle`);
@@ -845,7 +848,7 @@ transfer: оба ПК FOR UPDATE по id; target != from;
 <a id="br-038"></a>
 ### BR-038. Гостевая сессия с кассы (без аккаунта) — P1
 
-**Код:** `app/Services/GuestSessions.php` — `sell()` (34–96), `priceFor()` (98–113); `GuestSessionController::store()`;
+**Код:** `app/Services/GuestSessions.php` — `sell()` (34–108), `priceFor()` (110–125); `GuestSessionController::store()`;
 маршруты `club-computers.guest-session` (право `cash.create`, `throttle:30,1`), staff `computers.guest-session`.
 - Включено, если `guests.guest_mode_enabled` (умолч. **true**), иначе 403.
 - Вход: `computer_ids` 1…50 (ПК клуба, distinct), `tariff_id` **или** `minutes` 1…720, `payment_method ∈ {cash, card, qr}`.
@@ -879,7 +882,7 @@ cash_transactions: income, amount = formatCents(total), description «Госте
 <a id="br-039"></a>
 ### BR-039. Действие с ПК после сессии, выход по бездействию — P3
 
-**Код:** `ClubComputerController::afterSessionAction()` (~стр. 511–522); `GuestFeatures::idleLogoutMinutes()`.
+**Код:** `ClubComputerController::afterSessionAction()` (~стр. 529–539); `GuestFeatures::idleLogoutMinutes()`.
 ```
 action = pc_action_after_session_end ∈ {restart, shutdown} ? it : "none"
 delay_seconds = is_numeric(m) ? (int) round(max(0, (float)m) * 60) : 30      // m = pc_restart_after_session_end, умолч. 0.5
@@ -1111,7 +1114,7 @@ items — только из чека 1350.00.
 <a id="br-058"></a>
 ### BR-058. Пополнение и списание баланса владельцем без кассы — P1
 
-**Код:** `UserController::update()` (стр. 89–165), `canTopUpWithoutCash()` (33–36: только роль `owner`).
+**Код:** `UserController::update()` (стр. 103–179), `canTopUpWithoutCash()` (34–37: только роль `owner`).
 ```
 top_up_amount: numeric 0.01…10 000 000 (иначе для не-владельца — prohibited); top_up_balance ∈ {balance, bonus_balance};
 balance_action ∈ {top_up, write_off} (умолч. top_up)
@@ -1128,7 +1131,7 @@ top_up:    balance[field] += amount; журнал user.balance_topped_up {…, p
 <a id="br-059"></a>
 ### BR-059. Новый клиент: начальный баланс и скидка — P1
 
-**Код:** `UserController::store()` (стр. 56–83), `canSetMoney()` (право `customer_money.update`); `StoreUserRequest`.
+**Код:** `UserController::store()` (стр. 70–97), `canSetMoney()` (право `customer_money.update`); `StoreUserRequest`.
 - С правом: `discount`, `balance`, `bonus_balance` задаются при создании (без кассы, без бонуса, без журнала суммы — только `user.created`).
 - Без права: любое ненулевое значение → 403; иначе 0.
 - Создаются `users`, `club_memberships {role=client, discount}`, `member_balances {balance, bonus_balance}`.
@@ -1138,7 +1141,7 @@ top_up:    balance[field] += amount; журнал user.balance_topped_up {…, p
 <a id="br-060"></a>
 ### BR-060. Лимит кассиров/операторов на смене — P3
 
-**Код:** `app/Services/StaffShifts.php` — `limit()` (18–23), `onShift()` (26–45), `hasPlace()` (48–57); `AuthController::login()` стр. 108–117.
+**Код:** `app/Services/StaffShifts.php` — `limit()` (18–23), `onShift()` (26–45), `hasPlace()` (48–57); `AuthController::login()` стр. 124–132.
 ```
 limit(role) = (int) settings.club[max_cashiers_on_shift|max_operators_on_shift] > 0 ? значение : null
 onShift = distinct user_id из таблицы web-сессий (sessions) с last_activity >= now − session.lifetime мин,
@@ -1247,7 +1250,7 @@ status=cancelled, handled_by, handled_at; журнал shop.order_cancelled (sub
 <a id="br-080"></a>
 ### BR-080. Интервал между бронями — P2
 
-**Код:** `ComputerReservations::gapMinutes()` (стр. 23–28).
+**Код:** `ComputerReservations::gapMinutes()` (стр. 43–48).
 ```
 gap = is_numeric(v) ? max(0, (int) round((float) v)) : 30        // v = settings.club.booking_interval, умолч. 30
 ```
@@ -1257,7 +1260,7 @@ gap = is_numeric(v) ? max(0, (int) round((float) v)) : 30        // v = settings
 <a id="br-081"></a>
 ### BR-081. Создание брони — P2
 
-**Код:** `ComputerReservations::create()` (33–76); `ComputerReservationController::store()`, `storeMany()`;
+**Код:** `ComputerReservations::create()` (53–96); `ComputerReservationController::store()`, `storeMany()`;
 `StoreComputerReservationRequest` (ПК клуба, клиент клуба, `starts_at` формата `Y-m-d\TH:i` во **времени клуба**, длительность 15…1440 мин).
 ```
 startsAt (часовой пояс клуба) < now − 5 мин → «Нельзя забронировать ПК на прошедшее время.»
@@ -1274,8 +1277,8 @@ INSERT computer_reservations {club_computer_id, user_id, customer_name, customer
 <a id="br-082"></a>
 ### BR-082. Бронь блокирует продажу времени — P1
 
-**Код:** `ComputerReservations::blocking()` (93–101), `markArrivedBy()` (104–111), `heldComputerIds()` (118–126);
-`ComputerReservation::scopeOverlapping()` (стр. 51–57), `scopePending()` (45–48).
+**Код:** `ComputerReservations::blocking()` (116–124), `markArrivedBy()` (127–135), `heldComputerIds()` (174–182);
+`ComputerReservation::scopeOverlapping()` (стр. 72–78), `scopePending()` (55–58).
 ```
 blocking(ПК, userId, until) = первая (по starts_at) ожидающая бронь ПК, пересекающая [now, until + gap),
                               у которой user_id IS NULL или user_id != userId
@@ -1292,7 +1295,7 @@ heldComputerIds = ПК с ожидающими бронями, пересека�
 <a id="br-083"></a>
 ### BR-083. Отмена брони, отметка прихода, состояния — P2
 
-**Код:** `ComputerReservations::cancel()`, `arrive()`, `close()` (78–144); `ComputerReservation::state()` (60–69).
+**Код:** `ComputerReservations::cancel()` (98–101), `arrive()` (107–110), `close()` (235–263); `ComputerReservation::state()` (81–90).
 ```
 state = cancelled_at → cancelled; arrived_at → arrived; ends_at < now → finished; starts_at < now → active; иначе pending
 cancel/arrive: бронь FOR UPDATE; state ∉ {pending, active} → «Эта бронь уже закрыта.»; поле = now; журнал reservation.cancelled|arrived
@@ -1303,7 +1306,7 @@ cancel/arrive: бронь FOR UPDATE; state ∉ {pending, active} → «Эта �
 <a id="br-084"></a>
 ### BR-084. Ручной резерв ПК (`is_reserved`) — P2
 
-**Код:** `ClubComputerController::control()` (стр. 160–175), действие `reserve` (право `pc_control.update`); API v1 `ComputerController::reservation()`.
+**Код:** `ClubComputerController::control()` (стр. 163–178), действие `reserve` (право `pc_control.update`); API v1 `ComputerController::reservation()`.
 - Переключатель: если среди выбранных есть хоть один не зарезервированный → всем `is_reserved = true`, иначе всем `false`.
 - `is_reserved = true` запрещает продажу времени и пересадку на ПК; журнал `computer.controlled (reserve|unreserve)`, вебхук `computer.reservation_changed`.
 - [ ] Перенести.
@@ -1343,7 +1346,7 @@ from.balance = formatCents(from − cents); to.balance = formatCents(storedCents
 <a id="br-092"></a>
 ### BR-092. Перевод с кодом из Telegram (моб. приложение) — P1
 
-**Код:** `app/Services/FriendTransferCodes.php` — `send()` (230–261), `confirm()` (270–301), `checkedCents()` (304–319); константы
+**Код:** `app/Services/FriendTransferCodes.php` — `send()` (32–63), `confirm()` (72–103), `checkedCents()` (106–121); константы
 `CODE_MINUTES=5`, `RESEND_SECONDS=60`, `CODES_PER_HOUR=5`, `MAX_ATTEMPTS=5`.
 ```
 send: Telegram Gateway должен быть настроен; checkedCents (сумма, дружба, баланс ≥ суммы — без блокировки)
@@ -1363,7 +1366,7 @@ confirm: транзакция: последний (по id) неистёкший
 <a id="br-100"></a>
 ### BR-100. Вход клиента в агенте, «один ПК за раз» — P2
 
-**Код:** `Api/AuthController::issueUserLoginResponse()` (стр. 31–140); `app/Services/AgentSignIns.php` — `elsewhere()` (20–33), `ACTIVE_MINUTES = 2`.
+**Код:** `Api/AuthController::issueUserLoginResponse()` (стр. 34–154); `app/Services/AgentSignIns.php` — `elsewhere()` (23–36), `ACTIVE_MINUTES = 2`.
 ```
 пользователь по телефону + пароль, иначе 401 (журнал auth.api_login_failed во всех клубах аккаунта, BR-160)
 заблокирован → 403 account_blocked
@@ -1393,7 +1396,7 @@ membership: в указанном клубе, иначе ПЕРВОЕ членс
 <a id="br-102"></a>
 ### BR-102. QR-вход на ПК — P2
 
-**Код:** `app/Services/QrLogins.php` — `create()` (138–152), `poll()` (159–194), `findOpen()` (197–205), `approve()` (208–233);
+**Код:** `app/Services/QrLogins.php` — `create()` (25–39), `poll()` (46–81), `findOpen()` (84–92), `approve()` (95–120);
 `AgentQrLogin::LIFETIME_MINUTES = 5`, `hashCode = sha256`; `Api/GuestQrLoginController` (моб. приложение), веб `pc-login/{code}`.
 ```
 create(ПК): удалить прежние QR этого ПК; code = random(40, [A-Za-z0-9]); хранится sha256; expires_at = now + 5 мин
@@ -1422,7 +1425,7 @@ poll(ПК, id): login этого ПК FOR UPDATE; нет/закрыт → expire
 <a id="br-104"></a>
 ### BR-104. Вход сотрудника в панель — P2
 
-**Код:** `app/Http/Controllers/AuthController.php` — `login()` (стр. 34–131), `normalizePhone()` (~стр. 200–213).
+**Код:** `app/Http/Controllers/AuthController.php` — `login()` (стр. 37–146), `normalizePhone()` (~стр. 216–230).
 - Телефон: только `7XXXXXXXXXX` (11 цифр, начинается с 7) → без первой; **`8…` не обрезается** (в отличие от агента).
 - Членство: сначала роль сотрудника, затем по id. Клиент может войти, только если цель — `/pc-login/…` (подтверждение QR).
 - Лимит смены (BR-060), журнал `auth.login`; ошибки — `auth.login_failed` с причиной.
@@ -1435,7 +1438,7 @@ poll(ПК, id): login этого ПК FOR UPDATE; нет/закрыт → expire
 ### BR-120. Команды питания и Wake-on-LAN — P3
 
 **Код:** `app/Services/ComputerPower.php` — `queue()` (38–57), `take()` (111–133), `wakeTargets()` (141–152), `carriesOut()` (99–108);
-`ClubComputerController::control()` (147–207), `agentHeartbeat()` (301–326). Константы: `COMMAND_TTL_SECONDS = 120`, `AGENT_VERSION = 0.0.66`,
+`ClubComputerController::control()` (150–210), `agentHeartbeat()` (304–333). Константы: `COMMAND_TTL_SECONDS = 120`, `AGENT_VERSION = 0.0.66`,
 `SERVICE_AGENT_VERSION = 0.0.72`, `MESSAGE_AGENT_VERSION = 0.0.73`.
 ```
 действия: restart → status 'restarting', команда 'restart'; power_off → status 'offline', 'shutdown'; service → 'service' (BR-123);
@@ -1450,7 +1453,7 @@ outdated = версия агента < минимальной (isOutdated) — �
 <a id="br-121"></a>
 ### BR-121. Сообщение на экран ПК — P3
 
-**Код:** `ComputerPower::message()` (65–72), `takeMessage()` (75–96); `ClubComputerController::notify()` (~377–411).
+**Код:** `ComputerPower::message()` (65–72), `takeMessage()` (75–96); `ClubComputerController::notify()` (~393–426).
 - До 200 ПК, текст ≤ 300 символов (trim); `staff_message`, `staff_message_at = now`; отдаётся агенту один раз, если не старше 300 с.
 - Журнал `computer.messaged`. Право `pc_control.update`.
 - [ ] Перенести.
@@ -1458,7 +1461,7 @@ outdated = версия агента < минимальной (isOutdated) — �
 <a id="br-122"></a>
 ### BR-122. PIN выхода из агента — P2
 
-**Код:** `SettingsController::agentPin()` (стр. 58–82, право `workers.update`); `Api/AgentExitPinController::__invoke()`;
+**Код:** `SettingsController::agentPin()` (стр. 110–134, право `workers.update`); `Api/AgentExitPinController::__invoke()`;
 лимитер `agent-exit-pin` (`AppServiceProvider`: 5 попыток / 5 мин на ПК, 100 в час на клуб).
 ```
 установка: PIN 4–8 цифр (/^\d{4,8}$/), подтверждение; хранится bcrypt в clubs.agent_exit_pin_hash; пусто → удалить
@@ -1473,7 +1476,7 @@ outdated = версия агента < минимальной (isOutdated) — �
 <a id="br-123"></a>
 ### BR-123. Техрежим (визит сотрудника) — P2
 
-**Код:** `ClubComputerSessions::startStaffVisit()` (стр. 236–242), `DEFAULT_STAFF_MINUTES = 15`; `SettingsController::agentStaffTime()` (85–102).
+**Код:** `ClubComputerSessions::startStaffVisit()` (стр. 236–242), `DEFAULT_STAFF_MINUTES = 15`; `SettingsController::agentStaffTime()` (137–154).
 ```
 minutes = clubs.agent_staff_minutes ?? 15          // 1…240, изменение пишет club.agent_staff_time_changed
 ПК: staff_user_id, staff_kind ∈ {pin, signin, panel}, staff_until = now + minutes
@@ -1507,7 +1510,7 @@ register: транзакция (до 3 попыток), clubs FOR UPDATE
 <a id="br-125"></a>
 ### BR-125. Ключ установки клуба и enroll — P2
 
-**Код:** `Club::booted()` (стр. 25–45); `app/Services/ClubInstallationKey.php` — `resolve()`; `Api/AgentEnrollController::__invoke()`.
+**Код:** `Club::booted()` (стр. 26–46); `app/Services/ClubInstallationKey.php` — `resolve()`; `Api/AgentEnrollController::__invoke()`.
 ```
 при создании клуба: key = random(64); installation_key (зашифрован), installation_key_hash = sha256(key), prefix = key[0:12]
                     изменение этих полей запрещено (LogicException)
@@ -1530,7 +1533,7 @@ enroll: club_key (64 симв.), device_id, device_name?, mac?; клуб не н
 <a id="br-127"></a>
 ### BR-127. Нормализация MAC и телефона — P3
 
-**Код:** `app/Support/MacAddress.php` — `normalize()` (стр. 240–253), `deviceId()`; `app/Support/PhoneNumber.php` — `normalize()`.
+**Код:** `app/Support/MacAddress.php` — `normalize()` (стр. 13–26), `deviceId()`; `app/Support/PhoneNumber.php` — `normalize()`.
 ```
 MAC: только hex-символы, upper; длина ≠ 12 или < 2 различных символов (000000000000, FFFFFFFFFFFF) → null; иначе AA:BB:CC:DD:EE:FF
 deviceId(mac) = "MAC-" + mac без ":"
@@ -1542,7 +1545,7 @@ Phone: цифры; пусто → ""; 11 цифр, начало 7 или 8 → �
 <a id="br-128"></a>
 ### BR-128. Добавление/удаление ПК и зон — P2
 
-**Код:** `ClubZoneComputerService::add()`; `ClubComputerController::update()` (65–119), `destroy()` (125–145); `ClubZoneController::destroy()` (стр. 151–162).
+**Код:** `ClubZoneComputerService::add()`; `ClubComputerController::update()` (68–122), `destroy()` (128–148); `ClubZoneController::destroy()` (стр. 151–162).
 - Добавление в зону: зона и её ПК FOR UPDATE; `capacity` заполнена → «Достигнута вместимость зоны.»; номер = max + 1; позиция —
   первая свободная ячейка сетки `x = 5 + (i % 6)*47`, `y = 5 + floor(i/6)*42`; имя `PC-NN`.
 - Перенос ПК в другую зону: capacity; свободная позиция в сетке шагом 47×42 в пределах `width−66`, `height−166`.
@@ -1564,7 +1567,7 @@ Phone: цифры; пусто → ""; 11 цифр, начало 7 или 8 → �
 <a id="br-130"></a>
 ### BR-130. Активна ли подписка клуба — P2
 
-**Код:** `app/Models/ClubSubscription.php` — `isActive()` (стр. 31–35), `isPastPaidPeriod()` (38–41), скоуп `active()` (45–51).
+**Код:** `app/Models/ClubSubscription.php` — `isActive()` (стр. 47–51), `isPastPaidPeriod()` (54–57), скоуп `active()` (61–67).
 ```
 isActive = (status == active && (current_period_ends_at == null || current_period_ends_at > now))
         || (status == trialing && trial_ends_at != null && trial_ends_at > now)
@@ -1577,7 +1580,7 @@ isActive = (status == active && (current_period_ends_at == null || current_perio
 <a id="br-131"></a>
 ### BR-131. Пробный период при регистрации клуба — P2
 
-**Код:** `AuthController::register()` (стр. 143–198).
+**Код:** `AuthController::register()` (стр. 159–214).
 - Создаются пользователь, клуб (`slug = Str::slug(name) или 'club'` + `-` + 8 случайных строчных), членство `owner`, `member_balances` владельца,
   план `trial` (`firstOrCreate`: «Пробный период», без цены, 14 дней), подписка `trialing`, `trial_ends_at = now + (trial_days ?: 14) дней`.
 - [ ] Перенести.
@@ -1585,7 +1588,7 @@ isActive = (status == active && (current_period_ends_at == null || current_perio
 <a id="br-132"></a>
 ### BR-132. Продление, приостановка, смена тарифа (суперадмин) — P2
 
-**Код:** `Superadmin/ClubController::extend()` (~стр. 161–189), `suspend()` (~192–204), `changePlan()` (~206–219).
+**Код:** `Superadmin/ClubController::extend()` (~стр. 161–189), `suspend()` (~192–203), `changePlan()` (~205–219).
 ```
 extend(days 1…3650, plan?): подписка FOR UPDATE (или новая с started_at = now)
     from = current_period_ends_at > now ? current_period_ends_at : now
@@ -1621,7 +1624,7 @@ changePlan: saas_plan_id
 <a id="br-140"></a>
 ### BR-140. Права панели `ClubPermissions` — P2
 
-**Код:** `app/Support/ClubPermissions.php` — `SECTIONS` (стр. 24–45), `allows()` (48–58), `exists()`, `byRole()` (67–72), `given()` (75–80).
+**Код:** `app/Support/ClubPermissions.php` — `SECTIONS` (стр. 24–46), `allows()` (49–59), `exists()`, `byRole()` (68–73), `given()` (76–81).
 ```
 allows(m, right): m == null || right не существует → false; m.role == owner → true
                   return given(m, right) ?? byRole(m.role, right)
@@ -1706,7 +1709,7 @@ reports       = role ∈ {owner, admin, manager}
 <a id="br-144"></a>
 ### BR-144. Маршрут → право (`RequireClubArea`) — P2
 
-**Код:** `app/Http/Middleware/RequireClubArea.php` — `ROUTES` (стр. 18–70), `handle()` (83–91).
+**Код:** `app/Http/Middleware/RequireClubArea.php` — `ROUTES` (стр. 18–71), `handle()` (84–92).
 - Каждый маршрут группы `club-area` обязан быть в таблице (иначе 403 — «новая страница сначала получает право»).
 - Соответствие (сокращённо): касса — `cash.view` (страницы, чеки, X/Z), `cash.create` (смены, продажа, пополнение, приход/расход, закрытие,
   отметка печати Z, гостевая сессия), `cash.delete` (возврат); клиенты; брони; карта; `pc_control.update` (control, notify);
@@ -1815,7 +1818,7 @@ currency = finances.currency на момент создания (при изме
 
 ### 15.2. Сессии и ПК (P1/P2)
 
-16. **Пересадка не переносит/не сбрасывает `session_guest`** (`SeatTransfers::transfer()` стр. 105–107). Если на целевом ПК осталась
+16. **Пересадка не переносит/не сбрасывает `session_guest`** (`SeatTransfers::transfer()` стр. 106–108). Если на целевом ПК осталась
     истёкшая, ещё не очищенная гостевая сессия (`session_guest = true`, окно до минуты), перенесённая сессия клиента станет «гостевой»:
     агент откроет ПК без входа, а `fresh_boot` (BR-037) **сотрёт её без возврата**. (OQ-BR-16)
 17. **Естественное истечение** (BR-033) не пишет журнал и не удаляет `session_purchases` (их чистит суточная задача через 8 дней).
@@ -2185,7 +2188,7 @@ $balance = (float) $reseller->earned - (float) $reseller->paid_out;
 <a id="br-196"></a>
 ### BR-196. Уровень зоны: тариф пересаживается в зону того же или более низкого уровня — P2
 
-**Код:** `app/Services/SeatTransfers.php` `allowedZoneIds()` (стр. 136–157); `app/Http/Requests/StoreClubZoneRequest.php`
+**Код:** `app/Services/SeatTransfers.php` `allowedZoneIds()` (стр. 137–157); `app/Http/Requests/StoreClubZoneRequest.php`
 (`level`); `resources/views/club-map/index.blade.php` (поле «Уровень зоны» формы зоны);
 `database/migrations/2026_11_19_100000_add_level_to_club_zones.php`.
 - Уровень зоны задаёт клуб в форме зоны на карте клуба: целое 1…99 или пусто («Без уровня», `NULL`). 0 и > 99 —

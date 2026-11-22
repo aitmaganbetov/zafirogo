@@ -2,6 +2,9 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 
@@ -44,8 +47,14 @@ func Load(path string, environ func() []string) (*Config, error) {
 	if path == "" {
 		path = lookup(environ, FileEnv)
 	}
+	explicitEnv := lookup(environ, EnvPrefix+"ENV") != ""
 	if path != "" {
-		if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
+		fk := koanf.New(".")
+		if err := fk.Load(file.Provider(path), yaml.Parser()); err != nil {
+			return nil, fmt.Errorf("config: file %q: %w", path, err)
+		}
+		explicitEnv = explicitEnv || fk.String("env") != ""
+		if err := k.Merge(fk); err != nil {
 			return nil, fmt.Errorf("config: file %q: %w", path, err)
 		}
 	}
@@ -84,6 +93,12 @@ func Load(path string, environ func() []string) (*Config, error) {
 	var cfg Config
 	if err := k.Unmarshal("", &cfg); err != nil {
 		return nil, fmt.Errorf("config: decode: %w", err)
+	}
+	// Аудит OPS-18: env по умолчанию — dev (случайные ключи, dev-CA агентов). Бинарник, запущенный вне образа
+	// (systemd, вручную) без ZAFIRO_ENV против настоящей базы, не должен молча стартовать в dev.
+	if !explicitEnv && !cfg.Standalone() && !localPostgres(cfg.Database.URL.Reveal()) {
+		return nil, fmt.Errorf("config: env: не задан явно (%sENV или env в файле), а database.url указывает не на "+
+			"локальный хост — задайте %sENV=prod (для разработки с удалённой базой — dev или test)", EnvPrefix, EnvPrefix)
 	}
 	cfg.applyDerived()
 	if err := cfg.Validate(); err != nil {
@@ -167,4 +182,37 @@ func splitList(v string) []string {
 		}
 	}
 	return out
+}
+
+// localPostgres — все хосты DSN локальные: localhost, loopback, unix-сокет (пустой хост или путь). Некорректный
+// DSN — не локальный (ошибку формата сообщит Validate, если env задан явно).
+func localPostgres(dsn string) bool {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return false
+	}
+	hosts := u.Host
+	if h := u.Query().Get("host"); h != "" {
+		hosts = h
+	}
+	if hosts == "" {
+		return true
+	}
+	for h := range strings.SplitSeq(hosts, ",") {
+		if strings.HasPrefix(h, "/") {
+			continue
+		}
+		if host, _, err := net.SplitHostPort(h); err == nil {
+			h = host
+		}
+		h = strings.Trim(h, "[]")
+		if strings.EqualFold(h, "localhost") {
+			continue
+		}
+		if ip, err := netip.ParseAddr(h); err == nil && ip.IsLoopback() {
+			continue
+		}
+		return false
+	}
+	return true
 }

@@ -109,7 +109,7 @@ type AutoBillingDecision struct {
 // Сброс PauseStartedAt (вышел из аккаунта, ушёл в «не ждёт») — забота вызывающего, как в autoBillingTick().
 // Решение Q-008 (docs/DECISIONS.md) — логика агента переносится на сервер.
 // Источник: WindowsAgent/Frontend/main.js autoBillingOn/autoBillingWaits/startAutoBilling/autoBillingTick
-// (~стр. 1001–1046) (BR-023, GS-055).
+// (~стр. 1010–1046) (BR-023, GS-055).
 func AutoBilling(o MinuteOffer, st AutoBillingState, mainBalance money.Tiyn, now time.Time) AutoBillingDecision {
 	minutes := AffordableMinutes(o, mainBalance)
 	if !st.SignedIn || st.HasActiveSession || st.Stopped || !o.AutoBilling || !o.Available || minutes <= 0 {

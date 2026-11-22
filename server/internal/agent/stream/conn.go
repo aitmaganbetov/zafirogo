@@ -247,7 +247,14 @@ func (c *conn) enqueueCommands(ctx context.Context, cmds []*agentv1.Command, fro
 
 // recordResult записывает итог долговременной команды в очередь Postgres; updated — запись изменилась (команда
 // этого ПК, итога ещё не было). Сбой — в журнал (ok = false), поток не закрывается.
+//
+// Запись — в контексте, не зависящем от закрытия потока (с потолком resultWriteTimeout): агент считает итог
+// доставленным, как только отправил его (AgentRuntime.SendResult), и сразу после итога может закрыть поток (Drain,
+// перезагрузка). Отмена контекста потока посреди записи теряла итог навсегда: досылки по last_command_seq уже не будет,
+// команда оставалась невыполненной в очереди (аудит 22.11.2026, CODE-13 — флейк TestRebalanceAfterInstanceReturns).
 func (c *conn) recordResult(ctx context.Context, res *agentv1.CommandResult, now time.Time) (updated, ok bool) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resultWriteTimeout)
+	defer cancel()
 	updated, err := c.svc.queue.Record(ctx, c.id.ClubID, c.id.ComputerID, res, now.UTC())
 	if err != nil {
 		c.svc.o.Log.Warn("agent command result not recorded", "computer_id", c.id.ComputerID, "err", err)
@@ -256,9 +263,15 @@ func (c *conn) recordResult(ctx context.Context, res *agentv1.CommandResult, now
 	return updated, true
 }
 
+// resultWriteTimeout — потолок записи итога команды после закрытия потока (recordResult).
+const resultWriteTimeout = 5 * time.Second
+
 // notifyResult — итог команды обработчику панели (Options.Results), если он подключён.
+// Как и запись (recordResult), не прерывается закрытием потока сразу после итога.
 func (c *conn) notifyResult(ctx context.Context, kind commands.Kind, res *agentv1.CommandResult) {
 	if c.svc.o.Results != nil {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resultWriteTimeout)
+		defer cancel()
 		c.svc.o.Results.CommandResult(ctx, c.id, kind, res)
 	}
 }

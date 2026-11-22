@@ -80,6 +80,11 @@ func (p *PasswordRecovery) SendCode(ctx context.Context, phone string) error {
 	if err != nil {
 		return err
 	}
+	// Хэш — до транзакции (аудит PERF-3): блокировка пользователя (TelegramLockUser) не держится на время Argon2id.
+	hash, err := p.Hasher.Hash(ctx, code)
+	if err != nil {
+		return err
+	}
 	now := p.now()
 	var user *store.TelegramUserByPhoneRow
 	var codeID int64
@@ -102,10 +107,6 @@ func (p *PasswordRecovery) SendCode(ctx context.Context, phone string) error {
 		}
 		if limitErr = limits("phone", now, st.LastAt, st.InHour, st.FirstInHour); limitErr != nil {
 			return nil //nolint:nilerr // отказ по лимиту возвращается после коммита транзакции (limitErr)
-		}
-		hash, err := p.Hasher.Hash(ctx, code)
-		if err != nil {
-			return err
 		}
 		codeID, err = q.TelegramInsertRecoveryCode(ctx, store.TelegramInsertRecoveryCodeParams{
 			UserID: user.ID, CodeHash: hash, ExpiresAt: now.Add(CodeTTL), Now: &now,
@@ -155,11 +156,49 @@ func (p *PasswordRecovery) drop(ctx context.Context, id int64) {
 // Reset — PasswordRecovery::reset(): верный код задаёт новый пароль (newPassword уже проверен вызывающим: ≥ 6,
 // подтверждение) и завершает все сеансы аккаунта; неверный засчитывает попытку. Ошибка для пользователя —
 // *Error (поле code). Возвращает id пользователя.
+//
+// Хэши (проверка кода, хэш нового пароля) — вне транзакции с блокировкой кода (аудит PERF-3): сначала короткая
+// транзакция читает код, затем проверка хэша, затем транзакция с FOR UPDATE повторяет все проверки старого кода и
+// берёт готовый результат, только если под блокировкой тот же код (иначе — проверка внутри, как раньше).
 func (p *PasswordRecovery) Reset(ctx context.Context, phone, code, newPassword string) (int64, error) {
 	now := p.now()
+	var pre struct {
+		codeID int64
+		match  bool
+		hash   string // хэш нового пароля (только при совпадении)
+	}
+	var codeHash string
+	err := db.InPlatformTx(ctx, p.Platform, func(q *store.Queries) error {
+		pre.codeID, codeHash = 0, ""
+		user, err := account(ctx, q, phone)
+		if err != nil || user == nil {
+			return err
+		}
+		rec, err := q.TelegramLatestRecoveryCode(ctx, store.TelegramLatestRecoveryCodeParams{UserID: user.ID, Now: now})
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && rec.Attempts >= MaxAttempts) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		pre.codeID, codeHash = rec.ID, rec.CodeHash
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("verifycode: reset password: %w", err)
+	}
+	if pre.codeID != 0 {
+		_, verr := p.Hasher.Verify(ctx, code, codeHash)
+		if pre.match = verr == nil; pre.match {
+			if pre.hash, err = p.Hasher.Hash(ctx, newPassword); err != nil {
+				return 0, fmt.Errorf("verifycode: reset password: %w", err)
+			}
+		}
+	}
+
 	var userID int64
 	var fail *Error
-	err := db.InPlatformTx(ctx, p.Platform, func(q *store.Queries) error {
+	err = db.InPlatformTx(ctx, p.Platform, func(q *store.Queries) error {
 		userID, fail = 0, nil
 		user, err := account(ctx, q, phone)
 		if err != nil {
@@ -177,14 +216,19 @@ func (p *PasswordRecovery) Reset(ctx context.Context, phone, code, newPassword s
 		if err != nil {
 			return err
 		}
-		if _, err := p.Hasher.Verify(ctx, code, rec.CodeHash); err != nil {
+		match, hash := pre.match, pre.hash
+		if rec.ID != pre.codeID { // код сменился между транзакциями — проверка под блокировкой, как раньше
+			_, verr := p.Hasher.Verify(ctx, code, rec.CodeHash)
+			if match = verr == nil; match {
+				if hash, err = p.Hasher.Hash(ctx, newPassword); err != nil {
+					return err
+				}
+			}
+		}
+		if !match {
 			// $recovery->increment('attempts') — фиксируется (транзакция завершается успешно).
 			fail = &Error{Kind: KindCodeWrong, Field: "code", Key: MsgCodeWrong}
 			return q.TelegramRecoveryCodeAttempt(ctx, store.TelegramRecoveryCodeAttemptParams{ID: rec.ID, Now: &now})
-		}
-		hash, err := p.Hasher.Hash(ctx, newPassword)
-		if err != nil {
-			return err
 		}
 		if err := q.TelegramSetUserPassword(ctx, store.TelegramSetUserPasswordParams{PasswordHash: hash, Now: &now, ID: user.ID}); err != nil {
 			return err

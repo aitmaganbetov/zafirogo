@@ -426,10 +426,12 @@ type ClubRow struct {
 
 // Dashboard defines model for Dashboard.
 type Dashboard struct {
-	AgentDownloadUrl *string           `json:"agent_download_url"`
-	AgentRelease     *AgentRelease     `json:"agent_release,omitempty"`
-	AgentVersions    []AgentVersion    `json:"agent_versions"`
-	Backup           Backup            `json:"backup"`
+	AgentDownloadUrl *string        `json:"agent_download_url"`
+	AgentRelease     *AgentRelease  `json:"agent_release,omitempty"`
+	AgentVersions    []AgentVersion `json:"agent_versions"`
+	Backup           Backup         `json:"backup"`
+
+	// CertificateHosts Сроки HTTPS-сертификатов доменов платформы (Certificates::hosts()/cached()); проверка — не чаще раза в час, в фоне, экран не ждёт сети (аудит CODE-3).
 	CertificateHosts []CertificateHost `json:"certificate_hosts"`
 	Channels         []ChannelRow      `json:"channels"`
 	Charts           struct {
@@ -448,17 +450,19 @@ type Dashboard struct {
 	LatestAgent *string `json:"latest_agent"`
 
 	// LedgerReconcile Фоновая сверка балансов клиентов и кассы с журналом операций (аудит AC-3, новая функция). Экран показывает строку, только когда есть открытые расхождения или сверка давно не проходила.
-	LedgerReconcile        LedgerReconcile `json:"ledger_reconcile"`
-	Live                   Live            `json:"live"`
-	LogErrors              []LogError      `json:"log_errors"`
-	Period                 string          `json:"period"`
-	PeriodMinutes          int64           `json:"period_minutes"`
-	RecentLogs             []LogRow        `json:"recent_logs"`
-	SchedulerMinutesAgo    *int64          `json:"scheduler_minutes_ago"`
-	SchedulerSilentMinutes int             `json:"scheduler_silent_minutes"`
-	SelectedClubs          []int64         `json:"selected_clubs"`
-	Tables                 []TableSize     `json:"tables"`
-	Today                  string          `json:"today"`
+	LedgerReconcile LedgerReconcile `json:"ledger_reconcile"`
+	Live            Live            `json:"live"`
+
+	// LogErrors Последние ошибки журнала сервера (ErrorLog::recent()). null — журнал ошибок на экран не подключён (экран пишет «не подключено», а не «ошибок нет»; аудит CODE-3).
+	LogErrors              *[]LogError `json:"log_errors"`
+	Period                 string      `json:"period"`
+	PeriodMinutes          int64       `json:"period_minutes"`
+	RecentLogs             []LogRow    `json:"recent_logs"`
+	SchedulerMinutesAgo    *int64      `json:"scheduler_minutes_ago"`
+	SchedulerSilentMinutes int         `json:"scheduler_silent_minutes"`
+	SelectedClubs          []int64     `json:"selected_clubs"`
+	Tables                 []TableSize `json:"tables"`
+	Today                  string      `json:"today"`
 }
 
 // DiscountForm defines model for DiscountForm.

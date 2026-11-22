@@ -50,7 +50,7 @@ type Payment struct {
 //	$mainPayment = $price - $bonusPayment;
 //	$mainBalance < $mainPayment || $bonusBalance < $bonusPayment → «Недостаточно средств для покупки тарифа.»
 //
-// Laravel: app/Services/AgentTariffPurchaseService.php sell() (стр. 236–269) (BR-018, GS-035, GS-039, GS-049, GS-050,
+// Laravel: app/Services/AgentTariffPurchaseService.php sell() (стр. 294–300), bonusPayment() (стр. 346–376) (BR-018, GS-035, GS-039, GS-049, GS-050,
 // GAP-006…GAP-008, GAP-011). Поминутная покупка передаёт MainOrBonus, запуск пакета — MainBalanceOnly, ChoiceMain и цену 0.
 // Выбор вне main/bonus отклоняет валидация запроса (Rule::in(BALANCES)) — здесь это ErrInvalidInput.
 func (r PaymentRules) Pay(price money.Tiyn, method PaymentMethod, choice BalanceChoice, b Balances) (Payment, error) {

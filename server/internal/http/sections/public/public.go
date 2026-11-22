@@ -1,5 +1,5 @@
 // Package public — публичные страницы без входа (api/public.yaml и не-JSON адреса). Laravel: LandingController,
-// PwaController (manifest, offline), маршруты api-docs.spec (routes/web.php:119–129).
+// PwaController (manifest, offline), маршруты api-docs.spec (routes/web.php:152–159).
 //
 //   - GET /api/landing — данные лендинга и страниц продукта (страницы — SPA, web/src/features/public);
 //   - GET /api/pricing — активные тарифы платформы для страницы /pricing;

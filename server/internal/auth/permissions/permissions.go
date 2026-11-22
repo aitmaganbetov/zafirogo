@@ -43,7 +43,7 @@ type Section struct {
 	Actions map[string][]string
 }
 
-// Sections — Laravel: ClubPermissions::SECTIONS (стр. 24–45), в том же порядке.
+// Sections — Laravel: ClubPermissions::SECTIONS (стр. 24–46), в том же порядке.
 var Sections = []Section{
 	{"cash", map[string][]string{ActionView: desk, ActionCreate: desk, ActionDelete: managers}},
 	{"customers", map[string][]string{ActionView: staff, ActionCreate: staff, ActionUpdate: staff}},
@@ -118,7 +118,7 @@ func Exists(right string) bool {
 	return ok
 }
 
-// ByRole — право по роли без выбора владельца. Laravel: ClubPermissions::byRole() (стр. 67–72).
+// ByRole — право по роли без выбора владельца. Laravel: ClubPermissions::byRole() (стр. 68–73).
 // Как в PHP, наличие права не проверяется: несуществующее право у владельца — true.
 func ByRole(role, right string) bool {
 	section, action := split(right)
@@ -134,7 +134,7 @@ func Given(m *Membership, right string) (value, ok bool) {
 	return value, ok
 }
 
-// Allows — есть ли у члена клуба право. Laravel: ClubPermissions::allows() (стр. 48–58), BR-140:
+// Allows — есть ли у члена клуба право. Laravel: ClubPermissions::allows() (стр. 49–59), BR-140:
 //
 //	membership == null || !exists(right) → false; role == owner → true; given(m, right) ?? byRole(role, right)
 func Allows(m *Membership, right string) bool {

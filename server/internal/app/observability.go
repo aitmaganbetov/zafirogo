@@ -24,6 +24,21 @@ func newPool(ctx context.Context, dsn string, tracer *observability.PgxTracer) (
 	if err != nil {
 		return nil, err
 	}
+	return openPool(ctx, cfg, tracer)
+}
+
+// newLockPool — пул соединений с локами лидерства (database.lock_pool_max_conns; pool_max_conns из DSN здесь не
+// действует — он про рабочий пул). Соединения не держатся впрок: лок берётся раз в тик.
+func newLockPool(ctx context.Context, dsn string, maxConns int32, tracer *observability.PgxTracer) (*pgxpool.Pool, error) {
+	cfg, err := db.ParsePoolConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	cfg.MaxConns, cfg.MinConns = maxConns, 0
+	return openPool(ctx, cfg, tracer)
+}
+
+func openPool(ctx context.Context, cfg *pgxpool.Config, tracer *observability.PgxTracer) (*pgxpool.Pool, error) {
 	if tracer != nil {
 		cfg.ConnConfig.Tracer = tracer
 		cfg.BeforeClose = tracer.Forget
@@ -70,7 +85,7 @@ func (a *App) setObservabilitySources(serverCert tls.Certificate, guest *guestap
 		abBacklog = guest.AutoBillingBacklog // S6-O4-10: отставание автобиллинга (zset ab:due)
 	}
 	a.Obs.SetSources(observability.Sources{
-		Pools:                    map[string]*pgxpool.Pool{"app": a.AppPool, "platform": a.PlatformPool},
+		Pools:                    map[string]*pgxpool.Pool{"app": a.AppPool, "platform": a.PlatformPool, "leader": a.LockPool},
 		Platform:                 a.PlatformPool,
 		LocalStreams:             a.Stream.LocalStreams,
 		StreamRebalanceRequested: a.Stream.RebalanceRequested,

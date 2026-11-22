@@ -3,7 +3,7 @@ package guestapi
 // Автобиллинг на сервере (решение Q-008, docs/open-questions/stage5-agent.md AG-12).
 //
 // Старый агент делал его сам раз в секунду (WindowsAgent/Frontend/main.js autoBillingOn/autoBillingWaits/
-// startAutoBilling/autoBillingTick, ~стр. 1001–1046; BR-023, GS-055): гость вошёл, сессии нет, клуб включил
+// startAutoBilling/autoBillingTick, ~стр. 1010–1046; BR-023, GS-055): гость вошёл, сессии нет, клуб включил
 // автобиллинг, у зоны есть цена часа и основного баланса хватает хотя бы на минуту → пауза
 // auto_billing_pause_minutes на выбор тарифа → покупка минут на весь основной баланс; после конца тарифа по времени
 // (sessionEnded 'expired') — сразу; гость сам завершил сессию, её завершили в клубе или перенесли, покупка не удалась

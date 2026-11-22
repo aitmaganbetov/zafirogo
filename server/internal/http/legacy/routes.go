@@ -22,10 +22,11 @@ func (a *API) routes() chi.Router {
 	r.With(a.throttle("api.catalog.clubs")).Get("/api/catalog/clubs", a.catalogIndex)
 	r.With(a.throttle("api.catalog.club")).Get("/api/catalog/clubs/{club:[0-9]+}", a.catalogShow)
 
-	// routes/api.php: /api/auth/*
-	r.Post("/api/auth/login", a.login)
-	r.Post("/api/auth/password/code", a.passwordRoute(a.passwordCode))
-	r.Post("/api/auth/password/reset", a.passwordRoute(a.passwordReset))
+	// routes/api.php: /api/auth/*. Лимит — до маршрутизации по клубу: запросы, которые уходят на старый сервер, считаются
+	// здесь же и по тем же ключам (IP клиента + телефон), иначе за прокси Laravel видит один IP на всех (аудит SEC-1).
+	r.With(a.throttle(ratelimit.CustomerLogin)).Post("/api/auth/login", a.login)
+	r.With(a.throttle(ratelimit.PasswordRecovery)).Post("/api/auth/password/code", a.passwordRoute(a.passwordCode))
+	r.With(a.throttle(ratelimit.PasswordRecovery)).Post("/api/auth/password/reset", a.passwordRoute(a.passwordReset))
 	r.Group(func(r chi.Router) {
 		r.Use(a.authenticate)
 		// Приложение гостя не зависит от подписки клуба (AuthController::needsSubscription(), Zafiro 1a0487a).

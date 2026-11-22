@@ -426,6 +426,48 @@ func TestLoginRateLimit(t *testing.T) {
 	if r.header.Get("Retry-After") == "" {
 		t.Error("no Retry-After")
 	}
+	// Аудит SEC-7: другая запись того же номера («7…» без +7, «8…») — тот же счётчик.
+	for _, p := range []string{strings.TrimPrefix(phone, "+7"), "8" + strings.TrimPrefix(phone, "+7")} {
+		expect(t, e.do("POST", "/api/auth/login", "", map[string]any{"phone": p, "password": "pw", "device_name": "m"}), 429,
+			map[string]any{"message": "Too Many Attempts."})
+	}
+}
+
+// Аудит SEC-1: вход и восстановление пароля, которые уходят на старый сервер (телефона здесь нет), проходят те же
+// лимиты customer-login и password-recovery до пересылки — лишний запрос получает 429 и до апстрима не доходит.
+func TestUpstreamRateLimit(t *testing.T) {
+	var e *env
+	e = newEnv(t, func(x *env) option { e = x; return withUpstream(x) })
+	const phone = "+77779990011" // аккаунта здесь нет — запрос для старого сервера
+	for i := 0; i < 5; i++ {
+		r := e.do("POST", "/api/auth/login", "", map[string]any{"phone": phone, "password": fmt.Sprintf("bad%d", i), "device_name": "mobileclient"})
+		expect(t, r, 200, map[string]any{"upstream": true})
+		if v := r.header.Values("X-RateLimit-Limit"); len(v) > 1 {
+			t.Fatalf("rate limit headers mixed with upstream: %v", v)
+		}
+	}
+	r := e.do("POST", "/api/auth/login", "", map[string]any{"phone": phone, "password": "pw", "device_name": "mobileclient"})
+	expect(t, r, 429, map[string]any{"message": "Too Many Attempts."})
+	// Та же запись номера иначе — тот же счётчик (SEC-7).
+	expect(t, e.do("POST", "/api/auth/login", "", map[string]any{"phone": "87779990011", "password": "pw", "device_name": "mobileclient"}), 429, nil)
+	if n := e.upHits.Load(); n != 5 {
+		t.Fatalf("login: upstream hits %d, want 5", n)
+	}
+
+	// password-recovery: 10 в минуту на IP + телефон (общий счётчик кода и сброса).
+	const other = "+77779990022"
+	for i := 0; i < 10; i++ {
+		path := "/api/auth/password/code"
+		if i%2 == 1 {
+			path = "/api/auth/password/reset"
+		}
+		expect(t, e.do("POST", path, "", map[string]any{"phone": other}), 200, map[string]any{"upstream": true})
+	}
+	expect(t, e.do("POST", "/api/auth/password/code", "", map[string]any{"phone": other}), 429, map[string]any{"message": "Too Many Attempts."})
+	expect(t, e.do("POST", "/api/auth/password/reset", "", map[string]any{"phone": other, "code": "123456"}), 429, nil)
+	if n := e.upHits.Load(); n != 15 {
+		t.Fatalf("recovery: upstream hits %d, want 15", n)
+	}
 }
 
 // ---------------------------------------------------------------------------

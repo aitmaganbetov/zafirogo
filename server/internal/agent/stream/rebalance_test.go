@@ -112,3 +112,45 @@ func TestMarkMovable(t *testing.T) {
 		})
 	}
 }
+
+// PERF-2 (аудит 22.11.2026): массовое подключение — оба инстанса растут одновременно, каждый видит запись соседа
+// с прошлого интервала. Доли равны, перебалансировка не должна начинаться; после окончания роста настоящий перекос
+// выравнивается как прежде.
+func TestRebalanceWaitsForRampUp(t *testing.T) {
+	o := RebalanceOptions{Threshold: 1.2, MinExcess: 50, Batch: 100}
+	var a, b rebalanceState
+	a.prevLocal, b.prevLocal = -1, -1
+	naive := 0
+	for round, prevA, prevB := 1, 0, 0; round <= 10; round++ {
+		curA, curB := 100*round, 100*round // по 100 подключений за интервал на каждый (least_conn поровну)
+		if r, _ := rebalanceRelease(curA, []int{curA, prevB}, false, o); r > 0 {
+			naive++ // без защиты: свой свежий счётчик против устаревшего соседа
+		}
+		if r := a.decide(curA, []int{curA, prevB}, o); r != 0 {
+			t.Fatalf("round %d: A released %d while ramping up (A=%d, B seen %d)", round, r, curA, prevB)
+		}
+		if r := b.decide(curB, []int{curB, prevA}, o); r != 0 {
+			t.Fatalf("round %d: B released %d while ramping up", round, r)
+		}
+		prevA, prevB = curA, curB
+	}
+	if naive == 0 {
+		t.Fatal("scenario does not reproduce the stale-neighbor imbalance")
+	}
+	// Рост кончился, но потоки перекошены (B перезапущен): A начинает со следующего интервала и продолжает,
+	// хотя B растёт за счёт отпущенных A.
+	if r := a.decide(1000, []int{1000, 0}, o); r != 100 {
+		t.Fatalf("A after ramp-up: release %d, want 100", r)
+	}
+	if r := a.decide(900, []int{900, 100}, o); r != 100 {
+		t.Fatalf("A while rebalancing: release %d, want 100", r)
+	}
+	// Первый интервал без прежнего замера — не начинать.
+	c := rebalanceState{prevLocal: -1}
+	if r := c.decide(5000, []int{5000, 0}, o); r != 0 {
+		t.Fatalf("first interval: release %d", r)
+	}
+	if r := c.decide(5000, []int{5000, 0}, o); r != 100 {
+		t.Fatalf("second interval: release %d, want 100", r)
+	}
+}

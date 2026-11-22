@@ -54,6 +54,8 @@ type App struct {
 	// Подключения.
 	AppPool      *pgxpool.Pool // логин роли zafiro_app (RLS по клубу)
 	PlatformPool *pgxpool.Pool // логин роли zafiro_platform (все клубы)
+	// LockPool — тот же логин, только соединения с advisory lock лидерства фоновых задач (worker/leader.UseLockPool).
+	LockPool *pgxpool.Pool
 	// I18n — один каталог переводов на приложение (HTTP, gRPC гостя, бот): одна фоновая сверка на платформенном пуле.
 	I18n   *i18n.Catalog
 	Valkey valkey.Client

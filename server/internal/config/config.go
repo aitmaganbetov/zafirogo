@@ -103,12 +103,26 @@ type Database struct {
 	URL Secret `koanf:"url"`
 	// PlatformURL — DSN pgx логина zafiro_platform. Обязателен, если задан URL.
 	PlatformURL Secret `koanf:"platform_url"`
+	// LockPoolMaxConns — предел отдельного пула соединений, на которых фоновые задачи держат advisory lock лидерства
+	// (worker/leader.UseLockPool; логин — тот же, что у PlatformURL). Работа задач идёт в пуле PlatformURL, поэтому
+	// держатели локов не занимают его слоты (аудит PERF-1). Хватает числа задач (≈ 14); меньше — тики задач ждут
+	// очереди, но не блокируют друг друга. ZAFIRO_DATABASE_LOCK_POOL_MAX_CONNS.
+	LockPoolMaxConns int `koanf:"lock_pool_max_conns"`
 }
 
-// Valkey — подключение к Valkey.
+// Valkey — подключение к Valkey. Один адрес (основной узел или адрес управляемого сервиса/прокси); Sentinel и кластер
+// не поддерживаются — см. docs/dev-setup.md «Valkey: TLS и ACL».
 type Valkey struct {
-	Addr     string `koanf:"addr"`
+	Addr string `koanf:"addr"`
+	// Username — пользователь ACL (AUTH <username> <password>); пусто — пользователь default.
+	Username string `koanf:"username"`
 	Password Secret `koanf:"password"`
+	// TLS — соединение по TLS (управляемый Valkey/Redis, общая сеть; аудит SEC-2/OPS-6).
+	TLS bool `koanf:"tls"`
+	// TLSCAFile — PEM с CA сервера; пусто — системные корневые сертификаты.
+	TLSCAFile string `koanf:"tls_ca_file"`
+	// TLSServerName — имя в сертификате сервера; пусто — хост из addr.
+	TLSServerName string `koanf:"tls_server_name"`
 }
 
 // NATS — подключение к NATS JetStream.
@@ -363,6 +377,9 @@ type EventsStream struct {
 	MaxAge     time.Duration `koanf:"max_age"`
 	Duplicates time.Duration `koanf:"duplicates"`
 	Replicas   int           `koanf:"replicas"`
+	// MaxBytes — предел размера потока в байтах (аудит OPS-12): при заполнении JetStream удаляет самые старые
+	// события (Discard old), а не останавливает публикацию. 0 — без предела (только MaxAge). Расчёт — docs/dev-setup.md.
+	MaxBytes int64 `koanf:"max_bytes"`
 }
 
 // Outbox — публикатор outbox → JetStream.

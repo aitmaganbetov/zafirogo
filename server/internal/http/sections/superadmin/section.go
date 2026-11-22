@@ -1,6 +1,6 @@
 // Package superadmin — кабинет суперадмина (api/superadmin.yaml, Этап 3, группа 6): сервер и релиз агента,
 // клубы и подписки, пользователи платформы, тарифы платформы, журнал, новости платформы, языки и переводы,
-// Telegram. Laravel: app/Http/Controllers/Superadmin/*, routes/web.php (~стр. 52–106).
+// Telegram. Laravel: app/Http/Controllers/Superadmin/*, routes/web.php (~стр. 59–124).
 //
 // Доступ — RequireSuperadmin (флаг суперадмина; заблокированный Principal не получает вовсе). Хост
 // SUPERADMIN_DOMAIN проверяет общий middleware роутера (Q-069). Данные — пул zafiro_platform (по всем клубам).
@@ -53,6 +53,8 @@ type Online interface {
 
 type handlers struct {
 	d *httpx.Deps
+	// certs — сроки HTTPS-сертификатов экрана «Сервер» (certificates.go).
+	certs *certChecker
 }
 
 var _ superadminapi.StrictServerInterface = (*handlers)(nil)
@@ -63,7 +65,7 @@ func Section() httpx.Section {
 }
 
 func mount(r chi.Router, d *httpx.Deps) {
-	h := &handlers{d: d}
+	h := &handlers{d: d, certs: &certChecker{expiresAt: dialCertificate, log: d.Log()}}
 	si := superadminapi.NewStrictHandlerWithOptions(h,
 		httpx.Middlewares[superadminapi.StrictMiddlewareFunc](access),
 		superadminapi.StrictHTTPServerOptions{RequestErrorHandlerFunc: d.RequestError, ResponseErrorHandlerFunc: d.ResponseError()})

@@ -51,8 +51,8 @@ const (
 
 // Тексты старого кода (ключи перевода) и пометки движений склада (маркеры, не переводятся).
 const (
-	MsgProductGone    = "Товар больше не продаётся. Обновите магазин." // AgentShop::purchase() стр. 46
-	MsgNotEnoughStock = "Недостаточно товара: :product."               // стр. 54
+	MsgProductGone    = "Товар больше не продаётся. Обновите магазин." // AgentShop::purchase() стр. 45
+	MsgNotEnoughStock = "Недостаточно товара: :product."               // стр. 53
 	MsgNotEnoughMain  = "Недостаточно средств на основном счёте."      // стр. 70
 	MsgOrdered        = "Заказ оплачен. Сотрудник клуба принесёт его к ПК :computer."
 	MsgShopDisabled   = "Магазин в агенте отключён в клубе." // GuestShopController::purchase()
@@ -439,7 +439,7 @@ func (s *Service) insertOrder(ctx context.Context, q *store.Queries, req OrderRe
 	})
 }
 
-// record — журнал shop.purchased (AgentShop::purchase() стр. 82–88).
+// record — журнал shop.purchased (AgentShop::purchase() стр. 85–89).
 func (s *Service) record(ctx context.Context, q *store.Queries, req OrderRequest, computerName string, lines []Line, total money.Tiyn) error {
 	if _, ok := activity.RequestMetaFromContext(ctx); !ok {
 		return nil // без данных запроса (фоновые вызовы, тесты сервиса) журнал не пишется

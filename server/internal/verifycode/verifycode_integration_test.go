@@ -299,17 +299,27 @@ func transferPair(t *testing.T) (club, arman, dana, friendship int64) {
 	return club, arman, dana, tdb.Friendship(t, club, arman, dana, true)
 }
 
-// confirm — FriendTransferCodes::confirm(): неверный код засчитывает попытку отдельной транзакцией.
+// confirm — FriendTransferCodes::confirm(): неверный код засчитывает попытку отдельной транзакцией. Как вызывающие
+// (guestapi.transferByCode, legacy transferConfirm): хэш проверяется до транзакции (PrecheckTransferCode).
 func confirm(t *testing.T, e *env, club, userID, friendship int64, amount, code string) (billing.FriendTransferResult, error) {
+	t.Helper()
+	return confirmWith(t, e, pw, club, userID, friendship, amount, code)
+}
+
+func confirmWith(t *testing.T, e *env, h verifycode.Hasher, club, userID, friendship int64, amount, code string) (billing.FriendTransferResult, error) {
 	t.Helper()
 	ctx := context.Background()
 	var res billing.FriendTransferResult
+	p := billing.ConfirmTransferCodeParams{
+		ClubID: club, UserID: userID, FriendshipID: friendship, AmountInput: amount, Code: code, Now: e.clock.Now(),
+		VerifyCode: func(hash, code string) bool { _, err := h.Verify(ctx, code, hash); return err == nil },
+	}
+	p.Checked = billing.PrecheckTransferCode(ctx, func(fn func(q *store.Queries) error) error {
+		return db.InTenantTxWith(ctx, tdb.App, club, db.Options{UserID: userID}, fn)
+	}, p)
 	err := db.InTenantTxWith(ctx, tdb.App, club, db.Options{UserID: userID}, func(q *store.Queries) error {
 		var err error
-		res, err = billing.ConfirmFriendTransferCode(ctx, q, billing.ConfirmTransferCodeParams{
-			ClubID: club, UserID: userID, FriendshipID: friendship, AmountInput: amount, Code: code, Now: e.clock.Now(),
-			VerifyCode: func(hash, code string) bool { _, err := pw.Verify(ctx, code, hash); return err == nil },
-		})
+		res, err = billing.ConfirmFriendTransferCode(ctx, q, p)
 		return err
 	})
 	var mm *billing.TransferCodeMismatchError
@@ -435,5 +445,92 @@ func TestFriendTransferCode_NotConnected(t *testing.T) {
 	club, arman, _, f := transferPair(t)
 	if err := e.transfer.Send(context.Background(), club, arman, f, 1000); kind(err) != verifycode.KindUnavailable {
 		t.Fatalf("not connected: %v", err)
+	}
+}
+
+// lockProbe — хэшер, который при каждом вызове проверяет, не заблокированы ли строки пользователя (users,
+// password_recovery_codes, transfer_codes): FOR UPDATE NOWAIT с отдельного соединения.
+type lockProbe struct {
+	verifycode.Hasher
+	userID        atomic.Int64
+	calls, locked atomic.Int32
+}
+
+func (h *lockProbe) probe(ctx context.Context) {
+	h.calls.Add(1)
+	tx, err := tdb.Owner.Begin(ctx)
+	if err != nil {
+		panic(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, q := range []string{
+		"SELECT 1 FROM users WHERE id = $1 FOR UPDATE NOWAIT",
+		"SELECT 1 FROM password_recovery_codes WHERE user_id = $1 FOR UPDATE NOWAIT",
+		"SELECT 1 FROM transfer_codes WHERE user_id = $1 FOR UPDATE NOWAIT",
+	} {
+		if _, err := tx.Exec(ctx, q, h.userID.Load()); err != nil {
+			h.locked.Add(1) // 55P03 lock_not_available: хэш считается под блокировкой транзакции
+			return
+		}
+	}
+}
+
+func (h *lockProbe) Hash(ctx context.Context, plain string) (string, error) {
+	h.probe(ctx)
+	return h.Hasher.Hash(ctx, plain)
+}
+
+func (h *lockProbe) Verify(ctx context.Context, plain, encoded string) (bool, error) {
+	h.probe(ctx)
+	return h.Hasher.Verify(ctx, plain, encoded)
+}
+
+// Аудит PERF-3: Argon2id (хэш кода, проверка кода, хэш нового пароля) не выполняется, пока транзакция держит
+// блокировку пользователя или кода; правила те же (неверный код — попытка, верный — пароль сменён / перевод).
+func TestHashingOutsideLocks(t *testing.T) {
+	e := newEnv(t, true)
+	ctx := context.Background()
+	probe := &lockProbe{Hasher: pw}
+	e.recovery.Hasher, e.transfer.Hasher = probe, probe
+
+	ph := phone()
+	id := user(t, ph, false)
+	probe.userID.Store(id)
+	if err := e.recovery.SendCode(ctx, ph); err != nil {
+		t.Fatal(err)
+	}
+	code := e.tg.Codes()[0]
+	wrong := "111111"
+	if code == wrong {
+		wrong = "222222"
+	}
+	if _, err := e.recovery.Reset(ctx, ph, wrong, "new-secret"); kind(err) != verifycode.KindCodeWrong {
+		t.Fatalf("wrong code: %v", err)
+	}
+	if n := count(t, "SELECT attempts FROM password_recovery_codes WHERE user_id = $1", id); n != 1 {
+		t.Fatalf("attempts = %d", n)
+	}
+	if _, err := e.recovery.Reset(ctx, ph, code, "new-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if !passwordIs(t, id, "new-secret") {
+		t.Fatal("password not changed")
+	}
+
+	club, arman, _, f := transferPair(t)
+	probe.userID.Store(arman)
+	e.clock.travel(2 * time.Minute)
+	if err := e.transfer.Send(ctx, club, arman, f, 4000); err != nil {
+		t.Fatal(err)
+	}
+	tcode := e.tg.Codes()[1]
+	if _, err := confirmWith(t, e, probe, club, arman, f, "40", wrong); err == nil {
+		t.Fatal("wrong transfer code accepted")
+	}
+	if res, err := confirmWith(t, e, probe, club, arman, f, "40", tcode); err != nil || res.Amount != 4000 {
+		t.Fatalf("transfer: %+v %v", res, err)
+	}
+	if probe.calls.Load() != 7 || probe.locked.Load() != 0 {
+		t.Fatalf("hasher calls = %d, under a lock = %d", probe.calls.Load(), probe.locked.Load())
 	}
 }

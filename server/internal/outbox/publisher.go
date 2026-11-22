@@ -46,6 +46,12 @@ type PublisherOptions struct {
 	CleanupEvery time.Duration
 	// LeaderRetry — как часто пробовать стать лидером (0 — 5 с).
 	LeaderRetry time.Duration
+	// Stream — параметры потока для пересоздания, если он пропал во время работы (NATS поднят пустым, потерян том):
+	// публикация без потока получает «no response from stream», и публикатор вызывает EnsureStream (не чаще
+	// StreamRecheck). nil — не пересоздавать (аудит OPS-2: раньше поток создавался только при старте инстанса).
+	Stream *StreamOptions
+	// StreamRecheck — не чаще какого интервала пересоздавать поток (0 — 30 с).
+	StreamRecheck time.Duration
 	// Log — журнал (nil — slog.Default()).
 	Log *slog.Logger
 	// Now — часы (nil — time.Now).
@@ -60,6 +66,8 @@ type Publisher struct {
 	// afterPublish — хук тестов: вызывается после подтверждения JetStream и до пометки published_at;
 	// ошибка имитирует падение публикатора посередине (транзакция откатывается).
 	afterPublish func(published int) error
+	// lastEnsure — когда публикатор последний раз пробовал создать поток (только горутина лидера).
+	lastEnsure time.Time
 }
 
 // errPublish — ошибка на стороне NATS (не Postgres): лидерство не сдаём, ждём и повторяем.
@@ -87,6 +95,9 @@ func NewPublisher(o PublisherOptions) (*Publisher, error) {
 	}
 	if o.Retention <= 0 {
 		o.Retention = 24 * time.Hour
+	}
+	if o.StreamRecheck <= 0 {
+		o.StreamRecheck = 30 * time.Second
 	}
 	if o.CleanupEvery <= 0 {
 		o.CleanupEvery = 10 * time.Minute
@@ -126,6 +137,7 @@ func (p *Publisher) lead(ctx context.Context, lock *leader.Lock) error {
 					return err // Postgres: соединение (и лок) могли пропасть — переизбрание
 				}
 				p.o.Log.Warn("outbox: publish failed, will retry", "err", err)
+				p.ensureStreamIfMissing(ctx, err)
 				if !sleep(ctx, p.o.RetryDelay) {
 					return nil
 				}
@@ -239,6 +251,34 @@ func (p *Publisher) PublishBatch(ctx context.Context, db interface {
 		return len(rows), errPublish{fmt.Errorf("%d of %d events not acknowledged: %w", len(failed), len(rows), failed[0].err)}
 	}
 	return len(rows), nil
+}
+
+// ensureStreamIfMissing — поток событий пропал (JetStream не отвечает на публикацию в club.>): создать его заново
+// с теми же параметрами, что при старте (аудит OPS-2). Не чаще StreamRecheck; ошибка — в журнал, публикация
+// повторится после RetryDelay.
+func (p *Publisher) ensureStreamIfMissing(ctx context.Context, err error) {
+	if p.o.Stream == nil || !streamMissing(err) {
+		return
+	}
+	now := p.o.Now()
+	if !p.lastEnsure.IsZero() && now.Sub(p.lastEnsure) < p.o.StreamRecheck {
+		return
+	}
+	p.lastEnsure = now
+	sctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if _, err := EnsureStream(sctx, p.o.JS, *p.o.Stream); err != nil {
+		p.o.Log.Warn("outbox: stream is missing and could not be recreated", "err", err)
+		return
+	}
+	p.o.Log.Warn("outbox: events stream was missing, recreated")
+}
+
+// streamMissing — ошибка публикации означает, что потока для subject нет: JetStream не ответил
+// (ErrNoStreamResponse; у ядра NATS — ErrNoResponders) или поток не найден.
+func streamMissing(err error) bool {
+	return errors.Is(err, jetstream.ErrNoStreamResponse) || errors.Is(err, nats.ErrNoResponders) ||
+		errors.Is(err, jetstream.ErrStreamNotFound)
 }
 
 func (p *Publisher) cleanup(ctx context.Context, conn *pgx.Conn) error {

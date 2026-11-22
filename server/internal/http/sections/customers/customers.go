@@ -298,7 +298,7 @@ func parseOwnerAdjustment(f *httpx.FormErrors, amountTiyn int64, balanceType, ac
 }
 
 // ownerAdjust — пополнение/списание без кассы в транзакции q (ledger + журнал user.balance_topped_up /
-// user.balance_written_off). Возвращает ключ сообщения. Laravel: UserController::update() (стр. 135–157).
+// user.balance_written_off). Возвращает ключ сообщения. Laravel: UserController::update() (стр. 141–169).
 func (h *handlers) ownerAdjust(ctx context.Context, q *store.Queries, clubID int64, c store.AdminGetCustomerRow, a ownerAdjustment, key string) (string, error) {
 	actor := httpx.Actor(ctx)
 	res, err := billing.OwnerAdjust(ctx, q, billing.OwnerAdjustParams{

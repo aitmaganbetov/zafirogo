@@ -21,7 +21,7 @@ type Computer struct {
 
 // CheckForCustomer — ПК может принять время этого клиента: не в резерве, нет чужой оплаченной сессии.
 // Гостевая сессия (SessionUserID = nil) — тоже чужая.
-// Laravel: app/Services/AgentTariffPurchaseService.php ensureComputerFor() (стр. 212–221) (BR-020).
+// Laravel: app/Services/AgentTariffPurchaseService.php ensureComputerFor() (стр. 256–265) (BR-020).
 func (c Computer) CheckForCustomer(userID int64) error {
 	if c.Reserved {
 		return ErrComputerReserved
@@ -34,7 +34,7 @@ func (c Computer) CheckForCustomer(userID int64) error {
 
 // SessionEnd — новый конец сессии: при идущей оплаченной сессии время прибавляется к её концу
 // (продление), иначе — к now. Вторым значением — продлевается ли сессия (тот же session_id).
-// Laravel: app/Services/AgentTariffPurchaseService.php sell() (стр. 276–278), GuestSessions::sell() (стр. 64)
+// Laravel: app/Services/AgentTariffPurchaseService.php sell() (стр. 283–285), GuestSessions::sell() (стр. 64–69)
 // (BR-020, GAP-016, GS-091).
 func (c Computer) SessionEnd(now time.Time, minutes int64) (time.Time, bool) {
 	if c.PaidSession {
@@ -172,7 +172,7 @@ type MinutesPurchaseInput struct {
 
 // QuoteMinutesPurchase — расчётная часть покупки минут: зона без цены → ошибка; ПК; цена
 // minutesPriceInCents(hourlyPrice(...), minutes) (двойное округление); оплата как у тарифа main_or_bonus.
-// Laravel: app/Services/AgentTariffPurchaseService.php purchaseMinutes() (стр. 110–138) (BR-014, BR-021;
+// Laravel: app/Services/AgentTariffPurchaseService.php purchaseMinutes() (стр. 152–180) (BR-014, BR-021;
 // GS-039, GS-040, GS-051, GAP-010).
 func QuoteMinutesPurchase(in MinutesPurchaseInput) (Purchase, error) {
 	if in.Minutes < 1 || in.Minutes > MaxMinutes {
@@ -206,7 +206,7 @@ func QuoteMinutesPurchase(in MinutesPurchaseInput) (Purchase, error) {
 //	min($package->minutes_left, intdiv(max(0, $package->expires_at->getTimestamp() - now()->getTimestamp()), 60))
 //
 // ≤ 0 → пакет истёк (ErrPackageExpired; старый код удаляет пакет, но исключение откатывает удаление — OQ-BR-06).
-// Laravel: app/Services/AgentTariffPurchaseService.php startPackage() (стр. 171–203) (BR-024, GAP-014).
+// Laravel: app/Services/AgentTariffPurchaseService.php startPackage() (стр. 214–247) (BR-024, GAP-014).
 func PackageStartMinutes(minutesLeft int64, expiresAt, now time.Time) (int64, error) {
 	minutes := min(minutesLeft, money.IntDiv(max(0, expiresAt.Unix()-now.Unix()), 60))
 	if minutes <= 0 {

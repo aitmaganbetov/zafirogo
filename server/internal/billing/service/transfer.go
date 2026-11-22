@@ -32,7 +32,7 @@ type TransferResult struct {
 // TransferSeat переносит остаток оплаченной сессии на свободный ПК, где действует тариф сессии.
 // Денег не двигается: части сессии привязаны к session_id и переезжают вместе с ним (GAP-036).
 //
-// Laravel: app/Services/SeatTransfers.php transfer() (стр. 83–120): оба ПК FOR UPDATE в порядке id →
+// Laravel: app/Services/SeatTransfers.php transfer() (стр. 84–121): оба ПК FOR UPDATE в порядке id →
 // тот же/несуществующий ПК → своя оплаченная сессия на исходном → свободен ли целевой (не резерв, онлайн,
 // без сессии и сотрудника, без чужой брони до конца сессии + интервал) и подходит ли зона
 // (allowedZoneIds() — последняя покупка сессии; Решение Q-007/OQ-BR-04 (docs/DECISIONS.md) — из session_purchases,

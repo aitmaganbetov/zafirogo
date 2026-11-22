@@ -59,6 +59,11 @@ func (t *TransferCodes) Send(ctx context.Context, clubID, userID, friendshipID i
 	if err != nil {
 		return err
 	}
+	// Хэш — до транзакции (аудит PERF-3): блокировка пользователя (TelegramLockUser) не держится на время Argon2id.
+	hash, err := t.Hasher.Hash(ctx, code)
+	if err != nil {
+		return err
+	}
 	now := t.now()
 	var phone string
 	var codeID int64
@@ -79,10 +84,6 @@ func (t *TransferCodes) Send(ctx context.Context, clubID, userID, friendshipID i
 		}
 		if limitErr = limits("code", now, st.LastAt, st.InHour, st.FirstInHour); limitErr != nil {
 			return nil //nolint:nilerr // отказ по лимиту возвращается после коммита транзакции (limitErr)
-		}
-		hash, err := t.Hasher.Hash(ctx, code)
-		if err != nil {
-			return err
 		}
 		codeID, err = q.TelegramInsertTransferCode(ctx, store.TelegramInsertTransferCodeParams{
 			ClubID: clubID, UserID: userID, FriendshipID: friendshipID, AmountCents: int64(amount),

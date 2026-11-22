@@ -37,7 +37,7 @@ type FieldError struct {
 // ConvertEmptyStringsToNull (форма присылает "" для пустых ячеек).
 // Возвращает отфильтрованные уровни (то, что затем уходит в Normalize) и ошибки в порядке Laravel.
 //
-// Laravel: app/Http/Requests/SaveSettingsRequest.php rules() (~стр. 32–47), prepareForValidation() (~стр. 79–88).
+// Laravel: app/Http/Requests/SaveSettingsRequest.php rules() (~стр. 32–47), prepareForValidation() (~стр. 83–91).
 func ValidateLevels(input Value, field string) (Value, []FieldError) {
 	threshold := ThresholdAmount
 	if field == FieldLoyaltyLevels {
