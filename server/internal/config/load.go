@@ -2,12 +2,11 @@ package config
 
 import (
 	"fmt"
-	"net"
 	"net/netip"
-	"net/url"
 	"os"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/env/v2"
@@ -184,26 +183,21 @@ func splitList(v string) []string {
 	return out
 }
 
-// localPostgres — все хосты DSN локальные: localhost, loopback, unix-сокет (пустой хост или путь). Некорректный
-// DSN — не локальный (ошибку формата сообщит Validate, если env задан явно).
+// localPostgres — все хосты DSN локальные: localhost, loopback, unix-сокет. DSN разбирается как pgx (URL или
+// «ключ=значение», с PGHOST и запасными хостами), чтобы `host=db.internal …` не считался локальным (повторное
+// ревью аудита, OPS-18). Некорректный DSN — не локальный (ошибку формата сообщит Validate, если env задан явно).
 func localPostgres(dsn string) bool {
-	u, err := url.Parse(dsn)
+	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		return false
 	}
-	hosts := u.Host
-	if h := u.Query().Get("host"); h != "" {
-		hosts = h
+	hosts := []string{cfg.Host}
+	for _, fb := range cfg.Fallbacks {
+		hosts = append(hosts, fb.Host)
 	}
-	if hosts == "" {
-		return true
-	}
-	for h := range strings.SplitSeq(hosts, ",") {
-		if strings.HasPrefix(h, "/") {
-			continue
-		}
-		if host, _, err := net.SplitHostPort(h); err == nil {
-			h = host
+	for _, h := range hosts {
+		if h == "" || strings.HasPrefix(h, "/") {
+			continue // unix-сокет
 		}
 		h = strings.Trim(h, "[]")
 		if strings.EqualFold(h, "localhost") {

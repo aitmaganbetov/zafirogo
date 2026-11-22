@@ -76,6 +76,17 @@ func (p *PasswordRecovery) SendCode(ctx context.Context, phone string) error {
 	if !ok {
 		return &Error{Kind: KindUnavailable, Field: "phone", Key: MsgRecoveryUnavailable}
 	}
+	// Предпроверка без блокировок (повторное ревью аудита): неизвестный номер и запрос сверх лимита не стоят Argon2id —
+	// как до PERF-3. Под блокировкой ниже всё проверяется заново.
+	if found, limitErr, err := p.precheck(ctx, phone); err != nil || !found || limitErr != nil {
+		if err != nil {
+			return fmt.Errorf("verifycode: recovery code: %w", err)
+		}
+		if limitErr != nil {
+			return limitErr
+		}
+		return nil // неизвестный или заблокированный номер — тот же ответ, ничего не отправляется
+	}
 	code, err := newCode()
 	if err != nil {
 		return err
@@ -253,4 +264,23 @@ func (p *PasswordRecovery) Reset(ctx context.Context, phone, code, newPassword s
 		p.SignOut(context.WithoutCancel(ctx), userID)
 	}
 	return userID, nil
+}
+
+// precheck — короткое чтение без блокировок: есть ли аккаунт и не превышен ли лимит кодов (limits).
+func (p *PasswordRecovery) precheck(ctx context.Context, phone string) (found bool, limitErr *Error, err error) {
+	now := p.now()
+	err = db.InPlatformTx(ctx, p.Platform, func(q *store.Queries) error {
+		user, err := account(ctx, q, phone)
+		if err != nil || user == nil {
+			return err
+		}
+		found = true
+		st, err := q.TelegramRecoveryCodeStats(ctx, store.TelegramRecoveryCodeStatsParams{UserID: user.ID, Since: ptr(now.Add(-time.Hour))})
+		if err != nil {
+			return err
+		}
+		limitErr = limits("phone", now, st.LastAt, st.InHour, st.FirstInHour)
+		return nil
+	})
+	return found, limitErr, err
 }

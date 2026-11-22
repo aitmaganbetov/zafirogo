@@ -534,3 +534,52 @@ func TestHashingOutsideLocks(t *testing.T) {
 		t.Fatalf("hasher calls = %d, under a lock = %d", probe.calls.Load(), probe.locked.Load())
 	}
 }
+
+// countingHasher — считает вызовы Hash (Argon2id).
+type countingHasher struct {
+	verifycode.Hasher
+	n atomic.Int64
+}
+
+func (h *countingHasher) Hash(ctx context.Context, plain string) (string, error) {
+	h.n.Add(1)
+	return h.Hasher.Hash(ctx, plain)
+}
+
+// Повторное ревью аудита: неизвестный номер и запрос сверх лимита не стоят Argon2id (как до PERF-3) — хэш кода
+// считается только для кода, который будет отправлен.
+func TestNoHashForUnknownPhoneOrLimit(t *testing.T) {
+	e := newEnv(t, true)
+	ctx := context.Background()
+	h := &countingHasher{Hasher: pw}
+	e.recovery.Hasher, e.transfer.Hasher = h, h
+
+	if err := e.recovery.SendCode(ctx, phone()); err != nil {
+		t.Fatal(err)
+	}
+	if h.n.Load() != 0 {
+		t.Fatalf("unknown phone: %d hashes", h.n.Load())
+	}
+	ph := phone()
+	user(t, ph, false)
+	if err := e.recovery.SendCode(ctx, ph); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.recovery.SendCode(ctx, ph); kind(err) == 0 {
+		t.Fatalf("second code within a minute: %v", err)
+	}
+	if h.n.Load() != 1 {
+		t.Fatalf("recovery: %d hashes, want 1 (limit refused before hashing)", h.n.Load())
+	}
+
+	club, arman, _, f := transferPair(t)
+	if err := e.transfer.Send(ctx, club, arman, f, 4000); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.transfer.Send(ctx, club, arman, f, 4000); kind(err) == 0 {
+		t.Fatalf("second transfer code within a minute: %v", err)
+	}
+	if h.n.Load() != 2 {
+		t.Fatalf("transfer: %d hashes, want 2", h.n.Load())
+	}
+}

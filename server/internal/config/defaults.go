@@ -118,9 +118,10 @@ func Defaults() map[string]any {
 		"events.stream.max_age":    "72h",
 		"events.stream.duplicates": "10m",
 		"events.stream.replicas":   1,
-		// 1 ГиБ (аудит OPS-12). Больше места, чем есть у NATS, поток не получит: JetStream резервирует max_bytes при
-		// создании потока, поэтому умолчание небольшое; прод — по расчёту в docs/dev-setup.md.
-		"events.stream.max_bytes": int64(1 << 30),
+		// 0 — без предела, как было до аудита (OPS-12): умолчание применяется и к уже существующему потоку прода
+		// (CreateOrUpdateStream) и молча обрезало бы его; предел задаётся явно по расчёту в docs/dev-setup.md,
+		// без него — предупреждение при старте в prod (Warnings). Повторное ревью аудита 22.11.2026.
+		"events.stream.max_bytes": int64(0),
 
 		"outbox.batch_size": 100,
 		"outbox.interval":   "2s",

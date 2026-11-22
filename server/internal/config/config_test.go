@@ -612,9 +612,15 @@ func TestImplicitDevEnvWithRemoteDatabase(t *testing.T) {
 	if _, err := Load(path, environ(remote...)); err != nil {
 		t.Errorf("env from file: %v", err)
 	}
-	for _, dsn := range []string{"postgres://a:p@localhost,db.internal/z", "postgres://a:p@10.0.0.5/z"} {
+	for _, dsn := range []string{"postgres://a:p@localhost,db.internal/z", "postgres://a:p@10.0.0.5/z",
+		"host=db.internal user=a dbname=z", "host=localhost,db.internal user=a dbname=z"} { // «ключ=значение» — повторное ревью аудита
 		if localPostgres(dsn) {
 			t.Errorf("%s: must not be local", dsn)
+		}
+	}
+	for _, dsn := range []string{"host=localhost user=a dbname=z", "host=/var/run/postgresql dbname=z", "postgres://a:p@127.0.0.1/z"} {
+		if !localPostgres(dsn) {
+			t.Errorf("%s: must be local", dsn)
 		}
 	}
 }

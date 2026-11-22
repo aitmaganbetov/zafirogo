@@ -55,6 +55,14 @@ func (t *TransferCodes) Send(ctx context.Context, clubID, userID, friendshipID i
 	}); err != nil {
 		return err
 	}
+	// Лимит кодов — до Argon2id (повторное ревью аудита): запрос сверх лимита хэша не стоит; под блокировкой ниже —
+	// повторная проверка.
+	if limitErr, err := t.precheckLimit(ctx, userID); err != nil || limitErr != nil {
+		if err != nil {
+			return fmt.Errorf("verifycode: transfer code: %w", err)
+		}
+		return limitErr
+	}
 	code, err := newCode()
 	if err != nil {
 		return err
@@ -110,4 +118,18 @@ func (t *TransferCodes) Send(ctx context.Context, clubID, userID, friendshipID i
 		return &Error{Kind: KindNotSent, Field: "code", Key: MsgNotSent}
 	}
 	return nil
+}
+
+// precheckLimit — короткое чтение без блокировок: не превышен ли лимит кодов перевода (limits).
+func (t *TransferCodes) precheckLimit(ctx context.Context, userID int64) (limitErr *Error, err error) {
+	now := t.now()
+	err = db.InPlatformTx(ctx, t.Platform, func(q *store.Queries) error {
+		st, err := q.TelegramTransferCodeStats(ctx, store.TelegramTransferCodeStatsParams{UserID: userID, Since: ptr(now.Add(-time.Hour))})
+		if err != nil {
+			return err
+		}
+		limitErr = limits("code", now, st.LastAt, st.InHour, st.FirstInHour)
+		return nil
+	})
+	return limitErr, err
 }

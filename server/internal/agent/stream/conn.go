@@ -263,8 +263,10 @@ func (c *conn) recordResult(ctx context.Context, res *agentv1.CommandResult, now
 	return updated, true
 }
 
-// resultWriteTimeout — потолок записи итога команды после закрытия потока (recordResult).
-const resultWriteTimeout = 5 * time.Second
+// resultWriteTimeout — потолок записи итога команды (recordResult). Он охватывает и ожидание соединения пула под
+// нагрузкой (нагрузочный тест O4: до 10–30 с), поэтому с запасом: агент итог не досылает, и раньше срока запись
+// обрываться не должна; потолок лишь не даёт записи после закрытия потока висеть бесконечно (повторное ревью аудита).
+const resultWriteTimeout = 60 * time.Second
 
 // notifyResult — итог команды обработчику панели (Options.Results), если он подключён.
 // Как и запись (recordResult), не прерывается закрытием потока сразу после итога.
