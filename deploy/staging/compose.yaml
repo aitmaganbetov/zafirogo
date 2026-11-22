@@ -27,7 +27,7 @@ x-app: &app
   deploy:
     resources:
       limits:
-        cpus: "${STG_APP_CPUS:-2}"
+        cpus: "${STG_APP_CPUS:-4}"
         memory: ${STG_APP_MEMORY:-2g}
         pids: 4096
   depends_on:
