@@ -211,7 +211,7 @@ export function ClubSettingsPage() {
             <div className="min-w-0 flex-1 basis-64">
               {!data.logo_url && <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">{t('Логотип не загружен: на мониторах показывается только название клуба.')}</p>}
               <form method="POST" action="/settings/logo" encType="multipart/form-data" className="flex flex-wrap items-center gap-3" onSubmit={(e) => { const f = fd(e); const form = e.currentTarget; if (!readOnly) logo.mutate(f, { onSuccess: () => form.reset() }); }}>
-                <input type="file" name="logo" accept="image/png,image/jpeg" required className="min-w-0 text-sm text-gray-700 dark:text-gray-300" />
+                <input type="file" name="logo" accept="image/png,image/jpeg" required aria-labelledby="club-logo-title" className="min-w-0 text-sm text-gray-700 dark:text-gray-300" />
                 <button type="submit" className="brand-button rounded-lg px-4 py-2 text-sm">{t('Загрузить логотип')}</button>
               </form>
               {data.logo_url && (
@@ -238,7 +238,7 @@ export function ClubSettingsPage() {
             </div>
             <div className="min-w-0 flex-1 basis-64">
               <form method="POST" action="/settings/signin-image" encType="multipart/form-data" className="flex flex-wrap items-center gap-3" onSubmit={(e) => { const f = fd(e); const form = e.currentTarget; if (!readOnly) signin.mutate(f, { onSuccess: () => form.reset() }); }}>
-                <input type="file" name="image" accept="image/png,image/jpeg" required className="min-w-0 text-sm text-gray-700 dark:text-gray-300" />
+                <input type="file" name="image" accept="image/png,image/jpeg" required aria-labelledby="signin-image-title" className="min-w-0 text-sm text-gray-700 dark:text-gray-300" />
                 <button type="submit" className="brand-button rounded-lg px-4 py-2 text-sm">{t('Загрузить картинку')}</button>
               </form>
               {data.signin_image_url && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nextPeriod, parseTariffsSearch, perMinuteTiyn, priceInput, splitMinutes } from './api';
+import { nextPeriod, parseTariffsSearch, perMinuteTiyn, splitMinutes } from './api';
 
 describe('тарифы: формулы формы и списка', () => {
   it('splitMinutes — самая крупная целая единица (TariffController::splitMinutes)', () => {
@@ -14,11 +14,6 @@ describe('тарифы: формулы формы и списка', () => {
     expect(perMinuteTiyn(100000)).toBe(1667); // 1000,00 / 60 = 16,666… → 16,67
     expect(perMinuteTiyn(30)).toBe(1); // 0,005 → 0,01
     expect(perMinuteTiyn(29)).toBe(0);
-  });
-
-  it('значение поля «Стоимость» — decimal(12,2) строкой', () => {
-    expect(priceInput(60000)).toBe('600.00');
-    expect(priceInput(5)).toBe('0.05');
   });
 
   it('новая строка периода — последняя на день позже (вс → пн)', () => {

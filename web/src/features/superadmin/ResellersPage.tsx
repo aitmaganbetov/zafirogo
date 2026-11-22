@@ -6,7 +6,7 @@ import { idempotencyKey, isApiError } from '../../api/http';
 import { Pagination } from '../../components/Pagination';
 import { useAdminPageTitle } from '../../layouts/adminSession';
 import { PARSE_MONEY_MESSAGES, formatMoney, parseMoney } from '../../lib/money';
-import { formatPercent, trimHundredths } from '../reseller/percent';
+import { trimHundredths } from '../reseller/percent';
 import { firstError } from '../../api/errors';
 import {
   createReseller, deleteReseller, detachResellerClub, payoutReseller, qs, resellersQuery, updateReseller,
@@ -211,7 +211,7 @@ export function ResellersPage({ search }: { readonly search: ResellersSearch }) 
             <div className="grid gap-4 lg:grid-cols-2">
               {/* key: после сохранения поля берут новые значения (как перезагрузка страницы). */}
               <form key={`${reseller.commission_bp}|${reseller.discount_percent}|${reseller.is_active}`} method="POST" className="flex flex-wrap items-end gap-3" onSubmit={submitUpdate(reseller)}>
-                <label className="text-sm"><span className="mb-1 block text-gray-600 dark:text-gray-400">{t('Процент реселлера')}</span><input type="number" name="commission_percent" min="0" max="100" step="0.01" defaultValue={formatPercent(reseller.commission_bp)} required className={`${FIELD} w-28`} /></label>
+                <label className="text-sm"><span className="mb-1 block text-gray-600 dark:text-gray-400">{t('Процент реселлера')}</span><input type="number" name="commission_percent" min="0" max="100" step="0.01" defaultValue={trimHundredths(reseller.commission_bp)} required className={`${FIELD} w-28`} /></label>
                 <label className="text-sm"><span className="mb-1 block text-gray-600 dark:text-gray-400">{t('Скидка клубам, %')}</span><input type="number" name="discount_percent" min="0" max="100" step="1" defaultValue={reseller.discount_percent} required className={`${FIELD} w-28`} /></label>
                 <label className="flex items-center gap-2 pb-2 text-sm text-gray-700 dark:text-gray-300"><input type="checkbox" name="is_active" value="1" defaultChecked={reseller.is_active} /> {t('Код действует')}</label>
                 <button type="submit" disabled={update.isPending} className="rounded-lg border border-gray-300 px-4 py-2 text-sm">{t('Сохранить')}</button>

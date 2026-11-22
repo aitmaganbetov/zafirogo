@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { formatPercent, trimHundredths } from './percent';
+import { trimHundredths } from './percent';
 
 describe('сотые доли без float', () => {
   it('процент реселлера из базисных пунктов — без хвостовых нулей', () => {
-    expect(formatPercent(0)).toBe('0');
-    expect(formatPercent(1000)).toBe('10');
-    expect(formatPercent(1250)).toBe('12.5');
-    expect(formatPercent(1235)).toBe('12.35');
-    expect(formatPercent(1005)).toBe('10.05');
-    expect(formatPercent(5)).toBe('0.05');
-    expect(formatPercent(10000)).toBe('100');
+    expect(trimHundredths(0)).toBe('0');
+    expect(trimHundredths(1000)).toBe('10');
+    expect(trimHundredths(1250)).toBe('12.5');
+    expect(trimHundredths(1235)).toBe('12.35');
+    expect(trimHundredths(1005)).toBe('10.05');
+    expect(trimHundredths(5)).toBe('0.05');
+    expect(trimHundredths(10000)).toBe('100');
   });
 
   it('сумма для поля выплаты — round($balance, 2)', () => {

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { memo, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { can, useSession } from '../../auth/session';
 import { useAdminPageTitle } from '../../layouts/adminSession';
@@ -28,6 +28,7 @@ import { BookingModal, ComputerModal, GuestSessionModal, NotifyModal, ZoneModal,
 import { allErrors, firstError } from './errors';
 import { canvasHeight, collides, computerClasses, PC_GRID_X, PC_GRID_Y, snapComputer, snapSize, snapZone, zoneMinSize, type Rect } from './logic';
 import { useMapLive } from './useMapLive';
+import { intlLocale } from '../../lib/intlLocale';
 import { useStableHandlers } from '../../lib/useStableHandlers';
 
 /*
@@ -53,7 +54,7 @@ const ZONE_STATUS: Record<string, string> = { available: 'Свободно', bus
 const NO_IDS: readonly number[] = [];
 
 interface PcHandlers {
-  readonly click: (e: ReactMouseEvent, c: ComputerCard) => void;
+  readonly click: (e: SyntheticEvent, c: ComputerCard) => void;
   readonly pointerDown: (e: ReactPointerEvent<HTMLSpanElement>, c: ComputerCard) => void;
   readonly pointerMove: (e: ReactPointerEvent<HTMLSpanElement>) => void;
   readonly pointerUp: (c: ComputerCard) => void;
@@ -63,8 +64,11 @@ interface PcHandlers {
 /**
  * Плитка ПК. memo: событие computer.load об одном ПК меняет только его `st` (mergeLoads сохраняет ссылки
  * остальных состояний), обработчики стабильны — перерисовывается одна плитка, а не все (FE-03).
+ * Вне редактора плитка — кнопка-переключатель выбора с клавиатуры (Tab, Enter/Space — тот же обработчик, что щелчок;
+ * аудит 22.11.2026, UI-4; в Blade — <span> только для мыши). В редакторе роль не ставится: внутри видна кнопка
+ * «Редактировать компьютер» (вложенные интерактивные элементы), плитку там двигают мышью.
  */
-const PcTile = memo(function PcTile({ c, st, x, y, selected, moving, blocked, on }: {
+const PcTile = memo(function PcTile({ c, st, x, y, selected, moving, blocked, editMode, on }: {
   readonly c: ComputerCard;
   readonly st: ComputerState | undefined;
   readonly x: number;
@@ -72,6 +76,7 @@ const PcTile = memo(function PcTile({ c, st, x, y, selected, moving, blocked, on
   readonly selected: boolean;
   readonly moving: boolean;
   readonly blocked: boolean;
+  readonly editMode: boolean;
   readonly on: PcHandlers;
 }) {
   const { t } = useTranslation();
@@ -81,6 +86,14 @@ const PcTile = memo(function PcTile({ c, st, x, y, selected, moving, blocked, on
   return (
     <span className={classes} data-id={c.id} style={{ left: `${x}px`, top: `${y}px` }}
       title={[c.name, st?.status, c.details, loadTitle(t, st)].filter(Boolean).join(' · ')}
+      {...(editMode ? {} : {
+        role: 'button', tabIndex: 0, 'aria-pressed': selected,
+        onKeyDown: (e: ReactKeyboardEvent) => {
+          if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+          e.preventDefault(); // Space не прокручивает страницу
+          on.click(e, c);
+        },
+      })}
       onClick={(e) => on.click(e, c)} onPointerDown={(e) => on.pointerDown(e, c)} onPointerMove={on.pointerMove} onPointerUp={() => on.pointerUp(c)}>
       <span>{c.number}</span>
       <PcLoad state={st} />
@@ -117,7 +130,8 @@ function ClubMapView({ data, computer }: { readonly data: Page; readonly compute
   const may = (right: string) => !readOnly && can(me, right);
   const canEdit = may('club_map.update');
   const tz = me?.club?.timezone ?? 'UTC';
-  const locale = me?.club?.locale ?? i18n.language ?? 'ru';
+  // Для Intl (даты панели ПК, сумма предпросмотра): kk без данных CLDR в Chromium → ru (lib/intlLocale.ts, UI-8).
+  const locale = intlLocale(me?.club?.locale ?? i18n.language);
 
   const [editMode, setEditMode] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -315,7 +329,7 @@ function ClubMapView({ data, computer }: { readonly data: Page; readonly compute
         showNotice(t('Ячейка занята'), 1200, true);
       });
   };
-  const onPcClick = (e: ReactMouseEvent, c: ComputerCard) => {
+  const onPcClick = (e: SyntheticEvent, c: ComputerCard) => {
     if ((e.target as HTMLElement).closest('.cm-computer-edit')) return;
     setInfoId(c.id);
     if (editMode) return;
@@ -461,7 +475,7 @@ function ClubMapView({ data, computer }: { readonly data: Page; readonly compute
                       {pcs.map((c) => {
                         const p = pcPos(c);
                         return (
-                          <PcTile key={c.id} c={c} st={stateOf(c.id)} x={p.x} y={p.y} selected={selected.has(c.id)}
+                          <PcTile key={c.id} c={c} st={stateOf(c.id)} x={p.x} y={p.y} selected={selected.has(c.id)} editMode={editMode}
                             moving={active?.kind === 'pc' && active.id === c.id} blocked={blocked?.kind === 'pc' && blocked.id === c.id} on={on} />
                         );
                       })}
@@ -478,7 +492,8 @@ function ClubMapView({ data, computer }: { readonly data: Page; readonly compute
       </div>
       <div id="layout-status" className={`cm-saving${notice.show ? ' show' : ''}`}>{notice.text}</div>
 
-      <div id="computer-controls" className={`cm-control-panel${selected.size > 0 ? ' show' : ''}`}>
+      {/* inert, пока ничего не выбрано: скрытая панель (opacity 0) не держит невидимые остановки Tab (аудит 22.11.2026, UI-4). */}
+      <div id="computer-controls" className={`cm-control-panel${selected.size > 0 ? ' show' : ''}`} inert={selected.size === 0}>
         <div className="cm-control-count"><strong><span id="selected-count">{selected.size}</span> {t('ПК')}</strong>{t('выбрано')}</div>
         {may('pc_control.update') && (
           <>

@@ -128,6 +128,7 @@ describe('Профиль клуба', () => {
     expect(file.name).toBe('photos[]');
     expect(file.multiple).toBe(true);
     expect(file.accept).toBe('image/jpeg,image/png,image/webp');
+    expect(within(card).getByLabelText('Фотографии')).toBe(file); // UI-6: имя поля — заголовок карточки
     fireEvent.submit(file.closest('form') as HTMLFormElement);
     await waitFor(() => expect(api.of('POST', '/api/settings/profile/photos')).toHaveLength(1));
   });

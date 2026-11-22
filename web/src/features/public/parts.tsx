@@ -98,12 +98,20 @@ export function TextCardItem({ card }: { card: TextCard }) {
   );
 }
 
-/** Снимок агента на игровом месте с остатком времени (welcome.blade.php и product/agent.blade.php). */
+/**
+ * Снимок агента на игровом месте с остатком времени (welcome.blade.php и product/agent.blade.php).
+ * В Blade — public/images/landing/club.jpg 1600×1226 (112 КБ) в блок шириной до 528 px; здесь — тот же снимок в webp трёх
+ * ширин по srcset (13/26/53 КБ; аудит 22.11.2026, UI-5). Без lazy (герой /product/agent) — картинка LCP: высокий
+ * приоритет. <link rel="preload"> в <head> проверен и не взят: LCP ждёт отрисовки SPA, а preload отнимает канал у
+ * main.js — Lighthouse mobile 3,7–3,8 с без него против 3,8–4,0 с ним.
+ */
 export function AgentPhoto({ lazy }: { lazy: boolean }) {
   const { t } = useTranslation();
   return (
     <div className="relative overflow-hidden rounded-3xl border border-gray-200">
-      <img src="/images/landing/club.jpg" alt={t('Игровое место в компьютерном клубе')} className="h-full max-h-[460px] w-full object-cover" loading={lazy ? 'lazy' : undefined} />
+      <img src="/images/landing/club-1024.webp" srcSet="/images/landing/club-640.webp 640w, /images/landing/club-1024.webp 1024w, /images/landing/club-1600.webp 1600w"
+        sizes="(min-width: 1024px) 528px, 100vw" width={1600} height={1226}
+        alt={t('Игровое место в компьютерном клубе')} className="h-full max-h-[460px] w-full object-cover" loading={lazy ? 'lazy' : undefined} fetchPriority={lazy ? undefined : 'high'} />
       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent"></div>
       <div className="absolute bottom-5 left-5 right-5 rounded-2xl border border-white/10 bg-black/50 p-4 text-white backdrop-blur">
         <p className="text-sm text-white/60">{t('Осталось времени')}</p>

@@ -56,6 +56,17 @@ describe('тарифы: деньги', () => {
     expect(screen.getByText('2 500,50 KZT')).toBeInTheDocument(); // тариф
   });
 
+  // UI-6 (аудит 22.11.2026): у единиц длительности и лимита использования есть доступное имя (axe select-name, label).
+  it('поля единиц и лимита использования названы подписями', async () => {
+    mockApi({ 'GET /api/tariffs/page': page });
+    renderPage(<TariffsPage />);
+    await screen.findByText('Ночь');
+    fireEvent.click(document.getElementById('open-tariff-dialog') as HTMLElement);
+    expect(screen.getByRole('combobox', { name: 'Длительность' })).toHaveAttribute('name', 'duration_unit');
+    expect(screen.getByRole('spinbutton', { name: 'Ограничить использование' })).toHaveAttribute('name', 'usage_limit_value');
+    expect(screen.getByRole('combobox', { name: 'Ограничить использование' })).toHaveAttribute('name', 'usage_limit_unit');
+  });
+
   it('новый тариф: «1500.5» → price_tiyn 150 050', async () => {
     const api = mockApi({ 'GET /api/tariffs/page': page, 'POST /api/tariffs': { message: 'Тариф создан.', tariff } });
     renderPage(<TariffsPage />);

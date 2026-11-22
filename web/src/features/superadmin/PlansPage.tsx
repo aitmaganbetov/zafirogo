@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAdminPageTitle } from '../../layouts/adminSession';
-import { PARSE_MONEY_MESSAGES, parseMoney } from '../../lib/money';
+import { PARSE_MONEY_MESSAGES, parseMoney, tiynToFixed2 } from '../../lib/money';
 import { firstError } from '../../api/errors';
 import { createPlan, plansQuery, updatePlan, type Plan, type PlanForm } from './api';
 import { useSuperadminFlash } from './flash';
@@ -10,12 +10,6 @@ import { useSuperadminFlash } from './flash';
 /* Тарифы платформы — перенос resources/views/superadmin/plans/index.blade.php и plans/fields.blade.php (PlanController). */
 
 const INPUT = 'w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100';
-
-/** price_monthly (decimal:2) в поле формы: «15000.00». */
-function priceValue(tiyn: number | null | undefined): string {
-  if (tiyn == null) return '';
-  return `${Math.floor(tiyn / 100)}.${String(tiyn % 100).padStart(2, '0')}`;
-}
 
 /** plans/fields.blade.php — поля тарифа ($plan null — новый). */
 function PlanFields({ plan }: { readonly plan: Plan | null }) {
@@ -33,7 +27,7 @@ function PlanFields({ plan }: { readonly plan: Plan | null }) {
         </label>
         <label className="text-sm">
           <span className="mb-1 block text-gray-600">{t('Цена в месяц, ₸')}</span>
-          <input type="number" name="price_monthly" min="0" step="0.01" defaultValue={priceValue(plan?.price_monthly_tiyn)} className={INPUT} />
+          <input type="number" name="price_monthly" min="0" step="0.01" defaultValue={plan?.price_monthly_tiyn == null ? '' : tiynToFixed2(plan.price_monthly_tiyn)} className={INPUT} />
         </label>
         <label className="text-sm">
           <span className="mb-1 block text-gray-600">{t('Пробный период, дней')}</span>

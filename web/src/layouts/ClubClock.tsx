@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { intlLocale } from '../lib/intlLocale';
 import type { ClubTime } from './types';
 
 /*
@@ -50,7 +51,8 @@ export function ClubClock({ clubTime }: { readonly clubTime: ClubTime }) {
     return () => { window.clearTimeout(timer); };
   }, [nowMs]);
 
-  const locale = i18n.language;
+  // kk без данных CLDR в Chromium — «M10 15, Thu»; тогда ru (lib/intlLocale.ts, аудит 22.11.2026, UI-8).
+  const locale = intlLocale(i18n.language);
   const formats = useMemo(
     () => ({
       hoursMinutes: formatter(locale, timezone, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }),

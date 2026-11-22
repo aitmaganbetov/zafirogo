@@ -251,3 +251,42 @@ test('дашборд: сводка и график', async ({ page }) => {
   await expect(page.locator('[data-testid=dashboard] tbody')).toContainText('−500 KZT');
   await expect(page.locator('#chart')).toBeVisible();
 });
+
+// Аудит 22.11.2026: UI-4 — ПК выбирается с клавиатуры (Enter/Space на плитке), скрытая панель не держит остановки Tab;
+// UI-7 — на телефоне подсказка установки (iPhone) не закрывает открытую панель управления ПК.
+test.describe('карта с телефона (iPhone)', () => {
+  test.use({
+    viewport: { width: 375, height: 812 },
+    hasTouch: true,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+  });
+
+  test('клавиатура выбирает ПК; баннер PWA скрыт, пока открыта панель', async ({ page }) => {
+    await mockApi(page, { 'GET /api/club-map': (r) => json(r, MAP) });
+    await page.goto('/club-map');
+    const pc = page.locator('.cm-computer[data-id="1"]');
+    const panel = page.locator('#computer-controls');
+    const banner = page.locator('.pwa-banner');
+    await expect(banner).toBeVisible(); // подсказка iOS через 1,5 с
+    await expect(panel).toHaveAttribute('inert', '');
+
+    await pc.focus();
+    await page.keyboard.press('Enter');
+    await expect(pc).toHaveAttribute('aria-pressed', 'true');
+    await expect(panel).toHaveClass(/show/);
+    await expect(panel).not.toHaveAttribute('inert', '');
+    await expect(banner).toBeHidden();
+    // Центр панели (после выезда, transition .22s) — сама панель, не баннер.
+    await expect
+      .poll(() => panel.evaluate((el) => {
+        const b = el.getBoundingClientRect();
+        return !!el.ownerDocument.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2)?.closest('#computer-controls');
+      }))
+      .toBe(true);
+
+    await page.keyboard.press('Space');
+    await expect(pc).toHaveAttribute('aria-pressed', 'false');
+    await expect(panel).toHaveAttribute('inert', '');
+    await expect(banner).toBeVisible();
+  });
+});

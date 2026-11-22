@@ -166,7 +166,8 @@ export function CabinetLayout({ userName, path, onLogout, subtitle, role, roleIc
                   <h2 className="admin-title" title={title}>{title}</h2>
                 </div>
                 <div className="admin-topbar-actions">
-                  <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800 dark:bg-violet-900/40 dark:text-violet-200">
+                  {/* shrink-0 whitespace-nowrap (аудит 22.11.2026, UI-9): длинный kk-заголовок не ломает плашку в две строки. */}
+                  <span className="shrink-0 whitespace-nowrap rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800 dark:bg-violet-900/40 dark:text-violet-200">
                     <i className={`${roleIcon} mr-1`} aria-hidden="true"></i>
                     {role}
                   </span>

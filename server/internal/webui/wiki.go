@@ -19,7 +19,7 @@ const WikiPage = "wiki/index.html"
 // inlineScript — inline-скрипты страницы (без src): их sha256 разрешаются в CSP.
 var inlineScript = regexp.MustCompile(`(?s)<script>(.*?)</script>`)
 
-// Wiki оборачивает весь HTTP-обработчик сайта (routes/web.php:108–117, RestrictWikiHost):
+// Wiki оборачивает весь HTTP-обработчик сайта (routes/web.php:133–142, RestrictWikiHost):
 //   - host пуст (WIKI_DOMAIN не задан) — страница на /wiki;
 //   - host задан — страница на корне этого хоста, любой другой адрес хоста (кроме файлов сборки: стили, шрифты,
 //     иконки) — 302 на корень (RestrictWikiHost); старый адрес /wiki основного сайта — 301 на хост wiki.

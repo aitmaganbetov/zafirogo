@@ -33,4 +33,12 @@ describe('<Pagination> — tailwind.blade.php Laravel', () => {
     expect(p.textContent?.replace(/\s+/g, ' ')).toBe('Showing 26 to 50 of 60 results');
     expect(screen.getAllByRole('link', { name: 'pagination.previous' })[0]).toHaveAttribute('href', '/users?page=1');
   });
+
+  // UI-6 (аудит 22.11.2026): aria-label недоступной стрелки — на элементе с ролью (axe aria-prohibited-attr).
+  it('первая страница: «назад» — недоступная ссылка с именем', () => {
+    render(<Pagination page={1} perPage={25} total={60} count={25} hrefFor={(p) => `/users?page=${p}`} />);
+    const prev = screen.getAllByRole('link', { name: 'pagination.previous' }).find((el) => el.tagName === 'SPAN');
+    expect(prev).toHaveAttribute('aria-disabled', 'true');
+    expect(prev).not.toHaveAttribute('href');
+  });
 });

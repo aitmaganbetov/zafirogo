@@ -41,11 +41,6 @@ export function splitMinutes(minutes: number): [number, DurationUnit] {
   return [minutes, 'minutes'];
 }
 
-/** (string) $tariff->price — decimal(12,2) строкой «600.00» (значение поля «Стоимость»). */
-export function priceInput(tiyn: number): string {
-  return `${Math.floor(tiyn / 100)}.${String(tiyn % 100).padStart(2, '0')}`;
-}
-
 /**
  * Цена минуты в тиынах — number_format((float) $zone->price_per_hour / 60, 2): округление до тиына, половина — вверх
  * (PHP round, цены неотрицательные), целыми без float.

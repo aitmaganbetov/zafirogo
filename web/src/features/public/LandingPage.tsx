@@ -67,7 +67,8 @@ export function LandingPage() {
         <div className="relative">
           <div className="relative rounded-3xl border border-gray-200 bg-white p-5 shadow-2xl">
             <div className="mb-4 flex items-center gap-2"><span className="h-3 w-3 rounded-full bg-[#ff0169]"></span><span className="text-sm font-semibold">{t('Карта клуба')}</span></div>
-            <img src="/images/club-map.webp" width="810" height="800" alt={t('Карта клуба в панели Zafiro: зоны и ПК с их статусами')} className="w-full rounded-2xl border border-gray-100" />
+            {/* Картинка LCP лендинга — высокий приоритет (аудит 22.11.2026, UI-5; preload в <head> замедлял LCP — см. parts.tsx AgentPhoto). */}
+            <img src="/images/club-map.webp" width="810" height="800" fetchPriority="high" alt={t('Карта клуба в панели Zafiro: зоны и ПК с их статусами')} className="w-full rounded-2xl border border-gray-100" />
           </div>
         </div>
       </section>

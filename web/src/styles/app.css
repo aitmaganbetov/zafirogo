@@ -2728,6 +2728,14 @@ body {
     box-shadow: 0 0 0 6px rgba(100, 116, 139, .35), 0 8px 18px rgba(15, 23, 42, .28)
 }
 
+/* Фокус с клавиатуры на плитке ПК (аудит 22.11.2026, UI-4): рамки .selected/.reserved перекрыли бы стандартное
+   кольцо фокуса браузера. */
+.cm-page:not(.edit-mode) .cm-computer:focus-visible,
+.cm-page:not(.edit-mode) .cm-computer.selected:focus-visible:is(.pc-free, .pc-account, .pc-guest, .pc-staff) {
+    outline: 2px solid #2563eb;
+    outline-offset: 3px
+}
+
 /* Night theme of the club map. */
 .cm-page {
     --pc-off: #1e293b
@@ -3029,6 +3037,12 @@ html.dark:has(#root:empty) {
 }
 
 .pwa-banner[hidden] {
+    display: none
+}
+
+/* Пока на карте клуба открыта панель управления выбранными ПК, подсказка установки её не закрывает
+   (аудит 22.11.2026, UI-7: на телефоне баннер z-toast ложился на кнопки панели z-dropdown). */
+:root:has(.cm-control-panel.show) .pwa-banner {
     display: none
 }
 

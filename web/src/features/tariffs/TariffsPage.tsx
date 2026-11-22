@@ -6,14 +6,13 @@ import { can, useSession } from '../../auth/session';
 import { ConfirmForm } from '../../components/ConfirmForm';
 import { useAdminPageTitle } from '../../layouts/adminSession';
 import { setFlash, useFlash } from '../../lib/flash';
-import { formatMoney, parseMoney, PARSE_MONEY_MESSAGES } from '../../lib/money';
+import { formatMoney, parseMoney, PARSE_MONEY_MESSAGES, tiynToFixed2 } from '../../lib/money';
 import { firstError } from '../../api/errors';
 import {
   ALWAYS,
   createTariff,
   deleteTariff,
   perMinuteTiyn,
-  priceInput,
   splitMinutes,
   tariffsPageQuery,
   updateTariff,
@@ -79,7 +78,7 @@ function formValues(t: PageTariff): FormValues {
     name: t.name,
     duration_value: String(duration),
     duration_unit: durationUnit,
-    price: priceInput(t.price_tiyn),
+    price: tiynToFixed2(t.price_tiyn), // (string) $tariff->price — «600.00»
     discount_enabled: t.discount_enabled,
     zone_ids: t.zone_ids.map(String),
     usage_limit_enabled: t.usage_limit_enabled,
@@ -432,12 +431,12 @@ function TariffFields({ values, set, zones }: {
           <input id="tariff-name" name="name" value={values.name} onChange={(e) => set('name', e.target.value)} required maxLength={100} className={FIELD} />
         </div>
         <div>
-          <label htmlFor="tariff-duration" className={LABEL}>
+          <label id="tariff-duration-label" htmlFor="tariff-duration" className={LABEL}>
             {t('Длительность')}
           </label>
           <div className="tariff-duration-fields">
             <input id="tariff-duration" name="duration_value" type="number" value={values.duration_value} onChange={(e) => set('duration_value', e.target.value)} required min={1} max={10080} className={FIELD} />
-            <select name="duration_unit" className={SELECT} value={values.duration_unit} onChange={(e) => set('duration_unit', e.target.value)}>
+            <select name="duration_unit" aria-labelledby="tariff-duration-label" className={SELECT} value={values.duration_unit} onChange={(e) => set('duration_unit', e.target.value)}>
               <option value="hours">{t('Часов')}</option>
               <option value="minutes">{t('Минут')}</option>
               <option value="days">{t('Дней')}</option>
@@ -482,14 +481,14 @@ function TariffFields({ values, set, zones }: {
         </div>
         <div className="space-y-4">
           <div>
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+            <label id="tariff-usage-limit-label" className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
               <input type="checkbox" name="usage_limit_enabled" value="1" checked={values.usage_limit_enabled} onChange={(e) => set('usage_limit_enabled', e.target.checked)} className="brand-check rounded border-gray-300" />
               {t('Ограничить использование')}
             </label>
             <p className="mb-2 text-xs text-gray-500">{t('Абонемент сгорит через указанное время после активации.')}</p>
             <div className="tariff-duration-fields">
-              <input name="usage_limit_value" type="number" min={1} max={10080} value={values.usage_limit_value} onChange={(e) => set('usage_limit_value', e.target.value)} className={SMALL_INPUT} />
-              <select name="usage_limit_unit" className={SMALL_SELECT} value={values.usage_limit_unit} onChange={(e) => set('usage_limit_unit', e.target.value)}>
+              <input name="usage_limit_value" aria-labelledby="tariff-usage-limit-label" type="number" min={1} max={10080} value={values.usage_limit_value} onChange={(e) => set('usage_limit_value', e.target.value)} className={SMALL_INPUT} />
+              <select name="usage_limit_unit" aria-labelledby="tariff-usage-limit-label" className={SMALL_SELECT} value={values.usage_limit_unit} onChange={(e) => set('usage_limit_unit', e.target.value)}>
                 <option value="hours">{t('Часов')}</option>
                 <option value="minutes">{t('Минут')}</option>
                 <option value="days">{t('Дней')}</option>

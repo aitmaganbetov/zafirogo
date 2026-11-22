@@ -30,7 +30,10 @@ export function ShellThemeField({ value, themes }: { value: string; themes: Shel
     <fieldset className="rounded-xl border border-gray-200 p-4 md:col-span-2 dark:border-gray-700">
       <legend className="px-1 text-sm font-medium text-gray-700 dark:text-gray-300">{t('Тема оформления на ПК')}</legend>
       <p className="mb-3 text-xs text-gray-500">{t('Цвета экрана гостя и экрана входа на ПК клуба. Агент применит тему в течение минуты.')}</p>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {/* Аудит 22.11.2026, UI-2 (в Blade — grid-cols-2 sm:grid-cols-4): название темы («Стандартная (фиолетовая)»,
+          kk «Көгілдір-жасыл») выходило за карточку на соседнюю на телефоне (две колонки по ~116 px) и на 640–767 px
+          (четыре колонки). Теперь одна колонка до 480 px, две — до 768 px; с 768 px — как в Blade. */}
+      <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-2 md:grid-cols-4">
         {themes.map((theme) => {
           const name = THEME_NAMES[theme.key];
           // Ключ — данные, не текст интерфейса: через t() не идёт.

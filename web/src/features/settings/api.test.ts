@@ -1,15 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formToBody, hundredthsToInput } from './api';
-
-describe('hundredthsToInput', () => {
-  it('выводит числа как PHP (int|float)', () => {
-    expect(hundredthsToInput(100000)).toBe('1000');
-    expect(hundredthsToInput(100050)).toBe('1000.5');
-    expect(hundredthsToInput(550)).toBe('5.5');
-    expect(hundredthsToInput(1)).toBe('0.01');
-    expect(hundredthsToInput(1234)).toBe('12.34');
-  });
-});
+import { formToBody } from './api';
 
 describe('formToBody', () => {
   it('последнее значение повторённого поля, уровни списком, пустые уровни — []', () => {

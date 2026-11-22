@@ -94,7 +94,9 @@ export function InvoicesPage({ page }: { readonly page?: number }) {
         <h3 id="pending-title" className="mb-3 font-semibold text-gray-900 dark:text-white">{t('Ожидают оплаты')}</h3>
         {data.pending.map((invoice) => (
           <div key={invoice.id} className="mb-3 flex flex-wrap items-center gap-4 rounded-xl border border-amber-300 bg-white p-4 dark:border-amber-700 dark:bg-gray-900">
-            <div className="min-w-0 flex-1">
+            {/* basis-64 (аудит 22.11.2026, UI-3): при нехватке места цена и кнопки переносятся под счёт, а не сжимают
+                колонку счёта до букв в строке (kk, 375 px); в Blade — min-w-0 flex-1. */}
+            <div className="min-w-0 flex-1 basis-64">
               <p className="font-semibold text-gray-900 dark:text-white">{invoice.number} · <a href={saHref(`/clubs/${invoice.club_id}`)} className="text-violet-700 hover:underline dark:text-violet-300">{invoice.club_name}</a></p>
               <p className="text-sm text-gray-600 dark:text-gray-400">{invoice.plan_name}, {t(MONTHS_KEY, { count: invoice.months })}, {invoice.computers} {t('ПК')} × {money(invoice.price_per_computer_tiyn)} ₸{invoice.discount_percent > 0 && <>, {t('скидка {{percent}}%', { percent: invoice.discount_percent })}</>} · {invoice.created}</p>
             </div>

@@ -44,6 +44,27 @@ export function tiynToInput(tiyn: number): string {
   return (neg ? '-' : '') + String(Math.floor(abs / 100)) + (frac === 0 ? '' : '.' + String(frac).padStart(2, '0'));
 }
 
+/**
+ * (string) decimal(12,2) — тиыны строкой с двумя знаками: 60000 → «600.00», 5 → «0.05», -150 → «-1.50».
+ * Значение поля «Стоимость» тарифа клуба ((string) $tariff->price) и тарифа платформы (price_monthly, decimal:2).
+ */
+export function tiynToFixed2(tiyn: number): string {
+  assertTiyn(tiyn);
+  const abs = Math.abs(tiyn);
+  return (tiyn < 0 ? '-' : '') + String(Math.floor(abs / 100)) + '.' + String(abs % 100).padStart(2, '0');
+}
+
+/**
+ * Сотые (тиыны, базисные пункты) → число, как PHP выводит float: без хвостовых нулей — 100050 → «1000.5»,
+ * 500 → «5», 1235 → «12.35», -150 → «-1.5». Поля порогов/процентов бонусов, процент и выплата реселлера.
+ */
+export function hundredthsToInput(n: number): string {
+  assertTiyn(n);
+  const abs = Math.abs(n);
+  const frac = String(abs % 100).padStart(2, '0').replace(/0+$/, '');
+  return (n < 0 ? '-' : '') + String(Math.floor(abs / 100)) + (frac === '' ? '' : '.' + frac);
+}
+
 export type ParseMoneyError = 'required' | 'numeric' | 'decimal' | 'negative' | 'too_large';
 
 export type ParseMoneyResult = { readonly ok: true; readonly tiyn: number } | { readonly ok: false; readonly error: ParseMoneyError };

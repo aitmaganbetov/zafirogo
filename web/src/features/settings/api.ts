@@ -71,16 +71,6 @@ export function firstError(e: unknown, ...fields: string[]): string | undefined 
   return fields.length === 0 ? e.message : undefined;
 }
 
-/** Сотые (тиыны, базисные пункты) → число PHP для поля ввода: 100050 → «1000.5», 500 → «5». */
-export function hundredthsToInput(n: number): string {
-  const neg = n < 0;
-  const abs = Math.abs(n);
-  const frac = abs % 100;
-  let s = String(Math.floor(abs / 100));
-  if (frac !== 0) s += '.' + String(frac).padStart(2, '0').replace(/0$/, '');
-  return (neg ? '-' : '') + s;
-}
-
 /** Число минут (не деньги) как PHP выводит int|float: 0.5 → «0.5», 15 → «15». */
 export function minutesToInput(n: number): string {
   return String(n);

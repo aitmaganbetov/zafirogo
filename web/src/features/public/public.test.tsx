@@ -51,6 +51,12 @@ describe('публичный сайт', () => {
     expect(main.getByText('Сервер').nextElementSibling).toHaveTextContent('в облаке');
     // Настоящий снимок карты клуба вместо нарисованной схемы с легендой.
     expect(main.getByAltText('Карта клуба в панели Zafiro: зоны и ПК с их статусами')).toHaveAttribute('src', '/images/club-map.webp');
+    // UI-5 (аудит 22.11.2026): картинка LCP — высокий приоритет; снимок агента ниже — webp по srcset, лениво.
+    expect(main.getByAltText('Карта клуба в панели Zafiro: зоны и ПК с их статусами')).toHaveAttribute('fetchpriority', 'high');
+    const agent = main.getByAltText('Игровое место в компьютерном клубе');
+    expect(agent).toHaveAttribute('srcset', expect.stringContaining('/images/landing/club-640.webp 640w'));
+    expect(agent).toHaveAttribute('loading', 'lazy');
+    expect(agent).not.toHaveAttribute('fetchpriority');
     expect(main.queryByText(/Сейчас занято/)).toBeNull();
     // Тёмный блок мобильных приложений вместо сетки возможностей.
     expect(main.getByRole('heading', { name: 'Мобильные приложения для гостей и сотрудников' })).toBeInTheDocument();

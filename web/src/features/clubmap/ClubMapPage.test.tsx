@@ -118,6 +118,32 @@ describe('ClubMapPage', () => {
     expect(document.getElementById('computer-controls')?.className).not.toContain('show');
   });
 
+  // UI-4 (аудит 22.11.2026): плитка — кнопка-переключатель с клавиатуры; скрытая панель не держит остановки Tab.
+  it('selects a PC from the keyboard; the hidden control panel is inert', () => {
+    setup();
+    const pc = document.querySelector('.cm-computer[data-id="7"]') as HTMLElement;
+    const panel = document.getElementById('computer-controls') as HTMLElement;
+    expect(pc.getAttribute('role')).toBe('button');
+    expect(pc.tabIndex).toBe(0);
+    expect(pc.getAttribute('aria-pressed')).toBe('false');
+    expect(panel.hasAttribute('inert')).toBe(true);
+    fireEvent.keyDown(pc, { key: 'Enter' });
+    expect(pc.className).toContain('selected');
+    expect(pc.getAttribute('aria-pressed')).toBe('true');
+    expect(panel.hasAttribute('inert')).toBe(false);
+    expect(document.getElementById('computer-info-name')?.textContent).toBe('VIP-01 (#1)');
+    fireEvent.keyDown(pc, { key: ' ' });
+    expect(pc.className).not.toContain('selected');
+    expect(panel.hasAttribute('inert')).toBe(true);
+    // Клавиша не на самой плитке (на вложенной кнопке) — не переключает выбор.
+    fireEvent.keyDown(pc.querySelector('.cm-computer-edit') as HTMLElement, { key: 'Enter' });
+    expect(pc.className).not.toContain('selected');
+    // В редакторе плитку двигают мышью: роли и остановки Tab нет (внутри видна кнопка «Редактировать компьютер»).
+    fireEvent.click(document.getElementById('editor-toggle') as HTMLElement);
+    expect(pc.hasAttribute('role')).toBe(false);
+    expect(pc.hasAttribute('tabindex')).toBe(false);
+  });
+
   // Переход из колокольчика «Проблемы с ПК» (/club-map?computer=8) — открыта карточка этого ПК, без выделения.
   it('opens the PC card from the ?computer= link', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200, headers: { 'Content-Type': 'application/json' } }));

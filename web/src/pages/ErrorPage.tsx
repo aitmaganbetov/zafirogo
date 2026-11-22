@@ -1,8 +1,9 @@
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useRouterState } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDocumentTitle } from '../lib/title';
-import { isApiError } from '../api/http';
+import { allErrors } from '../api/errors';
+import { isApiError, type ApiError } from '../api/http';
 import { useAdminPageTitle, useInsideAdminLayout } from '../layouts/adminSession';
 import { isForbidden } from './errors';
 
@@ -77,11 +78,32 @@ function SubscriptionRedirect() {
   return null;
 }
 
-/** errorComponent маршрутов: 402 — на /billing, 403 (ForbiddenError или ответ API 403), 404 (ответ API 404), иначе 500. */
+/**
+ * Ответ API 400/422 на загрузку экрана — неверные параметры адреса (сохранённая ссылка с удалённым сотрудником,
+ * испорченный курсор, `?date=bad`). В Laravel такой GET проваливал FormRequest/validate() и уходил
+ * redirect()->back()->withErrors() — не 500 (аудит 22.11.2026, UI-1). Здесь — тот же экран без параметров поиска;
+ * тексты ошибок едут в state перехода (useSearchErrors): экран, который в Blade выводил $errors, их покажет.
+ * Без параметров повторять нечего — тогда «500», как раньше.
+ */
+function BadRequestPage({ error }: { error: ApiError }) {
+  const navigate = useNavigate();
+  const { pathname, searchStr } = useRouterState({ select: (s) => s.location });
+  const retry = searchStr !== '' && searchStr !== '?';
+  useEffect(() => {
+    if (retry) void navigate({ href: pathname, replace: true, state: { searchErrors: allErrors(error) } });
+  }, [retry, navigate, pathname, error]);
+  return retry ? null : <ServerErrorPage />;
+}
+
+/**
+ * errorComponent маршрутов: 402 — на /billing, 403 (ForbiddenError или ответ API 403), 404 (ответ API 404),
+ * 400/422 — тот же экран без параметров адреса (BadRequestPage), иначе 500.
+ */
 export function RouteErrorPage({ error }: { error: unknown }) {
   if (isApiError(error) && error.status === 402) return <SubscriptionRedirect />;
   if (isForbidden(error)) return <ForbiddenPage message={error.message} />;
   if (isApiError(error) && error.kind === 'forbidden') return <ForbiddenPage message={error.message} />;
   if (isApiError(error) && error.kind === 'not_found') return <NotFoundPage />;
+  if (isApiError(error) && (error.kind === 'validation' || error.kind === 'bad_request')) return <BadRequestPage error={error} />;
   return <ServerErrorPage />;
 }

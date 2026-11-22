@@ -85,7 +85,7 @@ export function Pagination({ page, perPage, total, count, hrefFor }: PaginationP
         <div>
           <span className="inline-flex rtl:flex-row-reverse shadow-sm rounded-md">
             {onFirst ? (
-              <span aria-disabled="true" aria-label={prev}>
+              <span role="link" aria-disabled="true" aria-label={prev}>
                 <span className="inline-flex items-center px-2 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 cursor-not-allowed rounded-l-md leading-5 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-400" aria-hidden="true">
                   <Arrow d={PREV_PATH} />
                 </span>
@@ -117,7 +117,7 @@ export function Pagination({ page, perPage, total, count, hrefFor }: PaginationP
                 <Arrow d={NEXT_PATH} />
               </a>
             ) : (
-              <span aria-disabled="true" aria-label={next}>
+              <span role="link" aria-disabled="true" aria-label={next}>
                 <span className="inline-flex items-center px-2 py-2 -ml-px text-sm font-medium text-gray-500 bg-white border border-gray-300 cursor-not-allowed rounded-r-md leading-5 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-400" aria-hidden="true">
                   <Arrow d={NEXT_PATH} />
                 </span>

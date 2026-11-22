@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatMoney, parseMoney, tiynToInput } from './money';
+import { formatMoney, hundredthsToInput, parseMoney, tiynToFixed2, tiynToInput } from './money';
 
 describe('formatMoney = number_format($x, d, dec, sep) для тиынов', () => {
   it.each([
@@ -70,4 +70,35 @@ describe('parseMoney — строго ≤ 2 знаков (Q-002)', () => {
     expect(tiynToInput(150000)).toBe('1500');
     expect(tiynToInput(-5)).toBe('-0.05');
   });
+});
+
+// CODE-10 (аудит 22.11.2026): общие функции вместо копий в tariffs/api.ts (priceInput), superadmin/PlansPage.tsx
+// (priceValue), settings/api.ts и reseller/percent.ts (hundredthsToInput/trimHundredths). Копии давали для
+// отрицательных «-2.-50» (Math.floor(-150 / 100) = -2, -150 % 100 = -50).
+describe('tiynToFixed2 = (string) decimal(12,2)', () => {
+  it.each([
+    [60000, '600.00'],
+    [5, '0.05'],
+    [0, '0.00'],
+    [1500000, '15000.00'],
+    [250050, '2500.50'],
+    [-150, '-1.50'],
+    [-5, '-0.05'],
+  ])('%i → %s', (tiyn, s) => expect(tiynToFixed2(tiyn)).toBe(s));
+  it('не целое — ошибка', () => expect(() => tiynToFixed2(1.5)).toThrow(RangeError));
+});
+
+describe('hundredthsToInput — число как PHP выводит int|float', () => {
+  it.each([
+    [100000, '1000'],
+    [100050, '1000.5'],
+    [550, '5.5'],
+    [1, '0.01'],
+    [1234, '12.34'],
+    [1250, '12.5'],
+    [1005, '10.05'],
+    [0, '0'],
+    [-150, '-1.5'],
+    [-5, '-0.05'],
+  ])('%i → %s', (n, s) => expect(hundredthsToInput(n)).toBe(s));
 });

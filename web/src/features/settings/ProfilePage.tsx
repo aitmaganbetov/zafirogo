@@ -138,7 +138,7 @@ export function ProfilePage() {
         )}
         {data.photos.length < data.photo_limit && (
           <form method="POST" action="/settings/profile/photos" encType="multipart/form-data" className="flex flex-wrap items-center gap-3" onSubmit={(e) => { const f = fd(e); const form = e.currentTarget; if (!readOnly) photos.mutate(f, { onSuccess: () => form.reset() }); }}>
-            <input type="file" name="photos[]" accept="image/jpeg,image/png,image/webp" multiple required className="min-w-0 text-sm text-gray-700 dark:text-gray-300" />
+            <input type="file" name="photos[]" accept="image/jpeg,image/png,image/webp" multiple required aria-labelledby="club-photos-title" className="min-w-0 text-sm text-gray-700 dark:text-gray-300" />
             <button type="submit" className="brand-button rounded-lg px-4 py-2 text-sm">{t('Добавить фото')}</button>
           </form>
         )}

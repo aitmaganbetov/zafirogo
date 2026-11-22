@@ -11,6 +11,7 @@ import { setFlash, useFlash } from '../../lib/flash';
 import { formatMoney } from '../../lib/money';
 import { useInvalidateOn } from '../../realtime/hooks';
 import { allErrors } from '../../api/errors';
+import { useSearchErrors } from '../../pages/errors';
 import {
   arriveReservation,
   cancelReservation,
@@ -57,7 +58,9 @@ export function ReservationsPage({ search }: { search: ReservationsSearch }) {
   useInvalidateOn(['reservation.*'], ['reservations']);
   const flash = useFlash('status');
   const [status, setStatus] = useState<string | null>(flash);
-  const [errors, setErrors] = useState<string[]>([]);
+  // ?date=bad: validate() старого — redirect()->back()->withErrors(), ошибки в блоке $errors (ErrorPage.tsx BadRequestPage).
+  const searchErrors = useSearchErrors();
+  const [errors, setErrors] = useState<string[]>(() => [...searchErrors]);
   const { data } = useQuery(reservationsQuery(search));
   const tz = me?.club?.timezone ?? 'UTC';
   const readOnly = me?.read_only === true;

@@ -6,7 +6,7 @@ import { formatMoney } from '../../lib/money';
 import { qs } from '../superadmin/api';
 import { cabinetQuery, type CabinetSearch, type ResellerCabinet } from './api';
 import { resellerHref } from './host';
-import { formatPercent } from './percent';
+import { trimHundredths } from './percent';
 
 /*
  * Кабинет реселлера — перенос resources/views/reseller/dashboard.blade.php (ResellerController::dashboard()): код и
@@ -51,7 +51,7 @@ export function DashboardPage({ search }: { readonly search: CabinetSearch }) {
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
           <div className="text-sm text-gray-500">{t('Ваш процент с оплат')}</div>
-          <div className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">{formatPercent(data.commission_bp)}%</div>
+          <div className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">{trimHundredths(data.commission_bp)}%</div>
           <div className="mt-1 text-xs text-gray-500">{t('Скидка для ваших клубов: {{percent}}%', { percent: data.discount_percent })}</div>
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
@@ -103,7 +103,7 @@ export function DashboardPage({ search }: { readonly search: CabinetSearch }) {
                   <td className="px-4 py-2 text-gray-500">{invoice.paid}</td>
                   <td className="px-4 py-2 text-gray-900 dark:text-white">{invoice.club_name}</td>
                   <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{money(invoice.amount_tiyn)} · {t(MONTHS_KEY, { count: invoice.months })}</td>
-                  <td className="px-4 py-2 font-medium text-gray-900 dark:text-white">{money(invoice.reseller_amount_tiyn)} <span className="text-xs font-normal text-gray-500">({formatPercent(invoice.reseller_bp)}%)</span></td>
+                  <td className="px-4 py-2 font-medium text-gray-900 dark:text-white">{money(invoice.reseller_amount_tiyn)} <span className="text-xs font-normal text-gray-500">({trimHundredths(invoice.reseller_bp)}%)</span></td>
                 </tr>
               ))}
               {data.earnings.items.length === 0 && (
