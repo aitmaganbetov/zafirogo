@@ -24,7 +24,7 @@ import (
 //
 // Ключи Valkey (prefix — Options.KeyPrefix):
 //
-//	<prefix>tok:<sha256>  HASH {club, pc, user, exp, used}  TTL = срок токена
+//	<prefix>tok:<sha256>  HASH {club, pc, user, exp, used, born}  TTL = срок токена
 //	<prefix>pc:<pc>       STRING <sha256> — один токен на ПК: новый вход на ПК отзывает прежний (как
 //	                      $user->tokens()->where('name', $deviceName)->delete() в AuthController/QrLogins)
 //	<prefix>user:<user>   HASH <pc> → <sha256> — токены пользователя по ПК: правило «один ПК на клиента»
@@ -37,6 +37,10 @@ const tokenPrefix = "zgt_"
 // AgentSignIns::ACTIVE_MINUTES — клиент считается вошедшим на другом ПК, если его токен там использовался
 // в последние 2 минуты (или ПК сейчас в сети и сообщает этого гостя в Status).
 const signInActiveFor = 2 * time.Minute
+
+// tokenMaxLife — предел жизни одного токена с продлениями (ComputerUserRenew). Срок токена Sanctum в Laravel —
+// 30 дней (docs/agent-protocol.md §4).
+const tokenMaxLife = 30 * 24 * time.Hour
 
 // touchEvery — не чаще этого обновлять «последнее использование» токена (Sanctum писал last_used_at на каждый запрос).
 const touchEvery = 20 * time.Second
@@ -92,7 +96,7 @@ if old then
     if redis.call('HGET', uk, ARGV[2]) == old then redis.call('HDEL', uk, ARGV[2]) end
   end
 end
-redis.call('HSET', KEYS[1], 'club', ARGV[1], 'pc', ARGV[2], 'user', ARGV[3], 'exp', ARGV[4], 'used', ARGV[5])
+redis.call('HSET', KEYS[1], 'club', ARGV[1], 'pc', ARGV[2], 'user', ARGV[3], 'exp', ARGV[4], 'used', ARGV[5], 'born', ARGV[5])
 redis.call('PEXPIRE', KEYS[1], ARGV[6])
 redis.call('SET', KEYS[2], ARGV[8], 'PX', ARGV[6])
 redis.call('HSET', KEYS[3], ARGV[2], ARGV[8])
@@ -345,22 +349,64 @@ func (t *Tokens) computerUserAnd(ctx context.Context, computerID int64, key stri
 	return m, g, nil
 }
 
-// ComputerUser — гость, вошедший на ПК сейчас (живой токен ПК); нулевой Guest — никто.
-func (t *Tokens) ComputerUser(ctx context.Context, computerID int64) (Guest, error) {
-	hash, err := t.c.Do(ctx, t.c.B().Get().Key(t.pcKey(computerID)).Build()).ToString()
-	if valkey.IsValkeyNil(err) {
-		return Guest{}, nil
-	}
-	if err != nil {
-		return Guest{}, err
-	}
-	m, err := t.c.Do(ctx, t.c.B().Hgetall().Key(t.tokKey(hash)).Build()).AsStrMap()
+// computerUserScript — токен гостя ПК одним обращением (GET pc:<id> + HGETALL tok:<hash>) и, если просят, продление.
+// KEYS: pc, затем ключи, срок которых продлевается вместе с токеном (состояние автобиллинга ПК).
+// ARGV: префикс tok:, заявленный гость (” — не продлевать), now (с), срок (с), предел жизни (с), префикс user:.
+//
+// Продление: токен выдан заявленному гостю, не истёк, до конца срока осталось меньше половины — срок становится
+// now + срок, но не позже born + предел. Запись — не чаще раза в полсрока.
+var computerUserScript = valkey.NewLuaScript(`
+local hash = redis.call('GET', KEYS[1])
+if not hash then return {} end
+local tk = ARGV[1] .. hash
+if ARGV[2] ~= '' then
+  local v = redis.call('HMGET', tk, 'user', 'exp', 'born')
+  local exp, born = tonumber(v[2]), tonumber(v[3])
+  local now, ttl = tonumber(ARGV[3]), tonumber(ARGV[4])
+  if v[1] == ARGV[2] and exp and born and exp > now and (exp - now) * 2 < ttl then
+    local nexp = math.min(now + ttl, born + tonumber(ARGV[5]))
+    if nexp > exp then
+      local ms = (nexp - now) * 1000
+      redis.call('HSET', tk, 'exp', nexp)
+      redis.call('PEXPIRE', tk, ms)
+      redis.call('PEXPIRE', KEYS[1], ms)
+      local uk = ARGV[6] .. v[1]
+      if redis.call('PTTL', uk) < ms then redis.call('PEXPIRE', uk, ms) end
+      for i = 2, #KEYS do
+        local left = redis.call('PTTL', KEYS[i])
+        if left >= 0 and left < ms then redis.call('PEXPIRE', KEYS[i], ms) end
+      end
+    end
+  end
+end
+return redis.call('HGETALL', tk)
+`)
+
+func (t *Tokens) computerUser(ctx context.Context, computerID int64, renewFor string, also []string) (Guest, error) {
+	now := t.now()
+	m, err := computerUserScript.Exec(ctx, t.c, append([]string{t.pcKey(computerID)}, also...),
+		[]string{t.tokKey(""), renewFor, unixString(now), strconv.FormatInt(int64(t.ttl/time.Second), 10),
+			strconv.FormatInt(int64(tokenMaxLife/time.Second), 10), t.prefix + "user:"}).AsStrMap()
 	if err != nil {
 		return Guest{}, err
 	}
 	g, _, ok := parseToken(m)
-	if !ok || g.PC != computerID || !t.now().Before(g.ExpiresAt) {
+	if !ok || g.PC != computerID || !now.Before(g.ExpiresAt) {
 		return Guest{}, nil
 	}
 	return g, nil
+}
+
+// ComputerUser — гость, вошедший на ПК сейчас (живой токен ПК); нулевой Guest — никто. Одно обращение к Valkey.
+func (t *Tokens) ComputerUser(ctx context.Context, computerID int64) (Guest, error) {
+	return t.computerUser(ctx, computerID, "", nil)
+}
+
+// ComputerUserRenew — ComputerUser с продлением: если токен ПК выдан гостю userID и до конца его срока осталось
+// меньше половины, срок токена (и ключей also — состояния, живущего вместе с токеном) продлевается на полный срок,
+// но не дольше tokenMaxLife от выдачи. Вызывает стрим, пока ПК сообщает этого гостя в идущей сессии: без продления
+// гость, сидящий дольше срока токена (12 ч), молча выпадал из присутствия и получал выход на первом же RPC.
+// Отозванный токен (выход, смена пароля, отзыв сертификата) не продлевается — его уже нет.
+func (t *Tokens) ComputerUserRenew(ctx context.Context, computerID, userID int64, also ...string) (Guest, error) {
+	return t.computerUser(ctx, computerID, strconv.FormatInt(userID, 10), also)
 }

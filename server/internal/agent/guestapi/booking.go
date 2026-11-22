@@ -104,21 +104,27 @@ func bookingCodeStatus(e *reservations.Error) error {
 //
 // Laravel: app/Services/ComputerReservations.php startForSignedIn() — в старом на каждом heartbeat ПК с токеном
 // клиента; здесь — событие входа. Ошибка входу не мешает (задача запустит бронь в пределах минуты) — в журнал.
-// Сессию гость получает в ответе входа (GuestSignIn.session), поэтому отдельной команды StartSession нет.
+// Сессию гость получает в ответе входа (GuestSignIn.session); та же сессия уходит ПК командой StartSession после
+// коммита (как в StartBookingByCode): бронь начинается своей транзакцией до завершающей транзакции входа, и если та
+// не удалась или ответ входа не дошёл до ПК, время уже идёт — агент должен о нём узнать.
 func (s *Server) startBookingOnSignIn(ctx context.Context, id identity.Identity, userID int64) {
 	now := s.o.Now()
+	ctx, hooks := billingsvc.WithCommitHooks(ctx)
 	err := db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
+		hooks.Reset()
 		info, err := club.Load(ctx, q, id.ClubID)
 		if err != nil {
 			return err
 		}
 		_, _, err = reservations.StartForSignedIn(ctx, q, info, id.ComputerID, userID, reservations.Env{
-			Now: now, Actor: billing.BalanceActor{UserID: userID, Kind: "guest"},
+			Now: now, Actor: billing.BalanceActor{UserID: userID, Kind: "guest"}, Notifier: s.o.Notifier,
 		})
 		return err
 	})
 	if err != nil {
 		s.o.Log.WarnContext(ctx, "paid booking not started on sign-in", "club_id", id.ClubID, "computer_id", id.ComputerID,
 			"user_id", userID, "err", err)
+		return
 	}
+	hooks.Run(context.WithoutCancel(ctx))
 }

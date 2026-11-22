@@ -73,6 +73,13 @@ type Options struct {
 	// StatusFloodDrops — сколько отброшенных за минуту Status закрывает поток (RESOURCE_EXHAUSTED);
 	// 0 — DefaultStatusFloodDrops.
 	StatusFloodDrops int
+	// EventBurst, EventEvery — потолок AgentEvent потока (limit.go); 0 — DefaultEventBurst, DefaultEventEvery.
+	EventBurst int
+	EventEvery time.Duration
+	// ResultBurst, ResultEvery — потолок CommandResult неизвестных потоку команд (limit.go); 0 — DefaultResultBurst,
+	// DefaultResultEvery.
+	ResultBurst int
+	ResultEvery time.Duration
 
 	Events   EventHandler
 	Welcome  WelcomeProvider
@@ -114,6 +121,14 @@ func (o *Options) defaults() {
 	if o.StatusFloodDrops <= 0 {
 		o.StatusFloodDrops = DefaultStatusFloodDrops
 	}
+	if o.EventBurst <= 0 {
+		o.EventBurst = DefaultEventBurst
+	}
+	set(&o.EventEvery, DefaultEventEvery)
+	if o.ResultBurst <= 0 {
+		o.ResultBurst = DefaultResultBurst
+	}
+	set(&o.ResultEvery, DefaultResultEvery)
 	o.Rebalance.defaults()
 	o.Health.defaults()
 	if o.SubjectPrefix == "" {
@@ -152,8 +167,11 @@ type Service struct {
 	// statusDropped — Status сверх потолка частоты; statusFloods — потоков закрыто за это; guestRejected — Status,
 	// где заявленный гость не совпал с записью сервера (limit.go, guest.go).
 	statusDropped, statusFloods, guestRejected atomic.Uint64
-	stop                                       chan struct{}
-	wg                                         sync.WaitGroup
+	// eventsDropped, resultsDropped — AgentEvent и CommandResult сверх потолка частоты (и итоги команд, которых этому
+	// ПК не отправляли); messageFloods — потоков закрыто за это.
+	eventsDropped, resultsDropped, messageFloods atomic.Uint64
+	stop                                         chan struct{}
+	wg                                           sync.WaitGroup
 }
 
 // New создаёт сервис, подписывается на subject инстанса в NATS и запускает тикер присутствия.
@@ -231,6 +249,16 @@ func (s *Service) StatusDropped() uint64 { return s.statusDropped.Load() }
 
 // StatusFloods — сколько потоков закрыто за устойчивое превышение частоты Status.
 func (s *Service) StatusFloods() uint64 { return s.statusFloods.Load() }
+
+// EventsDropped — сколько AgentEvent отброшено потолком частоты потока (агент повторит их после переподключения).
+func (s *Service) EventsDropped() uint64 { return s.eventsDropped.Load() }
+
+// ResultsDropped — сколько CommandResult отброшено: команда потоку неизвестна и потолок исчерпан либо seq больше
+// любого отправленного этому ПК.
+func (s *Service) ResultsDropped() uint64 { return s.resultsDropped.Load() }
+
+// MessageFloods — сколько потоков закрыто за устойчивое превышение частоты AgentEvent или CommandResult.
+func (s *Service) MessageFloods() uint64 { return s.messageFloods.Load() }
 
 // GuestRejected — сколько раз ПК заявил гостя, которого сервер на этом ПК не подтверждает (A-01).
 func (s *Service) GuestRejected() uint64 { return s.guestRejected.Load() }

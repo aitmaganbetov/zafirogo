@@ -264,6 +264,28 @@ func TestSignInStartsPaidBooking(t *testing.T) {
 	}
 }
 
+// Ревью 22.11.2026: бронь при входе начинается отдельной транзакцией до завершающей транзакции входа — та же сессия
+// уходит ПК командой StartSession после коммита (как при входе по коду брони): если ответ входа не дошёл до ПК или
+// завершающая транзакция не удалась, время уже идёт и агент о нём знает.
+func TestSignInBookingSendsStartSession(t *testing.T) {
+	h := newHarness(t, harnessOpts{noLimits: true})
+	phone := uniqPhone()
+	user := h.customer("Арман", phone, "password", 0, 0)
+	p := h.enrollPC()
+	h.booking(p, user, "123456", 0, time.Hour, 60000, 0)
+	as := p.connect("boot-signin-booking", 0)
+	s, err := p.login(phone, "password")
+	if err != nil || s.GetSession().GetSessionId() == "" {
+		t.Fatalf("login = %+v, %v", s.GetSession(), err)
+	}
+	cmd := as.waitCommand(func(c *agentv1.Command) bool { return c.GetStartSession() != nil })
+	got := cmd.GetStartSession().GetSession()
+	if got.GetSessionId() != s.GetSession().GetSessionId() || got.GetUserId() != user || got.GetGuest() ||
+		!got.GetEndsAt().AsTime().Equal(s.GetSession().GetEndsAt().AsTime()) {
+		t.Fatalf("StartSession = %+v, sign-in session = %+v", got, s.GetSession())
+	}
+}
+
 // Подтверждение QR-входа начинает оплаченную бронь так же, как вход по паролю.
 func TestQrLoginStartsPaidBooking(t *testing.T) {
 	h := newHarness(t, harnessOpts{noLimits: true, settings: `{"guests": {"show_qr_code_on_login": true}}`})

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Zafiro.Agent.UI.Screens;
 
 namespace Zafiro.Agent.UI;
@@ -22,7 +23,7 @@ internal static class Program
             using (running)
             {
                 // Право на передний план — работающему UI: иначе окно лаунчера осталось бы за игрой.
-                _ = NativeMethods.AllowSetForegroundWindow(NativeMethods.AsfwAny);
+                GrantForeground();
                 running.Set();
             }
 
@@ -31,5 +32,47 @@ internal static class Program
 
         var app = new UiApp(options);
         return app.Run();
+    }
+
+    /// <summary>
+    /// Отдаёт право на передний план именно работающему UI (его PID); если процесс не найден или Windows отказала —
+    /// как раньше, любому процессу (ASFW_ANY): окно лаунчера важнее.
+    /// </summary>
+    private static void GrantForeground()
+    {
+        var pid = FindRunningUi();
+        if (pid is null || !NativeMethods.AllowSetForegroundWindow(pid.Value))
+        {
+            _ = NativeMethods.AllowSetForegroundWindow(NativeMethods.AsfwAny);
+        }
+    }
+
+    private static int? FindRunningUi()
+    {
+        try
+        {
+            using var self = Process.GetCurrentProcess();
+            var found = new List<UiProcess>();
+            foreach (var p in Process.GetProcessesByName(self.ProcessName))
+            {
+                using (p)
+                {
+                    try
+                    {
+                        found.Add(new UiProcess(p.Id, p.SessionId, p.StartTime));
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+                    {
+                        // Процесс уже завершился или недоступен — не кандидат.
+                    }
+                }
+            }
+
+            return RunningUi.Pick(found, self.Id, self.SessionId);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            return null;
+        }
     }
 }

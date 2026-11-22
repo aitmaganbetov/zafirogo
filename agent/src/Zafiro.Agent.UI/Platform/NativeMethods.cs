@@ -8,12 +8,16 @@ internal static class NativeMethods
 {
     public const int SwMinimize = 6;
 
-    /// <summary>ASFW_ANY: передний план может взять любой процесс (AllowSetForegroundWindow).</summary>
+    /// <summary>
+    /// ASFW_ANY: передний план может взять любой процесс (AllowSetForegroundWindow). Только запасной путь: обычно
+    /// право отдаётся PID работающего UI (Program.GrantForeground).
+    /// </summary>
     public const int AsfwAny = -1;
 
     /// <summary>
     /// Второй запуск UI (ярлык «Zafiro» — его запустил гость, у процесса есть право на передний план) отдаёт это право
     /// работающему UI, иначе Windows не даст ему встать поверх игры (старый агент: App.xaml.cs, коммит 71db8d6).
+    /// processId — PID процесса, которому отдаётся право, или <see cref="AsfwAny"/>.
     /// </summary>
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

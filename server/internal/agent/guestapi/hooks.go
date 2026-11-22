@@ -188,9 +188,16 @@ func (h *Hooks) ConfigChanged(ctx context.Context, id identity.Identity) (*agent
 }
 
 // ComputerGuest — stream.GuestVerifier: гость, вошедший на ПК по живому токену гостя этого ПК и клуба (0 — никто).
-// По нему стрим проверяет Status.signed_in_user_id (аудит безопасности A-01).
-func (h *Hooks) ComputerGuest(ctx context.Context, clubID, computerID int64) (int64, error) {
-	g, err := h.s.tokens.ComputerUser(ctx, computerID)
+// По нему стрим проверяет Status.signed_in_user_id (аудит безопасности A-01). ПК сообщает заявленного гостя в
+// идущей сессии (inSession) — срок его токена и состояния автобиллинга ПК продлевается (Tokens.ComputerUserRenew).
+func (h *Hooks) ComputerGuest(ctx context.Context, clubID, computerID, claimed int64, inSession bool) (int64, error) {
+	var g Guest
+	var err error
+	if inSession && claimed > 0 {
+		g, err = h.s.tokens.ComputerUserRenew(ctx, computerID, claimed, h.s.abKey(computerID))
+	} else {
+		g, err = h.s.tokens.ComputerUser(ctx, computerID)
+	}
 	if err != nil || g.ClubID != clubID {
 		return 0, err
 	}

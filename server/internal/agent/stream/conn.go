@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -77,8 +78,13 @@ type conn struct {
 	pingSent     time.Time // когда отправлен последний Ping
 	hourlyAt     time.Time // последний Status, учтённый в почасовой истории (health.go recordHourly)
 
-	// limit — потолок частоты Status этого потока (limit.go); только горутина чтения.
-	limit statusLimit
+	// limit, evLimit, resLimit — потолки частоты Status, AgentEvent и CommandResult этого потока (limit.go);
+	// только горутина чтения.
+	limit, evLimit, resLimit msgLimit
+	// guestWarned — о каком заявленном госте уже написано в журнал; guestErrWarned — о сбое проверки (guest.go):
+	// не чаще раза на поток. Только горутина чтения (и Connect до её запуска).
+	guestWarned    int64
+	guestErrWarned bool
 }
 
 func (c *conn) close(err error) {
@@ -654,20 +660,27 @@ func (c *conn) recvLoop(st agentv1.AgentService_ConnectServer) {
 	}
 }
 
+// dropped учитывает сообщение, отброшенное потолком частоты; устойчивое превышение закрывает поток
+// RESOURCE_EXHAUSTED (агент переподключится с обычной задержкой).
+func (c *conn) dropped(l *msgLimit, now time.Time, drops, floods *atomic.Uint64, what string) {
+	drops.Add(1)
+	if l.flooding(now, c.svc.o.StatusFloodDrops) {
+		c.svc.o.Log.Warn("agent stream closed: message flood", "club_id", c.id.ClubID, "computer_id", c.id.ComputerID, "message", what)
+		floods.Add(1)
+		c.close(statusErr(codes.ResourceExhausted, agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED, "too many "+what+" messages"))
+	}
+}
+
 func (c *conn) onStatus(ctx context.Context, s *agentv1.Status) {
-	if err := validateStatus(s); err != nil {
-		c.svc.o.Log.Debug("agent status ignored", "computer_id", c.id.ComputerID, "err", err)
+	now := c.svc.o.Now()
+	// Потолок частоты — до любой обработки (A-02), в том числе до проверки полей: чередование состояния, периферии
+	// или гостя его не обходит, неверные Status тоже считаются.
+	if !c.limit.allow(now, c.svc.o.StatusBurst, c.svc.o.MinStatusGap) {
+		c.dropped(&c.limit, now, &c.svc.statusDropped, &c.svc.statusFloods, "Status")
 		return
 	}
-	now := c.svc.o.Now()
-	// Потолок частоты — до любой обработки (A-02): чередование состояния, периферии или гостя его не обходит.
-	if !c.limit.allow(now, c.svc.o.StatusBurst, c.svc.o.MinStatusGap) {
-		c.svc.statusDropped.Add(1)
-		if c.limit.flooding(now, c.svc.o.StatusFloodDrops) {
-			c.svc.o.Log.Warn("agent stream closed: status flood", "club_id", c.id.ClubID, "computer_id", c.id.ComputerID)
-			c.svc.statusFloods.Add(1)
-			c.close(statusErr(codes.ResourceExhausted, agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED, "too many Status messages"))
-		}
+	if err := validateStatus(s); err != nil {
+		c.svc.o.Log.Debug("agent status ignored", "computer_id", c.id.ComputerID, "err", err)
 		return
 	}
 	c.dropInvalidHealth(s)
@@ -715,6 +728,12 @@ func (c *conn) ack(eventID string) {
 }
 
 func (c *conn) onEvent(ctx context.Context, ev *agentv1.AgentEvent) {
+	// Потолок частоты — до проверки, Valkey и обработчика (limit.go). Отброшенное событие не подтверждается: агент
+	// повторит его после переподключения.
+	if now := c.svc.o.Now(); !c.evLimit.allow(now, c.svc.o.EventBurst, c.svc.o.EventEvery) {
+		c.dropped(&c.evLimit, now, &c.svc.eventsDropped, &c.svc.messageFloods, "AgentEvent")
+		return
+	}
 	if err := validateEvent(ev); err != nil {
 		c.svc.o.Log.Warn("agent event rejected", "computer_id", c.id.ComputerID, "err", err)
 		if ev.GetEventId() != "" {
@@ -747,27 +766,57 @@ func (c *conn) onResult(ctx context.Context, res *agentv1.CommandResult) {
 	if !validUUID(res.GetCommandId()) {
 		return
 	}
-	if res.GetSeq() == 0 && c.pingResult(res, c.svc.o.Now()) {
+	now := c.svc.o.Now()
+	if res.GetSeq() == 0 && c.pingResult(res, now) {
 		return // ответ на Ping измерения времени ответа (health.go)
 	}
 	var kind commands.Kind
 	final := res.GetStatus() != agentv1.CommandStatus_COMMAND_STATUS_ACCEPTED
 	c.mu.Lock()
-	if f, ok := c.inflight[res.GetCommandId()]; ok {
+	f, known := c.inflight[res.GetCommandId()]
+	repeated := false
+	if known {
 		kind = commands.KindOf(f.cmd)
 		if final {
 			delete(c.inflight, res.GetCommandId())
 		} else {
+			repeated = f.accepted
 			f.accepted = true
 		}
 	}
+	maxSent := c.maxSent
 	c.mu.Unlock()
-	if res.GetSeq() > 0 {
-		if _, err := c.svc.queue.Record(ctx, c.id.ClubID, c.id.ComputerID, res, c.svc.o.Now().UTC()); err != nil {
-			c.svc.o.Log.Warn("agent command result not recorded", "computer_id", c.id.ComputerID, "err", err)
-		}
+	if repeated {
+		return // повтор ACCEPTED: принятие уже записано
 	}
-	if c.svc.o.Results != nil {
+	if known || res.GetSeq() == 0 {
+		// Команда отправлена в этом потоке (их число ограничено сервером) или мгновенная (в базу не пишется).
+		if res.GetSeq() > 0 {
+			if _, err := c.svc.queue.Record(ctx, c.id.ClubID, c.id.ComputerID, res, now.UTC()); err != nil {
+				c.svc.o.Log.Warn("agent command result not recorded", "computer_id", c.id.ComputerID, "err", err)
+			}
+		}
+		if c.svc.o.Results != nil {
+			c.svc.o.Results.CommandResult(ctx, c.id, kind, res)
+		}
+		return
+	}
+	// Долговременная команда, которой нет среди отправленных в этом потоке. Законный случай — итог команды,
+	// полученной в прежнем потоке (агент досылает недоставленные итоги после Welcome; повтор снят после
+	// maxSendAttempts): её seq не больше последнего отправленного этому ПК (Hello.last_command_seq и всё, что ушло
+	// в этом потоке). Остальное в базу не идёт; законное — под потолком частоты (limit.go): поток CommandResult со
+	// случайным command_id не открывает транзакцию на каждое сообщение.
+	if res.GetSeq() > maxSent || !c.resLimit.allow(now, c.svc.o.ResultBurst, c.svc.o.ResultEvery) {
+		c.dropped(&c.resLimit, now, &c.svc.resultsDropped, &c.svc.messageFloods, "CommandResult")
+		return
+	}
+	updated, err := c.svc.queue.Record(ctx, c.id.ClubID, c.id.ComputerID, res, now.UTC())
+	if err != nil {
+		c.svc.o.Log.Warn("agent command result not recorded", "computer_id", c.id.ComputerID, "err", err)
+		return
+	}
+	// Панели — только итог, который действительно записан (команда этого ПК, итога ещё не было).
+	if updated && c.svc.o.Results != nil {
 		c.svc.o.Results.CommandResult(ctx, c.id, kind, res)
 	}
 }

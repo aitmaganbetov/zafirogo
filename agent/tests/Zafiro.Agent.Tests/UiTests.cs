@@ -388,6 +388,21 @@ public sealed class UiTests : IDisposable
         Assert.Equal(LaunchOptions.DefaultPipeName, LaunchOptions.Parse(["--pipe=..\\evil"]).PipeName);
     }
 
+    [Fact]
+    public void Право_на_передний_план_получает_работающий_UI()
+    {
+        var t0 = new DateTime(2026, 11, 22, 12, 0, 0, DateTimeKind.Utc);
+        // Сам ярлык (PID 30), UI другого сеанса Windows (PID 10) и работающий UI этого сеанса (PID 20).
+        UiProcess[] all = [new(30, 2, t0.AddMinutes(5)), new(10, 1, t0.AddMinutes(-5)), new(20, 2, t0)];
+        Assert.Equal(20, RunningUi.Pick(all, selfId: 30, selfSessionId: 2));
+        // Несколько в сеансе — самый ранний (работающий экземпляр запущен раньше ярлыков).
+        Assert.Equal(20, RunningUi.Pick([.. all, new UiProcess(40, 2, t0.AddMinutes(1))], 30, 2));
+        // Никого, кроме себя и чужих сеансов, — null: вызывающий оставляет прежнее поведение (ASFW_ANY).
+        Assert.Null(RunningUi.Pick([all[0], all[1]], 30, 2));
+        Assert.Null(RunningUi.Pick([], 30, 2));
+        Assert.Null(RunningUi.Pick([new UiProcess(0, 2, t0)], 30, 2));
+    }
+
     [Theory]
     [InlineData(KioskRules.VkTab, true, false, false, true, false, true)] // Alt+Tab без сессии
     [InlineData(KioskRules.VkTab, true, false, false, false, false, false)] // Alt+Tab во время сессии
