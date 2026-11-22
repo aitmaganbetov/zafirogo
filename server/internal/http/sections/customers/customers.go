@@ -281,18 +281,18 @@ func parseOwnerAdjustment(f *httpx.FormErrors, amountTiyn int64, balanceType, ac
 	amount, err := billing.ParseOwnerAdjustmentAmount(money.Tiyn(amountTiyn).Tenge())
 	switch {
 	case errors.Is(err, billing.ErrBalanceAmountDecimals): // Решение Q-002 (docs/DECISIONS.md)
-		f.AddErr(httpx.RuleError("top_up_amount", cash.RuleDecimal))
+		f.Rule("top_up_amount", cash.RuleDecimal, "")
 	case err != nil && amountTiyn < 1:
-		f.AddErr(httpx.RuleError("top_up_amount", cash.RuleMin))
+		f.Rule("top_up_amount", cash.RuleMin, "")
 	case err != nil:
-		f.AddErr(httpx.RuleError("top_up_amount", cash.RuleMax))
+		f.Rule("top_up_amount", cash.RuleMax, "")
 	}
 	out.amount = amount
 	if !out.field.Valid() {
-		f.AddErr(httpx.RuleError("top_up_balance", cash.RuleIn))
+		f.Rule("top_up_balance", cash.RuleIn, "")
 	}
 	if action != "top_up" && action != "write_off" {
-		f.AddErr(httpx.RuleError("balance_action", cash.RuleIn))
+		f.Rule("balance_action", cash.RuleIn, "")
 	}
 	return out
 }
@@ -382,9 +382,9 @@ func (h *handlers) AdjustCustomerBalance(ctx context.Context, req customersapi.A
 // checkInitialBalance — StoreUserRequest: balance / bonus_balance nullable|numeric|min:0|max:9999999999.99.
 func checkInitialBalance(f *httpx.FormErrors, field string, v int64) {
 	if v < 0 {
-		f.AddErr(httpx.RuleError(field, cash.RuleMin))
+		f.Rule(field, cash.RuleMin, "")
 	} else if money.Tiyn(v) > maxInitialBalance {
-		f.AddErr(httpx.RuleError(field, cash.RuleMax))
+		f.Rule(field, cash.RuleMax, "")
 	}
 }
 

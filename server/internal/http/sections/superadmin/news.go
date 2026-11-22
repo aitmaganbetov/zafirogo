@@ -3,14 +3,13 @@ package superadmin
 import (
 	"context"
 	"errors"
-	"path"
-	"strconv"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	superadminapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/superadmin"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
+	"github.com/aitmaganbetov/zafirogo/server/internal/http/newsform"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -21,10 +20,6 @@ const (
 	newsPage    = 20 // News::PAGE
 	subjectNews = `App\Models\News`
 )
-
-func newsImageURL(id int64, imagePath string) string {
-	return "/news-images/" + strconv.FormatInt(id, 10) + "/" + path.Base(imagePath)
-}
 
 // SaListPlatformNews — Superadmin\NewsController::index().
 func (h *handlers) SaListPlatformNews(ctx context.Context, req superadminapi.SaListPlatformNewsRequestObject) (superadminapi.SaListPlatformNewsResponseObject, error) {
@@ -40,7 +35,7 @@ func (h *handlers) SaListPlatformNews(ctx context.Context, req superadminapi.SaL
 			item := superadminapi.PlatformNewsItem{Id: r.ID, Title: r.Title, Body: r.Body, IsPublished: r.IsPublished, CreatedAt: r.CreatedAt}
 			if r.ImagePath != nil && *r.ImagePath != "" {
 				item.HasImage = true
-				item.ImageUrl = ptr(newsImageURL(r.ID, *r.ImagePath))
+				item.ImageUrl = httpx.Ptr(newsform.ImageURL(r.ID, *r.ImagePath))
 			}
 			out.Items = append(out.Items, item)
 		}
@@ -54,40 +49,40 @@ func (h *handlers) SaListPlatformNews(ctx context.Context, req superadminapi.SaL
 
 // SaCreatePlatformNews — store(): журнал платформы superadmin.news_created.
 func (h *handlers) SaCreatePlatformNews(ctx context.Context, req superadminapi.SaCreatePlatformNewsRequestObject) (superadminapi.SaCreatePlatformNewsResponseObject, error) {
-	f, err := readForm(req.Body)
+	f, err := newsform.Read(req.Body)
 	if err != nil {
 		return nil, err
 	}
-	if err := f.validate(); err != nil {
+	if err := f.Validate(); err != nil {
 		return nil, err
 	}
 	now := h.d.NowFunc()
 	uid := httpx.Principal(ctx).UserID
-	published := !f.hasPub || f.published
+	published := !f.HasPublished || f.Published
 	err = h.tx(ctx, func(q *store.Queries) error {
 		var img *string
-		if f.image != nil {
-			p, err := f.imagePath()
+		if f.Image != nil {
+			p, err := f.ImagePath("news/platform")
 			if err != nil {
 				return err
 			}
 			img = &p
 		}
-		id, err := q.SuperadminInsertPlatformNews(ctx, store.SuperadminInsertPlatformNewsParams{Title: f.title, Body: f.body, ImagePath: img,
+		id, err := q.SuperadminInsertPlatformNews(ctx, store.SuperadminInsertPlatformNewsParams{Title: f.Title, Body: f.Body, ImagePath: img,
 			IsPublished: published, CreatedBy: &uid, Now: &now})
 		if err != nil {
 			return err
 		}
-		if f.image != nil {
-			if err := q.SuperadminPutPlatformNewsImage(ctx, store.SuperadminPutPlatformNewsImageParams{NewsID: id, ContentType: f.imageType, Data: f.image, Now: now}); err != nil {
+		if f.Image != nil {
+			if err := q.SuperadminPutPlatformNewsImage(ctx, store.SuperadminPutPlatformNewsImageParams{NewsID: id, ContentType: f.ImageType, Data: f.Image, Now: now}); err != nil {
 				return err
 			}
 		}
 		if err := h.log(ctx, q, activity.PlatformEntry{Event: "superadmin.news_created", Key: "Добавлена новость: :title",
-			Params: map[string]string{"title": f.title}, SubjectType: subjectNews, SubjectID: id}); err != nil {
+			Params: map[string]string{"title": f.Title}, SubjectType: subjectNews, SubjectID: id}); err != nil {
 			return err
 		}
-		return h.audit(ctx, q, 0, "settings", "platform_news.created", subjectNews, id, nil, map[string]any{"title": f.title, "is_published": published})
+		return h.audit(ctx, q, 0, "settings", "platform_news.created", subjectNews, id, nil, map[string]any{"title": f.Title, "is_published": published})
 	})
 	if err != nil {
 		return nil, err
@@ -97,7 +92,7 @@ func (h *handlers) SaCreatePlatformNews(ctx context.Context, req superadminapi.S
 
 // SaUpdatePlatformNews — update(): новость клуба — 404 (abort_unless($news->club_id === null, 404)).
 func (h *handlers) SaUpdatePlatformNews(ctx context.Context, req superadminapi.SaUpdatePlatformNewsRequestObject) (superadminapi.SaUpdatePlatformNewsResponseObject, error) {
-	f, err := readForm(req.Body)
+	f, err := newsform.Read(req.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -110,37 +105,37 @@ func (h *handlers) SaUpdatePlatformNews(ctx context.Context, req superadminapi.S
 		if err != nil {
 			return err
 		}
-		if err := f.validate(); err != nil {
+		if err := f.Validate(); err != nil {
 			return err
 		}
 		img := cur.ImagePath
 		switch {
-		case f.image != nil:
-			p, err := f.imagePath()
+		case f.Image != nil:
+			p, err := f.ImagePath("news/platform")
 			if err != nil {
 				return err
 			}
 			img = &p
-			if err := q.SuperadminPutPlatformNewsImage(ctx, store.SuperadminPutPlatformNewsImageParams{NewsID: cur.ID, ContentType: f.imageType, Data: f.image, Now: now}); err != nil {
+			if err := q.SuperadminPutPlatformNewsImage(ctx, store.SuperadminPutPlatformNewsImageParams{NewsID: cur.ID, ContentType: f.ImageType, Data: f.Image, Now: now}); err != nil {
 				return err
 			}
-		case f.removeImage:
+		case f.RemoveImage:
 			img = nil
 			if err := q.SuperadminDeletePlatformNewsImage(ctx, cur.ID); err != nil {
 				return err
 			}
 		}
-		published := f.hasPub && f.published
-		if err := q.SuperadminUpdatePlatformNews(ctx, store.SuperadminUpdatePlatformNewsParams{Title: f.title, Body: f.body,
+		published := f.HasPublished && f.Published
+		if err := q.SuperadminUpdatePlatformNews(ctx, store.SuperadminUpdatePlatformNewsParams{Title: f.Title, Body: f.Body,
 			IsPublished: published, ImagePath: img, Now: &now, ID: cur.ID}); err != nil {
 			return err
 		}
 		if err := h.log(ctx, q, activity.PlatformEntry{Event: "superadmin.news_updated", Key: "Изменена новость: :title",
-			Params: map[string]string{"title": f.title}, SubjectType: subjectNews, SubjectID: cur.ID}); err != nil {
+			Params: map[string]string{"title": f.Title}, SubjectType: subjectNews, SubjectID: cur.ID}); err != nil {
 			return err
 		}
 		return h.audit(ctx, q, 0, "settings", "platform_news.updated", subjectNews, cur.ID, map[string]any{"title": cur.Title},
-			map[string]any{"title": f.title, "is_published": published})
+			map[string]any{"title": f.Title, "is_published": published})
 	})
 	if err != nil {
 		return nil, err

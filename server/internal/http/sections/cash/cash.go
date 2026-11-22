@@ -316,17 +316,17 @@ func (h *handlers) CreateBalanceTopUp(ctx context.Context, req cashapi.CreateBal
 			return err
 		}
 		if len(names) == 0 {
-			form.Add("user_id", httpx.RuleMessage("user_id", cash.RuleIn, ""))
+			form.Rule("user_id", cash.RuleIn, "")
 		}
 		amount, perr := cash.ParseTopUpAmount(money.Tiyn(b.AmountTiyn).Tenge())
 		if perr != nil && !form.AddErr(perr) {
 			return perr
 		}
 		if !cash.BalanceField(b.BalanceType).Valid() {
-			form.Add("balance_type", httpx.RuleMessage("balance_type", cash.RuleIn, ""))
+			form.Rule("balance_type", cash.RuleIn, "")
 		}
 		if !cash.PaymentMethod(b.PaymentMethod).Valid() {
-			form.Add("payment_method", httpx.RuleMessage("payment_method", cash.RuleIn, ""))
+			form.Rule("payment_method", cash.RuleIn, "")
 		}
 		if err := form.Err(); err != nil {
 			return err

@@ -137,24 +137,24 @@ func validateCommon(ctx context.Context, q *store.Queries, info club.Info, fe *h
 		}
 	}
 	if startsAt == "" {
-		fe.Add("starts_at", httpx.RuleMessage("starts_at", "required", ""))
+		fe.Rule("starts_at", "required", "")
 	} else if t, err := time.ParseInLocation(localLayout, startsAt, info.Loc); err != nil {
-		fe.Add("starts_at", httpx.RuleMessage("starts_at", "date_format", ""))
+		fe.Rule("starts_at", "date_format", "")
 	} else {
 		f.startsAt = t
 	}
 	switch {
 	case duration == nil:
-		fe.Add("duration_minutes", httpx.RuleMessage("duration_minutes", "required", ""))
+		fe.Rule("duration_minutes", "required", "")
 	case *duration < 15:
-		fe.Add("duration_minutes", httpx.RuleMessage("duration_minutes", "min", "15"))
+		fe.Rule("duration_minutes", "min", "15")
 	case *duration > 1440:
-		fe.Add("duration_minutes", httpx.RuleMessage("duration_minutes", "max", "1440"))
+		fe.Rule("duration_minutes", "max", "1440")
 	default:
 		f.minutes = *duration
 	}
 	if note != nil && utf8.RuneCountInString(*note) > 500 {
-		fe.Add("note", httpx.RuleMessage("note", "max_string", "500"))
+		fe.Rule("note", "max_string", "500")
 	}
 	if note != nil && strings.TrimSpace(*note) != "" {
 		n := strings.TrimSpace(*note) // TrimStrings + ConvertEmptyStringsToNull
@@ -188,11 +188,11 @@ func (h *handlers) CreateReservation(ctx context.Context, req reservationsapi.Cr
 		}
 		var fe httpx.FormErrors
 		if in.ClubComputerId == nil {
-			fe.Add("club_computer_id", httpx.RuleMessage("club_computer_id", "required", ""))
+			fe.Rule("club_computer_id", "required", "")
 		} else if n, err := q.ReservationComputersExist(ctx, store.ReservationComputersExistParams{ClubID: p.ClubID, Ids: []int64{*in.ClubComputerId}}); err != nil {
 			return err
 		} else if n == 0 {
-			fe.Add("club_computer_id", httpx.RuleMessage("club_computer_id", "exists", ""))
+			fe.Rule("club_computer_id", "exists", "")
 		}
 		f, err := validateCommon(ctx, q, info, &fe, in.UserId, in.StartsAt, in.DurationMinutes, in.Note, now)
 		if err != nil {
@@ -232,9 +232,9 @@ func (h *handlers) CreateReservationsMany(ctx context.Context, req reservationsa
 		var fe httpx.FormErrors
 		switch {
 		case len(in.ComputerIds) == 0:
-			fe.Add("computer_ids", httpx.RuleMessage("computer_ids", "required", ""))
+			fe.Rule("computer_ids", "required", "")
 		case len(in.ComputerIds) > 50:
-			fe.Add("computer_ids", httpx.RuleMessage("computer_ids", "max", "50"))
+			fe.Rule("computer_ids", "max", "50")
 		default:
 			seen := map[int64]int{}
 			for _, id := range in.ComputerIds {
@@ -252,10 +252,10 @@ func (h *handlers) CreateReservationsMany(ctx context.Context, req reservationsa
 			for i, id := range in.ComputerIds {
 				field := "computer_ids." + strconv.Itoa(i)
 				if seen[id] > 1 {
-					fe.Add(field, httpx.RuleMessage(field, "distinct", ""))
+					fe.Rule(field, "distinct", "")
 				}
 				if !exists[id] {
-					fe.Add(field, httpx.RuleMessage(field, "exists", ""))
+					fe.Rule(field, "exists", "")
 				}
 			}
 		}

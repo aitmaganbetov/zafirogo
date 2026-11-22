@@ -109,9 +109,9 @@ func (h *handlers) SaCreateLanguage(ctx context.Context, req superadminapi.SaCre
 		var fe httpx.FormErrors
 		switch {
 		case code == "":
-			fe.Add("code", httpx.RuleMessage("code", "required", ""))
+			fe.Rule("code", "required", "")
 		case len(code) > 16:
-			fe.Add("code", httpx.RuleMessage("code", "max_string", "16"))
+			fe.Rule("code", "max_string", "16")
 		case !langCodeRe.MatchString(code):
 			fe.AddMsg("code", "Код языка: 2–3 латинские буквы, например uz или tr.", nil)
 		default:
@@ -120,14 +120,14 @@ func (h *handlers) SaCreateLanguage(ctx context.Context, req superadminapi.SaCre
 				return err
 			}
 			if taken {
-				fe.Add("code", httpx.RuleMessage("code", "unique", ""))
+				fe.Rule("code", "unique", "")
 			}
 		}
 		switch {
 		case name == "":
-			fe.Add("name", httpx.RuleMessage("name", "required", ""))
+			fe.Rule("name", "required", "")
 		case utf8.RuneCountInString(name) > 64:
-			fe.Add("name", httpx.RuleMessage("name", "max_string", "64"))
+			fe.Rule("name", "max_string", "64")
 		}
 		if err := fe.Err(); err != nil {
 			return err
@@ -396,7 +396,7 @@ func (h *handlers) SaSaveTranslations(ctx context.Context, req superadminapi.SaS
 			continue
 		}
 		if utf8.RuneCountInString(*v) > maxTranslation {
-			fe.Add("translations."+hash, httpx.RuleMessage("translations."+hash, "max_string", strconv.Itoa(maxTranslation)))
+			fe.Rule("translations."+hash, "max_string", strconv.Itoa(maxTranslation))
 		}
 		values[hash] = *v
 	}
@@ -660,13 +660,13 @@ func (h *handlers) SaImportTranslations(ctx context.Context, req superadminapi.S
 	}
 	var fe httpx.FormErrors
 	if code == "" {
-		fe.Add("language", httpx.RuleMessage("language", "required", ""))
+		fe.Rule("language", "required", "")
 	}
 	switch {
 	case !hasFile:
-		fe.Add("file", httpx.RuleMessage("file", "required", ""))
+		fe.Rule("file", "required", "")
 	case len(data) > maxImportBytes:
-		fe.Add("file", httpx.RuleMessage("file", "max", "2048"))
+		fe.Rule("file", "max", "2048")
 	}
 	if err := fe.Err(); err != nil {
 		return nil, err

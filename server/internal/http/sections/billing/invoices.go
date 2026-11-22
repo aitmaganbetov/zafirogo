@@ -2,7 +2,6 @@ package billing
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -37,10 +36,10 @@ func (h *handlers) CreateInvoice(ctx context.Context, req billingapi.CreateInvoi
 	}
 	var fe httpx.FormErrors
 	if body.SaasPlanId == 0 {
-		fe.Add("saas_plan_id", httpx.RuleMessage("saas_plan_id", "required", ""))
+		fe.Rule("saas_plan_id", "required", "")
 	}
 	if body.Months == 0 {
-		fe.Add("months", httpx.RuleMessage("months", "required", ""))
+		fe.Rule("months", "required", "")
 	}
 	if err := fe.Err(); err != nil {
 		return nil, err
@@ -66,7 +65,7 @@ func (h *handlers) CreateInvoice(ctx context.Context, req billingapi.CreateInvoi
 		}.Translated(logOpened, map[string]string{"number": number, "amount": money.GroupThousands(opened.Amount/100, " ")})); err != nil {
 			return err
 		}
-		return audit(ctx, q, p.ClubID, "invoice.opened", opened.ID, map[string]any{
+		return httpx.Audit(ctx, q, p.ClubID, "money", "invoice.opened", subjectInvoice, opened.ID, nil, map[string]any{
 			"number": number, "saas_plan_id": body.SaasPlanId, "months": opened.Months, "computers": opened.Computers,
 			"price_per_computer": opened.PricePerComputer, "discount_percent": opened.DiscountPercent, "amount": opened.Amount,
 		})
@@ -96,7 +95,7 @@ func (h *handlers) CancelInvoice(ctx context.Context, req billingapi.CancelInvoi
 		}.Translated(logCanceled, map[string]string{"number": number})); err != nil {
 			return err
 		}
-		return audit(ctx, q, p.ClubID, "invoice.canceled", req.InvoiceId, map[string]any{"number": number})
+		return httpx.Audit(ctx, q, p.ClubID, "money", "invoice.canceled", subjectInvoice, req.InvoiceId, nil, map[string]any{"number": number})
 	})
 	if err != nil {
 		return nil, err
@@ -109,10 +108,10 @@ func (h *handlers) CancelInvoice(ctx context.Context, req billingapi.CancelInvoi
 func invoiceError(err error) error {
 	var fe httpx.FormErrors
 	if errors.Is(err, subscription.ErrPlanNotPayable) {
-		fe.Add("saas_plan_id", httpx.RuleMessage("saas_plan_id", "in", ""))
+		fe.Rule("saas_plan_id", "in", "")
 	}
 	if errors.Is(err, subscription.ErrMonths) {
-		fe.Add("months", httpx.RuleMessage("months", "in", ""))
+		fe.Rule("months", "in", "")
 	}
 	if e := fe.Err(); e != nil {
 		return e
@@ -128,29 +127,6 @@ func invoiceError(err error) error {
 		return httpx.Validation("invoice", subscription.MsgClosed)
 	}
 	return err
-}
-
-// audit — запись audit_log (категория money: счёт — денежное обязательство клуба перед платформой).
-func audit(ctx context.Context, q *store.Queries, clubID int64, action string, invoiceID int64, after map[string]any) error {
-	a := httpx.Actor(ctx)
-	subject := subjectInvoice
-	params := store.InsertAuditLogParams{ClubID: &clubID, ActorKind: a.Kind, Category: "money", Action: action,
-		SubjectType: &subject, SubjectID: &invoiceID}
-	if a.UserID > 0 {
-		params.ActorUserID = &a.UserID
-	}
-	if a.IP.IsValid() {
-		ip := a.IP
-		params.Ip = &ip
-	}
-	if a.RequestID != "" {
-		params.RequestID = &a.RequestID
-	}
-	var err error
-	if params.After, err = json.Marshal(after); err != nil {
-		return err
-	}
-	return q.InsertAuditLog(ctx, params)
 }
 
 // reportInvoice — сообщение о счёте в чат оповещений платформы, в фоне после ответа: медленный Telegram не должен

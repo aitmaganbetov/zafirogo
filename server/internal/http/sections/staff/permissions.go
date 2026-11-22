@@ -243,7 +243,7 @@ func (h *handlers) UpdateStaffPermissions(ctx context.Context, req staffapi.Upda
 		if err := h.record(ctx, q, clubID, m.UserID, permissionsUpdatedEv, msgRightsUpdatedLog, map[string]string{"user": m.Name}, changes); err != nil {
 			return err
 		}
-		if err := audit(ctx, q, clubID, permissionsUpdatedEv, subjectMembership, m.ID,
+		if err := httpx.Audit(ctx, q, clubID, "permission", permissionsUpdatedEv, subjectMembership, m.ID,
 			map[string]any{"permissions": mem.Given}, map[string]any{"permissions": given}); err != nil {
 			return err
 		}
@@ -274,7 +274,7 @@ func (h *handlers) ResetStaffPermissions(ctx context.Context, req staffapi.Reset
 			map[string]any{"reset": true}); err != nil {
 			return err
 		}
-		if err := audit(ctx, q, clubID, permissionsUpdatedEv, subjectMembership, m.ID,
+		if err := httpx.Audit(ctx, q, clubID, "permission", permissionsUpdatedEv, subjectMembership, m.ID,
 			map[string]any{"permissions": permissions.ParseGiven(m.Permissions)}, map[string]any{"permissions": nil, "reset": true}); err != nil {
 			return err
 		}

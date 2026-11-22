@@ -138,37 +138,7 @@ func (h *handlers) SaListClubs(ctx context.Context, req superadminapi.SaListClub
 			}
 		}
 		for _, r := range rows {
-			row := superadminapi.ClubRow{Id: r.ID, Name: r.Name, Slug: r.Slug, ComputersCount: r.ComputersCount,
-				OnlineCount: r.OnlineCount, BusyCount: r.BusyCount, SessionsToday: r.SessionsToday, WebhookFailures: r.WebhookFailures,
-				AgentPerMinute: phpNum(float64(r.AgentRequests)/loadMinutes, 1), ApiPerMinute: phpNum(float64(r.ApiRequests)/loadMinutes, 1),
-				Badge: badge(r.SubscriptionStatus, r.TrialEndsAt, r.CurrentPeriodEndsAt, now)}
-			// Бейдж «−P%»: ($club->subscription?->discountPercent() ?? 0) > 0, title — причина.
-			if row.DiscountPercent = subscription.OwnDiscount(int(r.DiscountPercent), r.DiscountUntil, now, time.UTC); row.DiscountPercent > 0 {
-				row.DiscountNote = r.DiscountNote
-			}
-			if r.OwnerName != "" {
-				name := r.OwnerName
-				row.OwnerName = &name
-			}
-			if r.ComputersCount > 0 {
-				pct := intRound(float64(r.BusyCount) * 100 / float64(r.ComputersCount))
-				row.BusyPercent = &pct
-			}
-			if r.LastLoginAt.Year() > 1 {
-				human := diffForHumans(r.LastLoginAt, now, locale)
-				row.LastLoginHuman = &human
-			}
-			if latest != "" {
-				n := outdated[r.ID]
-				row.OutdatedAgents = &n
-			}
-			// $endsAt?->isFuture() ? (int) ceil(now()->diffInHours($endsAt) / 24) : null
-			if r.SubscriptionEndsAt.Year() > 1 && r.SubscriptionEndsAt.After(now) {
-				hours := math.Floor(r.SubscriptionEndsAt.Sub(now).Hours())
-				days := int64(math.Ceil(hours / 24))
-				row.DaysLeft = &days
-			}
-			out.Items = append(out.Items, row)
+			out.Items = append(out.Items, clubRow(r, now, locale, latest, outdated[r.ID]))
 		}
 		totals, err := q.SuperadminClubTotals(ctx, &now)
 		if err != nil {
@@ -182,6 +152,40 @@ func (h *handlers) SaListClubs(ctx context.Context, req superadminapi.SaListClub
 		return nil, err
 	}
 	return superadminapi.SaListClubs200JSONResponse(out), nil
+}
+
+// clubRow — строка списка клубов; outdated — ПК клуба с устаревшим агентом (при известной последней версии latest).
+func clubRow(r store.SuperadminClubsRow, now time.Time, locale, latest string, outdated int64) superadminapi.ClubRow {
+	row := superadminapi.ClubRow{Id: r.ID, Name: r.Name, Slug: r.Slug, ComputersCount: r.ComputersCount,
+		OnlineCount: r.OnlineCount, BusyCount: r.BusyCount, SessionsToday: r.SessionsToday, WebhookFailures: r.WebhookFailures,
+		AgentPerMinute: phpNum(float64(r.AgentRequests)/loadMinutes, 1), ApiPerMinute: phpNum(float64(r.ApiRequests)/loadMinutes, 1),
+		Badge: badge(r.SubscriptionStatus, r.TrialEndsAt, r.CurrentPeriodEndsAt, now)}
+	// Бейдж «−P%»: ($club->subscription?->discountPercent() ?? 0) > 0, title — причина.
+	if row.DiscountPercent = subscription.OwnDiscount(int(r.DiscountPercent), r.DiscountUntil, now, time.UTC); row.DiscountPercent > 0 {
+		row.DiscountNote = r.DiscountNote
+	}
+	if r.OwnerName != "" {
+		name := r.OwnerName
+		row.OwnerName = &name
+	}
+	if r.ComputersCount > 0 {
+		pct := intRound(float64(r.BusyCount) * 100 / float64(r.ComputersCount))
+		row.BusyPercent = &pct
+	}
+	if r.LastLoginAt.Year() > 1 {
+		human := httpx.DiffForHumans(r.LastLoginAt, now, locale)
+		row.LastLoginHuman = &human
+	}
+	if latest != "" {
+		row.OutdatedAgents = &outdated
+	}
+	// $endsAt?->isFuture() ? (int) ceil(now()->diffInHours($endsAt) / 24) : null
+	if r.SubscriptionEndsAt.Year() > 1 && r.SubscriptionEndsAt.After(now) {
+		hours := math.Floor(r.SubscriptionEndsAt.Sub(now).Hours())
+		days := int64(math.Ceil(hours / 24))
+		row.DaysLeft = &days
+	}
+	return row
 }
 
 // issues — ClubAttention::issues(): ПК внезапно ушли офлайн, недоставленные вебхуки, подписка скоро кончится.
@@ -207,7 +211,7 @@ func (h *handlers) issues(ctx context.Context, q *store.Queries, now time.Time, 
 					map[string]string{"now": strconv.FormatInt(is, 10), "was": strconv.FormatInt(b.Online, 10)})})
 		}
 	}
-	fails, err := q.SuperadminWebhookFailures(ctx, store.SuperadminWebhookFailuresParams{Since: ptr(now.Add(-24 * time.Hour)), MinFailures: webhookFailures})
+	fails, err := q.SuperadminWebhookFailures(ctx, store.SuperadminWebhookFailuresParams{Since: httpx.Ptr(now.Add(-24 * time.Hour)), MinFailures: webhookFailures})
 	if err != nil {
 		return nil, err
 	}
@@ -257,8 +261,6 @@ func (h *handlers) issues(ctx context.Context, q *store.Queries, now time.Time, 
 	return out, nil
 }
 
-func ptr[T any](v T) *T { return &v }
-
 // SaGetClub — ClubController::show().
 func (h *handlers) SaGetClub(ctx context.Context, req superadminapi.SaGetClubRequestObject) (superadminapi.SaGetClubResponseObject, error) {
 	now := h.d.NowFunc()
@@ -284,20 +286,20 @@ func (h *handlers) SaGetClub(ctx context.Context, req superadminapi.SaGetClubReq
 			// Кабинет — вне клуба: последний день скидки считается по UTC (CurrentClub::timezone() без клуба).
 			s.DiscountPercent = subscription.OwnDiscount(int(c.DiscountPercent), c.DiscountUntil, now, time.UTC)
 			if c.DiscountUntil != nil {
-				s.DiscountUntil = ptr(c.DiscountUntil.Format("2006-01-02"))
-				s.DiscountUntilLabel = ptr(c.DiscountUntil.Format("02.01.2006"))
+				s.DiscountUntil = httpx.Ptr(c.DiscountUntil.Format("2006-01-02"))
+				s.DiscountUntilLabel = httpx.Ptr(c.DiscountUntil.Format("02.01.2006"))
 			}
 			if c.PlanPriceMonthly != nil {
-				s.MonthlyPriceTiyn = ptr(subscription.MonthlyPrice(*c.PlanPriceMonthly, s.DiscountPercent))
+				s.MonthlyPriceTiyn = httpx.Ptr(subscription.MonthlyPrice(*c.PlanPriceMonthly, s.DiscountPercent))
 			}
 			if c.PlanName != "" {
-				s.PlanName = ptr(c.PlanName)
+				s.PlanName = httpx.Ptr(c.PlanName)
 			}
 			if c.CurrentPeriodEndsAt != nil {
-				s.PaidUntil = ptr(c.CurrentPeriodEndsAt.UTC().Format("02.01.2006"))
+				s.PaidUntil = httpx.Ptr(c.CurrentPeriodEndsAt.UTC().Format("02.01.2006"))
 			}
 			if *c.SubscriptionStatus == "trialing" && c.TrialEndsAt != nil {
-				s.TrialUntil = ptr(c.TrialEndsAt.UTC().Format("02.01.2006"))
+				s.TrialUntil = httpx.Ptr(c.TrialEndsAt.UTC().Format("02.01.2006"))
 			}
 			out.Subscription = s
 		}
@@ -545,15 +547,15 @@ func (h *handlers) SaSetClubDiscount(ctx context.Context, req superadminapi.SaSe
 	var fe httpx.FormErrors
 	var percent int
 	if req.Body == nil {
-		fe.Add("discount_percent", httpx.RuleMessage("discount_percent", "required", ""))
+		fe.Rule("discount_percent", "required", "")
 	} else {
 		percent = req.Body.DiscountPercent
 	}
 	switch {
 	case percent < 0:
-		fe.Add("discount_percent", httpx.RuleMessage("discount_percent", "min", "0"))
+		fe.Rule("discount_percent", "min", "0")
 	case percent > 100:
-		fe.Add("discount_percent", httpx.RuleMessage("discount_percent", "max", "100"))
+		fe.Rule("discount_percent", "max", "100")
 	}
 	var until *time.Time
 	var note *string
@@ -563,9 +565,9 @@ func (h *handlers) SaSetClubDiscount(ctx context.Context, req superadminapi.SaSe
 			today := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), 0, 0, 0, 0, time.UTC)
 			switch day, err := time.Parse("2006-01-02", strings.TrimSpace(*req.Body.DiscountUntil)); {
 			case err != nil:
-				fe.Add("discount_until", httpx.RuleMessage("discount_until", "date", ""))
+				fe.Rule("discount_until", "date", "")
 			case day.Before(today):
-				fe.Add("discount_until", httpx.RuleMessage("discount_until", "after_or_equal", "today"))
+				fe.Rule("discount_until", "after_or_equal", "today")
 			default:
 				until = &day
 			}
@@ -573,7 +575,7 @@ func (h *handlers) SaSetClubDiscount(ctx context.Context, req superadminapi.SaSe
 		if req.Body.DiscountNote != nil && strings.TrimSpace(*req.Body.DiscountNote) != "" {
 			text := strings.TrimSpace(*req.Body.DiscountNote)
 			if len([]rune(text)) > maxDiscountNoteChars {
-				fe.Add("discount_note", httpx.RuleMessage("discount_note", "max_string", "200"))
+				fe.Rule("discount_note", "max_string", "200")
 			}
 			note = &text
 		}

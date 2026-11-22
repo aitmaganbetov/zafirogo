@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -39,6 +38,8 @@ const (
 
 	// subjectTariff — морф-класс журнала ($tariff).
 	subjectTariff = `App\Models\Tariff`
+	// auditSubject — subject_type записей audit_log категории tariff.
+	auditSubject = "tariff"
 	// maxPrice — StoreTariffRequest price max:9999999999.99 (PQ-4, CHECK tariffs.price в 0014).
 	maxPrice = money.Tiyn(999_999_999_999)
 )
@@ -166,20 +167,20 @@ func validate(ctx context.Context, q *store.Queries, clubID, exceptID int64, in 
 	// name: required|string|max:100|unique (без удалённых, без учёта регистра).
 	switch n := utf8.RuneCountInString(in.Name); {
 	case n == 0:
-		fe.Add("name", httpx.RuleMessage("name", "required", ""))
+		fe.Rule("name", "required", "")
 	case n > 100:
-		fe.Add("name", httpx.RuleMessage("name", "max_string", "100"))
+		fe.Rule("name", "max_string", "100")
 	default:
 		taken, err := q.AdminTariffNameTaken(ctx, store.AdminTariffNameTakenParams{ClubID: clubID, Name: in.Name, ExceptID: exceptID})
 		if err != nil {
 			return d, err
 		}
 		if taken {
-			fe.Add("name", httpx.RuleMessage("name", "unique", ""))
+			fe.Rule("name", "unique", "")
 		}
 	}
 	if in.Description != nil && utf8.RuneCountInString(*in.Description) > 500 {
-		fe.Add("description", httpx.RuleMessage("description", "max_string", "500"))
+		fe.Rule("description", "max_string", "500")
 	}
 	if in.Description != nil && *in.Description == "" {
 		d.description = nil // ConvertEmptyStringsToNull
@@ -187,108 +188,47 @@ func validate(ctx context.Context, q *store.Queries, clubID, exceptID int64, in 
 	durationOK := true
 	switch {
 	case in.DurationValue < 1:
-		fe.Add("duration_value", httpx.RuleMessage("duration_value", "min", "1"))
+		fe.Rule("duration_value", "min", "1")
 		durationOK = false
 	case in.DurationValue > 10080:
-		fe.Add("duration_value", httpx.RuleMessage("duration_value", "max", "10080"))
+		fe.Rule("duration_value", "max", "10080")
 		durationOK = false
 	}
 	factor, ok := durationFactors[in.DurationUnit]
 	if !ok {
-		fe.Add("duration_unit", httpx.RuleMessage("duration_unit", "in", ""))
+		fe.Rule("duration_unit", "in", "")
 	} else if durationOK {
 		d.durationMinutes = in.DurationValue * factor
 	}
 	// price: required|numeric|min:0|max:9999999999.99 (тиыны, PQ-4).
 	switch {
 	case d.price < 0:
-		fe.Add("price", httpx.RuleMessage("price", "min", "0"))
+		fe.Rule("price", "min", "0")
 	case d.price > maxPrice:
-		fe.Add("price", httpx.RuleMessage("price", "max", "9999999999.99"))
+		fe.Rule("price", "max", "9999999999.99")
 	}
 	if in.PaymentMethod != "main_balance_only" && in.PaymentMethod != "main_or_bonus" {
-		fe.Add("payment_method", httpx.RuleMessage("payment_method", "in", ""))
+		fe.Rule("payment_method", "in", "")
 	}
-	// zone_ids: nullable|array|max:100; zone_ids.*: integer|distinct|in(зоны с ПК).
 	if in.ZoneIds != nil {
-		ids := *in.ZoneIds
-		if len(ids) > 100 {
-			fe.Add("zone_ids", httpx.RuleMessage("zone_ids", "max", "100"))
-		} else {
-			allowed, err := q.AdminZonesWithComputersIn(ctx, store.AdminZonesWithComputersInParams{ClubID: clubID, Ids: ids})
-			if err != nil {
-				return d, err
-			}
-			seen := map[int64]int{}
-			for _, id := range ids {
-				seen[id]++
-			}
-			for i, id := range ids {
-				field := "zone_ids." + strconv.Itoa(i)
-				if seen[id] > 1 {
-					fe.Add(field, httpx.RuleMessage(field, "distinct", ""))
-				}
-				if !slices.Contains(allowed, id) {
-					fe.Add(field, httpx.RuleMessage(field, "in", ""))
-				}
-			}
-			d.zoneIDs = ids
+		var err error
+		if d.zoneIDs, err = validateZones(ctx, q, clubID, &fe, *in.ZoneIds); err != nil {
+			return d, err
 		}
 	}
-	// usage_limit_*: required_if:usage_limit_enabled,1, integer min:1 max:10080, unit in.
-	if in.UsageLimitEnabled || in.UsageLimitValue != nil {
-		switch {
-		case in.UsageLimitValue == nil:
-			if in.UsageLimitEnabled {
-				fe.Add("usage_limit_value", httpx.RuleMessage("usage_limit_value", "required", ""))
-			}
-		case *in.UsageLimitValue < 1:
-			fe.Add("usage_limit_value", httpx.RuleMessage("usage_limit_value", "min", "1"))
-		case *in.UsageLimitValue > 10080:
-			fe.Add("usage_limit_value", httpx.RuleMessage("usage_limit_value", "max", "10080"))
-		}
-	}
-	unit := ""
-	if in.UsageLimitUnit != nil {
-		unit = *in.UsageLimitUnit
-	}
-	if unit == "" && in.UsageLimitEnabled {
-		fe.Add("usage_limit_unit", httpx.RuleMessage("usage_limit_unit", "required", ""))
-	} else if _, ok := durationFactors[unit]; unit != "" && !ok {
-		fe.Add("usage_limit_unit", httpx.RuleMessage("usage_limit_unit", "in", ""))
-	}
-	if in.UsageLimitEnabled && in.UsageLimitValue != nil && !fe.Has("usage_limit_value") && !fe.Has("usage_limit_unit") {
-		m := *in.UsageLimitValue * durationFactors[unit]
-		d.usageMinutes = &m
-	}
-	// quantity_limit: required_if:quantity_limit_enabled,1, integer min:1 max:1000000; выключен — null.
-	if in.QuantityLimitEnabled || in.QuantityLimit != nil {
-		switch {
-		case in.QuantityLimit == nil:
-			if in.QuantityLimitEnabled {
-				fe.Add("quantity_limit", httpx.RuleMessage("quantity_limit", "required", ""))
-			}
-		case *in.QuantityLimit < 1:
-			fe.Add("quantity_limit", httpx.RuleMessage("quantity_limit", "min", "1"))
-		case *in.QuantityLimit > 1_000_000:
-			fe.Add("quantity_limit", httpx.RuleMessage("quantity_limit", "max", "1000000"))
-		}
-	}
-	if in.QuantityLimitEnabled {
-		d.quantityLimit = in.QuantityLimit
-	}
+	validateLimits(&fe, in, &d)
 	// validity_periods: required|array|min:1|max:50; sale_periods: nullable|array|max:50.
 	switch {
 	case len(in.ValidityPeriods) == 0:
-		fe.Add("validity_periods", httpx.RuleMessage("validity_periods", "required", ""))
+		fe.Rule("validity_periods", "required", "")
 	case len(in.ValidityPeriods) > 50:
-		fe.Add("validity_periods", httpx.RuleMessage("validity_periods", "max", "50"))
+		fe.Rule("validity_periods", "max", "50")
 	default:
 		validatePeriods(&fe, "validity_periods", in.ValidityPeriods)
 	}
 	if in.SalePeriods != nil {
 		if len(*in.SalePeriods) > 50 {
-			fe.Add("sale_periods", httpx.RuleMessage("sale_periods", "max", "50"))
+			fe.Rule("sale_periods", "max", "50")
 		} else {
 			validatePeriods(&fe, "sale_periods", *in.SalePeriods)
 		}
@@ -312,21 +252,94 @@ func validate(ctx context.Context, q *store.Queries, clubID, exceptID int64, in 
 	return d, nil
 }
 
+// validateZones — zone_ids: nullable|array|max:100; zone_ids.*: integer|distinct|in(зоны с ПК). Список зон
+// тарифа — ids, если форма их приняла (иначе nil).
+func validateZones(ctx context.Context, q *store.Queries, clubID int64, fe *httpx.FormErrors, ids []int64) ([]int64, error) {
+	if len(ids) > 100 {
+		fe.Rule("zone_ids", "max", "100")
+		return nil, nil
+	}
+	allowed, err := q.AdminZonesWithComputersIn(ctx, store.AdminZonesWithComputersInParams{ClubID: clubID, Ids: ids})
+	if err != nil {
+		return nil, err
+	}
+	seen := map[int64]int{}
+	for _, id := range ids {
+		seen[id]++
+	}
+	for i, id := range ids {
+		field := "zone_ids." + strconv.Itoa(i)
+		if seen[id] > 1 {
+			fe.Rule(field, "distinct", "")
+		}
+		if !slices.Contains(allowed, id) {
+			fe.Rule(field, "in", "")
+		}
+	}
+	return ids, nil
+}
+
+// validateLimits — лимиты использования и количества продаж; включённые и верные пишутся в d (минуты, штуки).
+func validateLimits(fe *httpx.FormErrors, in tariffsapi.TariffInput, d *tariffData) {
+	// usage_limit_*: required_if:usage_limit_enabled,1, integer min:1 max:10080, unit in.
+	if in.UsageLimitEnabled || in.UsageLimitValue != nil {
+		switch {
+		case in.UsageLimitValue == nil:
+			if in.UsageLimitEnabled {
+				fe.Rule("usage_limit_value", "required", "")
+			}
+		case *in.UsageLimitValue < 1:
+			fe.Rule("usage_limit_value", "min", "1")
+		case *in.UsageLimitValue > 10080:
+			fe.Rule("usage_limit_value", "max", "10080")
+		}
+	}
+	unit := ""
+	if in.UsageLimitUnit != nil {
+		unit = *in.UsageLimitUnit
+	}
+	if unit == "" && in.UsageLimitEnabled {
+		fe.Rule("usage_limit_unit", "required", "")
+	} else if _, ok := durationFactors[unit]; unit != "" && !ok {
+		fe.Rule("usage_limit_unit", "in", "")
+	}
+	if in.UsageLimitEnabled && in.UsageLimitValue != nil && !fe.Has("usage_limit_value") && !fe.Has("usage_limit_unit") {
+		m := *in.UsageLimitValue * durationFactors[unit]
+		d.usageMinutes = &m
+	}
+	// quantity_limit: required_if:quantity_limit_enabled,1, integer min:1 max:1000000; выключен — null.
+	if in.QuantityLimitEnabled || in.QuantityLimit != nil {
+		switch {
+		case in.QuantityLimit == nil:
+			if in.QuantityLimitEnabled {
+				fe.Rule("quantity_limit", "required", "")
+			}
+		case *in.QuantityLimit < 1:
+			fe.Rule("quantity_limit", "min", "1")
+		case *in.QuantityLimit > 1_000_000:
+			fe.Rule("quantity_limit", "max", "1000000")
+		}
+	}
+	if in.QuantityLimitEnabled {
+		d.quantityLimit = in.QuantityLimit
+	}
+}
+
 func validatePeriods(fe *httpx.FormErrors, field string, periods []tariffsapi.WeeklyPeriod) {
 	for i, p := range periods {
 		base := field + "." + strconv.Itoa(i) + "."
 		day := func(name, v string) {
 			if v == "" {
-				fe.Add(base+name, httpx.RuleMessage(base+name, "required", ""))
+				fe.Rule(base+name, "required", "")
 			} else if !slices.Contains(weekDays, v) {
-				fe.Add(base+name, httpx.RuleMessage(base+name, "in", ""))
+				fe.Rule(base+name, "in", "")
 			}
 		}
 		clock := func(name, v string) {
 			if v == "" {
-				fe.Add(base+name, httpx.RuleMessage(base+name, "required", ""))
+				fe.Rule(base+name, "required", "")
 			} else if !timeRe.MatchString(v) {
-				fe.Add(base+name, httpx.RuleMessage(base+name, "date_format", ""))
+				fe.Rule(base+name, "date_format", "")
 			}
 		}
 		day("start_day", p.StartDay)
@@ -374,7 +387,7 @@ func (h *handlers) CreateTariff(ctx context.Context, req tariffsapi.CreateTariff
 		}.Translated(logCreated, map[string]string{"tariff": d.name})); err != nil {
 			return err
 		}
-		return audit(ctx, q, p.ClubID, "tariff.created", id, nil, snapshot(d.price, d.durationMinutes, d.isActive, d.zoneIDs))
+		return httpx.Audit(ctx, q, p.ClubID, "tariff", "tariff.created", auditSubject, id, nil, snapshot(d.price, d.durationMinutes, d.isActive, d.zoneIDs))
 	})
 	if err != nil {
 		return nil, err
@@ -422,7 +435,7 @@ func (h *handlers) UpdateTariff(ctx context.Context, req tariffsapi.UpdateTariff
 		}.Translated(logUpdated, map[string]string{"tariff": d.name})); err != nil {
 			return err
 		}
-		return audit(ctx, q, p.ClubID, "tariff.updated", cur.ID, before, after)
+		return httpx.Audit(ctx, q, p.ClubID, "tariff", "tariff.updated", auditSubject, cur.ID, before, after)
 	})
 	if err != nil {
 		return nil, err
@@ -453,7 +466,7 @@ func (h *handlers) DeleteTariff(ctx context.Context, req tariffsapi.DeleteTariff
 		}.Translated(logDeleted, map[string]string{"tariff": cur.Name})); err != nil {
 			return err
 		}
-		return audit(ctx, q, p.ClubID, "tariff.deleted", cur.ID,
+		return httpx.Audit(ctx, q, p.ClubID, "tariff", "tariff.deleted", auditSubject, cur.ID,
 			snapshot(money.Tiyn(cur.Price), cur.DurationMinutes, cur.IsActive, cur.ZoneIds), nil)
 	})
 	if err != nil {
@@ -511,37 +524,3 @@ func changed(before, after *tariffSnapshot) []string {
 
 // tengeNumber — (float) $tariff->price в details журнала: число тенге без float (json.Number из тиынов).
 func tengeNumber(t money.Tiyn) json.Number { return json.Number(t.Tenge()) }
-
-// audit — запись audit_log категории tariff (только добавление).
-func audit(ctx context.Context, q *store.Queries, clubID int64, action string, tariffID int64, before, after *tariffSnapshot) error {
-	actor := httpx.Actor(ctx)
-	subject := "tariff"
-	params := store.InsertAuditLogParams{
-		ClubID: &clubID, ActorKind: actor.Kind, Category: "tariff", Action: action, SubjectType: &subject, SubjectID: &tariffID,
-	}
-	var err error
-	if before != nil {
-		if params.Before, err = json.Marshal(before); err != nil {
-			return err
-		}
-	}
-	if after != nil {
-		if params.After, err = json.Marshal(after); err != nil {
-			return err
-		}
-	}
-	if actor.UserID > 0 {
-		params.ActorUserID = &actor.UserID
-	}
-	if actor.IP.IsValid() {
-		ip := actor.IP
-		params.Ip = &ip
-	}
-	if actor.RequestID != "" {
-		params.RequestID = &actor.RequestID
-	}
-	if err := q.InsertAuditLog(ctx, params); err != nil {
-		return fmt.Errorf("tariffs: audit: %w", err)
-	}
-	return nil
-}

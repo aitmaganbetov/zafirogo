@@ -6,14 +6,12 @@ package settings
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg" // image.DecodeConfig: JPEG
 	_ "image/png"  // image.DecodeConfig: PNG
 	"io"
-	"math/big"
 	"mime/multipart"
 	"net/http"
 	"path"
@@ -23,7 +21,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	settingsapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/settings"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
@@ -99,7 +96,7 @@ func readUpload(mr *multipart.Reader, k imageKind) (upload, error) {
 	}
 	var fe httpx.FormErrors
 	if !found || len(u.data) == 0 {
-		fe.Add(k.field, httpx.RuleMessage(k.field, "required", ""))
+		fe.Rule(k.field, "required", "")
 		return u, fe.Err()
 	}
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(u.data))
@@ -130,20 +127,6 @@ func readUpload(mr *multipart.Reader, k imageKind) (upload, error) {
 		u.contentType, u.ext = "image/png", "png"
 	}
 	return u, nil
-}
-
-// randomName — Str::random(40).
-func randomName() (string, error) {
-	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 40)
-	for i := range b {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
-		if err != nil {
-			return "", err
-		}
-		b[i] = alphabet[n.Int64()]
-	}
-	return string(b), nil
 }
 
 // UploadClubLogo — ClubLogoController::update().
@@ -195,7 +178,7 @@ func (h *handlers) saveImage(ctx context.Context, body *multipart.Reader, k imag
 		return "", err
 	}
 	p := httpx.Principal(ctx)
-	name, err := randomName()
+	name, err := httpx.RandomName()
 	if err != nil {
 		return "", err
 	}
@@ -211,10 +194,7 @@ func (h *handlers) saveImage(ctx context.Context, body *multipart.Reader, k imag
 		if err := h.setPath(ctx, q, k, p.ClubID, &imgPath, now); err != nil {
 			return err
 		}
-		_, err := activity.Record(ctx, q, activity.Entry{
-			ClubID: p.ClubID, Event: k.event, UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID, At: now,
-		}.Translated(k.logSaved, nil))
-		return err
+		return logClub(ctx, q, now, k.event, nil, k.logSaved, nil)
 	})
 	if err != nil {
 		return "", err
@@ -246,10 +226,7 @@ func (h *handlers) deleteImage(ctx context.Context, k imageKind) (string, error)
 		if err := h.setPath(ctx, q, k, p.ClubID, nil, now); err != nil {
 			return err
 		}
-		_, err = activity.Record(ctx, q, activity.Entry{
-			ClubID: p.ClubID, Event: k.event, UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID, At: now,
-		}.Translated(k.logDeleted, nil))
-		return err
+		return logClub(ctx, q, now, k.event, nil, k.logDeleted, nil)
 	})
 	if err != nil {
 		return "", err

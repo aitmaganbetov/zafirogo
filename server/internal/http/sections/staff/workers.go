@@ -258,35 +258,6 @@ func (h *handlers) ListWorkers(ctx context.Context, req staffapi.ListWorkersRequ
 	return staffapi.ListWorkers200JSONResponse(out), nil
 }
 
-// audit — запись audit_log (категория permission): роли, права, приглашения.
-func audit(ctx context.Context, q *store.Queries, clubID int64, action, subjectType string, subjectID int64, before, after any) error {
-	a := httpx.Actor(ctx)
-	p := store.InsertAuditLogParams{ClubID: &clubID, ActorKind: a.Kind, Category: "permission", Action: action,
-		SubjectType: &subjectType, SubjectID: &subjectID}
-	if a.UserID > 0 {
-		p.ActorUserID = &a.UserID
-	}
-	if a.IP.IsValid() {
-		ip := a.IP
-		p.Ip = &ip
-	}
-	if a.RequestID != "" {
-		p.RequestID = &a.RequestID
-	}
-	var err error
-	if before != nil {
-		if p.Before, err = json.Marshal(before); err != nil {
-			return err
-		}
-	}
-	if after != nil {
-		if p.After, err = json.Marshal(after); err != nil {
-			return err
-		}
-	}
-	return q.InsertAuditLog(ctx, p)
-}
-
 // accessChanged — событие staff.access_changed: WebSocket сотрудника переподключается с новыми правами
 // (docs/realtime.md); права REST и так читаются из БД на каждом запросе.
 func accessChanged(ctx context.Context, q *store.Queries, clubID, userID int64) error {
@@ -326,9 +297,9 @@ func (h *handlers) AddWorker(ctx context.Context, req staffapi.AddWorkerRequestO
 	}
 	switch {
 	case role == "":
-		form.AddErr(httpx.RuleError("role", cash.RuleRequired))
+		form.Rule("role", cash.RuleRequired, "")
 	case !canAssign(viewer.role, role):
-		form.AddErr(httpx.RuleError("role", cash.RuleIn))
+		form.Rule("role", cash.RuleIn, "")
 	}
 	if err := form.Err(); err != nil {
 		return nil, err
@@ -366,7 +337,7 @@ func (h *handlers) AddWorker(ctx context.Context, req staffapi.AddWorkerRequestO
 			map[string]any{"role": role}); err != nil {
 			return err
 		}
-		if err := audit(ctx, q, clubID, "worker.added", subjectUser, user.ID, nil, map[string]any{"role": role}); err != nil {
+		if err := httpx.Audit(ctx, q, clubID, "permission", "worker.added", subjectUser, user.ID, nil, map[string]any{"role": role}); err != nil {
 			return err
 		}
 		return accessChanged(ctx, q, clubID, user.ID)
@@ -425,7 +396,7 @@ func (h *handlers) ChangeWorkerRole(ctx context.Context, req staffapi.ChangeWork
 		}, map[string]any{"from": m.Role, "to": role}); err != nil {
 			return err
 		}
-		if err := audit(ctx, q, clubID, "worker.role_changed", subjectMembership, m.ID,
+		if err := httpx.Audit(ctx, q, clubID, "permission", "worker.role_changed", subjectMembership, m.ID,
 			map[string]any{"role": m.Role}, map[string]any{"role": role}); err != nil {
 			return err
 		}
@@ -453,7 +424,7 @@ func (h *handlers) RemoveWorker(ctx context.Context, req staffapi.RemoveWorkerRe
 			map[string]string{"user": m.Name}, map[string]any{"from": m.Role}); err != nil {
 			return err
 		}
-		if err := audit(ctx, q, clubID, "worker.removed", subjectMembership, m.ID,
+		if err := httpx.Audit(ctx, q, clubID, "permission", "worker.removed", subjectMembership, m.ID,
 			map[string]any{"role": m.Role}, map[string]any{"role": permissions.RoleClient}); err != nil {
 			return err
 		}
@@ -506,16 +477,16 @@ func (h *handlers) CreateInvitation(ctx context.Context, req staffapi.CreateInvi
 		a, err := mail.ParseAddress(*email)
 		switch {
 		case err != nil || a.Address != *email || a.Name != "":
-			form.AddErr(httpx.RuleError("email", "email"))
+			form.Rule("email", "email", "")
 		case utf8.RuneCountInString(*email) > maxString:
-			form.AddErr(httpx.RuleErrorWith("email", "max_string", strconv.Itoa(maxString)))
+			form.Rule("email", "max_string", strconv.Itoa(maxString))
 		}
 	}
 	switch {
 	case role == "":
-		form.AddErr(httpx.RuleError("role", cash.RuleRequired))
+		form.Rule("role", cash.RuleRequired, "")
 	case !slices.Contains(invitationRoles, role):
-		form.AddErr(httpx.RuleError("role", cash.RuleIn))
+		form.Rule("role", cash.RuleIn, "")
 	}
 	if err := form.Err(); err != nil {
 		return nil, err
@@ -556,7 +527,7 @@ func (h *handlers) CreateInvitation(ctx context.Context, req staffapi.CreateInvi
 			return err
 		}
 		// Аудит — без email и токена (только роль и срок).
-		return audit(ctx, q, clubID, "invitation.created", subjectInvitation, id, nil, map[string]any{
+		return httpx.Audit(ctx, q, clubID, "permission", "invitation.created", subjectInvitation, id, nil, map[string]any{
 			"role": role, "expires_at": expires.UTC(),
 		})
 	})

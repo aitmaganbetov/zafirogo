@@ -44,8 +44,7 @@ var serverSkipDirs = []string{"cmd", "gen", "internal/store", "internal/config",
 
 // serverSkipFiles — файлы со своей локализацией: «5 минут назад» на ru/kk/en (Carbon diffForHumans).
 var serverSkipFiles = []string{
-	"internal/http/sections/notifications/humantime.go",
-	"internal/http/sections/superadmin/humantime.go",
+	"internal/http/httpx/humantime.go",
 }
 
 // notKeys — русские литералы сервера, которые не переводятся: маркеры в данных и сравнениях (CLAUDE.md

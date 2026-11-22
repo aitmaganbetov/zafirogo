@@ -6,7 +6,6 @@ package customers
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"math/big"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
@@ -95,17 +95,17 @@ func trimmed(s *string) *string {
 // checkDiscount — 'discount' => nullable|numeric|min:0|max:100 (значение уже не пустое).
 func checkDiscount(f *httpx.FormErrors, d string) {
 	if !money.PHPIsNumeric(d) {
-		f.AddErr(httpx.RuleError("discount", cash.RuleNumeric))
+		f.Rule("discount", cash.RuleNumeric, "")
 		return
 	}
 	v, err := strconv.ParseFloat(strings.TrimSpace(d), 64)
 	switch {
 	case err != nil:
-		f.AddErr(httpx.RuleError("discount", cash.RuleNumeric))
+		f.Rule("discount", cash.RuleNumeric, "")
 	case v < 0:
-		f.AddErr(httpx.RuleErrorWith("discount", cash.RuleMin, "0"))
+		f.Rule("discount", cash.RuleMin, "0")
 	case v > 100:
-		f.AddErr(httpx.RuleErrorWith("discount", cash.RuleMax, "100"))
+		f.Rule("discount", cash.RuleMax, "100")
 	}
 }
 
@@ -113,9 +113,9 @@ func checkDiscount(f *httpx.FormErrors, d string) {
 func checkName(f *httpx.FormErrors, name string) {
 	switch {
 	case name == "":
-		f.AddErr(httpx.RuleError("name", cash.RuleRequired))
+		f.Rule("name", cash.RuleRequired, "")
 	case utf8.RuneCountInString(name) > maxString:
-		f.AddErr(httpx.RuleErrorWith("name", "max_string", strconv.Itoa(maxString)))
+		f.Rule("name", "max_string", strconv.Itoa(maxString))
 	}
 }
 
@@ -126,9 +126,9 @@ func checkEmail(f *httpx.FormErrors, email *string) {
 	}
 	switch {
 	case !validEmail(*email):
-		f.AddErr(httpx.RuleError("email", "email"))
+		f.Rule("email", "email", "")
 	case utf8.RuneCountInString(*email) > maxString:
-		f.AddErr(httpx.RuleErrorWith("email", "max_string", strconv.Itoa(maxString)))
+		f.Rule("email", "max_string", strconv.Itoa(maxString))
 	}
 }
 
@@ -145,37 +145,6 @@ func conflicts(ctx context.Context, q *store.Queries, phone string, email *strin
 func uniqueViolation(err error, constraint string) bool {
 	var pg *pgconn.PgError
 	return errors.As(err, &pg) && pg.Code == "23505" && pg.ConstraintName == constraint
-}
-
-// audit — запись audit_log (категория permission/security), без секретов.
-func audit(ctx context.Context, q *store.Queries, clubID int64, category, action, subjectType string, subjectID int64, before, after any) error {
-	a := httpx.Actor(ctx)
-	p := store.InsertAuditLogParams{ClubID: &clubID, ActorKind: a.Kind, Category: category, Action: action}
-	if subjectType != "" {
-		p.SubjectType, p.SubjectID = &subjectType, &subjectID
-	}
-	if a.UserID > 0 {
-		p.ActorUserID = &a.UserID
-	}
-	if a.IP.IsValid() {
-		ip := a.IP
-		p.Ip = &ip
-	}
-	if a.RequestID != "" {
-		p.RequestID = &a.RequestID
-	}
-	var err error
-	if before != nil {
-		if p.Before, err = json.Marshal(before); err != nil {
-			return err
-		}
-	}
-	if after != nil {
-		if p.After, err = json.Marshal(after); err != nil {
-			return err
-		}
-	}
-	return q.InsertAuditLog(ctx, p)
 }
 
 // customerOrStaff — UserController::customer(): клиент клуба; сотрудник — 403 «Сотрудников меняют на странице
@@ -236,18 +205,18 @@ func (h *handlers) CreateCustomer(ctx context.Context, req customersapi.CreateCu
 	checkName(&form, name)
 	switch {
 	case phone == "":
-		form.AddErr(httpx.RuleError("phone", cash.RuleRequired))
+		form.Rule("phone", cash.RuleRequired, "")
 	case !phoneRe.MatchString(phone):
-		form.AddErr(httpx.RuleError("phone", "regex"))
+		form.Rule("phone", "regex", "")
 	}
 	checkEmail(&form, email)
 	switch {
 	case b.Password == "":
-		form.AddErr(httpx.RuleError("password", cash.RuleRequired))
+		form.Rule("password", cash.RuleRequired, "")
 	case utf8.RuneCountInString(b.Password) < minPassword:
-		form.AddErr(httpx.RuleErrorWith("password", "min_string", strconv.Itoa(minPassword)))
+		form.Rule("password", "min_string", strconv.Itoa(minPassword))
 	case b.Password != b.PasswordConfirmation:
-		form.AddErr(httpx.RuleError("password", "confirmed"))
+		form.Rule("password", "confirmed", "")
 	}
 	if discount != nil {
 		checkDiscount(&form, *discount)
@@ -270,10 +239,10 @@ func (h *handlers) CreateCustomer(ctx context.Context, req customersapi.CreateCu
 			return err
 		}
 		if c.PhoneTaken {
-			form.AddErr(httpx.RuleError("phone", "unique"))
+			form.Rule("phone", "unique", "")
 		}
 		if c.EmailTaken {
-			form.AddErr(httpx.RuleError("email", "unique"))
+			form.Rule("email", "unique", "")
 		}
 		return nil
 	})
@@ -299,55 +268,67 @@ func (h *handlers) CreateCustomer(ctx context.Context, req customersapi.CreateCu
 	if err != nil {
 		return nil, err
 	}
-	now := h.d.NowFunc()
+	c := newCustomer{name: name, phone: phone, email: email, discount: discountValue, passwordHash: hash,
+		balance: money.Tiyn(balance), bonusBalance: money.Tiyn(bonusBalance), now: h.d.NowFunc()}
 	var out customersapi.CustomerSaved
 	err = h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		var err error
-		out, err = httpx.Idempotent(ctx, q, clubID, key, "create_customer", createFingerprint(b), now,
-			func() (customersapi.CustomerSaved, error) {
-				userID, err := q.AdminCreateCustomer(ctx, store.AdminCreateCustomerParams{
-					ClubID: clubID, Discount: discountValue, Now: &now, Name: name, Phone: phone, Email: email, PasswordHash: hash,
-				})
-				if uniqueViolation(err, "users_phone_unique") {
-					return customersapi.CustomerSaved{}, httpx.RuleError("phone", "unique")
-				}
-				if err != nil {
-					return customersapi.CustomerSaved{}, err
-				}
-				if err := q.EnsureMemberBalance(ctx, store.EnsureMemberBalanceParams{ClubID: clubID, UserID: userID}); err != nil {
-					return customersapi.CustomerSaved{}, err
-				}
-				// RQ-13: начальный баланс — операция ledger initial_balance (не UPDATE баланса).
-				if _, err := billing.SetInitialBalance(ctx, q, billing.InitialBalanceParams{
-					ClubID: clubID, UserID: userID, Main: money.Tiyn(balance), Bonus: money.Tiyn(bonusBalance), Actor: httpx.Actor(ctx),
-				}); err != nil {
-					return customersapi.CustomerSaved{}, err
-				}
-				if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
-					ClubID: clubID, UserID: httpx.Principal(ctx).UserID, SubjectType: subjectUser, SubjectID: userID,
-					Event: "user.created", Description: h.d.T(ctx, msgUserCreatedLog, map[string]string{"user": name}),
-					Details: map[string]any{"phone": phone, "role": permissions.RoleClient},
-				}); err != nil {
-					return customersapi.CustomerSaved{}, err
-				}
-				row, err := customer(ctx, q, clubID, userID)
-				if err != nil {
-					return customersapi.CustomerSaved{}, err
-				}
-				if balance != 0 || bonusBalance != 0 {
-					if row, err = h.notifyBalance(ctx, q, clubID, userID); err != nil {
-						return customersapi.CustomerSaved{}, err
-					}
-				}
-				view, err := h.view(ctx, q, clubID, row)
-				return customersapi.CustomerSaved{Customer: view, Message: h.d.T(ctx, msgUserAdded, nil)}, err
-			})
+		out, err = httpx.Idempotent(ctx, q, clubID, key, "create_customer", createFingerprint(b), c.now,
+			func() (customersapi.CustomerSaved, error) { return h.insertCustomer(ctx, q, clubID, c) })
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return customersapi.CreateCustomer201JSONResponse(out), nil
+}
+
+// newCustomer — проверенная форма создания клиента.
+type newCustomer struct {
+	name, phone, discount, passwordHash string
+	email                               *string
+	balance, bonusBalance               money.Tiyn
+	now                                 time.Time
+}
+
+// insertCustomer — клиент клуба, строка баланса, начальный баланс через ledger, журнал user.created.
+func (h *handlers) insertCustomer(ctx context.Context, q *store.Queries, clubID int64, c newCustomer) (customersapi.CustomerSaved, error) {
+	userID, err := q.AdminCreateCustomer(ctx, store.AdminCreateCustomerParams{
+		ClubID: clubID, Discount: c.discount, Now: &c.now, Name: c.name, Phone: c.phone, Email: c.email, PasswordHash: c.passwordHash,
+	})
+	if uniqueViolation(err, "users_phone_unique") {
+		return customersapi.CustomerSaved{}, httpx.RuleError("phone", "unique")
+	}
+	if err != nil {
+		return customersapi.CustomerSaved{}, err
+	}
+	if err := q.EnsureMemberBalance(ctx, store.EnsureMemberBalanceParams{ClubID: clubID, UserID: userID}); err != nil {
+		return customersapi.CustomerSaved{}, err
+	}
+	// RQ-13: начальный баланс — операция ledger initial_balance (не UPDATE баланса).
+	if _, err := billing.SetInitialBalance(ctx, q, billing.InitialBalanceParams{
+		ClubID: clubID, UserID: userID, Main: c.balance, Bonus: c.bonusBalance, Actor: httpx.Actor(ctx),
+	}); err != nil {
+		return customersapi.CustomerSaved{}, err
+	}
+	if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
+		ClubID: clubID, UserID: httpx.Principal(ctx).UserID, SubjectType: subjectUser, SubjectID: userID,
+		Event: "user.created", Description: h.d.T(ctx, msgUserCreatedLog, map[string]string{"user": c.name}),
+		Details: map[string]any{"phone": c.phone, "role": permissions.RoleClient},
+	}); err != nil {
+		return customersapi.CustomerSaved{}, err
+	}
+	row, err := customer(ctx, q, clubID, userID)
+	if err != nil {
+		return customersapi.CustomerSaved{}, err
+	}
+	if c.balance != 0 || c.bonusBalance != 0 {
+		if row, err = h.notifyBalance(ctx, q, clubID, userID); err != nil {
+			return customersapi.CustomerSaved{}, err
+		}
+	}
+	view, err := h.view(ctx, q, clubID, row)
+	return customersapi.CustomerSaved{Customer: view, Message: h.d.T(ctx, msgUserAdded, nil)}, err
 }
 
 // orDash — ($value ?? '—') журнала изменений.
@@ -406,13 +387,13 @@ func (h *handlers) UpdateCustomer(ctx context.Context, req customersapi.UpdateCu
 				act = *action
 			}
 			if balanceType == nil {
-				form.AddErr(httpx.RuleError("top_up_balance", cash.RuleRequired)) // required_with:top_up_amount
+				form.Rule("top_up_balance", cash.RuleRequired, "") // required_with:top_up_amount
 			}
 			a := parseOwnerAdjustment(&form, *b.TopUpAmountTiyn, bt, act)
 			adj = &a
 		}
 	} else if balanceType != nil && *balanceType != string(billing.FieldMain) && *balanceType != string(billing.FieldBonus) {
-		form.AddErr(httpx.RuleError("top_up_balance", cash.RuleIn))
+		form.Rule("top_up_balance", cash.RuleIn, "")
 	}
 	if action != nil && !isOwner {
 		form.Add("balance_action", msgOwnerOnlyBalance)
@@ -421,7 +402,7 @@ func (h *handlers) UpdateCustomer(ctx context.Context, req customersapi.UpdateCu
 		if err := h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 			c, err := conflicts(ctx, q, "", email, req.UserId)
 			if err == nil && c.EmailTaken {
-				form.AddErr(httpx.RuleError("email", "unique"))
+				form.Rule("email", "unique", "")
 			}
 			return err
 		}); err != nil {
@@ -443,76 +424,88 @@ func (h *handlers) UpdateCustomer(ctx context.Context, req customersapi.UpdateCu
 		return nil, httpx.NewAPIError(http.StatusBadRequest, "idempotency_key_required", "")
 	}
 
-	now := h.d.NowFunc()
-	run := func(ctx context.Context, q *store.Queries) (customersapi.CustomerSaved, error) {
-		c, err := customerOrStaff(ctx, q, clubID, req.UserId)
-		if err != nil {
-			return customersapi.CustomerSaved{}, err
-		}
-		if _, err := q.AdminUpdateCustomerAccount(ctx, store.AdminUpdateCustomerAccountParams{
-			Name: name, Email: email, Now: &now, UserID: req.UserId, ClubID: clubID,
-		}); err != nil {
-			return customersapi.CustomerSaved{}, err
-		}
-		after := c.Discount
-		if discount != nil {
-			if after, err = q.AdminUpdateCustomerDiscount(ctx, store.AdminUpdateCustomerDiscountParams{
-				Discount: *discount, Now: &now, ClubID: clubID, UserID: req.UserId,
-			}); err != nil {
-				return customersapi.CustomerSaved{}, err
-			}
-		}
-		changes := map[string]any{}
-		if c.Name != name {
-			changes["name"] = c.Name + " → " + name
-		}
-		if orDash(c.Email) != orDash(email) {
-			changes["email"] = orDash(c.Email) + " → " + orDash(email)
-		}
-		if c.Discount != after {
-			changes["discount"] = c.Discount + " → " + after
-		}
-		if len(changes) > 0 {
-			if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
-				ClubID: clubID, UserID: p.UserID, SubjectType: subjectUser, SubjectID: req.UserId,
-				Event: "user.updated", Description: h.d.T(ctx, msgCustomerUpdatedLog, map[string]string{"user": name}), Details: changes,
-			}); err != nil {
-				return customersapi.CustomerSaved{}, err
-			}
-		}
-		msg, params := msgCustomerSaved, map[string]string(nil)
-		if adj != nil {
-			c.Name = name
-			if msg, err = h.ownerAdjust(ctx, q, clubID, c, *adj, key); err != nil {
-				return customersapi.CustomerSaved{}, err
-			}
-			params = map[string]string{"amount": httpx.NumberFormat(adj.amount, ".")}
-			if _, err := h.notifyBalance(ctx, q, clubID, req.UserId); err != nil {
-				return customersapi.CustomerSaved{}, err
-			}
-		}
-		row, err := customer(ctx, q, clubID, req.UserId)
-		if err != nil {
-			return customersapi.CustomerSaved{}, err
-		}
-		view, err := h.view(ctx, q, clubID, row)
-		return customersapi.CustomerSaved{Customer: view, Message: h.d.T(ctx, msg, params)}, err
-	}
+	u := customerUpdate{userID: req.UserId, name: name, email: email, discount: discount, adj: adj, key: key, now: h.d.NowFunc()}
 	var out customersapi.CustomerSaved
 	err = h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		var err error
 		if adj == nil {
-			out, err = run(ctx, q)
+			out, err = h.saveCustomer(ctx, q, clubID, u)
 			return err
 		}
-		out, err = httpx.Idempotent(ctx, q, clubID, key, "update_customer", map[string]any{"user_id": req.UserId, "body": b}, now,
-			func() (customersapi.CustomerSaved, error) { return run(ctx, q) })
+		out, err = httpx.Idempotent(ctx, q, clubID, key, "update_customer", map[string]any{"user_id": req.UserId, "body": b}, u.now,
+			func() (customersapi.CustomerSaved, error) { return h.saveCustomer(ctx, q, clubID, u) })
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return customersapi.UpdateCustomer200JSONResponse(out), nil
+}
+
+// customerUpdate — проверенная форма изменения клиента; adj — пополнение или списание владельцем (ключ key).
+type customerUpdate struct {
+	userID          int64
+	name            string
+	email, discount *string
+	adj             *ownerAdjustment
+	key             string
+	now             time.Time
+}
+
+// saveCustomer — имя, email, скидка, журнал user.updated, пополнение или списание владельцем.
+func (h *handlers) saveCustomer(ctx context.Context, q *store.Queries, clubID int64, u customerUpdate) (customersapi.CustomerSaved, error) {
+	c, err := customerOrStaff(ctx, q, clubID, u.userID)
+	if err != nil {
+		return customersapi.CustomerSaved{}, err
+	}
+	if _, err := q.AdminUpdateCustomerAccount(ctx, store.AdminUpdateCustomerAccountParams{
+		Name: u.name, Email: u.email, Now: &u.now, UserID: u.userID, ClubID: clubID,
+	}); err != nil {
+		return customersapi.CustomerSaved{}, err
+	}
+	after := c.Discount
+	if u.discount != nil {
+		if after, err = q.AdminUpdateCustomerDiscount(ctx, store.AdminUpdateCustomerDiscountParams{
+			Discount: *u.discount, Now: &u.now, ClubID: clubID, UserID: u.userID,
+		}); err != nil {
+			return customersapi.CustomerSaved{}, err
+		}
+	}
+	changes := map[string]any{}
+	if c.Name != u.name {
+		changes["name"] = c.Name + " → " + u.name
+	}
+	if orDash(c.Email) != orDash(u.email) {
+		changes["email"] = orDash(c.Email) + " → " + orDash(u.email)
+	}
+	if c.Discount != after {
+		changes["discount"] = c.Discount + " → " + after
+	}
+	if len(changes) > 0 {
+		if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
+			ClubID: clubID, UserID: httpx.Principal(ctx).UserID, SubjectType: subjectUser, SubjectID: u.userID,
+			Event: "user.updated", Description: h.d.T(ctx, msgCustomerUpdatedLog, map[string]string{"user": u.name}), Details: changes,
+		}); err != nil {
+			return customersapi.CustomerSaved{}, err
+		}
+	}
+	msg, params := msgCustomerSaved, map[string]string(nil)
+	if u.adj != nil {
+		c.Name = u.name
+		if msg, err = h.ownerAdjust(ctx, q, clubID, c, *u.adj, u.key); err != nil {
+			return customersapi.CustomerSaved{}, err
+		}
+		params = map[string]string{"amount": httpx.NumberFormat(u.adj.amount, ".")}
+		if _, err := h.notifyBalance(ctx, q, clubID, u.userID); err != nil {
+			return customersapi.CustomerSaved{}, err
+		}
+	}
+	row, err := customer(ctx, q, clubID, u.userID)
+	if err != nil {
+		return customersapi.CustomerSaved{}, err
+	}
+	view, err := h.view(ctx, q, clubID, row)
+	return customersapi.CustomerSaved{Customer: view, Message: h.d.T(ctx, msg, params)}, err
 }
 
 // passwordChars — Str::password(8, symbols: false): буквы обоих регистров и цифры.
@@ -605,7 +598,7 @@ func (h *handlers) ResetCustomerPassword(ctx context.Context, req customersapi.R
 		}); err != nil {
 			return err
 		}
-		if err := audit(ctx, q, clubID, "security", "user.password_reset", subjectUser, req.UserId, nil, map[string]any{"delivery": "screen"}); err != nil {
+		if err := httpx.Audit(ctx, q, clubID, "security", "user.password_reset", subjectUser, req.UserId, nil, map[string]any{"delivery": "screen"}); err != nil {
 			return err
 		}
 		// $user->tokens()->delete(): токены гостя на ПК отзываются, ПК клуба получают SignOutGuest.

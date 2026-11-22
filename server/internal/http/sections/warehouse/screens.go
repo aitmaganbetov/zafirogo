@@ -201,16 +201,16 @@ func (h *handlers) ReceiveStock(ctx context.Context, req warehouseapi.ReceiveSto
 	b := req.Body
 	var form httpx.FormErrors
 	if b.Quantity < 1 {
-		form.Add("quantity", httpx.RuleMessage("quantity", cash.RuleMin, ""))
+		form.Rule("quantity", cash.RuleMin, "")
 	} else if b.Quantity > stock.MaxReceiveQuantity {
-		form.Add("quantity", httpx.RuleMessage("quantity", cash.RuleMax, "100000"))
+		form.Rule("quantity", cash.RuleMax, "100000")
 	}
 	note := ""
 	if b.Note != nil {
 		note = *b.Note
 	}
 	if utf8.RuneCountInString(note) > maxNote {
-		form.Add("note", httpx.RuleMessage("note", cash.RuleMax, ""))
+		form.Rule("note", cash.RuleMax, "")
 	}
 	if err := form.Err(); err != nil {
 		return nil, err

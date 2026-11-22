@@ -98,13 +98,13 @@ func (h *handlers) Register(ctx context.Context, req authapi.RegisterRequestObje
 	case strings.TrimSpace(name) == "":
 		fe.Add("name", msgNameRequired)
 	case utf8.RuneCountInString(name) > maxString:
-		fe.Add("name", httpx.RuleMessage("name", "max_string", "255"))
+		fe.Rule("name", "max_string", "255")
 	}
 	switch {
 	case strings.TrimSpace(clubName) == "":
 		fe.Add("club_name", msgClubNameRequired)
 	case utf8.RuneCountInString(clubName) > maxString:
-		fe.Add("club_name", httpx.RuleMessage("club_name", "max_string", "255"))
+		fe.Rule("club_name", "max_string", "255")
 	}
 	h.validatePhone(ctx, pool, &fe, phone, auth.MsgPhoneRequired, auth.MsgPhoneInvalid, msgPhoneTaken)
 	validatePassword(&fe, pw, str(body.PasswordConfirmation), auth.MsgPasswordRequired, msgPasswordMin, msgPasswordMismatch)
@@ -374,74 +374,19 @@ func (h *handlers) AcceptInvitation(ctx context.Context, req authapi.AcceptInvit
 			return nil, err
 		}
 		userName = me.Name
-	} else {
-		// Без своих текстов — стандартные сообщения валидатора (accept() не задаёт messages).
-		userName, phone = str(body.Name), auth.NormalizePhone(str(body.Phone))
-		if phone == "" {
-			phone = "+7" // $request->merge(['phone' => '+7'.$digits]) — пустой номер даёт ошибку regex
-		}
-		pw := str(body.Password)
-		var fe httpx.FormErrors
-		switch {
-		case strings.TrimSpace(userName) == "":
-			fe.Add("name", httpx.RuleMessage("name", "required", ""))
-		case utf8.RuneCountInString(userName) > maxString:
-			fe.Add("name", httpx.RuleMessage("name", "max_string", "255"))
-		}
-		h.validatePhone(ctx, pool, &fe, phone, httpx.RuleMessage("phone", "required", ""),
-			httpx.RuleMessage("phone", "regex", ""), httpx.RuleMessage("phone", "unique", ""))
-		validatePassword(&fe, pw, str(body.PasswordConfirmation), httpx.RuleMessage("password", "required", ""),
-			httpx.RuleMessage("password", "min_string", "6"), httpx.RuleMessage("password", "confirmed", ""))
-		if err := fe.Err(); err != nil {
-			return nil, err
-		}
-		if hash, err = h.d.Passwords.Hash(ctx, pw); err != nil {
-			return nil, err
-		}
+	} else if userName, phone, hash, err = h.invitedAccount(ctx, pool, body); err != nil {
+		return nil, err
 	}
 
 	now := h.d.NowFunc()
-	userID := p.UserID
+	var newUser *store.RegisterCreateUserParams
+	if !authed {
+		newUser = &store.RegisterCreateUserParams{Name: userName, Phone: phone, Email: inv.Email, Password: hash, Now: &now}
+	}
+	var userID int64
 	err = db.InPlatformTx(ctx, pool, func(q *store.Queries) error {
-		lock, err := q.LockInvitation(ctx, store.LockInvitationParams{ID: inv.ID, ClubID: inv.ClubID})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return httpx.NotFound()
-		}
-		if err != nil {
-			return err
-		}
-		if lock.AcceptedAt != nil || !lock.ExpiresAt.After(now) {
-			return httpx.NewAPIError(http.StatusGone, "gone", "")
-		}
-		if !authed {
-			if userID, err = q.RegisterCreateUser(ctx, store.RegisterCreateUserParams{
-				Name: userName, Phone: phone, Email: inv.Email, Password: hash, Now: &now,
-			}); err != nil {
-				return err
-			}
-		}
-		exists, err := memberOf(ctx, q, inv.ClubID, userID)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return httpx.NewAPIError(http.StatusConflict, "already_member", msgAlreadyInClub)
-		}
-		if err := q.RegisterCreateMembership(ctx, store.RegisterCreateMembershipParams{ClubID: inv.ClubID, UserID: userID, Role: inv.Role, Now: &now}); err != nil {
-			return err
-		}
-		if err := q.EnsureMemberBalance(ctx, store.EnsureMemberBalanceParams{ClubID: inv.ClubID, UserID: userID}); err != nil {
-			return err
-		}
-		if err := q.InvitationMarkAccepted(ctx, store.InvitationMarkAcceptedParams{ID: inv.ID, ClubID: inv.ClubID, Now: &now}); err != nil {
-			return err
-		}
-		_, err = activity.Record(ctx, q, activity.Entry{
-			ClubID: inv.ClubID, Event: "invitation.accepted",
-			Description: httpx.Substitute(msgAccepted, map[string]string{"user": userName, "role": inv.Role}),
-			UserID:      userID, SubjectType: subjectInvite, SubjectID: inv.ID, At: now,
-			Details: map[string]any{"role": inv.Role, "new_account": !authed},
-		})
+		var err error
+		userID, err = joinClub(ctx, q, inv, p.UserID, userName, newUser, now)
 		return err
 	})
 	if isUnique(err) && !authed {
@@ -471,6 +416,76 @@ func (h *handlers) AcceptInvitation(ctx context.Context, req authapi.AcceptInvit
 		return nil, err
 	}
 	return authapi.AcceptInvitation200JSONResponse(out), nil
+}
+
+// invitedAccount — форма нового аккаунта по приглашению (гость без входа): имя, телефон, пароль. Без своих текстов —
+// стандартные сообщения валидатора (accept() не задаёт messages).
+func (h *handlers) invitedAccount(ctx context.Context, pool db.Beginner, body authapi.AcceptInvitationRequest) (name, phone, hash string, err error) {
+	name, phone = str(body.Name), auth.NormalizePhone(str(body.Phone))
+	if phone == "" {
+		phone = "+7" // $request->merge(['phone' => '+7'.$digits]) — пустой номер даёт ошибку regex
+	}
+	pw := str(body.Password)
+	var fe httpx.FormErrors
+	switch {
+	case strings.TrimSpace(name) == "":
+		fe.Rule("name", "required", "")
+	case utf8.RuneCountInString(name) > maxString:
+		fe.Rule("name", "max_string", "255")
+	}
+	h.validatePhone(ctx, pool, &fe, phone, httpx.RuleMessage("phone", "required", ""),
+		httpx.RuleMessage("phone", "regex", ""), httpx.RuleMessage("phone", "unique", ""))
+	validatePassword(&fe, pw, str(body.PasswordConfirmation), httpx.RuleMessage("password", "required", ""),
+		httpx.RuleMessage("password", "min_string", "6"), httpx.RuleMessage("password", "confirmed", ""))
+	if err := fe.Err(); err != nil {
+		return "", "", "", err
+	}
+	hash, err = h.d.Passwords.Hash(ctx, pw)
+	return name, phone, hash, err
+}
+
+// joinClub — принятие приглашения в транзакции: приглашение не принято и не истекло (иначе 410), новый аккаунт
+// (newUser != nil, иначе — пользователь userID), членство с ролью приглашения, строка баланса, отметка о принятии,
+// журнал invitation.accepted. Возвращает id пользователя.
+func joinClub(ctx context.Context, q *store.Queries, inv store.InvitationByTokenHashRow, userID int64, userName string, newUser *store.RegisterCreateUserParams, now time.Time) (int64, error) {
+	lock, err := q.LockInvitation(ctx, store.LockInvitationParams{ID: inv.ID, ClubID: inv.ClubID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, httpx.NotFound()
+	}
+	if err != nil {
+		return 0, err
+	}
+	if lock.AcceptedAt != nil || !lock.ExpiresAt.After(now) {
+		return 0, httpx.NewAPIError(http.StatusGone, "gone", "")
+	}
+	if newUser != nil {
+		if userID, err = q.RegisterCreateUser(ctx, *newUser); err != nil {
+			return 0, err
+		}
+	}
+	exists, err := memberOf(ctx, q, inv.ClubID, userID)
+	if err != nil {
+		return 0, err
+	}
+	if exists {
+		return 0, httpx.NewAPIError(http.StatusConflict, "already_member", msgAlreadyInClub)
+	}
+	if err := q.RegisterCreateMembership(ctx, store.RegisterCreateMembershipParams{ClubID: inv.ClubID, UserID: userID, Role: inv.Role, Now: &now}); err != nil {
+		return 0, err
+	}
+	if err := q.EnsureMemberBalance(ctx, store.EnsureMemberBalanceParams{ClubID: inv.ClubID, UserID: userID}); err != nil {
+		return 0, err
+	}
+	if err := q.InvitationMarkAccepted(ctx, store.InvitationMarkAcceptedParams{ID: inv.ID, ClubID: inv.ClubID, Now: &now}); err != nil {
+		return 0, err
+	}
+	_, err = activity.Record(ctx, q, activity.Entry{
+		ClubID: inv.ClubID, Event: "invitation.accepted",
+		Description: httpx.Substitute(msgAccepted, map[string]string{"user": userName, "role": inv.Role}),
+		UserID:      userID, SubjectType: subjectInvite, SubjectID: inv.ID, At: now,
+		Details: map[string]any{"role": inv.Role, "new_account": newUser != nil},
+	})
+	return userID, err
 }
 
 // ---------------------------------------------------------------------------

@@ -60,7 +60,7 @@ func (h *handlers) resellerHost() string {
 func resellerError(err error) error {
 	var fe httpx.FormErrors
 	if errors.Is(err, reseller.ErrPasswordRequired) {
-		fe.AddErr(httpx.RuleError("password", cash.RuleRequired))
+		fe.Rule("password", cash.RuleRequired, "")
 	}
 	if errors.Is(err, reseller.ErrCodeTaken) {
 		fe.AddErr(httpx.ValidationMsg("code", reseller.MsgCodeTaken, nil))
@@ -109,7 +109,7 @@ func (h *handlers) SaListResellers(ctx context.Context, req superadminapi.SaList
 		for _, c := range clubs {
 			club := superadminapi.ResellerClub{Id: c.ID, Name: c.Name}
 			if c.ResellerAttachedAt != nil {
-				club.Attached = ptr(c.ResellerAttachedAt.UTC().Format("02.01.2006"))
+				club.Attached = httpx.Ptr(c.ResellerAttachedAt.UTC().Format("02.01.2006"))
 			}
 			byReseller[c.ResellerID] = append(byReseller[c.ResellerID], club)
 		}
@@ -135,15 +135,15 @@ func (h *handlers) SaListResellers(ctx context.Context, req superadminapi.SaList
 func resellerTerms(fe *httpx.FormErrors, commissionBP, discountPercent int) {
 	switch {
 	case commissionBP < 0:
-		fe.AddErr(httpx.RuleErrorWith("commission_percent", cash.RuleMin, "0"))
+		fe.Rule("commission_percent", cash.RuleMin, "0")
 	case commissionBP > reseller.MaxCommissionBP:
-		fe.AddErr(httpx.RuleErrorWith("commission_percent", cash.RuleMax, "100"))
+		fe.Rule("commission_percent", cash.RuleMax, "100")
 	}
 	switch {
 	case discountPercent < 0:
-		fe.AddErr(httpx.RuleErrorWith("discount_percent", cash.RuleMin, "0"))
+		fe.Rule("discount_percent", cash.RuleMin, "0")
 	case discountPercent > reseller.MaxDiscountPercent:
-		fe.AddErr(httpx.RuleErrorWith("discount_percent", cash.RuleMax, "100"))
+		fe.Rule("discount_percent", cash.RuleMax, "100")
 	}
 }
 
@@ -165,22 +165,22 @@ func (h *handlers) SaCreateReseller(ctx context.Context, req superadminapi.SaCre
 	var fe httpx.FormErrors
 	switch {
 	case name == "":
-		fe.AddErr(httpx.RuleError("name", cash.RuleRequired))
+		fe.Rule("name", cash.RuleRequired, "")
 	case utf8.RuneCountInString(name) > reseller.MaxName:
-		fe.AddErr(httpx.RuleErrorWith("name", "max_string", strconv.Itoa(reseller.MaxName)))
+		fe.Rule("name", "max_string", strconv.Itoa(reseller.MaxName))
 	}
 	switch {
 	case phone == "":
-		fe.AddErr(httpx.RuleError("phone", cash.RuleRequired))
+		fe.Rule("phone", cash.RuleRequired, "")
 	case !reseller.ValidPhone(phone):
 		fe.AddErr(httpx.ValidationMsg("phone", reseller.MsgPhoneInvalid, nil))
 	}
 	if password != "" && utf8.RuneCountInString(password) < reseller.MinPassword {
-		fe.AddErr(httpx.RuleErrorWith("password", "min_string", strconv.Itoa(reseller.MinPassword)))
+		fe.Rule("password", "min_string", strconv.Itoa(reseller.MinPassword))
 	}
 	switch {
 	case code == "":
-		fe.AddErr(httpx.RuleError("code", cash.RuleRequired))
+		fe.Rule("code", cash.RuleRequired, "")
 	case !reseller.ValidCode(code):
 		fe.AddErr(httpx.ValidationMsg("code", reseller.MsgCodeFormat, nil))
 	}
@@ -290,12 +290,12 @@ func (h *handlers) SaPayoutReseller(ctx context.Context, req superadminapi.SaPay
 	var fe httpx.FormErrors
 	switch {
 	case b.AmountTiyn < reseller.MinPayout:
-		fe.AddErr(httpx.RuleErrorWith("amount", cash.RuleMin, "0.01"))
+		fe.Rule("amount", cash.RuleMin, "0.01")
 	case b.AmountTiyn > reseller.MaxPayout:
-		fe.AddErr(httpx.RuleErrorWith("amount", cash.RuleMax, "999999999"))
+		fe.Rule("amount", cash.RuleMax, "999999999")
 	}
 	if utf8.RuneCountInString(note) > reseller.MaxNote {
-		fe.AddErr(httpx.RuleErrorWith("note", "max_string", strconv.Itoa(reseller.MaxNote)))
+		fe.Rule("note", "max_string", strconv.Itoa(reseller.MaxNote))
 	}
 	if err := fe.Err(); err != nil {
 		return nil, err

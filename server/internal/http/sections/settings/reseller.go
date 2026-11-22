@@ -10,7 +10,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	settingsapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/settings"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
@@ -79,13 +78,11 @@ func (h *handlers) AttachClubReseller(ctx context.Context, req settingsapi.Attac
 		case err != nil:
 			return err
 		}
-		if _, err := activity.Record(ctx, q, activity.Entry{
-			ClubID: p.ClubID, Event: "club.reseller_attached", UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID, At: now,
-		}.Translated(logResellerAttached, map[string]string{"code": attached.Code})); err != nil {
+		if err := logClub(ctx, q, now, "club.reseller_attached", nil, logResellerAttached, map[string]string{"code": attached.Code}); err != nil {
 			return err
 		}
 		// Привязка меняет цену подписки клуба (скидка реселлера) — аудит (CLAUDE.md «Безопасность»).
-		return audit(ctx, q, p.ClubID, "reseller.attached", map[string]any{"reseller_id": nil},
+		return httpx.Audit(ctx, q, p.ClubID, "settings", "reseller.attached", subjectClub, p.ClubID, map[string]any{"reseller_id": nil},
 			map[string]any{"reseller_id": attached.ID, "code": attached.Code})
 	})
 	if err != nil {

@@ -76,7 +76,7 @@ func (h *handlers) SaListAccounts(ctx context.Context, req superadminapi.SaListA
 				a.Memberships = []superadminapi.AccountMembership{}
 			}
 			if u.BlockedAt != nil {
-				a.BlockedSince = ptr(u.BlockedAt.UTC().Format("02.01.2006"))
+				a.BlockedSince = httpx.Ptr(u.BlockedAt.UTC().Format("02.01.2006"))
 			}
 			out.Items = append(out.Items, a)
 		}

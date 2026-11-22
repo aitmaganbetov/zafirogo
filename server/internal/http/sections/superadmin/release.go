@@ -183,16 +183,16 @@ func (h *handlers) SaSetAgentRelease(ctx context.Context, req superadminapi.SaSe
 	version := strings.TrimSpace(b.LatestVersion)
 	switch {
 	case version == "":
-		fe.Add("latest_version", httpx.RuleMessage("latest_version", "required", ""))
+		fe.Rule("latest_version", "required", "")
 	case !versionRe.MatchString(version):
 		fe.AddMsg("latest_version", "Версия — три числа через точку, например 1.2.0.", nil)
 	}
 	releasedAt := strings.TrimSpace(b.ReleasedAt)
 	if releasedAt == "" {
-		fe.Add("released_at", httpx.RuleMessage("released_at", "required", ""))
+		fe.Rule("released_at", "required", "")
 	} else if _, err := time.Parse("2006-01-02", releasedAt); err != nil {
 		if _, err := time.Parse(time.RFC3339, releasedAt); err != nil {
-			fe.Add("released_at", httpx.RuleMessage("released_at", "date", ""))
+			fe.Rule("released_at", "date", "")
 		}
 	}
 	var download *string
@@ -201,7 +201,7 @@ func (h *handlers) SaSetAgentRelease(ctx context.Context, req superadminapi.SaSe
 		u, err := url.Parse(v)
 		switch {
 		case len([]rune(v)) > 500:
-			fe.Add("download_url", httpx.RuleMessage("download_url", "max_string", "500"))
+			fe.Rule("download_url", "max_string", "500")
 		case err != nil || u.Scheme != "https" || u.Host == "":
 			fe.AddMsg("download_url", "Ссылка на скачивание должна начинаться с https://.", nil)
 		}

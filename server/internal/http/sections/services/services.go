@@ -79,20 +79,20 @@ func validated(b servicesapi.ServiceRequest) (fields, error) {
 	var form httpx.FormErrors
 	switch {
 	case strings.TrimSpace(b.Name) == "":
-		form.Add("name", httpx.RuleMessage("name", cash.RuleRequired, ""))
+		form.Rule("name", cash.RuleRequired, "")
 	case utf8.RuneCountInString(b.Name) > maxName:
-		form.Add("name", httpx.RuleMessage("name", "max_string", "150"))
+		form.Rule("name", "max_string", "150")
 	}
 	switch {
 	case b.PriceTiyn < 0:
-		form.Add("price", httpx.RuleMessage("price", cash.RuleMin, ""))
+		form.Rule("price", cash.RuleMin, "")
 	case money.Tiyn(b.PriceTiyn) > MaxPrice:
-		form.Add("price", httpx.RuleMessage("price", cash.RuleMax, "9999999"))
+		form.Rule("price", cash.RuleMax, "9999999")
 	}
 	f := fields{name: strings.TrimSpace(b.Name), price: b.PriceTiyn, active: true}
 	if b.Unit != nil {
 		if utf8.RuneCountInString(*b.Unit) > maxUnit {
-			form.Add("unit", httpx.RuleMessage("unit", "max_string", "30"))
+			form.Rule("unit", "max_string", "30")
 		}
 		if u := strings.TrimSpace(*b.Unit); u != "" {
 			f.unit = &u

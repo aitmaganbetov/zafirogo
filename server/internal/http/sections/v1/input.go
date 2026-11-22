@@ -136,7 +136,7 @@ type form struct {
 func (c *call) form() *form { return &form{in: c.input} }
 
 func (f *form) fail(field, rule, param string) {
-	f.fe.Add(field, httpx.RuleMessage(field, rule, param))
+	f.fe.Rule(field, rule, param)
 }
 
 func (f *form) err() error { return f.fe.Err() }
@@ -410,5 +410,3 @@ func pageOf[T any](p page, rows []T, id func(T) int64, view func(T) any) respons
 		"meta": map[string]any{"per_page": p.limit, "next_cursor": next},
 	})
 }
-
-func ptr[T any](v T) *T { return &v }

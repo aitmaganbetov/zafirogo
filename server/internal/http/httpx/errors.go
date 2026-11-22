@@ -80,6 +80,9 @@ func (f *FormErrors) Add(field, message string) {
 	f.fields[field] = append(f.fields[field], message)
 }
 
+// Rule добавляет ошибку правила формы с текстом валидатора Laravel (RuleMessage; param "" — значение из ruleParams).
+func (f *FormErrors) Rule(field, rule, param string) { f.Add(field, RuleMessage(field, rule, param)) }
+
 // Has — есть ли ошибка поля.
 func (f *FormErrors) Has(field string) bool { return len(f.fields[field]) > 0 }
 

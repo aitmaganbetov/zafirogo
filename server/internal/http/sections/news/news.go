@@ -8,21 +8,13 @@ package news
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"errors"
-	"fmt"
-	"image"
 	_ "image/jpeg" // image.DecodeConfig: JPEG
 	_ "image/png"  // image.DecodeConfig: PNG
-	"io"
-	"math/big"
-	"mime/multipart"
 	"net/http"
 	"path"
 	"strconv"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -31,6 +23,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	newsapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/news"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
+	"github.com/aitmaganbetov/zafirogo/server/internal/http/newsform"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -76,10 +69,6 @@ const (
 	subjectNews = `App\Models\News`
 	// pageSize — News::PAGE.
 	pageSize = 20
-	// maxImage — max:2048 (килобайт).
-	maxImage = 2048 * 1024
-	// maxField — предел текстового поля формы при чтении (body max:5000 символов — до 20 000 байт UTF-8).
-	maxField = 64 * 1024
 )
 
 // ListNews — index(): новости клуба, новые сверху, по 20.
@@ -100,7 +89,7 @@ func (h *handlers) ListNews(ctx context.Context, req newsapi.ListNewsRequestObje
 			item := newsapi.NewsItem{Id: r.ID, Title: r.Title, Body: r.Body, IsPublished: r.IsPublished, CreatedAt: r.CreatedAt}
 			if r.ImagePath != nil && *r.ImagePath != "" {
 				item.HasImage = true
-				u := ImageURL(r.ID, *r.ImagePath)
+				u := newsform.ImageURL(r.ID, *r.ImagePath)
 				item.ImageUrl = &u
 			}
 			out.Items = append(out.Items, item)
@@ -113,160 +102,41 @@ func (h *handlers) ListNews(ctx context.Context, req newsapi.ListNewsRequestObje
 	return newsapi.ListNews200JSONResponse(out), nil
 }
 
-// ImageURL — News::imageUrl(): /news-images/{id}/{basename(image_path)}.
-func ImageURL(newsID int64, imagePath string) string {
-	return "/news-images/" + strconv.FormatInt(newsID, 10) + "/" + path.Base(imagePath)
-}
-
-// form — поля NewsManager::validate().
-type form struct {
-	title, body         string
-	published, hasPub   bool
-	removeImage         bool
-	image               []byte
-	imageType, imageExt string
-	hasTitle, hasBody   bool
-}
-
-// readForm — multipart: title, body, is_published, remove_image, image. Повтор поля (hidden 0 + checkbox 1) —
-// последнее значение, как разбор формы PHP.
-func readForm(mr *multipart.Reader) (form, error) {
-	var f form
-	if mr == nil {
-		return f, nil
-	}
-	for {
-		part, err := mr.NextPart()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return f, httpx.NewAPIError(http.StatusBadRequest, "bad_request", "")
-		}
-		name := part.FormName()
-		if name == "image" && part.FileName() != "" {
-			data, err := io.ReadAll(io.LimitReader(part, maxImage+1))
-			if err != nil {
-				return f, httpx.NewAPIError(http.StatusBadRequest, "bad_request", "")
-			}
-			f.image = data
-			continue
-		}
-		data, err := io.ReadAll(io.LimitReader(part, maxField))
-		if err != nil {
-			return f, httpx.NewAPIError(http.StatusBadRequest, "bad_request", "")
-		}
-		v := string(data)
-		switch name {
-		case "title":
-			f.title, f.hasTitle = strings.TrimSpace(v), true
-		case "body":
-			f.body, f.hasBody = strings.TrimSpace(v), true
-		case "is_published":
-			f.published, f.hasPub = boolField(v), true
-		case "remove_image":
-			f.removeImage = boolField(v)
-		}
-	}
-	return f, nil
-}
-
-// boolField — правило boolean Laravel: true/false, 1/0, "1"/"0" (иное — false).
-func boolField(v string) bool { return v == "1" || v == "true" }
-
-// validate — title required|max:150, body required|max:5000, image png/jpeg ≤ 2 МБ, 64…4096 пикселей.
-func (f *form) validate() error {
-	var fe httpx.FormErrors
-	switch n := utf8.RuneCountInString(f.title); {
-	case n == 0:
-		fe.Add("title", httpx.RuleMessage("title", "required", ""))
-	case n > 150:
-		fe.Add("title", httpx.RuleMessage("title", "max_string", "150"))
-	}
-	switch n := utf8.RuneCountInString(f.body); {
-	case n == 0:
-		fe.Add("body", httpx.RuleMessage("body", "required", ""))
-	case n > 5000:
-		fe.Add("body", httpx.RuleMessage("body", "max_string", "5000"))
-	}
-	if f.image != nil {
-		cfg, format, err := image.DecodeConfig(bytes.NewReader(f.image))
-		switch {
-		case err != nil || (format != "png" && format != "jpeg"):
-			fe.Add("image", httpx.RuleMessage("image", "mimes", ""))
-		case len(f.image) > maxImage:
-			fe.Add("image", httpx.RuleMessage("image", "max_file", ""))
-		case cfg.Width < 64 || cfg.Height < 64 || cfg.Width > 4096 || cfg.Height > 4096:
-			fe.Add("image", httpx.RuleMessage("image", "dimensions", ""))
-		default:
-			// storeImage(): guessExtension() === 'png' ? 'png' : 'jpg'.
-			f.imageType, f.imageExt = "image/jpeg", "jpg"
-			if format == "png" {
-				f.imageType, f.imageExt = "image/png", "png"
-			}
-		}
-	}
-	return fe.Err()
-}
-
-// randomName — Str::random(40): буквы и цифры.
-func randomName() (string, error) {
-	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 40)
-	for i := range b {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
-		if err != nil {
-			return "", err
-		}
-		b[i] = alphabet[n.Int64()]
-	}
-	return string(b), nil
-}
-
-// storeImage — картинка новости: путь news/<club>/<40 символов>.<png|jpg> и байты в news_images.
-func (f *form) imagePath(clubID int64) (string, error) {
-	name, err := randomName()
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("news/%d/%s.%s", clubID, name, f.imageExt), nil
-}
-
 // CreateNews — store(): новость клуба с картинкой, журнал news.created.
 func (h *handlers) CreateNews(ctx context.Context, req newsapi.CreateNewsRequestObject) (newsapi.CreateNewsResponseObject, error) {
-	f, err := readForm(req.Body)
+	f, err := newsform.Read(req.Body)
 	if err != nil {
 		return nil, err
 	}
-	if err := f.validate(); err != nil {
+	if err := f.Validate(); err != nil {
 		return nil, err
 	}
 	p := httpx.Principal(ctx)
 	now := h.d.NowFunc()
-	published := !f.hasPub || f.published // ($data['is_published'] ?? true)
+	published := !f.HasPublished || f.Published // ($data['is_published'] ?? true)
 	err = h.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		var imgPath *string
-		if f.image != nil {
-			pth, err := f.imagePath(p.ClubID)
+		if f.Image != nil {
+			pth, err := f.ImagePath("news/" + strconv.FormatInt(p.ClubID, 10))
 			if err != nil {
 				return err
 			}
 			imgPath = &pth
 		}
 		id, err := q.InsertClubNews(ctx, store.InsertClubNewsParams{
-			ClubID: p.ClubID, Title: f.title, Body: f.body, ImagePath: imgPath, IsPublished: published, CreatedBy: &p.UserID, Now: &now,
+			ClubID: p.ClubID, Title: f.Title, Body: f.Body, ImagePath: imgPath, IsPublished: published, CreatedBy: &p.UserID, Now: &now,
 		})
 		if err != nil {
 			return err
 		}
-		if f.image != nil {
-			if err := q.PutClubNewsImage(ctx, store.PutClubNewsImageParams{NewsID: id, ClubID: p.ClubID, ContentType: f.imageType, Data: f.image, Now: now}); err != nil {
+		if f.Image != nil {
+			if err := q.PutClubNewsImage(ctx, store.PutClubNewsImageParams{NewsID: id, ClubID: p.ClubID, ContentType: f.ImageType, Data: f.Image, Now: now}); err != nil {
 				return err
 			}
 		}
 		_, err = activity.Record(ctx, q, activity.Entry{
 			ClubID: p.ClubID, Event: "news.created", UserID: p.UserID, SubjectType: subjectNews, SubjectID: id, At: now,
-		}.Translated(logCreated, map[string]string{"title": f.title}))
+		}.Translated(logCreated, map[string]string{"title": f.Title}))
 		return err
 	})
 	if err != nil {
@@ -277,7 +147,7 @@ func (h *handlers) CreateNews(ctx context.Context, req newsapi.CreateNewsRequest
 
 // UpdateNews — update(): новая картинка или «убрать картинку» удаляют прежнюю; журнал news.updated.
 func (h *handlers) UpdateNews(ctx context.Context, req newsapi.UpdateNewsRequestObject) (newsapi.UpdateNewsResponseObject, error) {
-	f, err := readForm(req.Body)
+	f, err := newsform.Read(req.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -291,35 +161,35 @@ func (h *handlers) UpdateNews(ctx context.Context, req newsapi.UpdateNewsRequest
 		if err != nil {
 			return err
 		}
-		if err := f.validate(); err != nil {
+		if err := f.Validate(); err != nil {
 			return err
 		}
 		imgPath := cur.ImagePath
 		switch {
-		case f.image != nil:
-			pth, err := f.imagePath(p.ClubID)
+		case f.Image != nil:
+			pth, err := f.ImagePath("news/" + strconv.FormatInt(p.ClubID, 10))
 			if err != nil {
 				return err
 			}
 			imgPath = &pth
-			if err := q.PutClubNewsImage(ctx, store.PutClubNewsImageParams{NewsID: cur.ID, ClubID: p.ClubID, ContentType: f.imageType, Data: f.image, Now: now}); err != nil {
+			if err := q.PutClubNewsImage(ctx, store.PutClubNewsImageParams{NewsID: cur.ID, ClubID: p.ClubID, ContentType: f.ImageType, Data: f.Image, Now: now}); err != nil {
 				return err
 			}
-		case f.removeImage:
+		case f.RemoveImage:
 			imgPath = nil
 			if err := q.DeleteClubNewsImage(ctx, store.DeleteClubNewsImageParams{ClubID: p.ClubID, NewsID: cur.ID}); err != nil {
 				return err
 			}
 		}
 		if err := q.UpdateClubNews(ctx, store.UpdateClubNewsParams{
-			ClubID: p.ClubID, ID: cur.ID, Title: f.title, Body: f.body, IsPublished: f.hasPub && f.published, // ?? false
+			ClubID: p.ClubID, ID: cur.ID, Title: f.Title, Body: f.Body, IsPublished: f.HasPublished && f.Published, // ?? false
 			ImagePath: imgPath, Now: &now,
 		}); err != nil {
 			return err
 		}
 		_, err = activity.Record(ctx, q, activity.Entry{
 			ClubID: p.ClubID, Event: "news.updated", UserID: p.UserID, SubjectType: subjectNews, SubjectID: cur.ID, At: now,
-		}.Translated(logUpdated, map[string]string{"title": f.title}))
+		}.Translated(logUpdated, map[string]string{"title": f.Title}))
 		return err
 	})
 	if err != nil {

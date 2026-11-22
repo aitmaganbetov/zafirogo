@@ -84,7 +84,7 @@ func (h *handlers) SaListInvoices(ctx context.Context, req superadminapi.SaListI
 				row.Created = i.CreatedAt.UTC().Format("02.01.2006")
 			}
 			if i.PaidAt != nil {
-				row.Paid = ptr(i.PaidAt.UTC().Format("02.01.2006"))
+				row.Paid = httpx.Ptr(i.PaidAt.UTC().Format("02.01.2006"))
 			}
 			out.Closed = append(out.Closed, row)
 		}
@@ -203,10 +203,10 @@ func (h *handlers) SaSetInvoiceKaspi(ctx context.Context, req superadminapi.SaSe
 	case !httpsURL(link):
 		fe.Add("url", "The url field must be a valid URL.")
 	case utf8.RuneCountInString(link) > maxKaspiURLChars:
-		fe.Add("url", httpx.RuleMessage("url", "max_string", "500"))
+		fe.Rule("url", "max_string", "500")
 	}
 	if utf8.RuneCountInString(recipient) > maxKaspiRecipientChars {
-		fe.Add("recipient", httpx.RuleMessage("recipient", "max_string", "200"))
+		fe.Rule("recipient", "max_string", "200")
 	}
 	if err := fe.Err(); err != nil {
 		return nil, err

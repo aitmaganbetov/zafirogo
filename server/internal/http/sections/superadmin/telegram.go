@@ -92,7 +92,7 @@ func (h *handlers) SaTelegram(ctx context.Context, _ superadminapi.SaTelegramReq
 			return err
 		}
 		if al != nil {
-			out.AlertsChatId = ptr(al.ChatID)
+			out.AlertsChatId = httpx.Ptr(al.ChatID)
 		}
 		since := now.Add(-30 * 24 * time.Hour)
 		out.SentLastMonth, err = q.SuperadminCountPlatformEventSince(ctx, store.SuperadminCountPlatformEventSinceParams{Event: "user.password_code_sent", Since: &since})
@@ -166,9 +166,9 @@ func (h *handlers) SaSetTelegramAlerts(ctx context.Context, req superadminapi.Sa
 	token := strings.TrimSpace(req.Body.BotToken)
 	switch {
 	case token == "":
-		fe.Add("bot_token", httpx.RuleMessage("bot_token", "required", ""))
+		fe.Rule("bot_token", "required", "")
 	case len(token) > 255:
-		fe.Add("bot_token", httpx.RuleMessage("bot_token", "max_string", "255"))
+		fe.Rule("bot_token", "max_string", "255")
 	case !botTokenRe.MatchString(token):
 		fe.AddMsg("bot_token", "Это не похоже на токен бота: скопируйте его из сообщения @BotFather.", nil)
 	}
@@ -179,7 +179,7 @@ func (h *handlers) SaSetTelegramAlerts(ctx context.Context, req superadminapi.Sa
 	switch {
 	case chat == "":
 	case len(chat) > 64:
-		fe.Add("chat_id", httpx.RuleMessage("chat_id", "max_string", "64"))
+		fe.Rule("chat_id", "max_string", "64")
 	case !chatIDRe.MatchString(chat):
 		fe.AddMsg("chat_id", "ID чата — число (у групп со знаком минус) или @имя канала.", nil)
 	}

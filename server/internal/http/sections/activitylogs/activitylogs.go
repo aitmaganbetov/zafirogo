@@ -101,36 +101,36 @@ func (h *handlers) ListActivityLogs(ctx context.Context, req activitylogsapi.Lis
 			if d, ok := parseDay(info, from); ok {
 				fromAt = d
 			} else {
-				fe.Add("from", httpx.RuleMessage("from", "date", ""))
+				fe.Rule("from", "date", "")
 			}
 		}
 		if to != "" {
 			if d, ok := parseDay(info, to); ok {
 				toAt = d.AddDate(0, 0, 1)
 			} else {
-				fe.Add("to", httpx.RuleMessage("to", "date", ""))
+				fe.Rule("to", "date", "")
 			}
 		}
 		if event != "" {
 			if _, ok := activity.Label(event); !ok {
-				fe.Add("event", httpx.RuleMessage("event", "in", ""))
+				fe.Rule("event", "in", "")
 			}
 		}
 		var userID int64
 		if userRaw != "" {
 			id, err := strconv.ParseInt(userRaw, 10, 64)
 			if err != nil {
-				fe.Add("user_id", httpx.RuleMessage("user_id", "integer", ""))
+				fe.Rule("user_id", "integer", "")
 			} else if ok, err := q.ClubMemberExists(ctx, store.ClubMemberExistsParams{ClubID: p.ClubID, UserID: id}); err != nil {
 				return err
 			} else if !ok {
-				fe.Add("user_id", httpx.RuleMessage("user_id", "in", ""))
+				fe.Rule("user_id", "in", "")
 			} else {
 				userID = id
 			}
 		}
 		if utf8.RuneCountInString(search) > 120 {
-			fe.Add("search", httpx.RuleMessage("search", "max_string", "120"))
+			fe.Rule("search", "max_string", "120")
 		}
 		if err := fe.Err(); err != nil {
 			return err

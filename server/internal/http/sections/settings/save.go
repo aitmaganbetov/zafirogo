@@ -101,11 +101,11 @@ func validate(section string, in input) (map[string]bonus.Value, *httpx.FormErro
 		if allowed, ok := enums[field]; ok {
 			// currency: required_if:section,finances; остальные — sometimes.
 			if field == "currency" && jsonKind(v) == 'n' {
-				fe.Add(field, httpx.RuleMessage(field, cash.RuleRequired, ""))
+				fe.Rule(field, cash.RuleRequired, "")
 				continue
 			}
 			if present && jsonKind(v) != 'n' && !slices.Contains(allowed, phpString(v)) || present && jsonKind(v) == 'a' {
-				fe.Add(field, httpx.RuleMessage(field, cash.RuleIn, ""))
+				fe.Rule(field, cash.RuleIn, "")
 			}
 			continue
 		}
@@ -123,7 +123,7 @@ func validate(section string, in input) (map[string]bonus.Value, *httpx.FormErro
 			continue
 		}
 		if slices.Contains(booleanFields, field) && present && !isBooleanInput(v) {
-			fe.Add(field, httpx.RuleMessage(field, "boolean", ""))
+			fe.Rule(field, "boolean", "")
 		}
 	}
 	return levels, fe
@@ -134,7 +134,7 @@ func validate(section string, in input) (map[string]bonus.Value, *httpx.FormErro
 func validateNumber(fe *httpx.FormErrors, field string, v json.RawMessage, present bool, r numberRule) {
 	if jsonKind(v) == 'n' || (jsonKind(v) == 'a' && !truthy(v)) {
 		if r.required {
-			fe.Add(field, httpx.RuleMessage(field, cash.RuleRequired, ""))
+			fe.Rule(field, cash.RuleRequired, "")
 		}
 		return
 	}
@@ -143,10 +143,10 @@ func validateNumber(fe *httpx.FormErrors, field string, v json.RawMessage, prese
 	}
 	if r.integer {
 		if !isIntegerInput(v) {
-			fe.Add(field, httpx.RuleMessage(field, cash.RuleInteger, ""))
+			fe.Rule(field, cash.RuleInteger, "")
 		}
 	} else if !isNumeric(v) {
-		fe.Add(field, httpx.RuleMessage(field, cash.RuleNumeric, ""))
+		fe.Rule(field, cash.RuleNumeric, "")
 	}
 	if !isNumeric(v) {
 		return
@@ -155,10 +155,10 @@ func validateNumber(fe *httpx.FormErrors, field string, v json.RawMessage, prese
 	lo, _ := new(big.Rat).SetString(r.min)
 	hi, _ := new(big.Rat).SetString(r.max)
 	if n.Cmp(lo) < 0 {
-		fe.Add(field, httpx.RuleMessage(field, cash.RuleMin, r.min))
+		fe.Rule(field, cash.RuleMin, r.min)
 	}
 	if n.Cmp(hi) > 0 {
-		fe.Add(field, httpx.RuleMessage(field, cash.RuleMax, r.max))
+		fe.Rule(field, cash.RuleMax, r.max)
 	}
 }
 
@@ -262,7 +262,7 @@ func addLevelErrors(fe *httpx.FormErrors, field, threshold string, kept bonus.Va
 				if r == "max" {
 					fe.AddMsg(field, msg.tooMany, map[string]string{"max": strconv.Itoa(bonus.MaxLevels)})
 				} else {
-					fe.Add(field, httpx.RuleMessage(field, r, ""))
+					fe.Rule(field, r, "")
 				}
 			}
 		case strings.HasSuffix(e.Key, "."+threshold):
@@ -286,7 +286,7 @@ func addLevelErrors(fe *httpx.FormErrors, field, threshold string, kept bonus.Va
 			}
 		default: // F.N: array:T,percent
 			for _, r := range rs {
-				fe.Add(e.Key, httpx.RuleMessage(e.Key, r, ""))
+				fe.Rule(e.Key, r, "")
 			}
 		}
 	}
@@ -297,7 +297,7 @@ func addLevelErrors(fe *httpx.FormErrors, field, threshold string, kept bonus.Va
 			continue
 		}
 		if t := level.Get(threshold); t.IsNumeric() && !twoDecimals(t) {
-			fe.Add(key, httpx.RuleMessage(key, cash.RuleDecimal, ""))
+			fe.Rule(key, cash.RuleDecimal, "")
 		}
 	}
 }

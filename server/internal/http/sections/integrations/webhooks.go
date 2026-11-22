@@ -37,19 +37,19 @@ func (h *handlers) validateWebhook(ctx context.Context, rawURL *string, evs *[]s
 	}
 	switch {
 	case d.url == "":
-		fe.Add("url", httpx.RuleMessage("url", cash.RuleRequired, ""))
+		fe.Rule("url", cash.RuleRequired, "")
 	case utf8.RuneCountInString(d.url) > 500:
-		fe.Add("url", httpx.RuleMessage("url", "max_string", "500"))
+		fe.Rule("url", "max_string", "500")
 	case !validURL(d.url):
 		// validation.url — в ru.php нет: английский текст валидатора по умолчанию, как в старом.
 		fe.Add("url", "The url field must be a valid URL.")
 	}
 	if evs == nil || len(*evs) == 0 {
-		fe.Add("events", httpx.RuleMessage("events", cash.RuleRequired, ""))
+		fe.Rule("events", cash.RuleRequired, "")
 	} else {
 		for i, e := range *evs {
 			if !knownEvent(e) {
-				fe.Add("events."+strconv.Itoa(i), httpx.RuleMessage("events."+strconv.Itoa(i), cash.RuleIn, ""))
+				fe.Rule("events."+strconv.Itoa(i), cash.RuleIn, "")
 			} else if !slices.Contains(d.events, e) {
 				d.events = append(d.events, e)
 			}
@@ -379,7 +379,7 @@ func (h *handlers) UpdateIntegrationsPermission(ctx context.Context, req integra
 			map[string]string{"user": name}, map[string]any{"can_manage_integrations": strconv.FormatBool(allowed)}, now); err != nil {
 			return err
 		}
-		if err := audit(ctx, q, v.p.ClubID, "permission", "integrations.permission_changed", `App\Models\ClubMembership`, m.ID,
+		if err := httpx.Audit(ctx, q, v.p.ClubID, "permission", "integrations.permission_changed", `App\Models\ClubMembership`, m.ID,
 			map[string]any{"can_manage_integrations": m.CanManageIntegrations}, map[string]any{"can_manage_integrations": allowed}); err != nil {
 			return err
 		}

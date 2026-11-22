@@ -14,6 +14,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/clubmap"
+	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
 	"github.com/aitmaganbetov/zafirogo/server/internal/stock"
@@ -85,7 +86,7 @@ func (h *handlers) listProducts(c *call) response {
 	}
 	if truthyStr(search) {
 		// addcslashes($search, '%_\\').'%' — начало имени.
-		arg.SearchPrefix = ptr(strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(*search) + "%")
+		arg.SearchPrefix = httpx.Ptr(strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(*search) + "%")
 	}
 	if truthyInt(category) {
 		arg.CategoryID = category
@@ -212,7 +213,7 @@ func (h *handlers) validateProduct(ctx context.Context, c *call, q *store.Querie
 			f.fe.Add("quantity", "Use POST /api/v1/stock-movements to change stock.")
 		}
 	} else {
-		out.quantity = f.integer("quantity", true, ptr(int64(0)), ptr(stock.MaxInitialQuantity))
+		out.quantity = f.integer("quantity", true, httpx.Ptr(int64(0)), httpx.Ptr(stock.MaxInitialQuantity))
 	}
 	return out, f.err()
 }
@@ -340,7 +341,7 @@ func (h *handlers) createStockMovement(c *call) response {
 			}
 		}
 		typ := f.oneOf("type", string(stock.Receipt), string(stock.WriteOff))
-		qty := f.integer("quantity", true, ptr(int64(1)), ptr(stock.MaxReceiveQuantity))
+		qty := f.integer("quantity", true, httpx.Ptr(int64(1)), httpx.Ptr(stock.MaxReceiveQuantity))
 		note := f.str("note", false, stock.MaxNote)
 		if err := f.err(); err != nil {
 			return err

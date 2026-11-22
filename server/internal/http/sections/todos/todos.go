@@ -126,14 +126,14 @@ func (h *handlers) CreateTodo(ctx context.Context, req todosapi.CreateTodoReques
 		var fe httpx.FormErrors
 		switch n := utf8.RuneCountInString(title); {
 		case n == 0:
-			fe.Add("title", httpx.RuleMessage("title", "required", ""))
+			fe.Rule("title", "required", "")
 		case n > maxTitleChars:
-			fe.Add("title", httpx.RuleMessage("title", "max_string", "200"))
+			fe.Rule("title", "max_string", "200")
 		}
 		if req.Body.DueOn == "" {
-			fe.Add("due_on", httpx.RuleMessage("due_on", "required", ""))
+			fe.Rule("due_on", "required", "")
 		} else if d, ok := info.ParseDay(req.Body.DueOn); !ok {
-			fe.Add("due_on", httpx.RuleMessage("due_on", "date_format", ""))
+			fe.Rule("due_on", "date_format", "")
 		} else if d.Before(info.StartOfDay(now)) {
 			fe.Add("due_on", msgPastDay)
 		} else {

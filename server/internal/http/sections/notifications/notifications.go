@@ -151,7 +151,7 @@ func (h *handlers) ListNotifications(ctx context.Context, _ notificationsapi.Lis
 		n := it.Notification
 		n.Unread = seenAt == nil || it.at.After(*seenAt)
 		n.At = it.at.Format(time.RFC3339)
-		n.AtHuman = diffForHumans(it.at, now, locale)
+		n.AtHuman = httpx.DiffForHumans(it.at, now, locale)
 		if n.Unread {
 			out.UnreadCount++
 		}
@@ -261,7 +261,7 @@ func (h *handlers) lowStock(ctx context.Context, q *store.Queries, clubID int64,
 // offline — ПК, которые должны быть на связи (status <> offline), но не отвечают дольше HEARTBEAT_TIMEOUT. Связь
 // агента в новом сервере — присутствие в Valkey: ПК, чей агент сейчас в сети, не считается.
 func (h *handlers) offline(ctx context.Context, q *store.Queries, clubID int64, now time.Time, items []item) ([]item, error) {
-	rows, err := q.NotificationOfflineComputers(ctx, store.NotificationOfflineComputersParams{ClubID: clubID, SeenBefore: ptr(now.Add(-heartbeatTimeout))})
+	rows, err := q.NotificationOfflineComputers(ctx, store.NotificationOfflineComputersParams{ClubID: clubID, SeenBefore: httpx.Ptr(now.Add(-heartbeatTimeout))})
 	if err != nil || len(rows) == 0 {
 		return items, err
 	}
@@ -480,5 +480,3 @@ func strimwidth(s string, width int) string {
 	r := []rune(s)
 	return string(r[:width-1]) + "…"
 }
-
-func ptr[T any](v T) *T { return &v }

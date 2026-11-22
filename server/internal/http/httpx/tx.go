@@ -2,8 +2,10 @@ package httpx
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/netip"
 	"strconv"
@@ -42,6 +44,39 @@ func Actor(ctx context.Context) billing.BalanceActor {
 		}
 	}
 	return a
+}
+
+// Audit — запись audit_log клуба clubID (только добавление) от имени того, кто выполняет запрос (Actor: сотрудник,
+// IP, X-Request-Id). subjectType "" — без субъекта; before/after — значения до и после в JSON, nil — NULL. Секреты
+// в before/after не передаются.
+func Audit(ctx context.Context, q *store.Queries, clubID int64, category, action, subjectType string, subjectID int64, before, after any) error {
+	a := Actor(ctx)
+	p := store.InsertAuditLogParams{ClubID: &clubID, ActorKind: a.Kind, Category: category, Action: action}
+	if subjectType != "" {
+		p.SubjectType, p.SubjectID = &subjectType, &subjectID
+	}
+	if a.UserID > 0 {
+		p.ActorUserID = &a.UserID
+	}
+	if a.IP.IsValid() {
+		ip := a.IP
+		p.Ip = &ip
+	}
+	if a.RequestID != "" {
+		p.RequestID = &a.RequestID
+	}
+	var err error
+	if before != nil {
+		if p.Before, err = json.Marshal(before); err != nil {
+			return err
+		}
+	}
+	if after != nil {
+		if p.After, err = json.Marshal(after); err != nil {
+			return err
+		}
+	}
+	return q.InsertAuditLog(ctx, p)
 }
 
 // Tx — тенантная транзакция клуба из Principal (auth.TenantTx: app.club_id, RLS). Действия после коммита
@@ -131,6 +166,20 @@ func LikePattern(q *string) string {
 	}
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return "%" + r.Replace(s) + "%"
+}
+
+// RandomName — Str::random(40): 40 случайных букв и цифр (имена файлов картинок).
+func RandomName() (string, error) {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, 40)
+	for i := range b {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
+		if err != nil {
+			return "", err
+		}
+		b[i] = alphabet[n.Int64()]
+	}
+	return string(b), nil
 }
 
 // Ptr — указатель на значение.

@@ -1,14 +1,14 @@
-package notifications
+package httpx
 
 import (
 	"strconv"
 	"time"
 )
 
-// diffForHumans — Carbon::diffForHumans() (одна единица, относительно now) на языке клуба: «5 минут назад»,
+// DiffForHumans — Carbon::diffForHumans() (одна единица, относительно now) на языке клуба: «5 минут назад»,
 // «через 2 часа», «3 days ago». Единицы — как в Carbon: секунды, минуты, часы, дни, недели, месяцы, годы
 // (вперёд — «через …»). Формы — переводы Carbon (resources/lang Carbon: ru, kk, en).
-func diffForHumans(at, now time.Time, locale string) string {
+func DiffForHumans(at, now time.Time, locale string) string {
 	d := now.Sub(at)
 	future := d < 0
 	if future {

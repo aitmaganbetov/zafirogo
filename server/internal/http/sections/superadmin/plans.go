@@ -83,44 +83,44 @@ func validatePlan(ctx context.Context, q *store.Queries, f superadminapi.PlanFor
 	d := planData{slug: strings.TrimSpace(f.Slug), name: strings.TrimSpace(f.Name), price: f.PriceMonthlyTiyn}
 	switch {
 	case d.slug == "":
-		fe.Add("slug", httpx.RuleMessage("slug", "required", ""))
+		fe.Rule("slug", "required", "")
 	case utf8.RuneCountInString(d.slug) > 80:
-		fe.Add("slug", httpx.RuleMessage("slug", "max_string", "80"))
+		fe.Rule("slug", "max_string", "80")
 	case !alphaDashRe.MatchString(d.slug):
-		fe.Add("slug", httpx.RuleMessage("slug", "regex", ""))
+		fe.Rule("slug", "regex", "")
 	default:
 		taken, err := q.SuperadminPlanSlugTaken(ctx, store.SuperadminPlanSlugTakenParams{Slug: d.slug, ExceptID: exceptID})
 		if err != nil {
 			return d, err
 		}
 		if taken {
-			fe.Add("slug", httpx.RuleMessage("slug", "unique", ""))
+			fe.Rule("slug", "unique", "")
 		}
 	}
 	switch {
 	case d.name == "":
-		fe.Add("name", httpx.RuleMessage("name", "required", ""))
+		fe.Rule("name", "required", "")
 	case utf8.RuneCountInString(d.name) > 120:
-		fe.Add("name", httpx.RuleMessage("name", "max_string", "120"))
+		fe.Rule("name", "max_string", "120")
 	}
 	if d.price != nil {
 		switch {
 		case *d.price < 0:
-			fe.Add("price_monthly", httpx.RuleMessage("price_monthly", "min", "0"))
+			fe.Rule("price_monthly", "min", "0")
 		case *d.price > maxPlanPriceTiyn:
-			fe.Add("price_monthly", httpx.RuleMessage("price_monthly", "max", "99999999"))
+			fe.Rule("price_monthly", "max", "99999999")
 		}
 	}
 	switch {
 	case f.TrialDays < 0:
-		fe.Add("trial_days", httpx.RuleMessage("trial_days", "min", "0"))
+		fe.Rule("trial_days", "min", "0")
 	case f.TrialDays > 365:
-		fe.Add("trial_days", httpx.RuleMessage("trial_days", "max", "365"))
+		fe.Rule("trial_days", "max", "365")
 	}
 	d.trialDays = int32(f.TrialDays) // #nosec G115 -- 0..365 проверено
 	if f.Features != nil {
 		if utf8.RuneCountInString(*f.Features) > 2000 {
-			fe.Add("features", httpx.RuleMessage("features", "max_string", "2000"))
+			fe.Rule("features", "max_string", "2000")
 		}
 		d.featList = splitFeatures(*f.Features)
 	}

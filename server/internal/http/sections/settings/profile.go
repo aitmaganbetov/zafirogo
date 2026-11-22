@@ -104,10 +104,10 @@ func (h *handlers) SaveClubLocation(ctx context.Context, req settingsapi.SaveClu
 	}
 	var fe httpx.FormErrors
 	if _, ok := catalog.CityByKey(city); city != "" && !ok {
-		fe.AddErr(httpx.RuleError("city", cash.RuleIn))
+		fe.Rule("city", cash.RuleIn, "")
 	}
 	if utf8.RuneCountInString(address) > catalog.MaxAddress {
-		fe.AddErr(httpx.RuleErrorWith("address", "max_string", strconv.Itoa(catalog.MaxAddress)))
+		fe.Rule("address", "max_string", strconv.Itoa(catalog.MaxAddress))
 	}
 	if err := fe.Err(); err != nil {
 		return nil, err
@@ -139,10 +139,7 @@ func (h *handlers) SaveClubLocation(ctx context.Context, req settingsapi.SaveClu
 		if location == "" {
 			location = "—"
 		}
-		_, err = activity.Record(ctx, q, activity.Entry{
-			ClubID: p.ClubID, Event: "club.location_changed", UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID, At: now,
-		}.Translated(logLocation, map[string]string{"location": location}))
-		return err
+		return logClub(ctx, q, now, "club.location_changed", nil, logLocation, map[string]string{"location": location})
 	})
 	if err != nil {
 		return nil, err
@@ -240,7 +237,7 @@ func (h *handlers) SaveClubProfile(ctx context.Context, req settingsapi.SaveClub
 	var fe httpx.FormErrors
 	for _, e := range errs {
 		if e.Rule == "max" {
-			fe.AddErr(httpx.RuleErrorWith(e.Field, "max_string", strconv.Itoa(e.Max)))
+			fe.Rule(e.Field, "max_string", strconv.Itoa(e.Max))
 		} else {
 			fe.Add(e.Field, e.Message)
 		}
@@ -264,10 +261,7 @@ func (h *handlers) SaveClubProfile(ctx context.Context, req settingsapi.SaveClub
 		if err := q.ClubProfileSetProfile(ctx, store.ClubProfileSetProfileParams{ClubID: p.ClubID, Profile: doc, Now: &now}); err != nil {
 			return err
 		}
-		_, err := activity.Record(ctx, q, activity.Entry{
-			ClubID: p.ClubID, Event: "club.profile_changed", UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID, At: now,
-		}.Translated(logProfile, nil))
-		return err
+		return logClub(ctx, q, now, "club.profile_changed", nil, logProfile, nil)
 	})
 	if err != nil {
 		return nil, err
@@ -391,7 +385,7 @@ func (h *handlers) UploadClubPhotos(ctx context.Context, req settingsapi.UploadC
 	}
 	names := make([]string, len(photos))
 	for i := range photos {
-		if names[i], err = randomName(); err != nil {
+		if names[i], err = httpx.RandomName(); err != nil {
 			return nil, err
 		}
 	}
@@ -422,10 +416,7 @@ func (h *handlers) UploadClubPhotos(ctx context.Context, req settingsapi.UploadC
 				return err
 			}
 		}
-		_, err = activity.Record(ctx, q, activity.Entry{
-			ClubID: p.ClubID, Event: "club.photos_added", UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID, At: now,
-		}.Translated(logPhotosAdded, map[string]string{"count": strconv.Itoa(len(photos))}))
-		return err
+		return logClub(ctx, q, now, "club.photos_added", nil, logPhotosAdded, map[string]string{"count": strconv.Itoa(len(photos))})
 	})
 	if err != nil {
 		return nil, err
@@ -445,10 +436,7 @@ func (h *handlers) DeleteClubPhoto(ctx context.Context, req settingsapi.DeleteCl
 		if n == 0 {
 			return httpx.NotFound()
 		}
-		_, err = activity.Record(ctx, q, activity.Entry{
-			ClubID: p.ClubID, Event: "club.photo_deleted", UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID, At: now,
-		}.Translated(logPhotoDelete, nil))
-		return err
+		return logClub(ctx, q, now, "club.photo_deleted", nil, logPhotoDelete, nil)
 	})
 	if err != nil {
 		return nil, err
@@ -482,7 +470,7 @@ func (h *handlers) SaveClubZoneProfile(ctx context.Context, req settingsapi.Save
 	description := trimmed(b.Description)
 	var fe httpx.FormErrors
 	if utf8.RuneCountInString(description) > catalog.MaxZoneDescription {
-		fe.AddErr(httpx.RuleErrorWith("description", "max_string", strconv.Itoa(catalog.MaxZoneDescription)))
+		fe.Rule("description", "max_string", strconv.Itoa(catalog.MaxZoneDescription))
 	}
 	in := map[string]string{}
 	for _, f := range catalog.DeviceFields() {
@@ -491,7 +479,7 @@ func (h *handlers) SaveClubZoneProfile(ctx context.Context, req settingsapi.Save
 		}
 		v := trimmed((*b.Devices)[f.Key])
 		if utf8.RuneCountInString(v) > catalog.MaxDevice {
-			fe.AddErr(httpx.RuleErrorWith("devices."+f.Key, "max_string", strconv.Itoa(catalog.MaxDevice)))
+			fe.Rule("devices."+f.Key, "max_string", strconv.Itoa(catalog.MaxDevice))
 		}
 		in[f.Key] = v
 	}

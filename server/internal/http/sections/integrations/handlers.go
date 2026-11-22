@@ -319,17 +319,17 @@ func validateKey(req *integrationsapi.ApiKeyRequest, now time.Time, tz string, m
 	}
 	switch n := utf8.RuneCountInString(d.name); {
 	case n == 0:
-		fe.Add("name", httpx.RuleMessage("name", cash.RuleRequired, ""))
+		fe.Rule("name", cash.RuleRequired, "")
 	case n > 100:
-		fe.Add("name", httpx.RuleMessage("name", "max_string", "100"))
+		fe.Rule("name", "max_string", "100")
 	}
 	if req.Scopes == nil || len(*req.Scopes) == 0 {
-		fe.Add("scopes", httpx.RuleMessage("scopes", cash.RuleRequired, ""))
+		fe.Rule("scopes", cash.RuleRequired, "")
 	} else {
 		seen := map[string]bool{}
 		for i, s := range *req.Scopes {
 			if !knownScope(s) {
-				fe.Add("scopes."+strconv.Itoa(i), httpx.RuleMessage("scopes."+strconv.Itoa(i), cash.RuleIn, ""))
+				fe.Rule("scopes."+strconv.Itoa(i), cash.RuleIn, "")
 				continue
 			}
 			if !seen[s] {
@@ -341,7 +341,7 @@ func validateKey(req *integrationsapi.ApiKeyRequest, now time.Time, tz string, m
 	if req.AllowedIps != nil {
 		s := strings.TrimSpace(*req.AllowedIps)
 		if utf8.RuneCountInString(s) > 2000 {
-			fe.Add("allowed_ips", httpx.RuleMessage("allowed_ips", "max_string", "2000"))
+			fe.Rule("allowed_ips", "max_string", "2000")
 		} else if s != "" {
 			d.ips = parseIPs(s, &fe)
 		}
@@ -358,11 +358,11 @@ func validateKey(req *integrationsapi.ApiKeyRequest, now time.Time, tz string, m
 			n, err := strconv.ParseInt(str, 10, 32)
 			switch {
 			case err != nil:
-				fe.Add("rate_limit_per_minute", httpx.RuleMessage("rate_limit_per_minute", cash.RuleInteger, ""))
+				fe.Rule("rate_limit_per_minute", cash.RuleInteger, "")
 			case n < 1:
-				fe.Add("rate_limit_per_minute", httpx.RuleMessage("rate_limit_per_minute", cash.RuleMin, "1"))
+				fe.Rule("rate_limit_per_minute", cash.RuleMin, "1")
 			case n > int64(maxRate):
-				fe.Add("rate_limit_per_minute", httpx.RuleMessage("rate_limit_per_minute", cash.RuleMax, strconv.Itoa(maxRate)))
+				fe.Rule("rate_limit_per_minute", cash.RuleMax, strconv.Itoa(maxRate))
 			default:
 				v := int32(n)
 				d.rateLimit = &v
@@ -375,7 +375,7 @@ func validateKey(req *integrationsapi.ApiKeyRequest, now time.Time, tz string, m
 		switch {
 		case err != nil:
 			// validation.date
-			fe.Add("expires_at", httpx.RuleMessage("expires_at", "date", ""))
+			fe.Rule("expires_at", "date", "")
 		case t.Format("2006-01-02") <= now.In(loc).Format("2006-01-02"):
 			// after:today — в ru.php нет: английский текст валидатора по умолчанию, как в старом.
 			fe.Add("expires_at", "The expires at field must be a date after today.")
@@ -455,7 +455,7 @@ func (h *handlers) CreateApiKey(ctx context.Context, req integrationsapi.CreateA
 			map[string]any{"scopes": strings.Join(d.scopes, ", "), "allowed_ips": ips, "expires_at": expires}, now); err != nil {
 			return err
 		}
-		if err := audit(ctx, q, v.p.ClubID, "security", "api_key.created", subjectAPIKey, id, nil,
+		if err := httpx.Audit(ctx, q, v.p.ClubID, "security", "api_key.created", subjectAPIKey, id, nil,
 			map[string]any{"name": d.name, "prefix": prefix, "scopes": d.scopes, "allowed_ips": d.ips, "expires_at": d.expiresAt}); err != nil {
 			return err
 		}
@@ -500,7 +500,7 @@ func (h *handlers) RotateApiKey(ctx context.Context, req integrationsapi.RotateA
 			map[string]string{"name": old.Name, "old": old.Prefix, "new": prefix}, nil, now); err != nil {
 			return err
 		}
-		if err := audit(ctx, q, v.p.ClubID, "security", "api_key.rotated", subjectAPIKey, id,
+		if err := httpx.Audit(ctx, q, v.p.ClubID, "security", "api_key.rotated", subjectAPIKey, id,
 			map[string]any{"prefix": old.Prefix}, map[string]any{"prefix": prefix}); err != nil {
 			return err
 		}
@@ -536,7 +536,7 @@ func (h *handlers) RevokeApiKey(ctx context.Context, req integrationsapi.RevokeA
 			map[string]string{"name": k.Name, "prefix": k.Prefix}, nil, now); err != nil {
 			return err
 		}
-		return audit(ctx, q, v.p.ClubID, "security", "api_key.revoked", subjectAPIKey, k.ID, map[string]any{"prefix": k.Prefix}, nil)
+		return httpx.Audit(ctx, q, v.p.ClubID, "security", "api_key.revoked", subjectAPIKey, k.ID, map[string]any{"prefix": k.Prefix}, nil)
 	})
 	if err != nil {
 		return nil, err
@@ -551,35 +551,6 @@ func (h *handlers) record(ctx context.Context, q *store.Queries, p principal.Pri
 		ClubID: p.ClubID, Event: ev, UserID: p.UserID, SubjectType: subjectType, SubjectID: subjectID, Details: details, At: now,
 	}.Translated(key, params))
 	return err
-}
-
-// audit — audit_log (только добавление): ключи API — security, доступ к интеграциям — permission. Секретов нет.
-func audit(ctx context.Context, q *store.Queries, clubID int64, category, action, subjectType string, subjectID int64, before, after any) error {
-	a := httpx.Actor(ctx)
-	p := store.InsertAuditLogParams{ClubID: &clubID, ActorKind: a.Kind, Category: category, Action: action,
-		SubjectType: &subjectType, SubjectID: &subjectID}
-	if a.UserID > 0 {
-		p.ActorUserID = &a.UserID
-	}
-	if a.IP.IsValid() {
-		ip := a.IP
-		p.Ip = &ip
-	}
-	if a.RequestID != "" {
-		p.RequestID = &a.RequestID
-	}
-	var err error
-	if before != nil {
-		if p.Before, err = json.Marshal(before); err != nil {
-			return err
-		}
-	}
-	if after != nil {
-		if p.After, err = json.Marshal(after); err != nil {
-			return err
-		}
-	}
-	return q.InsertAuditLog(ctx, p)
 }
 
 // accessChanged — staff.access_changed: меню сотрудника («API и интеграции») обновляется после переподключения.

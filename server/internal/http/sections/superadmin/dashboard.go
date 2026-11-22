@@ -11,6 +11,7 @@ import (
 	"time"
 
 	superadminapi "github.com/aitmaganbetov/zafirogo/server/internal/http/api/superadmin"
+	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/monitoring"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
@@ -46,10 +47,9 @@ func (h *handlers) SaDashboard(ctx context.Context, req superadminapi.SaDashboar
 	}
 	length, bucket := periods[period][0], periods[period][1]
 	nowMin := now.Unix() / 60
-	from := nowMin - length
-	var buckets []int64
-	for b := from - from%bucket; b <= nowMin-nowMin%bucket; b += bucket {
-		buckets = append(buckets, b)
+	w := window{length: length, bucket: bucket, from: nowMin - length}
+	for b := w.from - w.from%bucket; b <= nowMin-nowMin%bucket; b += bucket {
+		w.buckets = append(w.buckets, b)
 	}
 
 	out := superadminapi.Dashboard{Period: period, PeriodMinutes: length, SchedulerSilentMinutes: schedulerSilent,
@@ -63,178 +63,12 @@ func (h *handlers) SaDashboard(ctx context.Context, req superadminapi.SaDashboar
 	online := h.online(ctx)
 
 	err := h.tx(ctx, func(q *store.Queries) error {
-		server, err := q.SuperadminServerBuckets(ctx, store.SuperadminServerBucketsParams{Bucket: bucket, FromMinute: from})
+		serverDuration, err := serverCharts(ctx, q, &out, w, live)
 		if err != nil {
 			return err
 		}
-		maxLoad, err := q.SuperadminServerMaxLoad(ctx, from)
-		if err != nil {
+		if err := clubLoad(ctx, q, &out, w, req.Params.Clubs, serverDuration); err != nil {
 			return err
-		}
-		reqs, err := q.SuperadminRequestBuckets(ctx, store.SuperadminRequestBucketsParams{Bucket: bucket, FromMinute: from})
-		if err != nil {
-			return err
-		}
-		load := series{label: "Нагрузка CPU", translate: true, points: map[int64]float64{}}
-		mem := series{label: "Память, %", translate: true, points: map[int64]float64{}}
-		for _, r := range server {
-			// AVG без значений (снимок без /proc) в SQL — 0: строки бакета есть, только когда планировщик работал.
-			load.points[r.Bucket] = roundF(r.Load1, 2)
-			mem.points[r.Bucket] = roundF(r.Memory, 1)
-		}
-		cpu := 1.0
-		if live.CPUCount != nil {
-			cpu = float64(*live.CPUCount)
-		}
-		loadMax := math.Max(cpu, maxLoad) * 1.1
-		hundred := 100.0
-		perChannel := func(value func(r store.SuperadminRequestBucketsRow) (float64, bool)) []series {
-			var out []series
-			for _, ch := range monitoring.Channels {
-				s := series{label: channelLabels[ch], translate: true, points: map[int64]float64{}}
-				for _, r := range reqs {
-					if r.Channel == ch {
-						if v, ok := value(r); ok {
-							s.points[r.Bucket] = v
-						}
-					}
-				}
-				out = append(out, s)
-			}
-			return out
-		}
-		errSeries := series{label: "Ошибки 5xx, %", translate: true, points: map[int64]float64{}}
-		type tot struct{ req, errs int64 }
-		byBucket := map[int64]tot{}
-		var serverDuration int64
-		for _, r := range reqs {
-			t := byBucket[r.Bucket]
-			t.req += r.Requests
-			t.errs += r.Errors
-			byBucket[r.Bucket] = t
-			serverDuration += r.DurationMs
-		}
-		for b, t := range byBucket {
-			v := 0.0
-			if t.req > 0 {
-				v = roundF(float64(t.errs)*100/float64(t.req), 2)
-			}
-			errSeries.points[b] = v
-		}
-		toChart := func(c chart) superadminapi.Chart {
-			out := superadminapi.Chart{Lines: []superadminapi.ChartLine{}, MaxLabel: c.MaxLabel, FromLabel: chartTime(c.From), ToLabel: chartTime(c.To)}
-			for _, l := range c.Lines {
-				out.Lines = append(out.Lines, superadminapi.ChartLine{Label: l.Label, Translate: l.Translate, Color: l.Color, Segments: l.Segments})
-			}
-			return out
-		}
-		out.Charts.Load = toChart(makeChart(buckets, []series{load}, &loadMax))
-		out.Charts.Memory = toChart(makeChart(buckets, []series{mem}, &hundred))
-		out.Charts.Requests = toChart(makeChart(buckets, perChannel(func(r store.SuperadminRequestBucketsRow) (float64, bool) {
-			return roundF(float64(r.Requests)/float64(bucket), 1), true
-		}), nil))
-		out.Charts.Duration = toChart(makeChart(buckets, perChannel(func(r store.SuperadminRequestBucketsRow) (float64, bool) {
-			if r.Requests <= 0 {
-				return 0, false
-			}
-			return float64(intRound(float64(r.DurationMs) / float64(r.Requests))), true
-		}), nil))
-		out.Charts.Errors = toChart(makeChart(buckets, []series{errSeries}, nil))
-
-		// Нагрузка клубов.
-		rows, err := q.SuperadminClubLoad(ctx, store.SuperadminClubLoadParams{FromMinute: from, RowLimit: clubLoadRows})
-		if err != nil {
-			return err
-		}
-		var asked []int64
-		seen := map[int64]bool{}
-		if req.Params.Clubs != nil {
-			for _, s := range *req.Params.Clubs {
-				if !digitsRe.MatchString(s) {
-					continue
-				}
-				id, err := strconv.ParseInt(s, 10, 64)
-				if err != nil || seen[id] {
-					continue
-				}
-				seen[id] = true
-				asked = append(asked, id)
-			}
-		}
-		selected := asked
-		if len(selected) == 0 {
-			for _, r := range rows {
-				if len(selected) == clubLoadDefaultLines {
-					break
-				}
-				selected = append(selected, r.ClubID)
-			}
-		}
-		if len(selected) > clubLoadLines {
-			selected = selected[:clubLoadLines]
-		}
-		ids := append([]int64{}, selected...)
-		for _, r := range rows {
-			ids = append(ids, r.ClubID)
-		}
-		names := map[int64]string{}
-		nameRows, err := q.SuperadminClubNames(ctx, ids)
-		if err != nil {
-			return err
-		}
-		for _, n := range nameRows {
-			names[n.ID] = n.Name
-		}
-		var clubSeries []series
-		if len(selected) > 0 {
-			points, err := q.SuperadminClubLoadPoints(ctx, store.SuperadminClubLoadPointsParams{Bucket: bucket, FromMinute: from, ClubIds: selected})
-			if err != nil {
-				return err
-			}
-			used := map[string]bool{}
-			for _, id := range selected {
-				label, ok := names[id]
-				if !ok {
-					label = "#" + strconv.FormatInt(id, 10)
-				}
-				if used[label] { // два клуба с одним именем — две линии
-					label += " #" + strconv.FormatInt(id, 10)
-				}
-				used[label] = true
-				s := series{label: label, points: map[int64]float64{}}
-				for _, p := range points {
-					if p.ClubID == id {
-						s.points[p.Bucket] = roundF(float64(p.Requests)/float64(bucket), 1)
-					}
-				}
-				clubSeries = append(clubSeries, s)
-			}
-		}
-		out.Charts.Clubs = toChart(makeChart(buckets, clubSeries, nil))
-		out.SelectedClubs = selected
-		if out.SelectedClubs == nil {
-			out.SelectedClubs = []int64{}
-		}
-		out.ClubLoad = []superadminapi.ClubLoadRow{}
-		for _, r := range rows {
-			name, ok := names[r.ClubID]
-			if !ok {
-				name = "#" + strconv.FormatInt(r.ClubID, 10)
-			}
-			row := superadminapi.ClubLoadRow{ClubId: r.ClubID, Name: name,
-				RequestsPerMinute: phpNum(float64(r.Requests)/float64(length), 1), Peak: r.Peak,
-				Agent: numberFormat(r.Agent, " "), Api: numberFormat(r.Api, " "), Panel: numberFormat(r.Panel, " "),
-				Guest: numberFormat(r.Guest, " "), HasErrors: r.Errors > 0}
-			if r.Requests > 0 {
-				ms := strconv.FormatInt(intRound(float64(r.DurationMs)/float64(r.Requests)), 10)
-				pct := phpNum(float64(r.Errors)*100/float64(r.Requests), 1) + "%"
-				row.ResponseMs, row.ErrorsPercent = &ms, &pct
-			}
-			if serverDuration > 0 {
-				share := phpNum(float64(r.DurationMs)*100/float64(serverDuration), 1) + "%"
-				row.ServerShare = &share
-			}
-			out.ClubLoad = append(out.ClubLoad, row)
 		}
 
 		// Сверка балансов с журналом операций (аудит AC-3): открытые расхождения и давность последней успешной.
@@ -250,58 +84,11 @@ func (h *handlers) SaDashboard(ctx context.Context, req superadminapi.SaDashboar
 			out.SchedulerMinutesAgo = &ago
 		}
 
-		// Запросы за 15 минут.
-		chs, err := q.SuperadminRequestChannels(ctx, nowMin-15)
-		if err != nil {
+		if err := channelsOf(ctx, q, &out, nowMin); err != nil {
 			return err
 		}
-		out.Channels = []superadminapi.ChannelRow{}
-		for _, ch := range monitoring.Channels {
-			row := superadminapi.ChannelRow{Channel: ch, Label: channelLabels[ch], RequestsPerMinute: "0"}
-			for _, c := range chs {
-				if c.Channel != ch {
-					continue
-				}
-				row.RequestsPerMinute = phpNum(float64(c.Requests)/15, 1)
-				if c.Requests > 0 {
-					ms := strconv.FormatInt(intRound(float64(c.DurationMs)/float64(c.Requests)), 10)
-					pct := phpNum(float64(c.Errors)*100/float64(c.Requests), 1) + "%"
-					row.ResponseMs, row.ErrorsPercent, row.HasErrors = &ms, &pct, c.Errors > 0
-				}
-			}
-			out.Channels = append(out.Channels, row)
-		}
-
-		// ПК и версии агента.
-		total, err := q.SuperadminComputerCount(ctx)
-		if err != nil {
+		if err := agentsOf(ctx, q, &out, online); err != nil {
 			return err
-		}
-		out.Computers.Total = total
-		for _, n := range online {
-			out.Computers.Online += n
-		}
-		rel, err := readRelease(ctx, q)
-		if err != nil {
-			return err
-		}
-		latestVersion := rel.latestVersion()
-		if latestVersion != "" {
-			out.LatestAgent = &latestVersion
-		}
-		out.AgentDownloadUrl = rel.downloadURL()
-		if rel.raw != nil {
-			out.AgentRelease = &superadminapi.AgentRelease{LatestVersion: rel.LatestVersion, ReleasedAt: rel.ReleasedAt,
-				DownloadUrl: rel.DownloadURL, AutoUpdate: rel.AutoUpdate, InstallerUrl: rel.InstallerURL, InstallerSha256: rel.InstallerSHA256}
-		}
-		versions, err := q.SuperadminAgentVersions(ctx)
-		if err != nil {
-			return err
-		}
-		out.AgentVersions = []superadminapi.AgentVersion{}
-		for _, v := range versions {
-			out.AgentVersions = append(out.AgentVersions, superadminapi.AgentVersion{Version: v.AgentVersion, Count: v.Aggregate,
-				Outdated: latestVersion != "" && v.AgentVersion != latestVersion})
 		}
 
 		// Последние 10 записей журнала платформы.
@@ -329,6 +116,257 @@ func (h *handlers) SaDashboard(ctx context.Context, req superadminapi.SaDashboar
 	}
 	out.Backup = backupOf(h.d.Superadmin.BackupPath, now, h.d.Locale(ctx))
 	return superadminapi.SaDashboard200JSONResponse(out), nil
+}
+
+// window — период графиков экрана: длина и бакет в минутах, первая минута и бакеты оси.
+type window struct {
+	length, bucket, from int64
+	buckets              []int64
+}
+
+// serverCharts — графики сервера: нагрузка CPU, память, запросы и время ответа по каналам, доля ошибок 5xx.
+// serverDuration — суммарное время ответов за период (доля клуба в таблице нагрузки клубов).
+func serverCharts(ctx context.Context, q *store.Queries, out *superadminapi.Dashboard, w window, live monitoring.Snapshot) (serverDuration int64, err error) {
+	bucket := w.bucket
+	server, err := q.SuperadminServerBuckets(ctx, store.SuperadminServerBucketsParams{Bucket: bucket, FromMinute: w.from})
+	if err != nil {
+		return 0, err
+	}
+	maxLoad, err := q.SuperadminServerMaxLoad(ctx, w.from)
+	if err != nil {
+		return 0, err
+	}
+	reqs, err := q.SuperadminRequestBuckets(ctx, store.SuperadminRequestBucketsParams{Bucket: bucket, FromMinute: w.from})
+	if err != nil {
+		return 0, err
+	}
+	load := series{label: "Нагрузка CPU", translate: true, points: map[int64]float64{}}
+	mem := series{label: "Память, %", translate: true, points: map[int64]float64{}}
+	for _, r := range server {
+		// AVG без значений (снимок без /proc) в SQL — 0: строки бакета есть, только когда планировщик работал.
+		load.points[r.Bucket] = roundF(r.Load1, 2)
+		mem.points[r.Bucket] = roundF(r.Memory, 1)
+	}
+	cpu := 1.0
+	if live.CPUCount != nil {
+		cpu = float64(*live.CPUCount)
+	}
+	loadMax := math.Max(cpu, maxLoad) * 1.1
+	hundred := 100.0
+	perChannel := func(value func(r store.SuperadminRequestBucketsRow) (float64, bool)) []series {
+		var out []series
+		for _, ch := range monitoring.Channels {
+			s := series{label: channelLabels[ch], translate: true, points: map[int64]float64{}}
+			for _, r := range reqs {
+				if r.Channel == ch {
+					if v, ok := value(r); ok {
+						s.points[r.Bucket] = v
+					}
+				}
+			}
+			out = append(out, s)
+		}
+		return out
+	}
+	errSeries := series{label: "Ошибки 5xx, %", translate: true, points: map[int64]float64{}}
+	type tot struct{ req, errs int64 }
+	byBucket := map[int64]tot{}
+	for _, r := range reqs {
+		t := byBucket[r.Bucket]
+		t.req += r.Requests
+		t.errs += r.Errors
+		byBucket[r.Bucket] = t
+		serverDuration += r.DurationMs
+	}
+	for b, t := range byBucket {
+		v := 0.0
+		if t.req > 0 {
+			v = roundF(float64(t.errs)*100/float64(t.req), 2)
+		}
+		errSeries.points[b] = v
+	}
+	out.Charts.Load = toChart(makeChart(w.buckets, []series{load}, &loadMax))
+	out.Charts.Memory = toChart(makeChart(w.buckets, []series{mem}, &hundred))
+	out.Charts.Requests = toChart(makeChart(w.buckets, perChannel(func(r store.SuperadminRequestBucketsRow) (float64, bool) {
+		return roundF(float64(r.Requests)/float64(bucket), 1), true
+	}), nil))
+	out.Charts.Duration = toChart(makeChart(w.buckets, perChannel(func(r store.SuperadminRequestBucketsRow) (float64, bool) {
+		if r.Requests <= 0 {
+			return 0, false
+		}
+		return float64(intRound(float64(r.DurationMs) / float64(r.Requests))), true
+	}), nil))
+	out.Charts.Errors = toChart(makeChart(w.buckets, []series{errSeries}, nil))
+	return serverDuration, nil
+}
+
+// clubLoad — нагрузка клубов: таблица самых нагруженных за период и график выбранных (параметр clubs; без него —
+// первые clubLoadDefaultLines из таблицы, не больше clubLoadLines линий).
+func clubLoad(ctx context.Context, q *store.Queries, out *superadminapi.Dashboard, w window, clubs *[]string, serverDuration int64) error {
+	rows, err := q.SuperadminClubLoad(ctx, store.SuperadminClubLoadParams{FromMinute: w.from, RowLimit: clubLoadRows})
+	if err != nil {
+		return err
+	}
+	var asked []int64
+	seen := map[int64]bool{}
+	if clubs != nil {
+		for _, s := range *clubs {
+			if !digitsRe.MatchString(s) {
+				continue
+			}
+			id, err := strconv.ParseInt(s, 10, 64)
+			if err != nil || seen[id] {
+				continue
+			}
+			seen[id] = true
+			asked = append(asked, id)
+		}
+	}
+	selected := asked
+	if len(selected) == 0 {
+		for _, r := range rows {
+			if len(selected) == clubLoadDefaultLines {
+				break
+			}
+			selected = append(selected, r.ClubID)
+		}
+	}
+	if len(selected) > clubLoadLines {
+		selected = selected[:clubLoadLines]
+	}
+	ids := append([]int64{}, selected...)
+	for _, r := range rows {
+		ids = append(ids, r.ClubID)
+	}
+	names := map[int64]string{}
+	nameRows, err := q.SuperadminClubNames(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for _, n := range nameRows {
+		names[n.ID] = n.Name
+	}
+	var clubSeries []series
+	if len(selected) > 0 {
+		points, err := q.SuperadminClubLoadPoints(ctx, store.SuperadminClubLoadPointsParams{Bucket: w.bucket, FromMinute: w.from, ClubIds: selected})
+		if err != nil {
+			return err
+		}
+		used := map[string]bool{}
+		for _, id := range selected {
+			label, ok := names[id]
+			if !ok {
+				label = "#" + strconv.FormatInt(id, 10)
+			}
+			if used[label] { // два клуба с одним именем — две линии
+				label += " #" + strconv.FormatInt(id, 10)
+			}
+			used[label] = true
+			s := series{label: label, points: map[int64]float64{}}
+			for _, p := range points {
+				if p.ClubID == id {
+					s.points[p.Bucket] = roundF(float64(p.Requests)/float64(w.bucket), 1)
+				}
+			}
+			clubSeries = append(clubSeries, s)
+		}
+	}
+	out.Charts.Clubs = toChart(makeChart(w.buckets, clubSeries, nil))
+	out.SelectedClubs = selected
+	if out.SelectedClubs == nil {
+		out.SelectedClubs = []int64{}
+	}
+	out.ClubLoad = []superadminapi.ClubLoadRow{}
+	for _, r := range rows {
+		name, ok := names[r.ClubID]
+		if !ok {
+			name = "#" + strconv.FormatInt(r.ClubID, 10)
+		}
+		row := superadminapi.ClubLoadRow{ClubId: r.ClubID, Name: name,
+			RequestsPerMinute: phpNum(float64(r.Requests)/float64(w.length), 1), Peak: r.Peak,
+			Agent: numberFormat(r.Agent, " "), Api: numberFormat(r.Api, " "), Panel: numberFormat(r.Panel, " "),
+			Guest: numberFormat(r.Guest, " "), HasErrors: r.Errors > 0}
+		if r.Requests > 0 {
+			ms := strconv.FormatInt(intRound(float64(r.DurationMs)/float64(r.Requests)), 10)
+			pct := phpNum(float64(r.Errors)*100/float64(r.Requests), 1) + "%"
+			row.ResponseMs, row.ErrorsPercent = &ms, &pct
+		}
+		if serverDuration > 0 {
+			share := phpNum(float64(r.DurationMs)*100/float64(serverDuration), 1) + "%"
+			row.ServerShare = &share
+		}
+		out.ClubLoad = append(out.ClubLoad, row)
+	}
+	return nil
+}
+
+// channelsOf — запросы по каналам за последние 15 минут.
+func channelsOf(ctx context.Context, q *store.Queries, out *superadminapi.Dashboard, nowMin int64) error {
+	chs, err := q.SuperadminRequestChannels(ctx, nowMin-15)
+	if err != nil {
+		return err
+	}
+	out.Channels = []superadminapi.ChannelRow{}
+	for _, ch := range monitoring.Channels {
+		row := superadminapi.ChannelRow{Channel: ch, Label: channelLabels[ch], RequestsPerMinute: "0"}
+		for _, c := range chs {
+			if c.Channel != ch {
+				continue
+			}
+			row.RequestsPerMinute = phpNum(float64(c.Requests)/15, 1)
+			if c.Requests > 0 {
+				ms := strconv.FormatInt(intRound(float64(c.DurationMs)/float64(c.Requests)), 10)
+				pct := phpNum(float64(c.Errors)*100/float64(c.Requests), 1) + "%"
+				row.ResponseMs, row.ErrorsPercent, row.HasErrors = &ms, &pct, c.Errors > 0
+			}
+		}
+		out.Channels = append(out.Channels, row)
+	}
+	return nil
+}
+
+// agentsOf — ПК (всего и в сети) и версии агента против последнего выпуска.
+func agentsOf(ctx context.Context, q *store.Queries, out *superadminapi.Dashboard, online map[int64]int64) error {
+	total, err := q.SuperadminComputerCount(ctx)
+	if err != nil {
+		return err
+	}
+	out.Computers.Total = total
+	for _, n := range online {
+		out.Computers.Online += n
+	}
+	rel, err := readRelease(ctx, q)
+	if err != nil {
+		return err
+	}
+	latestVersion := rel.latestVersion()
+	if latestVersion != "" {
+		out.LatestAgent = &latestVersion
+	}
+	out.AgentDownloadUrl = rel.downloadURL()
+	if rel.raw != nil {
+		out.AgentRelease = &superadminapi.AgentRelease{LatestVersion: rel.LatestVersion, ReleasedAt: rel.ReleasedAt,
+			DownloadUrl: rel.DownloadURL, AutoUpdate: rel.AutoUpdate, InstallerUrl: rel.InstallerURL, InstallerSha256: rel.InstallerSHA256}
+	}
+	versions, err := q.SuperadminAgentVersions(ctx)
+	if err != nil {
+		return err
+	}
+	out.AgentVersions = []superadminapi.AgentVersion{}
+	for _, v := range versions {
+		out.AgentVersions = append(out.AgentVersions, superadminapi.AgentVersion{Version: v.AgentVersion, Count: v.Aggregate,
+			Outdated: latestVersion != "" && v.AgentVersion != latestVersion})
+	}
+	return nil
+}
+
+// toChart — график для ответа API.
+func toChart(c chart) superadminapi.Chart {
+	out := superadminapi.Chart{Lines: []superadminapi.ChartLine{}, MaxLabel: c.MaxLabel, FromLabel: chartTime(c.From), ToLabel: chartTime(c.To)}
+	for _, l := range c.Lines {
+		out.Lines = append(out.Lines, superadminapi.ChartLine{Label: l.Label, Translate: l.Translate, Color: l.Color, Segments: l.Segments})
+	}
+	return out
 }
 
 // roundF — round($x, n) PHP как число.
@@ -389,7 +427,7 @@ func ledgerReconcileOf(r store.SuperadminReconcileStateRow, interval time.Durati
 	}
 	out := superadminapi.LedgerReconcile{OpenFindings: r.OpenFindings}
 	if r.LastSuccessAt != nil {
-		human := diffForHumans(*r.LastSuccessAt, now, locale)
+		human := httpx.DiffForHumans(*r.LastSuccessAt, now, locale)
 		out.AtHuman = &human
 		out.Stale = now.Sub(*r.LastSuccessAt) > ledgerReconcileStalePeriods*interval
 	}
@@ -411,7 +449,7 @@ func backupOf(path string, now time.Time, locale string) superadminapi.Backup {
 		}
 	}
 	if !newest.IsZero() {
-		human := diffForHumans(newest, now, locale)
+		human := httpx.DiffForHumans(newest, now, locale)
 		b.AtHuman = &human
 		b.Stale = newest.Before(now.AddDate(0, 0, -2))
 	}

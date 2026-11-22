@@ -217,15 +217,12 @@ func (h *handlers) SaveClubSettings(ctx context.Context, req settingsapi.SaveClu
 			details[c.field] = c.readable
 			before[c.field], after[c.field] = c.before, c.after
 		}
-		if _, err := activity.Record(ctx, q, activity.Entry{
-			ClubID: p.ClubID, Event: "settings.updated", UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID,
-			Details: details, At: now,
-		}.Translated(logSettings, map[string]string{"fields": strings.Join(names, ", ")})); err != nil {
+		if err := logClub(ctx, q, now, "settings.updated", details, logSettings, map[string]string{"fields": strings.Join(names, ", ")}); err != nil {
 			return err
 		}
 		// Финансовые настройки (бонусы, скидки, оплата времени) влияют на деньги — аудит (CLAUDE.md «Безопасность»).
 		if section == sectionFinances {
-			return audit(ctx, q, p.ClubID, "settings.updated", before, after)
+			return httpx.Audit(ctx, q, p.ClubID, "settings", "settings.updated", subjectClub, p.ClubID, before, after)
 		}
 		return nil
 	})
@@ -236,30 +233,14 @@ func (h *handlers) SaveClubSettings(ctx context.Context, req settingsapi.SaveClu
 	return settingsapi.SaveClubSettings200JSONResponse{Message: h.d.T(ctx, msgSaved, nil)}, nil
 }
 
-// audit — запись audit_log категории settings (только добавление).
-func audit(ctx context.Context, q *store.Queries, clubID int64, action string, before, after any) error {
-	a := httpx.Actor(ctx)
-	subject := subjectClub
-	p := store.InsertAuditLogParams{ClubID: &clubID, ActorKind: a.Kind, Category: "settings", Action: action,
-		SubjectType: &subject, SubjectID: &clubID}
-	if a.UserID > 0 {
-		p.ActorUserID = &a.UserID
-	}
-	if a.IP.IsValid() {
-		ip := a.IP
-		p.Ip = &ip
-	}
-	if a.RequestID != "" {
-		p.RequestID = &a.RequestID
-	}
-	var err error
-	if p.Before, err = json.Marshal(before); err != nil {
-		return err
-	}
-	if p.After, err = json.Marshal(after); err != nil {
-		return err
-	}
-	return q.InsertAuditLog(ctx, p)
+// logClub — запись журнала действий о самом клубе (субъект — клуб) от сотрудника запроса: текст — ключ перевода
+// key с подстановками params, details — подробности (nil — без них).
+func logClub(ctx context.Context, q *store.Queries, now time.Time, event string, details map[string]any, key string, params map[string]string) error {
+	p := httpx.Principal(ctx)
+	_, err := activity.Record(ctx, q, activity.Entry{
+		ClubID: p.ClubID, Event: event, UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID, Details: details, At: now,
+	}.Translated(key, params))
+	return err
 }
 
 // configChanged — ConfigChanged агентам клуба после коммита (не блокирует ответ).
@@ -294,11 +275,7 @@ func (h *handlers) SaveClubTimezone(ctx context.Context, req settingsapi.SaveClu
 		if err := q.SettingsSetTimezone(ctx, store.SettingsSetTimezoneParams{ClubID: p.ClubID, Timezone: tz, Now: &now}); err != nil {
 			return err
 		}
-		_, err = activity.Record(ctx, q, activity.Entry{
-			ClubID: p.ClubID, Event: "club.timezone_changed", UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID,
-			Details: map[string]any{"from": row.Timezone, "to": tz}, At: now,
-		}.Translated(logTimezone, map[string]string{"from": row.Timezone, "to": tz}))
-		return err
+		return logClub(ctx, q, now, "club.timezone_changed", map[string]any{"from": row.Timezone, "to": tz}, logTimezone, map[string]string{"from": row.Timezone, "to": tz})
 	})
 	if err != nil {
 		return nil, err
@@ -391,11 +368,7 @@ func (h *handlers) SaveClubLanguage(ctx context.Context, req settingsapi.SaveClu
 		if err := q.SettingsSetLocale(ctx, store.SettingsSetLocaleParams{ClubID: p.ClubID, Locale: &locale, Now: &now}); err != nil {
 			return err
 		}
-		_, err = activity.Record(ctx, q, activity.Entry{
-			ClubID: p.ClubID, Event: "club.language_changed", UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID,
-			Details: map[string]any{"from": from, "to": locale}, At: now,
-		}.Translated(logLanguage, map[string]string{"from": from, "to": locale}))
-		return err
+		return logClub(ctx, q, now, "club.language_changed", map[string]any{"from": from, "to": locale}, logLanguage, map[string]string{"from": from, "to": locale})
 	})
 	if err != nil {
 		return nil, err
@@ -424,7 +397,7 @@ func (h *handlers) SaveAgentPin(ctx context.Context, req settingsapi.SaveAgentPi
 			fe.Add("pin", msgPinFormat)
 		}
 		if confirmation == nil || *confirmation != *pin {
-			fe.Add("pin", httpx.RuleMessage("pin", "confirmed", ""))
+			fe.Rule("pin", "confirmed", "")
 		}
 		if err := fe.Err(); err != nil {
 			return nil, err
@@ -454,10 +427,7 @@ func (h *handlers) SaveAgentPin(ctx context.Context, req settingsapi.SaveAgentPi
 		if hash == nil {
 			key = logPinDelete
 		}
-		_, err := activity.Record(ctx, q, activity.Entry{
-			ClubID: p.ClubID, Event: "club.agent_pin_changed", UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID, At: now,
-		}.Translated(key, nil))
-		return err
+		return logClub(ctx, q, now, "club.agent_pin_changed", nil, key, nil)
 	})
 	if err != nil {
 		return nil, err
@@ -510,11 +480,7 @@ func (h *handlers) SaveAgentStaffTime(ctx context.Context, req settingsapi.SaveA
 			return err
 		}
 		from, to := strconv.Itoa(int(row.AgentStaffMinutes)), strconv.Itoa(int(minutes))
-		_, err = activity.Record(ctx, q, activity.Entry{
-			ClubID: p.ClubID, Event: "club.agent_staff_time_changed", UserID: p.UserID, SubjectType: subjectClub, SubjectID: p.ClubID,
-			Details: map[string]any{"from": row.AgentStaffMinutes, "to": minutes}, At: now,
-		}.Translated(logStaffTime, map[string]string{"from": from, "to": to}))
-		return err
+		return logClub(ctx, q, now, "club.agent_staff_time_changed", map[string]any{"from": row.AgentStaffMinutes, "to": minutes}, logStaffTime, map[string]string{"from": from, "to": to})
 	})
 	if err != nil {
 		return nil, err
