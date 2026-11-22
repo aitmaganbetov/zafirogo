@@ -142,22 +142,6 @@ public sealed class AgentState
         }
     }
 
-    public long ServerTranslationsVersion
-    {
-        get
-        {
-            lock (_gate) return _serverTranslationsVersion;
-        }
-    }
-
-    public DateTimeOffset? ServiceUntil
-    {
-        get
-        {
-            lock (_gate) return _serviceUntil;
-        }
-    }
-
     public DateTimeOffset? CertificateRenewAfterOverride
     {
         get

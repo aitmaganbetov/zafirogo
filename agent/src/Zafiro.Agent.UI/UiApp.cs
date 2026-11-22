@@ -43,9 +43,6 @@ internal sealed class UiApp : Application
         _texts = new UiTranslations(_ipc);
     }
 
-    /// <summary>Тексты для окон без WebView2 (уведомления): переводы службы, ключ — русский текст.</summary>
-    internal UiTranslations Texts => _texts;
-
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);

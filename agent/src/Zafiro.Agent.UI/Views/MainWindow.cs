@@ -2,7 +2,6 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
@@ -369,6 +368,4 @@ internal sealed class MainWindow : Window
             return Path.Combine(Path.GetTempPath(), "ZafiroAgent-WebView2-" + Guid.NewGuid().ToString("N"));
         }
     }
-
-    internal IntPtr Handle => new WindowInteropHelper(this).Handle;
 }

@@ -72,8 +72,7 @@ public sealed class ImageCache
         }
 
         if (!Valid(fresh))
-            throw new AgentRpcException(StatusCode.InvalidArgument, ErrorCode.ValidationFailed, null, "server image is not a PNG/JPEG up to 3 MiB",
-                null, new Dictionary<string, string>(), [], null);
+            throw AgentRpcException.Local(StatusCode.InvalidArgument, ErrorCode.ValidationFailed, "server image is not a PNG/JPEG up to 3 MiB");
         var entry = new GetImageResponse { Data = fresh.Data, ContentType = fresh.ContentType, Etag = fresh.Etag };
         Save(key, entry);
         Touch(key);

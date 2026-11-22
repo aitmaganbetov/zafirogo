@@ -1,3 +1,5 @@
+using Google.Protobuf;
+
 namespace Zafiro.Agent.Core.Persistence;
 
 /// <summary>
@@ -58,6 +60,22 @@ public static class AtomicFile
             return null;
         }
         catch (DirectoryNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Читает сообщение proto; null — файла нет или он испорчен (владелец начинает с пустого состояния).</summary>
+    public static T? ReadMessage<T>(string path, MessageParser<T> parser)
+        where T : class, IMessage<T>
+    {
+        var bytes = Read(path);
+        if (bytes is null) return null;
+        try
+        {
+            return parser.ParseFrom(bytes);
+        }
+        catch (InvalidProtocolBufferException)
         {
             return null;
         }

@@ -28,7 +28,7 @@ public sealed class IpcDispatcher
         Map("agent.VerifyStaffPin", VerifyStaffPinRequest.Parser, async (r, ct) =>
         {
             var resp = await g.VerifyStaffPinAsync(r, ct).ConfigureAwait(false);
-            var until = resp.Until?.ToDateTimeOffset() ?? DateTimeOffset.UtcNow.AddMinutes(resp.StaffMinutes > 0 ? resp.StaffMinutes : 15);
+            var until = resp.Until?.ToDateTimeOffset() ?? DateTimeOffset.UtcNow.AddMinutes(resp.StaffMinutes > 0 ? resp.StaffMinutes : AgentRuntime.DefaultStaffMinutes);
             runtime.EnterServiceMode(until);
             return resp;
         });
@@ -128,11 +128,7 @@ public sealed class IpcDispatcher
         {
             response.Error = ToError(e);
         }
-        catch (InvalidProtocolBufferException)
-        {
-            response.Error = new Error { ErrorCode = ErrorCode.ValidationFailed, GrpcStatus = (int)Grpc.Core.StatusCode.InvalidArgument };
-        }
-        catch (ArgumentException)
+        catch (Exception e) when (e is InvalidProtocolBufferException or ArgumentException)
         {
             response.Error = new Error { ErrorCode = ErrorCode.ValidationFailed, GrpcStatus = (int)Grpc.Core.StatusCode.InvalidArgument };
         }

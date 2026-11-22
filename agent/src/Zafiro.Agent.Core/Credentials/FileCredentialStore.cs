@@ -88,19 +88,7 @@ public sealed class FileCredentialStore : ICredentialStore
         lock (_gate) AtomicFile.Delete(_path);
     }
 
-    private StoredCredentials? ReadStored()
-    {
-        var bytes = AtomicFile.Read(_path);
-        if (bytes is null) return null;
-        try
-        {
-            return StoredCredentials.Parser.ParseFrom(bytes);
-        }
-        catch (InvalidProtocolBufferException)
-        {
-            return null;
-        }
-    }
+    private StoredCredentials? ReadStored() => AtomicFile.ReadMessage(_path, StoredCredentials.Parser);
 
     private bool SameHardware(string stored)
     {

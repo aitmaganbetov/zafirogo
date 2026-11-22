@@ -17,7 +17,8 @@ public sealed class ShellThemeStore
     public ShellThemeStore(string? path)
     {
         _path = path;
-        _saved = Read(path);
+        // Испорченный файл — стандартная тема до Welcome.
+        _saved = path is null ? null : AtomicFile.ReadMessage(path, ShellTheme.Parser);
     }
 
     /// <summary>Сохранённая тема (null — стандартная или файла нет/испорчен).</summary>
@@ -43,21 +44,6 @@ public sealed class ShellThemeStore
 
             _saved = theme?.Clone();
             return true;
-        }
-    }
-
-    private static ShellTheme? Read(string? path)
-    {
-        if (path is null) return null;
-        var bytes = AtomicFile.Read(path);
-        if (bytes is null) return null;
-        try
-        {
-            return ShellTheme.Parser.ParseFrom(bytes);
-        }
-        catch (InvalidProtocolBufferException)
-        {
-            return null; // испорчен — стандартная тема до Welcome
         }
     }
 }

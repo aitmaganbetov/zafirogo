@@ -21,7 +21,7 @@ public sealed class EventJournalStore
     public EventJournalStore(string? path)
     {
         _path = path;
-        _journal = Load(path) ?? new EventJournal();
+        _journal = (path is null ? null : AtomicFile.ReadMessage(path, EventJournal.Parser)) ?? new EventJournal();
     }
 
     /// <summary>Добавляет событие (сохраняется до отправки).</summary>
@@ -62,20 +62,5 @@ public sealed class EventJournalStore
     private void Save()
     {
         if (_path is not null) AtomicFile.Write(_path, _journal.ToByteArray());
-    }
-
-    private static EventJournal? Load(string? path)
-    {
-        if (path is null) return null;
-        var bytes = AtomicFile.Read(path);
-        if (bytes is null) return null;
-        try
-        {
-            return EventJournal.Parser.ParseFrom(bytes);
-        }
-        catch (InvalidProtocolBufferException)
-        {
-            return null;
-        }
     }
 }

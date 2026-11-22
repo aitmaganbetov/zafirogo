@@ -25,6 +25,9 @@ namespace Zafiro.Agent.Core.Runtime;
 /// </summary>
 public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
 {
+    /// <summary>Техрежим по умолчанию, минут (клуб не задал staff_minutes). Laravel: app/Services/ClubComputerSessions.php DEFAULT_STAFF_MINUTES.</summary>
+    public const uint DefaultStaffMinutes = 15;
+
     private readonly AgentOptions _options;
     private readonly ICredentialStore _store;
     private readonly IPlatform _platform;
@@ -72,10 +75,10 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
         var state = State;
         _channels = new AgentChannelFactory(options, trust, () => state.RequestLocale);
         _enroller = new Enroller(options, _channels, trust, store, _time, loggers.CreateLogger("Zafiro.Agent.Enroll"));
-        var dir = string.IsNullOrEmpty(options.DataDirectory) ? null : options.DataDirectory;
-        Commands = new CommandJournalStore(dir is null ? null : Path.Combine(dir, "commands.pb"));
-        Events = new EventJournalStore(dir is null ? null : Path.Combine(dir, "events.pb"));
-        _shellTheme = new ShellThemeStore(dir is null ? null : Path.Combine(dir, "shell-theme.pb"));
+        string? DataFile(string name) => string.IsNullOrEmpty(options.DataDirectory) ? null : Path.Combine(options.DataDirectory, name);
+        Commands = new CommandJournalStore(DataFile("commands.pb"));
+        Events = new EventJournalStore(DataFile("events.pb"));
+        _shellTheme = new ShellThemeStore(DataFile("shell-theme.pb"));
         State.RestoreShellTheme(_shellTheme.Saved);
         Guest = new GuestApi(() => _channel?.Invoker, State, options, _time, this);
         _bootId = platform.GetBootId();
@@ -134,7 +137,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
     private async Task EnrollAsync(EnrollSecret secret, CancellationToken cancellationToken)
     {
         if (!await _enrollGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
-            throw new AgentRpcException(StatusCode.Aborted, ErrorCode.Unspecified, null, "enrollment is already in progress", null, new Dictionary<string, string>(), [], null);
+            throw AgentRpcException.Local(StatusCode.Aborted, ErrorCode.Unspecified, "enrollment is already in progress");
         var before = State.Connection;
         try
         {
@@ -194,98 +197,19 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                var creds = Credentials;
+                var creds = LoadCredentials();
                 if (creds is null)
                 {
-                    creds = _store.Load();
-                    if (creds is not null) ReplaceCredentials(creds);
-                }
-
-                if (creds is not null && creds.NotAfter <= _time.GetUtcNow())
-                {
-                    _log.LogWarning("certificate expired at {NotAfter}: enrollment is required", creds.NotAfter);
-                    _store.Clear();
-                    ReplaceCredentials(null);
-                    creds = null;
-                }
-
-                if (creds is null)
-                {
-                    if (!string.IsNullOrEmpty(_options.ImageKey))
-                    {
-                        try
-                        {
-                            await EnrollAsync(EnrollSecret.FromImageKey(_options.ImageKey), cancellationToken).ConfigureAwait(false);
-                            attempt = 0;
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-                        {
-                            var retry = (ex as AgentRpcException)?.RetryAfter;
-                            _log.LogWarning("enroll by image key failed: {Error}", ex.Message);
-                            await Delay(Backoff.Next(attempt++, _random, retry), cancellationToken).ConfigureAwait(false);
-                        }
-
-                        continue;
-                    }
-
-                    if (State.Connection != Connection.Revoked) State.SetConnection(Connection.NotEnrolled);
-                    await _wake.WaitAsync(cancellationToken).ConfigureAwait(false);
+                    attempt = await WaitForEnrollmentAsync(attempt, cancellationToken).ConfigureAwait(false);
                     continue;
                 }
 
                 State.SetConnection(Connection.Connecting);
                 var started = _time.GetUtcNow();
-                TimeSpan? retryAfter = null;
-                TimeSpan? forced = null;
-                try
-                {
-                    await RunStreamAsync(creds, cancellationToken).ConfigureAwait(false);
-                    forced = Interlocked.Exchange(ref _drainBox, null)?.Value;
-                }
-                catch (CertificateRevokedException)
-                {
-                    _log.LogWarning("certificate revoked: key and certificate removed, a new enrollment code is required");
-                    _store.Clear();
-                    ReplaceCredentials(null);
-                    State.SignOut();
-                    State.SetConnection(Connection.Revoked);
-                    continue;
-                }
-                catch (CertificateExpiredException e)
-                {
-                    _log.LogWarning("certificate rejected ({Code}): enrollment is required", ErrorCodes.Name(e.ErrorCode));
-                    _store.Clear();
-                    ReplaceCredentials(null);
-                    State.SetConnection(Connection.NotEnrolled);
-                    continue;
-                }
-                catch (ProtocolVersionUnsupportedException)
-                {
-                    _log.LogError("protocol version is not supported by the server: waiting for an update");
-                    forced = Backoff.ProtocolUnsupported;
-                }
-                catch (AgentRpcException e) when (!cancellationToken.IsCancellationRequested)
-                {
-                    retryAfter = e.RetryAfter;
-                    if (e.ErrorCode == ErrorCode.ComputerNotFound)
-                    {
-                        _log.LogWarning("computer card was deleted in the club panel");
-                    }
-
-                    _log.LogInformation("stream closed: {Error}", e.Message);
-                }
-                catch (Exception ex) when (!cancellationToken.IsCancellationRequested && ex is not OperationCanceledException)
-                {
-                    _log.LogInformation("stream failed: {Error}", ex.Message);
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    forced = Interlocked.Exchange(ref _drainBox, null)?.Value;
-                }
-
+                if (await ConnectOnceAsync(creds, cancellationToken).ConfigureAwait(false) is not { } end) continue;
                 if (cancellationToken.IsCancellationRequested) break;
                 if (_time.GetUtcNow() - started >= Backoff.StableAfter) attempt = 0;
-                var delay = forced ?? Backoff.Next(attempt++, _random, retryAfter);
+                var delay = end.Forced ?? Backoff.Next(attempt++, _random, end.RetryAfter);
                 State.SetConnection(Connection.Connecting);
                 await Delay(delay, cancellationToken).ConfigureAwait(false);
             }
@@ -295,16 +219,110 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
         }
         finally
         {
-            foreach (var t in new[] { housekeeping, health })
+            await IgnoreCancel(housekeeping).ConfigureAwait(false);
+            await IgnoreCancel(health).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Учётные данные в памяти или на диске; истёкший сертификат удаляется (нужна регистрация).</summary>
+    private AgentCredentials? LoadCredentials()
+    {
+        var creds = Credentials;
+        if (creds is null)
+        {
+            creds = _store.Load();
+            if (creds is not null) ReplaceCredentials(creds);
+        }
+
+        if (creds is null || creds.NotAfter > _time.GetUtcNow()) return creds;
+        _log.LogWarning("certificate expired at {NotAfter}: enrollment is required", creds.NotAfter);
+        ForgetCredentials();
+        return null;
+    }
+
+    /// <summary>Ключ и сертификат удаляются с диска и из памяти: нужна новая регистрация.</summary>
+    private void ForgetCredentials()
+    {
+        _store.Clear();
+        ReplaceCredentials(null);
+    }
+
+    /// <summary>
+    /// ПК не зарегистрирован: регистрация по ключу образа (бездисковые ПК; ошибка — пауза по <paramref name="attempt"/>)
+    /// или ожидание кода с экрана агента. Возвращает номер следующей попытки.
+    /// </summary>
+    private async Task<int> WaitForEnrollmentAsync(int attempt, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(_options.ImageKey))
+        {
+            if (State.Connection != Connection.Revoked) State.SetConnection(Connection.NotEnrolled);
+            await _wake.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return attempt;
+        }
+
+        try
+        {
+            await EnrollAsync(EnrollSecret.FromImageKey(_options.ImageKey), cancellationToken).ConfigureAwait(false);
+            return 0;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            var retry = (ex as AgentRpcException)?.RetryAfter;
+            _log.LogWarning("enroll by image key failed: {Error}", ex.Message);
+            await Delay(Backoff.Next(attempt++, _random, retry), cancellationToken).ConfigureAwait(false);
+            return attempt;
+        }
+    }
+
+    /// <summary>Чем закончился стрим: пауза задана (Drain, новый сертификат, версия протокола) или по RetryInfo сервера.</summary>
+    private readonly record struct StreamEnd(TimeSpan? Forced, TimeSpan? RetryAfter);
+
+    /// <summary>Один стрим до закрытия. null — сертификат отозван или истёк: сразу к регистрации, без паузы.</summary>
+    private async Task<StreamEnd?> ConnectOnceAsync(AgentCredentials creds, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await RunStreamAsync(creds, cancellationToken).ConfigureAwait(false);
+            return new StreamEnd(Interlocked.Exchange(ref _drainBox, null)?.Value, null);
+        }
+        catch (CertificateRevokedException)
+        {
+            _log.LogWarning("certificate revoked: key and certificate removed, a new enrollment code is required");
+            ForgetCredentials();
+            State.SignOut();
+            State.SetConnection(Connection.Revoked);
+            return null;
+        }
+        catch (CertificateExpiredException e)
+        {
+            _log.LogWarning("certificate rejected ({Code}): enrollment is required", ErrorCodes.Name(e.ErrorCode));
+            ForgetCredentials();
+            State.SetConnection(Connection.NotEnrolled);
+            return null;
+        }
+        catch (ProtocolVersionUnsupportedException)
+        {
+            _log.LogError("protocol version is not supported by the server: waiting for an update");
+            return new StreamEnd(Backoff.ProtocolUnsupported, null);
+        }
+        catch (AgentRpcException e) when (!cancellationToken.IsCancellationRequested)
+        {
+            if (e.ErrorCode == ErrorCode.ComputerNotFound)
             {
-                try
-                {
-                    await t.ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                }
+                _log.LogWarning("computer card was deleted in the club panel");
             }
+
+            _log.LogInformation("stream closed: {Error}", e.Message);
+            return new StreamEnd(null, e.RetryAfter);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested && ex is not OperationCanceledException)
+        {
+            _log.LogInformation("stream failed: {Error}", ex.Message);
+            return new StreamEnd(null, null);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new StreamEnd(Interlocked.Exchange(ref _drainBox, null)?.Value, null);
         }
     }
 
@@ -320,14 +338,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
         var wake = _wake.WaitAsync(cts.Token);
         var done = await Task.WhenAny(Task.Delay(delay, _time, cts.Token), wake).ConfigureAwait(false);
         if (done != wake) await cts.CancelAsync().ConfigureAwait(false);
-        try
-        {
-            await wake.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-
+        await IgnoreCancel(wake).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
     }
 
@@ -363,37 +374,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
             using var call = client.Connect(cancellationToken: streamCts.Token);
             writer = WriteLoop(call.RequestStream, outbox.Reader, streamCts.Token);
             outbox.Writer.TryWrite(new AgentMessage { Hello = BuildHello() });
-
-            Welcome welcome;
-            using (var welcomeCts = CancellationTokenSource.CreateLinkedTokenSource(streamCts.Token))
-            {
-                welcomeCts.CancelAfter(_options.WelcomeTimeout);
-                if (!await MoveNext(call.ResponseStream, welcomeCts.Token).ConfigureAwait(false))
-                    throw new AgentRpcException(StatusCode.Unavailable, ErrorCode.Unspecified, null, "stream closed before Welcome", null, new Dictionary<string, string>(), [], null);
-                welcome = call.ResponseStream.Current.Welcome
-                    ?? throw new AgentRpcException(StatusCode.Internal, ErrorCode.Unspecified, null, "the first server message is not Welcome", null, new Dictionary<string, string>(), [], null);
-            }
-
-            State.ApplyWelcome(welcome);
-            _log.LogInformation("connected: computer {ComputerId}, club {ClubId}, latest seq {Seq} (ours {Ours})",
-                welcome.ComputerId, welcome.ClubId, welcome.LatestCommandSeq, Commands.LastCommandSeq);
-            lock (_gate) _outbox = outbox;
-            if (_rotationPending)
-            {
-                // Первое подключение с новым сертификатом удалось — прежний ключ больше не нужен (§12.6 п. 6).
-                _store.CommitRotation();
-                creds.Stored.PreviousKeyName = "";
-                _rotationPending = false;
-                _log.LogInformation("connected with the renewed certificate, previous key removed");
-            }
-
-            _healthGate.Reset(); // первый Status нового стрима — с health
-            outbox.Writer.TryWrite(new AgentMessage { Status = NextStatus() });
-            foreach (var ev in Events.Pending()) outbox.Writer.TryWrite(new AgentMessage { Event = ev });
-            foreach (var r in Commands.Undelivered()) SendResult(r);
-            if (welcome.TranslationsVersion > State.TranslationsVersion) RaiseUi(new Event { TranslationsUpdated = new TranslationsUpdated { Version = welcome.TranslationsVersion } });
-            RefreshAutoBilling(); // мгновенные AutoBillingChanged, пока стрима не было, потеряны
-
+            OnWelcome(await ReceiveWelcomeAsync(call.ResponseStream, streamCts.Token).ConfigureAwait(false), creds, outbox);
             status = StatusLoop(outbox.Writer, streamCts.Token);
             while (await MoveNext(call.ResponseStream, streamCts.Token).ConfigureAwait(false))
             {
@@ -437,6 +418,41 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
 
             channel.Dispose();
         }
+    }
+
+    /// <summary>Первое сообщение сервера — Welcome, не позже <see cref="AgentOptions.WelcomeTimeout"/>.</summary>
+    private async Task<Welcome> ReceiveWelcomeAsync(IAsyncStreamReader<ServerMessage> stream, CancellationToken ct)
+    {
+        using var welcomeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        welcomeCts.CancelAfter(_options.WelcomeTimeout);
+        if (!await MoveNext(stream, welcomeCts.Token).ConfigureAwait(false))
+            throw AgentRpcException.Local(StatusCode.Unavailable, ErrorCode.Unspecified, "stream closed before Welcome");
+        return stream.Current.Welcome
+            ?? throw AgentRpcException.Local(StatusCode.Internal, ErrorCode.Unspecified, "the first server message is not Welcome");
+    }
+
+    /// <summary>Стрим открыт: состояние из Welcome, отправка Status, неподтверждённых событий и недоставленных итогов.</summary>
+    private void OnWelcome(Welcome welcome, AgentCredentials creds, Channel<AgentMessage> outbox)
+    {
+        State.ApplyWelcome(welcome);
+        _log.LogInformation("connected: computer {ComputerId}, club {ClubId}, latest seq {Seq} (ours {Ours})",
+            welcome.ComputerId, welcome.ClubId, welcome.LatestCommandSeq, Commands.LastCommandSeq);
+        lock (_gate) _outbox = outbox;
+        if (_rotationPending)
+        {
+            // Первое подключение с новым сертификатом удалось — прежний ключ больше не нужен (§12.6 п. 6).
+            _store.CommitRotation();
+            creds.Stored.PreviousKeyName = "";
+            _rotationPending = false;
+            _log.LogInformation("connected with the renewed certificate, previous key removed");
+        }
+
+        _healthGate.Reset(); // первый Status нового стрима — с health
+        outbox.Writer.TryWrite(new AgentMessage { Status = NextStatus() });
+        foreach (var ev in Events.Pending()) outbox.Writer.TryWrite(new AgentMessage { Event = ev });
+        foreach (var r in Commands.Undelivered()) SendResult(r);
+        if (welcome.TranslationsVersion > State.TranslationsVersion) RaiseUi(new Event { TranslationsUpdated = new TranslationsUpdated { Version = welcome.TranslationsVersion } });
+        RefreshAutoBilling(); // мгновенные AutoBillingChanged, пока стрима не было, потеряны
     }
 
     private static async Task<bool> MoveNext(IAsyncStreamReader<ServerMessage> stream, CancellationToken ct)
@@ -716,23 +732,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
 
             case Command.KindOneofCase.Reboot:
             case Command.KindOneofCase.Shutdown:
-            {
-                if (!_platform.Capabilities.PowerControl) return CommandOutcome.Fail(ErrorCode.CommandUnsupported);
-                var reboot = cmd.KindCase == Command.KindOneofCase.Reboot;
-                var delay = (reboot ? cmd.Reboot.Delay : cmd.Shutdown.Delay)?.ToTimeSpan() ?? TimeSpan.Zero;
-                if (delay < TimeSpan.Zero) delay = TimeSpan.Zero;
-                State.SetShuttingDown(true);
-                return CommandOutcome.Ok(async () =>
-                {
-                    var ok = reboot ? await _platform.RebootAsync(delay, CancellationToken.None).ConfigureAwait(false)
-                        : await _platform.ShutdownAsync(delay, CancellationToken.None).ConfigureAwait(false);
-                    if (!ok)
-                    {
-                        State.SetShuttingDown(false);
-                        RaiseEvent(e => e.Error = new AgentError { Component = "power", Message = "the operating system refused to " + (reboot ? "restart" : "shut down") });
-                    }
-                });
-            }
+                return PowerCommand(cmd);
 
             case Command.KindOneofCase.ShowMessage:
             {
@@ -768,7 +768,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
             {
                 if (!_platform.Capabilities.ServiceMode) return CommandOutcome.Fail(ErrorCode.CommandUnsupported);
                 var minutes = cmd.EnterServiceMode.StaffMinutes > 0 ? cmd.EnterServiceMode.StaffMinutes : State.Config?.StaffMinutes ?? 0;
-                if (minutes == 0) minutes = 15; // ClubComputerSessions::DEFAULT_STAFF_MINUTES
+                if (minutes == 0) minutes = DefaultStaffMinutes;
                 EnterServiceMode(_time.GetUtcNow() + TimeSpan.FromMinutes(minutes));
                 return CommandOutcome.Ok();
             }
@@ -807,19 +807,46 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
             case Command.KindOneofCase.Drain:
             {
                 var delay = Backoff.Drain(cmd.Drain.ReconnectWithin?.ToTimeSpan(), _random);
-                return CommandOutcome.Ok(() =>
-                {
-                    Interlocked.Exchange(ref _drainBox, new DelayBox(delay));
-                    CancellationTokenSource? cts;
-                    lock (_gate) cts = _streamCts;
-                    cts?.Cancel();
-                    return Task.CompletedTask;
-                });
+                return CommandOutcome.Ok(() => ReconnectAfterAsync(delay));
             }
 
             default:
                 return CommandOutcome.Fail(ErrorCode.CommandUnsupported, "unknown command");
         }
+    }
+
+    /// <summary>Перезагрузка или выключение по команде: итог сразу, само действие — после отправки итога.</summary>
+    private CommandOutcome PowerCommand(Command cmd)
+    {
+        if (!_platform.Capabilities.PowerControl) return CommandOutcome.Fail(ErrorCode.CommandUnsupported);
+        var reboot = cmd.KindCase == Command.KindOneofCase.Reboot;
+        var delay = (reboot ? cmd.Reboot.Delay : cmd.Shutdown.Delay)?.ToTimeSpan() ?? TimeSpan.Zero;
+        if (delay < TimeSpan.Zero) delay = TimeSpan.Zero;
+        State.SetShuttingDown(true);
+        return CommandOutcome.Ok(async () =>
+        {
+            if (!await PowerOffAsync(reboot, delay, CancellationToken.None).ConfigureAwait(false))
+                RaiseEvent(e => e.Error = new AgentError { Component = "power", Message = "the operating system refused to " + (reboot ? "restart" : "shut down") });
+        });
+    }
+
+    /// <summary>Перезагрузка или выключение ПК (состояние «выключается» уже выставлено); отказ ОС — состояние снимается.</summary>
+    private async Task<bool> PowerOffAsync(bool reboot, TimeSpan delay, CancellationToken ct)
+    {
+        var ok = reboot
+            ? await _platform.RebootAsync(delay, ct).ConfigureAwait(false)
+            : await _platform.ShutdownAsync(delay, ct).ConfigureAwait(false);
+        if (!ok) State.SetShuttingDown(false);
+        return ok;
+    }
+
+    /// <summary>Закрыть текущий стрим: цикл переподключится через <paramref name="delay"/> (Drain, новый сертификат).</summary>
+    private async Task ReconnectAfterAsync(TimeSpan delay)
+    {
+        Interlocked.Exchange(ref _drainBox, new DelayBox(delay));
+        CancellationTokenSource? cts;
+        lock (_gate) cts = _streamCts;
+        if (cts is not null) await cts.CancelAsync().ConfigureAwait(false);
     }
 
     /// <summary>Техрежим (по команде или после PIN сотрудника): агент закрыт до <paramref name="until"/>.</summary>
@@ -921,10 +948,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
             if (State.ComputerState is ComputerState.Idle or ComputerState.Locked && _platform.Capabilities.PowerControl)
             {
                 State.SetShuttingDown(true);
-                var ok = _afterSessionAction == AfterSessionAction.Restart
-                    ? await _platform.RebootAsync(TimeSpan.Zero, ct).ConfigureAwait(false)
-                    : await _platform.ShutdownAsync(TimeSpan.Zero, ct).ConfigureAwait(false);
-                if (!ok) State.SetShuttingDown(false);
+                await PowerOffAsync(_afterSessionAction == AfterSessionAction.Restart, TimeSpan.Zero, ct).ConfigureAwait(false);
             }
         }
 
@@ -969,10 +993,7 @@ public sealed class AgentRuntime : IGuestEvents, IAsyncDisposable
             var renewed = await _enroller.RenewAsync(channel, creds, _device, ct).ConfigureAwait(false);
             ReplaceCredentials(renewed);
             // Новый канал с новым сертификатом: текущий стрим закрывается, цикл переподключается сразу.
-            Interlocked.Exchange(ref _drainBox, new DelayBox(TimeSpan.Zero));
-            CancellationTokenSource? cts;
-            lock (_gate) cts = _streamCts;
-            if (cts is not null) await cts.CancelAsync().ConfigureAwait(false);
+            await ReconnectAfterAsync(TimeSpan.Zero).ConfigureAwait(false);
         }
         catch (AgentRpcException e)
         {

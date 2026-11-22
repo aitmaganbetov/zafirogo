@@ -32,6 +32,10 @@ public class AgentRpcException : Exception
         FieldViolations = violations;
     }
 
+    /// <summary>Ошибка самого агента (не ответ сервера): без текста для гостя, RetryInfo и деталей.</summary>
+    public static AgentRpcException Local(StatusCode statusCode, ErrorCode errorCode, string detail) =>
+        new(statusCode, errorCode, null, detail, null, new Dictionary<string, string>(), [], null);
+
     /// <summary>gRPC-код.</summary>
     public StatusCode StatusCode { get; }
 
@@ -97,9 +101,6 @@ public abstract class AgentRpcExceptionWrapper(AgentRpcException e)
 /// <summary>Разбор <see cref="RpcException"/> в типизированные ошибки контракта.</summary>
 public static class RpcErrors
 {
-    private static readonly EnumDescriptor ErrorCodeDescriptor =
-        CommonReflection.Descriptor.EnumTypes.First(e => e.Name == nameof(ErrorCode));
-
     /// <summary>Типизированное исключение по ErrorInfo.reason.</summary>
     public static AgentRpcException Parse(RpcException ex)
     {
@@ -171,7 +172,7 @@ public static class RpcErrors
     public static ErrorCode ParseReason(string? reason)
     {
         if (string.IsNullOrEmpty(reason)) return ErrorCode.Unspecified;
-        var v = ErrorCodeDescriptor.FindValueByName(reason);
+        var v = ErrorCodes.Descriptor.FindValueByName(reason);
         return v is null ? ErrorCode.Internal : (ErrorCode)v.Number;
     }
 
@@ -193,7 +194,7 @@ public static class RpcErrors
 /// <summary>Имена значений ErrorCode как в proto ("ERROR_CODE_INSUFFICIENT_FUNDS").</summary>
 public static class ErrorCodes
 {
-    private static readonly EnumDescriptor Descriptor =
+    internal static readonly EnumDescriptor Descriptor =
         CommonReflection.Descriptor.EnumTypes.First(e => e.Name == nameof(ErrorCode));
 
     public static string Name(ErrorCode code) => Descriptor.FindValueByNumber((int)code)?.Name ?? ((int)code).ToString(System.Globalization.CultureInfo.InvariantCulture);

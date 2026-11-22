@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Net.NetworkInformation;
 using Microsoft.Extensions.Logging;
@@ -57,7 +56,7 @@ public sealed class LinuxPlatform : IPlatform
 
     public ComputerLoad GetLoad() => new()
     {
-        AgentMemoryMb = (uint)(Environment.WorkingSet / (1024 * 1024)),
+        AgentMemoryMb = ProcessInfo.WorkingSetMb(),
     };
 
     public Task<bool> RebootAsync(TimeSpan delay, CancellationToken cancellationToken)
@@ -209,12 +208,8 @@ public static class WakeOnLanSender
     }
 }
 
-/// <summary>Процесс службы: память для Status.load.agent_memory_mb.</summary>
+/// <summary>Процесс службы: память для Status.load.agent_memory_mb (без объекта Process на каждый Status).</summary>
 internal static class ProcessInfo
 {
-    public static uint WorkingSetMb()
-    {
-        using var p = Process.GetCurrentProcess();
-        return (uint)(p.WorkingSet64 / (1024 * 1024));
-    }
+    public static uint WorkingSetMb() => (uint)(Environment.WorkingSet / (1024 * 1024));
 }

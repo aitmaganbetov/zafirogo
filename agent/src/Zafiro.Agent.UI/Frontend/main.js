@@ -108,6 +108,16 @@
   };
   const toastKey = (key, level = 'error', params = {}) => toast(t(key, params), level);
 
+  // Окна <dialog>: модально, где есть showModal; иначе — атрибутом open.
+  const openDialog = (dialog) => {
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+  };
+  const closeDialog = (dialog) => {
+    if (typeof dialog.close === 'function') dialog.close();
+    else dialog.removeAttribute('open');
+  };
+
   // Подтверждение действия в окне агента (не системное окно браузера).
   const confirmDialog = document.getElementById('confirmDialog');
   let confirmResolve = null;
@@ -117,15 +127,13 @@
     document.getElementById('confirmTitle').textContent = title;
     document.getElementById('confirmText').textContent = text;
     document.getElementById('confirmOk').textContent = okLabel;
-    if (typeof confirmDialog.showModal === 'function') confirmDialog.showModal();
-    else confirmDialog.setAttribute('open', '');
+    openDialog(confirmDialog);
     document.getElementById('confirmCancel').focus();
   });
   const finishConfirm = (answer) => {
     const resolve = confirmResolve;
     confirmResolve = null;
-    if (typeof confirmDialog.close === 'function') confirmDialog.close();
-    else confirmDialog.removeAttribute('open');
+    closeDialog(confirmDialog);
     resolve?.(answer);
   };
   document.getElementById('confirmOk').addEventListener('click', () => finishConfirm(true));
@@ -157,15 +165,13 @@
     document.getElementById('payBonus').textContent = mixed
       ? t('Смешанно: бонусы до :percent% + основной', { percent: bonusPercent })
       : t('С бонусного баланса');
-    if (typeof payDialog.showModal === 'function') payDialog.showModal();
-    else payDialog.setAttribute('open', '');
+    openDialog(payDialog);
     document.getElementById('payMain').focus();
   });
   const finishPay = (answer) => {
     const resolve = payResolve;
     payResolve = null;
-    if (typeof payDialog.close === 'function') payDialog.close();
-    else payDialog.removeAttribute('open');
+    closeDialog(payDialog);
     resolve?.(answer);
   };
   document.getElementById('payMain').addEventListener('click', () => finishPay('main'));
@@ -271,6 +277,13 @@
     return button;
   };
 
+  // Кнопки-фильтры (категории магазина, история): выбранная — класс is-active и aria-pressed.
+  const markPressed = (items, isActive) => items.forEach((item) => {
+    const active = isActive(item);
+    item.classList.toggle('is-active', active);
+    item.setAttribute('aria-pressed', String(active));
+  });
+
   // Кнопки категорий: «Все товары» и категории, которые есть у товаров клуба.
   const renderCategories = () => {
     const box = document.getElementById('shopCategories');
@@ -286,11 +299,7 @@
       button.textContent = name;
       return button;
     }));
-    box.querySelectorAll('.category-button').forEach((item) => {
-      const isActive = item.dataset.category === activeCategory;
-      item.classList.toggle('is-active', isActive);
-      item.setAttribute('aria-pressed', String(isActive));
-    });
+    markPressed(box.querySelectorAll('.category-button'), (item) => item.dataset.category === activeCategory);
   };
 
   const renderProducts = () => {
@@ -422,6 +431,11 @@
     return tc(':count час|:count часа|:count часов', value / 60);
   };
 
+  // Кнопки «Выбрать» тарифов: на время покупки времени (тариф, минуты, абонемент) — недоступны.
+  const disableTariffButtons = (disabled) => tariffCatalog.querySelectorAll('.tariff-purchase').forEach((item) => {
+    item.disabled = disabled;
+  });
+
   const renderTariffs = (tariffs) => {
     lastTariffs = tariffs;
     tariffCatalog.replaceChildren();
@@ -466,9 +480,7 @@
         const balance = await askBalance(name.textContent, price.textContent, Number(tariff.bonusMaxPercent) || 0, tariff.mixedPayment === true);
         if (!balance) return;
         setStatus(tariffPageStatus, 'Оформляем тариф…');
-        tariffCatalog.querySelectorAll('.tariff-purchase').forEach((item) => {
-          item.disabled = true;
-        });
+        disableTariffButtons(true);
         purchaseTime('GuestService/PurchaseTariff', { tariffId: String(tariffId), balanceSource: balanceSource(balance) });
       });
 
@@ -483,19 +495,12 @@
     if (!button) return;
 
     activeCategory = button.dataset.category;
-    document.querySelectorAll('.category-button').forEach((item) => {
-      const isActive = item === button;
-      item.classList.toggle('is-active', isActive);
-      item.setAttribute('aria-pressed', String(isActive));
-    });
+    markPressed(document.querySelectorAll('.category-button'), (item) => item === button);
     renderProducts();
   });
 
-  document.getElementById('cartToggle').addEventListener('click', () => {
-    if (typeof cartDialog.showModal === 'function') cartDialog.showModal();
-    else cartDialog.setAttribute('open', '');
-  });
-  document.getElementById('cartClose').addEventListener('click', () => cartDialog.close());
+  document.getElementById('cartToggle').addEventListener('click', () => openDialog(cartDialog));
+  document.getElementById('cartClose').addEventListener('click', () => closeDialog(cartDialog));
   document.getElementById('clearCart').addEventListener('click', () => {
     cart.clear();
     renderCart();
@@ -529,7 +534,7 @@
     renderCart();
   }));
   cartDialog.addEventListener('click', (event) => {
-    if (event.target === cartDialog) cartDialog.close();
+    if (event.target === cartDialog) closeDialog(cartDialog);
   });
 
   setView('session');
@@ -576,6 +581,9 @@
   let hasActiveSession = false;
   let sessionEndsAt = null;
 
+  // Секунды отсчёта → «m:ss».
+  const formatClock = (seconds) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+
   // «1 ч 27 мин» вместо «87»: так оставшееся время читается с одного взгляда.
   const formatMinutes = (minutes) => {
     const value = Math.max(0, Math.round(Number(minutes) || 0));
@@ -616,12 +624,11 @@
     const deadline = Date.now() + Math.max(0, Number(seconds) || 0) * 1000;
     if (afterSessionTimer === null) {
       const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-      toast(t(messages[0], { time: `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` }), 'warning');
+      toast(t(messages[0], { time: formatClock(left) }), 'warning');
     }
     const tick = () => {
       const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-      const time = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
-      setStatus(actionStatus, left > 0 ? messages[0] : messages[1], { time });
+      setStatus(actionStatus, left > 0 ? messages[0] : messages[1], { time: formatClock(left) });
     };
     tick();
     afterSessionTimer = setInterval(tick, 1000);
@@ -641,7 +648,7 @@
     document.getElementById('profileDetails').hidden = !hasActiveSession;
   };
 
-  // Друзья, переводы и пересадка: только то, что клуб включил в настройках «Гости» (приходит с heartbeat).
+  // Друзья, переводы и пересадка: только то, что клуб включил в настройках «Гости» (приходит в снимке службы).
   let guestFeatures = { friends: false, balance_transfer: false, self_transfer: false };
   // Вошёл, но без оплаченной сессии (не купил тариф или время кончилось): через столько минут
   // агент сам выходит из аккаунта и освобождает ПК (настройки клуба; 0 или null — не выходит).
@@ -683,14 +690,6 @@
   let chosenSeat = null;
   let seatError = null; // ошибка пересадки остаётся видна после обновления карты
 
-  const openDialog = (dialog) => {
-    if (typeof dialog.showModal === 'function') dialog.showModal();
-    else dialog.setAttribute('open', '');
-  };
-  const closeDialog = (dialog) => {
-    if (typeof dialog.close === 'function') dialog.close();
-    else dialog.removeAttribute('open');
-  };
   [[transferDialog, 'transferClose'], [seatDialog, 'seatClose']].forEach(([dialog, closeId]) => {
     document.getElementById(closeId).addEventListener('click', () => closeDialog(dialog));
     dialog.addEventListener('click', (event) => {
@@ -1056,11 +1055,7 @@
     const button = event.target.closest('[data-history-filter]');
     if (!button || historyLoading) return;
     historyFilter = button.dataset.historyFilter;
-    document.querySelectorAll('[data-history-filter]').forEach((item) => {
-      const active = item === button;
-      item.classList.toggle('is-active', active);
-      item.setAttribute('aria-pressed', String(active));
-    });
+    markPressed(document.querySelectorAll('[data-history-filter]'), (item) => item === button);
     requestHistory();
   });
   historyMore.addEventListener('click', () => requestHistory(true));
@@ -1122,7 +1117,7 @@
     if (!ok) return;
     minuteWholeBuy.disabled = true;
     minuteBuy.disabled = true;
-    tariffCatalog.querySelectorAll('.tariff-purchase').forEach((item) => { item.disabled = true; });
+    disableTariffButtons(true);
     setStatus(tariffPageStatus, 'Оформляем тариф…');
     purchaseTime('GuestService/PlayWholeBalance', {});
   });
@@ -1148,9 +1143,7 @@
     } catch (error) {
       message = error.message || null;
     }
-    tariffCatalog.querySelectorAll('.tariff-purchase').forEach((item) => {
-      item.disabled = false;
-    });
+    disableTariffButtons(false);
     minuteWholeBuy.disabled = false;
     renderMinutes();
     setStatus(tariffPageStatus, null);
@@ -1174,7 +1167,7 @@
     const left = endsAt === null ? 0 : endsAt - serverNow();
     const seconds = Math.max(0, Math.ceil(left / 1000));
     autoBillingShown = true;
-    document.getElementById('remainingBig').textContent = t('Поминутная оплата через :time', { time: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` });
+    document.getElementById('remainingBig').textContent = t('Поминутная оплата через :time', { time: formatClock(seconds) });
   };
   setInterval(autoBillingTick, 1000);
 
@@ -1189,7 +1182,7 @@
     const balance = await askBalance(t('Поминутно'), document.getElementById('minutePrice').textContent, Number(minuteOffer?.bonusMaxPercent) || 0, minuteOffer?.mixedPayment === true);
     if (!balance) return;
     minuteBuy.disabled = true;
-    tariffCatalog.querySelectorAll('.tariff-purchase').forEach((item) => { item.disabled = true; });
+    disableTariffButtons(true);
     setStatus(tariffPageStatus, 'Оформляем тариф…');
     purchaseTime('GuestService/PurchaseMinutes', { minutes, balanceSource: balanceSource(balance) });
   });
@@ -1320,8 +1313,8 @@
     }).catch(() => {});
   };
 
-  // Чат с клубом: сообщения клиента приходят кассиру и оператору в панель. Пока страница чата
-  // открыта — проверка каждые 5 с, иначе каждые 30 с (значок новых ответов на пункте меню).
+  // Чат с клубом: сообщения клиента приходят кассиру и оператору в панель; ответы клуба — push (значок новых ответов
+  // на пункте меню).
   const chatThread = document.getElementById('chatThread');
   const chatStatus = document.getElementById('chatStatus');
   const chatInput = document.getElementById('chatInput');
@@ -1723,11 +1716,7 @@
     clearProfilePasswords();
     if (confirmResolve) finishConfirm(false);
     historyFilter = '';
-    document.querySelectorAll('[data-history-filter]').forEach((item) => {
-      const active = item.dataset.historyFilter === '';
-      item.classList.toggle('is-active', active);
-      item.setAttribute('aria-pressed', String(active));
-    });
+    markPressed(document.querySelectorAll('[data-history-filter]'), (item) => item.dataset.historyFilter === '');
     autoBilling = null;
     setView('session');
   };

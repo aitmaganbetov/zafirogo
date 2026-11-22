@@ -22,8 +22,6 @@ public sealed class UiTranslations
         _ipc = ipc ?? throw new ArgumentNullException(nameof(ipc));
     }
 
-    public string Locale => _locale;
-
     public string T(string key, params (string Name, string Value)[] parameters)
     {
         ArgumentNullException.ThrowIfNull(key);

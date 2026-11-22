@@ -34,7 +34,9 @@ public sealed class CommandJournalStore
     public CommandJournalStore(string? path)
     {
         _path = path;
-        _journal = Load(path) ?? new CommandJournal();
+        // Испорченный журнал: начать с нуля. Сервер дошлёт команды с seq > 0 — повторное выполнение долговременных
+        // команд безопасно по смыслу (StartSession/EndSession — состояние; питание — только неистёкшие, 120 с).
+        _journal = (path is null ? null : AtomicFile.ReadMessage(path, CommandJournal.Parser)) ?? new CommandJournal();
     }
 
     /// <summary>seq последней выполненной долговременной команды (Hello.last_command_seq).</summary>
@@ -154,22 +156,5 @@ public sealed class CommandJournalStore
     private void Save()
     {
         if (_path is not null) AtomicFile.Write(_path, _journal.ToByteArray());
-    }
-
-    private static CommandJournal? Load(string? path)
-    {
-        if (path is null) return null;
-        var bytes = AtomicFile.Read(path);
-        if (bytes is null) return null;
-        try
-        {
-            return CommandJournal.Parser.ParseFrom(bytes);
-        }
-        catch (InvalidProtocolBufferException)
-        {
-            // Испорченный журнал: начать с нуля. Сервер дошлёт команды с seq > 0 — повторное выполнение долговременных
-            // команд безопасно по смыслу (StartSession/EndSession — состояние; питание — только неистёкшие, 120 с).
-            return null;
-        }
     }
 }

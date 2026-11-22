@@ -259,9 +259,10 @@
     if (digits !== bookingInput.value) bookingInput.value = digits;
   });
 
-  const fail = (err, fallbackKey) => {
-    if (err instanceof Z.BridgeError && err.message) setText(error, err.message);
-    else setKey(error, fallbackKey);
+  // Ошибка вызова: текст сервера как есть, иначе запасной ключ.
+  const fail = (element, err, fallbackKey) => {
+    if (err instanceof Z.BridgeError && err.message) setText(element, err.message);
+    else setKey(element, fallbackKey);
   };
 
   // Код брони (ClubSetupWindow.EnterBookingCodeAsync): сервер открывает на этом ПК оплаченную сессию без аккаунта,
@@ -279,7 +280,7 @@
       await bridge.call('GuestAuthService/StartBookingByCode', { code: value });
       resetForm();
     } catch (err) {
-      fail(err, 'Не удалось проверить код. Повторите попытку или обратитесь к администратору клуба.');
+      fail(error, err, 'Не удалось проверить код. Повторите попытку или обратитесь к администратору клуба.');
     } finally {
       busy = false;
       submit.disabled = false;
@@ -336,7 +337,7 @@
         resetForm();
       }
     } catch (err) {
-      fail(err, 'Не удалось выполнить вход. Повторите попытку или обратитесь к администратору клуба.');
+      fail(error, err, 'Не удалось выполнить вход. Повторите попытку или обратитесь к администратору клуба.');
       if (recovery === 'none') clearPasswords();
     } finally {
       busy = false;
@@ -407,8 +408,7 @@
       await bridge.call('agent.Enroll', { code: setupCode.value.trim() });
       setupCode.value = '';
     } catch (err) {
-      if (err instanceof Z.BridgeError && err.message) setText(setupError, err.message);
-      else setKey(setupError, 'Не удалось подключить ПК. Проверьте код и подключение к интернету.');
+      fail(setupError, err, 'Не удалось подключить ПК. Проверьте код и подключение к интернету.');
     } finally {
       busy = false;
       setupSubmit.disabled = false;
@@ -453,8 +453,7 @@
       closePin();
     } catch (err) {
       pinInput.value = '';
-      if (err instanceof Z.BridgeError && err.message) setText(pinError, err.message);
-      else setKey(pinError, 'Не удалось проверить PIN-код.');
+      fail(pinError, err, 'Не удалось проверить PIN-код.');
     } finally {
       $('pinSubmit').disabled = false;
     }

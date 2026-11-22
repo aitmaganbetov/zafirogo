@@ -324,16 +324,15 @@ public sealed class GuestApi
     }
 
     private CallInvoker Invoker() =>
-        _invoker() ?? throw new AgentRpcException(StatusCode.Unavailable, ErrorCode.Unspecified, null, "agent is not connected",
-            null, new Dictionary<string, string>(), [], null);
+        _invoker() ?? throw AgentRpcException.Local(StatusCode.Unavailable, ErrorCode.Unspecified, "agent is not connected");
 
     private CallOptions Options(bool write, bool token, CancellationToken ct, TimeSpan? deadline = null)
     {
         var headers = new Metadata();
         if (token)
         {
-            var t = _state.GuestToken ?? throw new GuestTokenInvalidException(new AgentRpcException(StatusCode.Unauthenticated,
-                ErrorCode.GuestTokenInvalid, null, "guest is not signed in", null, new Dictionary<string, string>(), [], null));
+            var t = _state.GuestToken ?? throw new GuestTokenInvalidException(
+                AgentRpcException.Local(StatusCode.Unauthenticated, ErrorCode.GuestTokenInvalid, "guest is not signed in"));
             headers.Add("authorization", "Bearer " + t);
         }
 
