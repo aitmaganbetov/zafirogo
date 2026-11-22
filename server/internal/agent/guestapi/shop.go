@@ -48,7 +48,7 @@ func (ss *shopService) ListProducts(ctx context.Context, req *agentv1.ListProduc
 	for _, p := range page.Products {
 		// ProductResource: currency всегда 'KZT', in_stock = quantity > 0; фото — колонки image_path в схеме нет.
 		out.Products = append(out.Products, &agentv1.Product{ProductId: p.ID, Sku: p.SKU, Name: p.Name, Category: p.Category,
-			PriceTiyn: int64(p.Price), Currency: "KZT", Quantity: int32(min(p.Quantity, 1<<31-1)), InStock: p.Quantity > 0}) // #nosec G115 -- ограничено
+			PriceTiyn: int64(p.Price), Currency: "KZT", Quantity: clampInt32(p.Quantity), InStock: p.Quantity > 0})
 	}
 	return out, nil
 }

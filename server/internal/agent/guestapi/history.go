@@ -217,11 +217,6 @@ func str(v any) string {
 	return s
 }
 
-// historyEntry — historyEntryIn без перевода: заголовок — русский ключ с подставленными параметрами.
-func historyEntry(l historyRow, userID int64, tariffs, users map[int64]string) *agentv1.HistoryEntry {
-	return historyEntryIn(l, userID, tariffs, users, substitute)
-}
-
 // historyEntryIn — GuestHistory::entry(): заголовок и изменения балансов по событию. Заголовок — ключ перевода
 // (русский текст, как `__()` в Laravel) с параметрами :name; tr переводит его на язык гостя.
 func historyEntryIn(l historyRow, userID int64, tariffs, users map[int64]string, tr func(string, map[string]string) string) *agentv1.HistoryEntry {

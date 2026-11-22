@@ -205,3 +205,8 @@ func TestAutoBillingRecheckSlot(t *testing.T) {
 		t.Fatalf("1000 clubs share %d slots", len(slots))
 	}
 }
+
+// historyEntry — historyEntryIn без перевода: заголовок — русский ключ с подставленными параметрами.
+func historyEntry(l historyRow, userID int64, tariffs, users map[int64]string) *agentv1.HistoryEntry {
+	return historyEntryIn(l, userID, tariffs, users, substitute)
+}

@@ -21,8 +21,6 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/shop"
 )
 
-const unavailable = codes.Unavailable
-
 // Тексты ошибок (русский текст = ключ перевода, как в старом коде; ссылки — у мест использования).
 const (
 	msgInternal          = "Внутренняя ошибка сервера."

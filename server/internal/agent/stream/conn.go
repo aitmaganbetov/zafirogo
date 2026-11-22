@@ -2,7 +2,6 @@ package stream
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -128,7 +127,7 @@ func (c *conn) enqueue(m *agentv1.ServerMessage) bool {
 	ok := c.pushLocked(m)
 	c.mu.Unlock()
 	if !ok {
-		c.close(statusErr(codes.ResourceExhausted, agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED, "agent does not read the stream"))
+		c.close(notReadingErr())
 		return false
 	}
 	c.signal()
@@ -228,7 +227,7 @@ func (c *conn) enqueueCommands(ctx context.Context, cmds []*agentv1.Command, fro
 	resync := c.resync
 	c.mu.Unlock()
 	if overflow {
-		c.close(statusErr(codes.ResourceExhausted, agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED, "agent does not read the stream"))
+		c.close(notReadingErr())
 		return
 	}
 	if queued {
@@ -241,12 +240,26 @@ func (c *conn) enqueueCommands(ctx context.Context, cmds []*agentv1.Command, fro
 		// Агент не умеет — не отправляем (как ComputerPower::carriesOut() по версии агента в Laravel).
 		res := &agentv1.CommandResult{CommandId: cmd.GetCommandId(), Seq: cmd.GetSeq(),
 			Status: agentv1.CommandStatus_COMMAND_STATUS_FAILED, ErrorCode: agentv1.ErrorCode_ERROR_CODE_COMMAND_UNSUPPORTED}
-		if _, err := c.svc.queue.Record(ctx, c.id.ClubID, c.id.ComputerID, res, now.UTC()); err != nil {
-			c.svc.o.Log.Warn("agent command result not recorded", "computer_id", c.id.ComputerID, "err", err)
-		}
-		if c.svc.o.Results != nil {
-			c.svc.o.Results.CommandResult(ctx, c.id, commands.KindOf(cmd), res)
-		}
+		c.recordResult(ctx, res, now)
+		c.notifyResult(ctx, commands.KindOf(cmd), res)
+	}
+}
+
+// recordResult записывает итог долговременной команды в очередь Postgres; updated — запись изменилась (команда
+// этого ПК, итога ещё не было). Сбой — в журнал (ok = false), поток не закрывается.
+func (c *conn) recordResult(ctx context.Context, res *agentv1.CommandResult, now time.Time) (updated, ok bool) {
+	updated, err := c.svc.queue.Record(ctx, c.id.ClubID, c.id.ComputerID, res, now.UTC())
+	if err != nil {
+		c.svc.o.Log.Warn("agent command result not recorded", "computer_id", c.id.ComputerID, "err", err)
+		return false, false
+	}
+	return updated, true
+}
+
+// notifyResult — итог команды обработчику панели (Options.Results), если он подключён.
+func (c *conn) notifyResult(ctx context.Context, kind commands.Kind, res *agentv1.CommandResult) {
+	if c.svc.o.Results != nil {
+		c.svc.o.Results.CommandResult(ctx, c.id, kind, res)
 	}
 }
 
@@ -268,6 +281,7 @@ func (s *Service) Connect(st agentv1.AgentService_ConnectServer) error {
 		return statusErr(codes.Unavailable, agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED, "server is shutting down")
 	}
 
+	// Горутина чтения: сначала Hello, затем (когда соединение готово и Welcome отправлен) recvLoop.
 	helloCh := make(chan *agentv1.AgentMessage, 1)
 	recvErr := make(chan error, 1)
 	connCh := make(chan *conn, 1)
@@ -285,27 +299,8 @@ func (s *Service) Connect(st agentv1.AgentService_ConnectServer) error {
 		}
 		c.recvLoop(st)
 	}()
-
-	timer := time.NewTimer(s.o.HelloTimeout)
-	defer timer.Stop()
-	var hello *agentv1.Hello
-	select {
-	case m := <-helloCh:
-		hello = m.GetHello()
-		if hello == nil {
-			return validationErr("hello", "the first message must be Hello")
-		}
-	case err := <-recvErr:
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		return err
-	case <-timer.C:
-		return validationErr("hello", "Hello was not received in time")
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	if err := validateHello(hello); err != nil {
+	hello, err := s.awaitHello(ctx, helloCh, recvErr)
+	if err != nil || hello == nil {
 		return err
 	}
 
@@ -326,9 +321,95 @@ func (s *Service) Connect(st agentv1.AgentService_ConnectServer) error {
 			return statusErr(codes.NotFound, agentv1.ErrorCode_ERROR_CODE_COMPUTER_NOT_FOUND, "computer not found")
 		}
 		s.o.Log.Error("agent hello: load computer", "club_id", id.ClubID, "computer_id", id.ComputerID, "err", err)
-		return statusErr(codes.Internal, agentv1.ErrorCode_ERROR_CODE_INTERNAL, "internal error")
+		return internalErr()
 	}
 	now := s.o.Now()
+	c := s.newConn(ctx, id, own, row, hello, now)
+	s.attach(c)
+	defer c.finish()
+	if hadPrev && prev.Instance != s.o.Instance {
+		s.kickRemote(prev.Instance, id, own.Gen)
+	}
+
+	freshBoot, err := s.rec.RecordHello(ctx, row, presence.HelloFacts{
+		AgentVersion: hello.GetAgentVersion(), BootID: hello.GetBootId(), RemoteIP: c.st.RemoteIP, Device: hello.GetDevice()})
+	if err != nil {
+		s.o.Log.Error("agent hello: record", "computer_id", id.ComputerID, "err", err)
+		return internalErr()
+	}
+	if h := hello.GetDevice().GetHostname(); h != "" {
+		row.DeviceName = &h // уже записано RecordHello (displayName в Welcome)
+	}
+	if freshBoot && s.o.Events != nil {
+		if err := s.o.Events.FreshBoot(ctx, id); err != nil {
+			s.o.Log.Warn("agent fresh boot hook failed", "computer_id", id.ComputerID, "err", err)
+		} else if row, err = s.rec.Load(ctx, id.ClubID, id.ComputerID); err != nil {
+			return internalErr()
+		}
+	}
+
+	latest := uint64(max(row.LastCommandSeq, 0)) // #nosec G115 -- неотрицательное после max
+	if hello.GetLastCommandSeq() > latest {
+		if err := s.queue.RaiseSeq(ctx, id.ClubID, id.ComputerID, hello.GetLastCommandSeq()); err != nil {
+			return internalErr()
+		}
+		latest = hello.GetLastCommandSeq()
+	}
+
+	w := s.welcome(row, latest, now)
+	if s.o.Welcome != nil {
+		if err := s.o.Welcome.CompleteWelcome(ctx, id, w); err != nil {
+			s.o.Log.Error("agent welcome provider failed", "computer_id", id.ComputerID, "err", err)
+			return internalErr()
+		}
+	}
+	if err := st.Send(&agentv1.ServerMessage{Payload: &agentv1.ServerMessage_Welcome{Welcome: w}}); err != nil {
+		return err
+	}
+	if err := c.writePresence(ctx); err != nil && !errors.Is(err, presence.ErrNotOwner) {
+		s.o.Log.Warn("agent presence write failed", "computer_id", id.ComputerID, "err", err)
+	}
+	if s.o.Presence != nil {
+		s.o.Presence.PresenceChanged(ctx, c.state())
+	}
+
+	c.catchUp(ctx, latest, hello.GetLastCommandSeq())
+
+	connCh <- c
+	return c.sendLoop(ctx, st)
+}
+
+// awaitHello ждёт первое сообщение стрима — Hello — не дольше HelloTimeout и проверяет его.
+// (nil, nil) — агент закрыл стрим до Hello.
+func (s *Service) awaitHello(ctx context.Context, helloCh <-chan *agentv1.AgentMessage, recvErr <-chan error) (*agentv1.Hello, error) {
+	timer := time.NewTimer(s.o.HelloTimeout)
+	defer timer.Stop()
+	var hello *agentv1.Hello
+	select {
+	case m := <-helloCh:
+		hello = m.GetHello()
+		if hello == nil {
+			return nil, validationErr("hello", "the first message must be Hello")
+		}
+	case err := <-recvErr:
+		if errors.Is(err, io.EOF) {
+			return nil, nil
+		}
+		return nil, err
+	case <-timer.C:
+		return nil, validationErr("hello", "Hello was not received in time")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if err := validateHello(hello); err != nil {
+		return nil, err
+	}
+	return hello, nil
+}
+
+// newConn — соединение по Hello до публикации (attach): снимок присутствия и Status из Hello, если он есть.
+func (s *Service) newConn(ctx context.Context, id identity.Identity, own presence.Owner, row store.GetAgentComputerRow,
+	hello *agentv1.Hello, now time.Time) *conn {
 	c := &conn{
 		svc: s, id: id, own: own,
 		sig:      make(chan struct{}, 1),
@@ -361,66 +442,19 @@ func (s *Service) Connect(st agentv1.AgentService_ConnectServer) error {
 	c.live = markOf(c.st, now)
 	// Первый Ping — через PingInterval после подключения (не добавлять сообщений в шторм переподключений).
 	c.pingSent = now
-	s.attach(c)
-	defer c.finish()
-	if hadPrev && prev.Instance != s.o.Instance {
-		s.kickRemote(prev.Instance, id, own.Gen)
-	}
+	return c
+}
 
-	freshBoot, err := s.rec.RecordHello(ctx, row, presence.HelloFacts{
-		AgentVersion: hello.GetAgentVersion(), BootID: hello.GetBootId(), RemoteIP: c.st.RemoteIP, Device: hello.GetDevice()})
-	if err != nil {
-		s.o.Log.Error("agent hello: record", "computer_id", id.ComputerID, "err", err)
-		return statusErr(codes.Internal, agentv1.ErrorCode_ERROR_CODE_INTERNAL, "internal error")
-	}
-	if h := hello.GetDevice().GetHostname(); h != "" {
-		row.DeviceName = &h // уже записано RecordHello (displayName в Welcome)
-	}
-	if freshBoot && s.o.Events != nil {
-		if err := s.o.Events.FreshBoot(ctx, id); err != nil {
-			s.o.Log.Warn("agent fresh boot hook failed", "computer_id", id.ComputerID, "err", err)
-		} else if row, err = s.rec.Load(ctx, id.ClubID, id.ComputerID); err != nil {
-			return statusErr(codes.Internal, agentv1.ErrorCode_ERROR_CODE_INTERNAL, "internal error")
-		}
-	}
-
-	latest := uint64(max(row.LastCommandSeq, 0)) // #nosec G115 -- неотрицательное после max
-	if hello.GetLastCommandSeq() > latest {
-		if err := s.queue.RaiseSeq(ctx, id.ClubID, id.ComputerID, hello.GetLastCommandSeq()); err != nil {
-			return statusErr(codes.Internal, agentv1.ErrorCode_ERROR_CODE_INTERNAL, "internal error")
-		}
-		latest = hello.GetLastCommandSeq()
-	}
-
-	w := s.welcome(row, latest, now)
-	if s.o.Welcome != nil {
-		if err := s.o.Welcome.CompleteWelcome(ctx, id, w); err != nil {
-			s.o.Log.Error("agent welcome provider failed", "computer_id", id.ComputerID, "err", err)
-			return statusErr(codes.Internal, agentv1.ErrorCode_ERROR_CODE_INTERNAL, "internal error")
-		}
-	}
-	if err := st.Send(&agentv1.ServerMessage{Payload: &agentv1.ServerMessage_Welcome{Welcome: w}}); err != nil {
-		return err
-	}
-	if err := c.writePresence(ctx); err != nil && !errors.Is(err, presence.ErrNotOwner) {
-		s.o.Log.Warn("agent presence write failed", "computer_id", id.ComputerID, "err", err)
-	}
-	if s.o.Presence != nil {
-		s.o.Presence.PresenceChanged(ctx, c.state())
-	}
-
-	// Досылка: долговременные с seq > last_command_seq, затем последние «заменяемые» мгновенные.
-	if latest > hello.GetLastCommandSeq() {
+// catchUp — досылка после Welcome: долговременные с seq > last_command_seq, затем последние «заменяемые» мгновенные.
+func (c *conn) catchUp(ctx context.Context, latest, helloSeq uint64) {
+	if latest > helloSeq {
 		// Есть команды новее выполненных агентом — досылка из Postgres. Обычный reconnect (всё выполнено)
 		// обходится без этого запроса.
 		c.resyncFromQueue(ctx)
 	}
-	if co, err := s.sender.Coalesced(ctx, id.ComputerID); err == nil {
+	if co, err := c.svc.sender.Coalesced(ctx, c.id.ComputerID); err == nil {
 		c.enqueueCommands(ctx, co, false)
 	}
-
-	connCh <- c
-	return c.sendLoop(ctx, st)
 }
 
 func remoteIP(ctx context.Context) string {
@@ -437,11 +471,7 @@ func remoteIP(ctx context.Context) string {
 
 func (s *Service) kickRemote(instance string, id identity.Identity, gen int64) {
 	env := commands.Envelope{Type: commands.EnvelopeKick, ClubID: id.ClubID, ComputerID: id.ComputerID, Gen: gen}
-	b, err := json.Marshal(env)
-	if err == nil {
-		err = s.o.NATS.Publish(commands.InstanceSubject(s.o.SubjectPrefix, instance), b)
-	}
-	if err != nil {
+	if err := commands.PublishEnvelope(s.o.NATS, s.o.SubjectPrefix, instance, env); err != nil {
 		s.o.Log.Warn("agent kick not published", "computer_id", id.ComputerID, "instance", instance, "err", err)
 	}
 }
@@ -792,13 +822,9 @@ func (c *conn) onResult(ctx context.Context, res *agentv1.CommandResult) {
 	if known || res.GetSeq() == 0 {
 		// Команда отправлена в этом потоке (их число ограничено сервером) или мгновенная (в базу не пишется).
 		if res.GetSeq() > 0 {
-			if _, err := c.svc.queue.Record(ctx, c.id.ClubID, c.id.ComputerID, res, now.UTC()); err != nil {
-				c.svc.o.Log.Warn("agent command result not recorded", "computer_id", c.id.ComputerID, "err", err)
-			}
+			c.recordResult(ctx, res, now)
 		}
-		if c.svc.o.Results != nil {
-			c.svc.o.Results.CommandResult(ctx, c.id, kind, res)
-		}
+		c.notifyResult(ctx, kind, res)
 		return
 	}
 	// Долговременная команда, которой нет среди отправленных в этом потоке. Законный случай — итог команды,
@@ -810,14 +836,9 @@ func (c *conn) onResult(ctx context.Context, res *agentv1.CommandResult) {
 		c.dropped(&c.resLimit, now, &c.svc.resultsDropped, &c.svc.messageFloods, "CommandResult")
 		return
 	}
-	updated, err := c.svc.queue.Record(ctx, c.id.ClubID, c.id.ComputerID, res, now.UTC())
-	if err != nil {
-		c.svc.o.Log.Warn("agent command result not recorded", "computer_id", c.id.ComputerID, "err", err)
-		return
-	}
 	// Панели — только итог, который действительно записан (команда этого ПК, итога ещё не было).
-	if updated && c.svc.o.Results != nil {
-		c.svc.o.Results.CommandResult(ctx, c.id, kind, res)
+	if updated, ok := c.recordResult(ctx, res, now); ok && updated {
+		c.notifyResult(ctx, kind, res)
 	}
 }
 

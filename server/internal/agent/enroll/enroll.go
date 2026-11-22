@@ -63,19 +63,15 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (*agentv1.EnrollRe
 	} else if blocked {
 		return nil, rateLimited(retry)
 	}
-	if ok, retry, err := s.opts.Limiter.Hit(ctx, "agent-enroll-ip:"+ip, enrollPerIP, limitWindow); err != nil {
+	if err := s.hit(ctx, "agent-enroll-ip:"+ip, enrollPerIP); err != nil {
 		return nil, err
-	} else if !ok {
-		return nil, rateLimited(retry)
 	}
 	dev, err := checkDevice(in.Device)
 	if err != nil {
 		return nil, err
 	}
-	if ok, retry, err := s.opts.Limiter.Hit(ctx, "agent-enroll:"+ip+"|"+deviceKey(dev.uuid), enrollPerDevice, limitWindow); err != nil {
+	if err := s.hit(ctx, "agent-enroll:"+ip+"|"+deviceKey(dev.uuid), enrollPerDevice); err != nil {
 		return nil, err
-	} else if !ok {
-		return nil, rateLimited(retry)
 	}
 
 	if in.ImageKey != "" {
@@ -112,15 +108,9 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (*agentv1.EnrollRe
 		if err != nil {
 			return err
 		}
-		sub, err := q.GetClubSubscriptionForAgent(ctx, club)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrSubscriptionInactive
-		}
+		sub, err := s.activeSubscription(ctx, q, club)
 		if err != nil {
 			return err
-		}
-		if !subscriptionActive(sub.Status, sub.TrialEndsAt, sub.CurrentPeriodEndsAt, s.opts.Now()) {
-			return ErrSubscriptionInactive
 		}
 
 		var created bool
@@ -157,12 +147,7 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (*agentv1.EnrollRe
 		}); err != nil {
 			return err
 		}
-		resp = &agentv1.EnrollResponse{
-			CertificatePem: issued.CertPEM, CaChainPem: s.opts.CA.ChainPEM(), ComputerId: pc.ID, ClubId: club,
-			ClubName: clubRow.Name, ComputerNumber: strconv.FormatInt(pc.Number, 10),
-			NotAfter: timestamppb.New(issued.NotAfter), RenewAfter: timestamppb.New(issued.RenewAfter),
-			AgentEndpoint: s.opts.AgentEndpoint, ComputerCreated: created,
-		}
+		resp = s.enrollResponse(issued, club, clubRow.Name, pc, created)
 		return nil
 	})
 	if err != nil {
@@ -178,6 +163,43 @@ func (s *Service) Enroll(ctx context.Context, in EnrollInput) (*agentv1.EnrollRe
 	s.opts.Logger.InfoContext(ctx, "agent enrolled", "club_id", clubID, "computer_id", pc.ID,
 		"serial", issued.Serial, "ip", ip)
 	return resp, nil
+}
+
+// hit — счётчик key в окне limitWindow; превышение — RATE_LIMITED с временем до конца окна.
+func (s *Service) hit(ctx context.Context, key string, limit int) error {
+	ok, retry, err := s.opts.Limiter.Hit(ctx, key, limit, limitWindow)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return rateLimited(retry)
+	}
+	return nil
+}
+
+// activeSubscription — подписка клуба для регистрации ПК; нет или не действует — ErrSubscriptionInactive.
+func (s *Service) activeSubscription(ctx context.Context, q *store.Queries, clubID int64) (store.GetClubSubscriptionForAgentRow, error) {
+	sub, err := q.GetClubSubscriptionForAgent(ctx, clubID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sub, ErrSubscriptionInactive
+	}
+	if err != nil {
+		return sub, err
+	}
+	if !subscriptionActive(sub.Status, sub.TrialEndsAt, sub.CurrentPeriodEndsAt, s.opts.Now()) {
+		return sub, ErrSubscriptionInactive
+	}
+	return sub, nil
+}
+
+// enrollResponse — ответ Enroll с выпущенным сертификатом карточки pc.
+func (s *Service) enrollResponse(issued pki.Issued, clubID int64, clubName string, pc card, created bool) *agentv1.EnrollResponse {
+	return &agentv1.EnrollResponse{
+		CertificatePem: issued.CertPEM, CaChainPem: s.opts.CA.ChainPEM(), ComputerId: pc.ID, ClubId: clubID,
+		ClubName: clubName, ComputerNumber: strconv.FormatInt(pc.Number, 10),
+		NotAfter: timestamppb.New(issued.NotAfter), RenewAfter: timestamppb.New(issued.RenewAfter),
+		AgentEndpoint: s.opts.AgentEndpoint, ComputerCreated: created,
+	}
 }
 
 func (s *Service) codeFailure(ctx context.Context, failKey string, err error) error {
@@ -466,10 +488,8 @@ func (s *Service) RenewCertificate(ctx context.Context, id identity.Identity, in
 	if id.ClubID <= 0 || id.ComputerID <= 0 || in.Current == nil {
 		return nil, ErrNoIdentity
 	}
-	if ok, retry, err := s.opts.Limiter.Hit(ctx, "agent-renew:"+strconv.FormatInt(id.ComputerID, 10), renewPerComputer, limitWindow); err != nil {
+	if err := s.hit(ctx, "agent-renew:"+strconv.FormatInt(id.ComputerID, 10), renewPerComputer); err != nil {
 		return nil, err
-	} else if !ok {
-		return nil, rateLimited(retry)
 	}
 	dev, err := checkDevice(in.Device)
 	if err != nil {

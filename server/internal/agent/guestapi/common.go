@@ -2,16 +2,12 @@ package guestapi
 
 import (
 	"context"
-	"fmt"
-	"net/netip"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
-	grpcserver "github.com/aitmaganbetov/zafirogo/server/internal/grpc"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -21,17 +17,6 @@ const (
 	subjectComputer = `App\Models\ClubComputer`
 )
 
-// displayName — ClubComputer::displayName(): display_name ?: device_name ?: sprintf('PC-%02d', number).
-func displayName(display, device *string, number int64) string {
-	if display != nil && *display != "" {
-		return *display
-	}
-	if device != nil && *device != "" {
-		return *device
-	}
-	return fmt.Sprintf("PC-%02d", number)
-}
-
 // record — запись журнала действий в транзакции q (ActivityLogger::record()). Без IP запроса (тесты сервиса
 // без gRPC) запись пропускается: журнал требует ip_address.
 func (s *Server) record(ctx context.Context, q *store.Queries, e activity.Entry) error {
@@ -40,10 +25,6 @@ func (s *Server) record(ctx context.Context, q *store.Queries, e activity.Entry)
 	}
 	_, err := activity.Record(ctx, q, e)
 	return err
-}
-
-func grpcRateLimited(after time.Duration) error {
-	return grpcserver.RateLimited(after, "Too Many Attempts.")
 }
 
 // waiters — ожидания QR-входа на этом инстансе (WatchQrLogin): подтверждение будит их сразу.
@@ -87,5 +68,3 @@ func (w *waiters) wake(id uuid.UUID) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
-
-func parseAddr(ip string) (netip.Addr, error) { return netip.ParseAddr(ip) }

@@ -152,16 +152,13 @@ type RefreshItem struct {
 
 func (s *Store) refreshExec(it RefreshItem) (valkey.LuaExec, error) {
 	js := ""
+	var signedIn int64
 	if it.State != nil {
 		b, err := json.Marshal(it.State)
 		if err != nil {
 			return valkey.LuaExec{}, err
 		}
-		js = string(b)
-	}
-	var signedIn int64
-	if it.State != nil {
-		signedIn = it.State.SignedInUserID
+		js, signedIn = string(b), it.State.SignedInUserID
 	}
 	return valkey.LuaExec{
 		Keys: s.guestIndexKeys([]string{s.pcKey(it.ComputerID), s.clubKey(it.ClubID), s.onlineKey()}, it.ClubID, signedIn),

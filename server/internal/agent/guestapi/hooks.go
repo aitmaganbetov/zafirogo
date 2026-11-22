@@ -12,6 +12,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/identity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/stream"
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
+	"github.com/aitmaganbetov/zafirogo/server/internal/club"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
@@ -102,7 +103,7 @@ func (h *Hooks) FreshBoot(ctx context.Context, id identity.Identity) error {
 		if err != nil {
 			return err
 		}
-		computer := displayName(row.DisplayName, row.DeviceName, row.Number)
+		computer := club.ComputerName(row.DisplayName, row.DeviceName, row.Number)
 		meta := activity.RequestMeta{IP: "127.0.0.1"} // системное действие при подключении ПК
 		if ip := peerIP(ctx); ip != "" {
 			meta.IP = ip

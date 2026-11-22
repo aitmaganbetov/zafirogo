@@ -142,8 +142,8 @@ func (o *Options) defaults() {
 	}
 }
 
-// Service — реализация AgentService.Connect. GetTranslations и VerifyStaffPin — Unimplemented
-// (их реализуют другие модули; оркестратор собирает AgentServiceServer встраиванием *Service).
+// Service — реализация AgentService.Connect. GetTranslations и VerifyStaffPin — Unimplemented: их реализует
+// guestapi.AgentService, который встраивает *Service и регистрирует AgentService целиком (guestapi.Register).
 type Service struct {
 	agentv1.UnimplementedAgentServiceServer
 
@@ -287,11 +287,7 @@ func (s *Service) Kick(ctx context.Context, clubID, computerID int64, certSerial
 		s.handleKick(env)
 		return nil
 	}
-	b, err := json.Marshal(env)
-	if err != nil {
-		return err
-	}
-	return s.o.NATS.Publish(commands.InstanceSubject(s.o.SubjectPrefix, own.Instance), b)
+	return commands.PublishEnvelope(s.o.NATS, s.o.SubjectPrefix, own.Instance, env)
 }
 
 // Drain просит все ПК этого инстанса переподключиться в случайный момент окна within (плановый
@@ -299,9 +295,7 @@ func (s *Service) Kick(ctx context.Context, clubID, computerID int64, certSerial
 func (s *Service) Drain(within time.Duration) {
 	s.closing.Store(true)
 	s.unpublishStreams() // остальные инстансы перестают считать этот живым (перебалансировка)
-	msg := &agentv1.ServerMessage{Payload: &agentv1.ServerMessage_Command{Command: &agentv1.Command{
-		Kind: &agentv1.Command_Drain{Drain: &agentv1.Drain{ReconnectWithin: durationpb.New(within)}},
-	}}}
+	msg := drainMsg(within)
 	for _, c := range s.snapshot() {
 		c.enqueue(msg)
 	}
@@ -361,8 +355,23 @@ func (s *Service) detach(c *conn) {
 	s.mu.Unlock()
 }
 
+// drainMsg — просьба переподключиться в случайный момент окна within (Drain, agent.proto п. 8).
+func drainMsg(within time.Duration) *agentv1.ServerMessage {
+	return cmdMsg(&agentv1.Command{Kind: &agentv1.Command_Drain{Drain: &agentv1.Drain{ReconnectWithin: durationpb.New(within)}}})
+}
+
 func replacedErr() error {
 	return statusErr(codes.Aborted, agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED, "replaced")
+}
+
+// internalErr — сбой сервера при подключении (подробности — в журнал сервера, агенту — только код).
+func internalErr() error {
+	return statusErr(codes.Internal, agentv1.ErrorCode_ERROR_CODE_INTERNAL, "internal error")
+}
+
+// notReadingErr — очередь отправки переполнена: агент не читает стрим.
+func notReadingErr() error {
+	return statusErr(codes.ResourceExhausted, agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED, "agent does not read the stream")
 }
 
 // onEnvelope — сообщение NATS для этого инстанса (одна горутина подписки).

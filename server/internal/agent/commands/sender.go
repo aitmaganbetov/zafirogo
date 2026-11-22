@@ -73,6 +73,15 @@ type Envelope struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
+// PublishEnvelope отправляет конверт инстансу через NATS (subject InstanceSubject(prefix, instance)).
+func PublishEnvelope(nc *nats.Conn, prefix, instance string, env Envelope) error {
+	b, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	return nc.Publish(InstanceSubject(prefix, instance), b)
+}
+
 // Sender — Commands.Send для остального сервера.
 type Sender struct {
 	queue    *Queue
@@ -220,11 +229,8 @@ func (s *Sender) route(ctx context.Context, clubID, computerID int64, payload []
 	if err != nil || !ok {
 		return err
 	}
-	b, err := json.Marshal(Envelope{Type: EnvelopeCommand, ClubID: clubID, ComputerID: computerID, Command: payload})
-	if err != nil {
-		return err
-	}
-	if err := s.nc.Publish(InstanceSubject(s.prefix, own.Instance), b); err != nil {
+	env := Envelope{Type: EnvelopeCommand, ClubID: clubID, ComputerID: computerID, Command: payload}
+	if err := PublishEnvelope(s.nc, s.prefix, own.Instance, env); err != nil {
 		return fmt.Errorf("commands: publish: %w", err)
 	}
 	return nil

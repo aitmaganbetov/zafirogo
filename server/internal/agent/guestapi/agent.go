@@ -16,6 +16,7 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/stream"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/ratelimit"
+	"github.com/aitmaganbetov/zafirogo/server/internal/club"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
@@ -155,7 +156,7 @@ func (a *AgentService) VerifyStaffPin(ctx context.Context, req *agentv1.VerifySt
 		if err != nil {
 			return err
 		}
-		computer := displayName(pcRow.DisplayName, pcRow.DeviceName, pcRow.Number)
+		computer := club.ComputerName(pcRow.DisplayName, pcRow.DeviceName, pcRow.Number)
 		if user == nil {
 			if valid {
 				s.o.Log.InfoContext(ctx, "Agent closed with staff PIN", "club_id", id.ClubID, "computer_id", id.ComputerID)

@@ -20,6 +20,7 @@ import (
 
 	"github.com/valkey-io/valkey-go"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/commands"
@@ -175,7 +176,7 @@ func (s *Server) Tokens() *Tokens { return s.tokens }
 
 // Register регистрирует в gRPC-сервере AgentService (стрим Connect из Options.Stream + GetTranslations и
 // VerifyStaffPin), GuestAuthService, GuestService, ShopService и SocialService. Вызывать из register-функции
-// grpcserver.NewServer ВМЕСТО stream.Register (AgentService регистрируется здесь).
+// grpcserver.NewServer (AgentService целиком регистрируется здесь, у пакета stream своей регистрации нет).
 func Register(gs *grpc.Server, o Options) (*Server, error) {
 	s, err := New(o)
 	if err != nil {
@@ -252,7 +253,7 @@ func (s *Server) limit(ctx context.Context, rule string, sub ratelimit.Subject) 
 	res, err := s.o.Limiter.Allow(ctx, rule, sub)
 	if err != nil {
 		s.o.Log.ErrorContext(ctx, "guest rate limit unavailable", "rule", rule, "err", err)
-		return grpcserver.Error(unavailable, agentv1.ErrorCode_ERROR_CODE_INTERNAL, msgInternal, nil)
+		return grpcserver.Error(codes.Unavailable, agentv1.ErrorCode_ERROR_CODE_INTERNAL, msgInternal, nil)
 	}
 	if !res.Allowed {
 		return grpcserver.RateLimited(res.RetryAfter, ratelimit.TooManyAttemptsMessage)

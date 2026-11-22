@@ -17,14 +17,12 @@ import (
 	"errors"
 	"net/netip"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
@@ -152,15 +150,8 @@ func (s *Service) enrollByImageKey(ctx context.Context, in EnrollInput, dev devi
 		if err != nil {
 			return err
 		}
-		sub, err := q.GetClubSubscriptionForAgent(ctx, club)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrSubscriptionInactive
-		}
-		if err != nil {
+		if _, err := s.activeSubscription(ctx, q, club); err != nil {
 			return err
-		}
-		if !subscriptionActive(sub.Status, sub.TrialEndsAt, sub.CurrentPeriodEndsAt, s.opts.Now()) {
-			return ErrSubscriptionInactive
 		}
 		r, err := q.FindComputerByMac(ctx, store.FindComputerByMacParams{ClubID: club, MacAddress: &dev.mac})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -200,12 +191,7 @@ func (s *Service) enrollByImageKey(ctx context.Context, in EnrollInput, dev devi
 		}); err != nil {
 			return err
 		}
-		resp = &agentv1.EnrollResponse{
-			CertificatePem: issued.CertPEM, CaChainPem: s.opts.CA.ChainPEM(), ComputerId: pc.ID, ClubId: club,
-			ClubName: clubRow.Name, ComputerNumber: strconv.FormatInt(pc.Number, 10),
-			NotAfter: timestamppb.New(issued.NotAfter), RenewAfter: timestamppb.New(issued.RenewAfter),
-			AgentEndpoint: s.opts.AgentEndpoint,
-		}
+		resp = s.enrollResponse(issued, club, clubRow.Name, pc, false)
 		return nil
 	})
 	if err != nil {

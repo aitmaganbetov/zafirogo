@@ -7,9 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/protobuf/types/known/durationpb"
-
-	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 )
 
@@ -207,9 +204,7 @@ func (s *Service) rebalanceOnce(ctx context.Context, active bool) bool {
 	if len(picked) == 0 {
 		return active
 	}
-	msg := &agentv1.ServerMessage{Payload: &agentv1.ServerMessage_Command{Command: &agentv1.Command{
-		Kind: &agentv1.Command_Drain{Drain: &agentv1.Drain{ReconnectWithin: durationpb.New(o.ReconnectWithin)}},
-	}}}
+	msg := drainMsg(o.ReconnectWithin)
 	sent := 0
 	for _, c := range picked {
 		if c.enqueue(msg) {

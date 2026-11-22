@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"strings"
 	"unicode/utf8"
 
@@ -15,9 +16,9 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/identity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
-	"github.com/aitmaganbetov/zafirogo/server/internal/billing/bonus"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/pricing"
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
+	"github.com/aitmaganbetov/zafirogo/server/internal/club"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -46,7 +47,7 @@ var _ agentv1.GuestServiceServer = (*guestService)(nil)
 func actor(ctx context.Context, g Guest) billing.BalanceActor {
 	a := billing.BalanceActor{UserID: g.UserID, Kind: "guest"}
 	if ip := peerIP(ctx); ip != "" {
-		if addr, err := parseAddr(ip); err == nil {
+		if addr, err := netip.ParseAddr(ip); err == nil {
 			a.IP = addr
 		}
 	}
@@ -208,7 +209,7 @@ func (gs *guestService) ListTariffs(ctx context.Context, _ *agentv1.ListTariffsR
 		if err != nil {
 			return err
 		}
-		discount := bonus.LoyaltyDiscountFor(ci.settings.bonus.LoyaltyLevelsInForce(), u.Discount, money.Tiyn(u.TotalSpent))
+		discount := memberDiscount(ci.settings, u.Discount, u.TotalSpent)
 		zone := pcRow.ClubZoneID
 		for _, r := range rows {
 			t, err := tariffFromRow(r)
@@ -224,7 +225,7 @@ func (gs *guestService) ListTariffs(ctx context.Context, _ *agentv1.ListTariffsR
 				return err
 			}
 			pt := &agentv1.Tariff{
-				TariffId: r.ID, Name: r.Name, Minutes: int32(min(offer.Minutes, 1<<31-1)), // #nosec G115 -- ограничено
+				TariffId: r.ID, Name: r.Name, Minutes: clampInt32(offer.Minutes),
 				PriceTiyn: int64(offer.Price), OriginalPriceTiyn: int64(offer.OriginalPrice), Currency: r.Currency,
 				BonusMaxPercent: uint32(max(offer.BonusMaxPercent, 0)), // #nosec G115 -- 0…100
 				MixedPayment:    offer.MixedPayment, ZoneIds: r.ZoneIds,
@@ -233,7 +234,7 @@ func (gs *guestService) ListTariffs(ctx context.Context, _ *agentv1.ListTariffsR
 				pt.Description = *r.Description
 			}
 			if offer.UsageLimitMinutes != nil {
-				pt.UsageLimitMinutes = int32(min(*offer.UsageLimitMinutes, 1<<31-1)) // #nosec G115 -- ограничено
+				pt.UsageLimitMinutes = clampInt32(*offer.UsageLimitMinutes)
 			}
 			out.Tariffs = append(out.Tariffs, pt)
 		}
@@ -350,7 +351,7 @@ func (s *Server) timePurchase(ctx context.Context, id identity.Identity, g Guest
 	return &agentv1.TimePurchase{
 		Message:          msg,
 		Balance:          &agentv1.Balance{MainTiyn: int64(res.NewBalance), BonusTiyn: int64(res.NewBonus), Currency: currency},
-		MinutesAdded:     int32(min(res.MinutesAdded, 1<<31-1)), // #nosec G115 -- ограничено
+		MinutesAdded:     clampInt32(res.MinutesAdded),
 		Session:          sess,
 		ChargedMainTiyn:  int64(res.MainPaid),
 		ChargedBonusTiyn: int64(res.BonusPaid),
@@ -491,7 +492,7 @@ func (gs *guestService) ListPackages(ctx context.Context, _ *agentv1.ListPackage
 		out.Packages = make([]*agentv1.TimePackage, 0, len(rows))
 		for _, r := range rows {
 			out.Packages = append(out.Packages, &agentv1.TimePackage{PackageId: r.ID, Name: r.Name,
-				MinutesLeft: int32(min(r.MinutesLeft, 1<<31-1)), ExpiresAt: timestamppb.New(r.ExpiresAt)}) // #nosec G115 -- ограничено
+				MinutesLeft: clampInt32(r.MinutesLeft), ExpiresAt: timestamppb.New(r.ExpiresAt)})
 		}
 		return nil
 	})
@@ -546,7 +547,7 @@ func (gs *guestService) EndSession(ctx context.Context, req *agentv1.EndSessionR
 				return nil, s.fail(ctx, "EndSession", err)
 			}
 			out := &agentv1.EndSessionResponse{RefundedMainTiyn: int64(res.RefundMain), RefundedBonusTiyn: int64(res.RefundBonus),
-				KeptMinutes: int32(min(res.KeptMinutes, 1<<31-1))} // #nosec G115 -- ограничено
+				KeptMinutes: clampInt32(res.KeptMinutes)}
 			err = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
 				ci, err := loadClub(ctx, q, id)
 				if err != nil {
@@ -591,7 +592,7 @@ func (gs *guestService) GetSeatMap(ctx context.Context, _ *agentv1.GetSeatMapReq
 	return out, nil
 }
 
-// clampInt32 — координата карты в int32 контракта (в базе bigint).
+// clampInt32 — число из базы (bigint: минуты, количество, координата карты) в int32 контракта.
 func clampInt32(v int64) int32 {
 	return int32(max(min(v, 1<<31-1), -(1 << 31))) // #nosec G115 -- ограничено
 }
@@ -620,7 +621,7 @@ func (gs *guestService) TransferSeat(ctx context.Context, req *agentv1.TransferS
 				if err != nil {
 					return err
 				}
-				name := displayName(t.DisplayName, t.DeviceName, t.Number)
+				name := club.ComputerName(t.DisplayName, t.DeviceName, t.Number)
 				out.Target = computerRef(t.ID, t.Number, name, t.ZoneName)
 				out.Message = "Сессия перенесена на ПК " + name + ". Войдите там своей учётной записью."
 				return nil

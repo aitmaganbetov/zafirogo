@@ -64,9 +64,7 @@ func overview(ctx context.Context, q *store.Queries, clubID, userID int64) (*age
 func friendsError(err error) error {
 	var fe *friends.Error
 	switch {
-	case errors.Is(err, friends.ErrNotFound):
-		return rpcError(codes.NotFound, agentv1.ErrorCode_ERROR_CODE_FRIENDSHIP_NOT_FOUND, msgRequestNotFound, nil, "friendship")
-	case errors.As(err, &fe) && fe.Code == friends.CodeRequestNotFound:
+	case errors.Is(err, friends.ErrNotFound), errors.As(err, &fe) && fe.Code == friends.CodeRequestNotFound:
 		return rpcError(codes.NotFound, agentv1.ErrorCode_ERROR_CODE_FRIENDSHIP_NOT_FOUND, msgRequestNotFound, nil, "friendship")
 	case errors.As(err, &fe) && fe.Code == friends.CodeUserNotFound:
 		return rpcError(codes.NotFound, agentv1.ErrorCode_ERROR_CODE_USER_NOT_FOUND, msgFriendNotFound, nil, "phone")

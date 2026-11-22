@@ -26,8 +26,10 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/password"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/ratelimit"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/pricing"
+	"github.com/aitmaganbetov/zafirogo/server/internal/club"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/friends"
+	grpcserver "github.com/aitmaganbetov/zafirogo/server/internal/grpc"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
 )
 
@@ -188,7 +190,7 @@ func (s *Server) signIn(ctx context.Context, id identity.Identity, userID int64,
 		if err != nil {
 			return err
 		}
-		computerName = displayName(pcRow.DisplayName, pcRow.DeviceName, pcRow.Number)
+		computerName = club.ComputerName(pcRow.DisplayName, pcRow.DeviceName, pcRow.Number)
 		return nil
 	})
 	if err != nil {
@@ -203,25 +205,36 @@ func (s *Server) signIn(ctx context.Context, id identity.Identity, userID int64,
 			return nil, s.signedInElsewhere(ctx, id.ClubID, other)
 		}
 	}
+	return s.issueSignIn(ctx, "signIn", id, userID, now, func(q *store.Queries) error {
+		return s.record(ctx, q, activity.Entry{ClubID: id.ClubID, Event: event, Description: description,
+			UserID: userID, SubjectType: subjectUser, SubjectID: userID, Details: map[string]any{"device": computerName, "computer": computerName}})
+	})
+}
+
+// issueSignIn — выдача входа после проверок (Login, QR, Register): токен этого ПК (прежний токен ПК отзывается),
+// автобиллинг с чистого листа, оплаченная бронь гостя на этом ПК (UQ-11 — сессия попадёт в ответ), профиль.
+// record — запись журнала в одной транзакции с чтением профиля (nil — без записи); method — имя для журнала ошибок.
+func (s *Server) issueSignIn(ctx context.Context, method string, id identity.Identity, userID int64, now time.Time,
+	record func(q *store.Queries) error) (*agentv1.GuestSignIn, error) {
 	token, exp, err := s.tokens.Issue(ctx, id, userID)
 	if err != nil {
-		return nil, s.fail(ctx, "signIn", err)
+		return nil, s.fail(ctx, method, err)
 	}
 	s.abSignedIn(ctx, id, userID)
-	// Оплаченная бронь гостя на этом ПК начинается сразу (UQ-11) — сессия попадёт в ответ входа.
 	s.startBookingOnSignIn(ctx, id, userID)
 	out := &agentv1.GuestSignIn{Token: &agentv1.GuestToken{AccessToken: token, ExpiresAt: timestamppb.New(exp)}}
 	err = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
-		if err := s.record(ctx, q, activity.Entry{ClubID: id.ClubID, Event: event, Description: description,
-			UserID: userID, SubjectType: subjectUser, SubjectID: userID, Details: map[string]any{"device": computerName, "computer": computerName}}); err != nil {
-			return err
+		if record != nil {
+			if err := record(q); err != nil {
+				return err
+			}
 		}
 		var err error
 		out.User, out.Balance, out.Session, err = s.profile(ctx, q, id, userID, now)
 		return err
 	})
 	if err != nil {
-		return nil, s.fail(ctx, "signIn", err)
+		return nil, s.fail(ctx, method, err)
 	}
 	return out, nil
 }
@@ -246,7 +259,7 @@ func (s *Server) signedInElsewhere(ctx context.Context, clubID, computerID int64
 			return nil
 		}
 		if err == nil {
-			name = displayName(row.DisplayName, row.DeviceName, row.Number)
+			name = club.ComputerName(row.DisplayName, row.DeviceName, row.Number)
 		}
 		return err
 	}); err != nil {
@@ -403,7 +416,7 @@ func (a *authService) Register(ctx context.Context, req *agentv1.RegisterRequest
 		if err != nil {
 			return err
 		}
-		computer := displayName(pcRow.DisplayName, pcRow.DeviceName, pcRow.Number)
+		computer := club.ComputerName(pcRow.DisplayName, pcRow.DeviceName, pcRow.Number)
 		event, desc := "user.joined_club", "Клиент другого клуба стал клиентом этого клуба на ПК "+computer+": "
 		if existing != nil {
 			userID = existing.ID
@@ -433,21 +446,9 @@ func (a *authService) Register(ctx context.Context, req *agentv1.RegisterRequest
 	if err != nil {
 		return nil, s.fail(ctx, "Register", err)
 	}
-	token, exp, err := s.tokens.Issue(ctx, id, userID)
+	out, err := s.issueSignIn(ctx, "Register", id, userID, now, nil)
 	if err != nil {
-		return nil, s.fail(ctx, "Register", err)
-	}
-	s.abSignedIn(ctx, id, userID)
-	// Оплаченная бронь гостя на этом ПК начинается сразу (UQ-11) — сессия попадёт в ответ входа.
-	s.startBookingOnSignIn(ctx, id, userID)
-	out := &agentv1.GuestSignIn{Token: &agentv1.GuestToken{AccessToken: token, ExpiresAt: timestamppb.New(exp)}}
-	err = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
-		var err error
-		out.User, out.Balance, out.Session, err = s.profile(ctx, q, id, userID, now)
-		return err
-	})
-	if err != nil {
-		return nil, s.fail(ctx, "Register", err)
+		return nil, err
 	}
 	return &agentv1.RegisterResponse{SignIn: out, AccountCreated: existing == nil}, nil
 }
@@ -679,7 +680,7 @@ func (s *Server) qrWatchSlot(ctx context.Context, computerID int64) (func(), err
 	release := func() { _ = c.Do(context.WithoutCancel(ctx), c.B().Decr().Key(key).Build()).Error() }
 	if n > maxQRWatchers {
 		release()
-		return nil, grpcRateLimited(time.Second)
+		return nil, grpcserver.RateLimited(time.Second, ratelimit.TooManyAttemptsMessage)
 	}
 	return release, nil
 }
