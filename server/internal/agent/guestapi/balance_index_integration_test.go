@@ -44,6 +44,22 @@ func (h *harness) waitPresence(pcID, user int64) {
 	h.t.Fatalf("presence of pc %d: user %d not seen", pcID, user)
 }
 
+// waitAgentState ждёт записи состояния агента в club_computers (RecordAgentState после Hello, асинхронно).
+// Состояние гостя у ПК снимает отметку сотрудника, поэтому staff_until в тесте ставится только после неё.
+func (h *harness) waitAgentState(pcID int64, state string) {
+	h.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var got *string
+		h.scan(&got, "SELECT agent_state FROM club_computers WHERE id = $1", pcID)
+		if got != nil && *got == state {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	h.t.Fatalf("agent_state of pc %d: %q not recorded", pcID, state)
+}
+
 // noBalanceChanged — за window на ПК не пришло BalanceChanged.
 func (a *agentStream) noBalanceChanged(window time.Duration) {
 	a.t.Helper()

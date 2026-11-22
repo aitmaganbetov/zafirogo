@@ -24,6 +24,8 @@ func TestGetSeatMap(t *testing.T) {
 	for i, p := range []*pc{own, free, reserved, booked, busy, staffed, otherZone} {
 		p.connect("boot-seat-"+string(rune('a'+i)), 0)
 	}
+	// Состояние idle снимает отметку сотрудника — дождаться его записи до staff_until (иначе гонка).
+	h.waitAgentState(staffed.id, "idle")
 	vip := h.int(`INSERT INTO club_zones (club_id, name, price_per_hour, icon, theme, sort_order, position_x, position_y, width, height, created_at, updated_at)
 		VALUES ($1, 'VIP', 90000, 'crown', 'purple', 1, 400, 30, 300, 200, now(), now()) RETURNING id`, h.club)
 	h.exec("UPDATE club_computers SET club_zone_id = $2 WHERE id = $1", otherZone.id, vip)
