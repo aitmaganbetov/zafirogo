@@ -1,0 +1,18 @@
+vet=0
+lint=0 0 issues.
+gosec=0
+govulncheck=1 0
+go-unit=1679 0 1
+go-int=2426 1 4
+sqlc+buf=0
+tsc=0
+eslint=0
+vitest=      Tests  303 passed (303)
+npm-audit(prod)=found 0 vulnerabilities 
+npm-audit(all)=9 moderate severity vulnerabilities
+build=0
+bundle=0
+playwright=  2 skipped   53 passed (51.1s) 
+agent-unit= Passed: 186 
+agent-frontend=# pass 26 # fail 0 # skipped 0 
+DONE
