@@ -193,6 +193,14 @@ func (a *API) Match(r *http.Request) bool {
 	return false
 }
 
+// readBodyKeep — readBody, но тело остаётся на месте (запрос может уйти на старый сервер как есть).
+func readBodyKeep(r *http.Request) body {
+	raw := peekBody(r)
+	b := readBody(r)
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	return b
+}
+
 // peekBody читает тело (до maxBody) и возвращает его на место.
 func peekBody(r *http.Request) []byte {
 	if r.Body == nil {
@@ -223,13 +231,28 @@ func (a *API) Middleware(next http.Handler) http.Handler {
 // Ответы в формате Laravel
 // ---------------------------------------------------------------------------
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
+// marshalJSON — json_encode ответа Laravel: без экранирования HTML, с переводом строки в конце (json.Encoder).
+func marshalJSON(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// writeRawJSON — готовое JSON-тело с заголовками ответа Laravel.
+func writeRawJSON(w http.ResponseWriter, status int, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache, private")
 	w.WriteHeader(status)
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(v)
+	_, _ = w.Write(body)
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	body, _ := marshalJSON(v)
+	writeRawJSON(w, status, body)
 }
 
 // writeMessage — {"message": "..."} (HttpException, abort()).
@@ -268,12 +291,24 @@ func writeValidation(w http.ResponseWriter, field, msg string) {
 	writeJSON(w, http.StatusUnprocessableEntity, validationBody{Message: msg, Errors: errs})
 }
 
-// errUnauthenticated — AuthenticationException в JSON.
+// msgUnauthenticated — AuthenticationException в JSON.
 const msgUnauthenticated = "Unauthenticated."
 
 // modelNotFound — ModelNotFoundException → NotFoundHttpException("No query results for model [X] id").
 func modelNotFound(w http.ResponseWriter, model string, id string) {
 	writeMessage(w, http.StatusNotFound, "No query results for model [App\\Models\\"+model+"] "+id)
+}
+
+// pathID — ключ модели {param} из пути: не положительное целое — 404 модели (route model binding); ok=false — ответ
+// записан. s — ключ как в пути (для текста 404).
+func pathID(w http.ResponseWriter, r *http.Request, param, model string) (id int64, s string, ok bool) {
+	s = chi.URLParam(r, param)
+	id, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || id <= 0 {
+		modelNotFound(w, model, s)
+		return 0, s, false
+	}
+	return id, s, true
 }
 
 // writeError — ошибка сервиса в формате Laravel. Ответ строит общий httpx.ResponseError (тексты старого кода,
@@ -289,32 +324,32 @@ func (a *API) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		writeValidation(w, ve.Field, a.t(r, ve.Key, ve.Params))
 		return
 	}
+	status, body := a.renderError(r, err)
+	switch {
+	case status == http.StatusUnprocessableEntity && len(body.Errors) > 0:
+		writeJSON(w, status, validationBody{Message: summarize(body.Message, body.Errors), Errors: body.Errors})
+	case status == http.StatusNotFound:
+		writeMessage(w, status, "Not Found")
+	case status >= 500:
+		writeMessage(w, status, "Server Error")
+	default:
+		writeMessage(w, status, body.Message)
+	}
+}
+
+// httpxErrorBody — нужное из тела ошибки общего слоя ({error, message, errors}); нет message — "".
+type httpxErrorBody struct {
+	Message string              `json:"message"`
+	Errors  map[string][]string `json:"errors"`
+}
+
+// renderError — ответ общего httpx.ResponseError на ошибку (тексты старого кода на языке клуба): статус и тело.
+func (a *API) renderError(r *http.Request, err error) (int, httpxErrorBody) {
 	rec := &bufferWriter{h: http.Header{}}
 	a.d.ResponseError()(rec, r, err)
-	var body struct {
-		Error   string              `json:"error"`
-		Message *string             `json:"message"`
-		Errors  map[string][]string `json:"errors"`
-	}
+	var body httpxErrorBody
 	_ = json.Unmarshal(rec.buf.Bytes(), &body)
-	switch {
-	case rec.status == http.StatusUnprocessableEntity && len(body.Errors) > 0:
-		first := ""
-		if body.Message != nil {
-			first = *body.Message
-		}
-		writeJSON(w, rec.status, validationBody{Message: summarize(first, body.Errors), Errors: body.Errors})
-	case rec.status == http.StatusNotFound:
-		writeMessage(w, rec.status, "Not Found")
-	case rec.status >= 500:
-		writeMessage(w, rec.status, "Server Error")
-	default:
-		msg := ""
-		if body.Message != nil {
-			msg = *body.Message
-		}
-		writeMessage(w, rec.status, msg)
-	}
+	return rec.status, body
 }
 
 // bufferWriter — ответ в памяти (ошибки httpx и вызовы нового REST изнутри).
@@ -391,13 +426,16 @@ func (b body) filled(k string) bool {
 func (b body) isString(k string) bool { _, ok := b[k].(string); return ok }
 
 // integer — правило 'integer' (целое число или строка из цифр). ok=false — не целое.
-func (b body) integer(k string) (int64, bool) {
-	s, present := b.str(k)
-	if !present {
-		return 0, false
-	}
-	switch b[k].(type) {
-	case string, json.Number:
+func (b body) integer(k string) (int64, bool) { return integerOf(b[k]) }
+
+// integerOf — правило 'integer' для значения из JSON (поле тела или элемент массива).
+func integerOf(v any) (int64, bool) {
+	var s string
+	switch x := v.(type) {
+	case string:
+		s = x
+	case json.Number:
+		s = x.String()
 	default:
 		return 0, false
 	}
@@ -422,8 +460,7 @@ func (b body) ids(k string) ([]int64, bool) {
 	}
 	out := make([]int64, 0, len(arr))
 	for _, v := range arr {
-		x := body{"v": v}
-		n, ok := x.integer("v")
+		n, ok := integerOf(v)
 		if !ok {
 			return nil, false
 		}

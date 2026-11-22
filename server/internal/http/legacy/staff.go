@@ -7,6 +7,7 @@ package legacy
 // Всё — через сервисы нового кода: cash/service, billing/service, clubmap, stock, shop, chat.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/aitmaganbetov/zafirogo/server/internal/agent/presence"
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/bonus"
 	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
@@ -55,13 +57,21 @@ const (
 // idempotencyKey — ключ денежной операции: заголовок Idempotency-Key, если приложение его прислало (старое не
 // присылает), иначе новый на каждый запрос — как в старом API (повтор запроса = новая операция).
 func idempotencyKey(r *http.Request) string {
-	if k := strings.TrimSpace(r.Header.Get("Idempotency-Key")); k != "" && len(k) <= 100 {
+	if k := clientIdempotencyKey(r); k != "" {
 		return "mobile:" + k
 	}
 	return "mobile:" + uuid.NewString()
 }
 
-// meta — StaffApiController::meta(): {current_page, last_page}.
+// clientIdempotencyKey — заголовок Idempotency-Key (до 100 символов); нет или длиннее — "".
+func clientIdempotencyKey(r *http.Request) string {
+	if k := strings.TrimSpace(r.Header.Get("Idempotency-Key")); len(k) <= 100 {
+		return k
+	}
+	return ""
+}
+
+// pageMeta — StaffApiController::meta(): {current_page, last_page}.
 type pageMeta struct {
 	CurrentPage int64 `json:"current_page"`
 	LastPage    int64 `json:"last_page"`
@@ -224,10 +234,7 @@ func (a *API) passthrough(method, path string) http.HandlerFunc {
 			writeMessage(w, status, e.Message)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-cache, private")
-		w.WriteHeader(status)
-		_, _ = w.Write(raw)
+		writeRawJSON(w, status, raw)
 	}
 }
 
@@ -272,32 +279,12 @@ func (a *API) reportToday(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		out.Currency = parseClubSetting(prof.Settings).currency()
-		// now($club->timezone ?: app.timezone)->startOfDay(): 7 дней до сегодня включительно.
-		loc := clubtz.Location(prof.Timezone)
-		local := now.In(loc)
-		today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
-		starts := make([]time.Time, 7)
-		for i := range starts {
-			starts[i] = today.AddDate(0, 0, i-6)
-		}
+		starts := weekStarts(now, prof.Timezone)
 		rows, err := q.MobileStaffCashDays(ctx, store.MobileStaffCashDaysParams{Starts: starts, ClubID: p.ClubID})
 		if err != nil {
 			return err
 		}
-		type sums struct{ income, expense, count int64 }
-		days := make([]sums, 7)
-		for _, row := range rows {
-			i := int(row.Day) - 1 // WITH ORDINALITY — с 1
-			if i < 0 || i > 6 {
-				continue
-			}
-			if row.Type == string(cash.Income) {
-				days[i].income = row.Total
-			} else {
-				days[i].expense = row.Total
-			}
-			days[i].count += row.Count
-		}
+		days := cashDays(rows)
 		out.Today = dayTotals{Income: moneyStr(days[6].income), Expense: moneyStr(days[6].expense), Transactions: days[6].count}
 		for i, d := range days {
 			out.Week = append(out.Week, weekDay{Date: starts[i].Format("2006-01-02"), Income: moneyStr(d.income), Expense: moneyStr(d.expense)})
@@ -307,7 +294,7 @@ func (a *API) reportToday(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		for _, c := range comps {
-			pc := c.pc(pres, now)
+			pc := c.pc(pres)
 			out.Computers.Total++
 			if pc.Connection() == "online" {
 				out.Computers.Online++
@@ -342,6 +329,40 @@ func (a *API) reportToday(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// weekStarts — начала 7 местных дней клуба до сегодня включительно:
+// now($club->timezone ?: app.timezone)->startOfDay() и 6 дней до него.
+func weekStarts(now time.Time, timezone string) []time.Time {
+	loc := clubtz.Location(timezone)
+	local := now.In(loc)
+	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
+	starts := make([]time.Time, 7)
+	for i := range starts {
+		starts[i] = today.AddDate(0, 0, i-6)
+	}
+	return starts
+}
+
+// daySums — приход, расход и число операций кассы за день.
+type daySums struct{ income, expense, count int64 }
+
+// cashDays — строки MobileStaffCashDays (день по порядку weekStarts, с 1) по дням.
+func cashDays(rows []store.MobileStaffCashDaysRow) []daySums {
+	days := make([]daySums, 7)
+	for _, row := range rows {
+		i := int(row.Day) - 1 // WITH ORDINALITY — с 1
+		if i < 0 || i > 6 {
+			continue
+		}
+		if row.Type == string(cash.Income) {
+			days[i].income = row.Total
+		} else {
+			days[i].expense = row.Total
+		}
+		days[i].count += row.Count
+	}
+	return days
+}
+
 // ---------------------------------------------------------------------------
 // Карта клуба (Api\Staff\ComputerController, ClubComputerController::control/endSession, GuestSessionController)
 // ---------------------------------------------------------------------------
@@ -351,27 +372,24 @@ type mapComputer struct {
 	held bool
 }
 
-func (c mapComputer) pc(pres map[int64]bool, _ time.Time) clubmap.Computer {
+func (c mapComputer) pc(online map[int64]presence.State) clubmap.Computer {
 	r := c.row
+	_, on := online[r.ID]
 	return clubmap.Computer{ID: r.ID, Status: r.Status, IsReserved: r.IsReserved, BookedNow: c.held, LastSeenAt: r.LastSeenAt,
 		SessionID: r.CurrentSessionID, SessionUserID: r.CurrentSessionUserID, SessionGuest: r.SessionGuest,
-		SessionEndsAt: r.SessionEndsAt, StaffUntil: r.StaffUntil, Online: pres[r.ID]}
+		SessionEndsAt: r.SessionEndsAt, StaffUntil: r.StaffUntil, Online: on}
 }
 
-// presence — ПК клуба в сети (присутствие агента); ошибка — все не в сети.
-func (a *API) presence(ctx context.Context, clubID int64) map[int64]bool {
-	out := map[int64]bool{}
+// presence — ПК клуба в сети (присутствие агента) по id; ошибка — все не в сети.
+func (a *API) presence(ctx context.Context, clubID int64) map[int64]presence.State {
 	if a.d.Presence == nil {
-		return out
+		return nil
 	}
 	states, err := a.d.Presence.List(ctx, clubID)
 	if err != nil {
 		a.o.Log.WarnContext(ctx, "legacy presence", "err", err)
 	}
-	for id := range clubmap.PresenceByID(states) {
-		out[id] = true
-	}
-	return out
+	return clubmap.PresenceByID(states)
 }
 
 // computers — ПК клуба (zone, number) и брони сейчас (ComputerReservations::heldComputerIds()).
@@ -411,21 +429,11 @@ func (a *API) computers(ctx context.Context, q *store.Queries, clubID int64, now
 	// orderBy('club_zone_id')->orderBy('number')
 	slices.SortStableFunc(out, func(x, y mapComputer) int {
 		if x.row.ClubZoneID != y.row.ClubZoneID {
-			return cmpInt(x.row.ClubZoneID, y.row.ClubZoneID)
+			return cmp.Compare(x.row.ClubZoneID, y.row.ClubZoneID)
 		}
-		return cmpInt(x.row.Number, y.row.Number)
+		return cmp.Compare(x.row.Number, y.row.Number)
 	})
 	return out, nil
-}
-
-func cmpInt(a, b int64) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	}
-	return 0
 }
 
 // latestAgent — AgentUpdate::latestVersion() (platform_settings agent_release).
@@ -446,79 +454,118 @@ func latestAgent(ctx context.Context, q *store.Queries, clubID int64) string {
 	return ""
 }
 
+// Ответ GET /api/staff/computers (Api\Staff\ComputerController::index()).
+type staffZoneJSON struct {
+	ID           int64   `json:"id"`
+	Name         string  `json:"name"`
+	PricePerHour *string `json:"price_per_hour"`
+}
+
+type staffUserRef struct {
+	ID   int64   `json:"id"`
+	Name *string `json:"name"`
+}
+
+type staffSessionJSON struct {
+	ID     *string       `json:"id"`
+	EndsAt *string       `json:"ends_at"`
+	Guest  bool          `json:"guest"`
+	User   *staffUserRef `json:"user"`
+}
+
+type staffVisitJSON struct {
+	Until *string `json:"until"`
+	Name  *string `json:"name"`
+}
+
+type staffComputerJSON struct {
+	ID            int64             `json:"id"`
+	Number        int64             `json:"number"`
+	Name          string            `json:"name"`
+	ZoneID        int64             `json:"zone_id"`
+	Status        string            `json:"status"`
+	Connection    string            `json:"connection"`
+	AgentState    *string           `json:"agent_state"`
+	AgentVersion  *string           `json:"agent_version"`
+	AgentOutdated bool              `json:"agent_outdated"`
+	Reserved      bool              `json:"reserved"`
+	BookedNow     bool              `json:"booked_now"`
+	Session       *staffSessionJSON `json:"session"`
+	StaffVisit    *staffVisitJSON   `json:"staff_visit"`
+}
+
+type staffTariffJSON struct {
+	ID      int64   `json:"id"`
+	Name    string  `json:"name"`
+	Minutes int64   `json:"minutes"`
+	Price   string  `json:"price"`
+	ZoneIDs []int64 `json:"zone_ids"`
+}
+
+// staffComputerOf — ПК на карте приложения: состояние и версия агента — из присутствия, если агент на связи,
+// иначе последние сохранённые; latest — последняя версия агента (agent_outdated).
+func staffComputerOf(c mapComputer, pres map[int64]presence.State, latest string, now time.Time) staffComputerJSON {
+	pc, row := c.pc(pres), c.row
+	cj := staffComputerJSON{ID: row.ID, Number: row.Number, Name: clubmap.DisplayName(row.DisplayName, row.DeviceName, row.Number),
+		ZoneID: row.ClubZoneID, Status: pc.CurrentStatus(), Connection: pc.Connection(), AgentState: row.AgentState,
+		AgentVersion: row.AgentVersion, Reserved: row.IsReserved, BookedNow: c.held}
+	if st, ok := pres[row.ID]; ok {
+		if st.AgentState != "" {
+			cj.AgentState = ptr(st.AgentState)
+		}
+		if st.AgentVersion != "" {
+			cj.AgentVersion = ptr(st.AgentVersion)
+		}
+	}
+	cj.AgentOutdated = clubmap.IsOutdated(cj.AgentVersion, latest)
+	if pc.HasPaidSession(now) {
+		s := &staffSessionJSON{ID: row.CurrentSessionID, EndsAt: zulu(row.SessionEndsAt), Guest: row.SessionGuest}
+		if row.CurrentSessionUserID != nil {
+			s.User = &staffUserRef{ID: *row.CurrentSessionUserID, Name: row.SessionUserName}
+		}
+		cj.Session = s
+	}
+	if pc.HasStaffVisit(now) {
+		cj.StaffVisit = &staffVisitJSON{Until: zulu(row.StaffUntil), Name: row.StaffName}
+	}
+	return cj
+}
+
+// staffTariffOf — тариф для гостевой сессии.
+func staffTariffOf(t store.MobileStaffTariffsRow) staffTariffJSON {
+	// AgentTariffPurchaseService::effectiveMinutes(): с лимитом использования — min(длительность, лимит).
+	minutes := t.DurationMinutes
+	if t.UsageLimitEnabled && t.UsageLimitMinutes != nil {
+		minutes = min(minutes, *t.UsageLimitMinutes)
+	}
+	ids := t.ZoneIds
+	if ids == nil {
+		ids = []int64{}
+	}
+	return staffTariffJSON{ID: t.ID, Name: t.Name, Minutes: minutes, Price: moneyStr(t.Price), ZoneIDs: ids}
+}
+
 // staffComputers — GET /api/staff/computers: zones, computers, guest_mode, tariffs.
 func (a *API) staffComputers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	clubID := httpx.ClubID(ctx)
 	now := a.d.NowFunc()
-	type zoneJSON struct {
-		ID          int64   `json:"id"`
-		Name        string  `json:"name"`
-		PricePerHou *string `json:"price_per_hour"`
-	}
-	type userRef struct {
-		ID   int64   `json:"id"`
-		Name *string `json:"name"`
-	}
-	type sessionJSON struct {
-		ID     *string  `json:"id"`
-		EndsAt *string  `json:"ends_at"`
-		Guest  bool     `json:"guest"`
-		User   *userRef `json:"user"`
-	}
-	type visitJSON struct {
-		Until *string `json:"until"`
-		Name  *string `json:"name"`
-	}
-	type computerJSON struct {
-		ID            int64        `json:"id"`
-		Number        int64        `json:"number"`
-		Name          string       `json:"name"`
-		ZoneID        int64        `json:"zone_id"`
-		Status        string       `json:"status"`
-		Connection    string       `json:"connection"`
-		AgentState    *string      `json:"agent_state"`
-		AgentVersion  *string      `json:"agent_version"`
-		AgentOutdated bool         `json:"agent_outdated"`
-		Reserved      bool         `json:"reserved"`
-		BookedNow     bool         `json:"booked_now"`
-		Session       *sessionJSON `json:"session"`
-		StaffVisit    *visitJSON   `json:"staff_visit"`
-	}
-	type tariffJSON struct {
-		ID      int64   `json:"id"`
-		Name    string  `json:"name"`
-		Minutes int64   `json:"minutes"`
-		Price   string  `json:"price"`
-		ZoneIDs []int64 `json:"zone_ids"`
-	}
 	out := struct {
-		Zones     []zoneJSON     `json:"zones"`
-		Computers []computerJSON `json:"computers"`
-		GuestMode bool           `json:"guest_mode"`
-		Tariffs   []tariffJSON   `json:"tariffs"`
-	}{Zones: []zoneJSON{}, Computers: []computerJSON{}, Tariffs: []tariffJSON{}}
-	pres := map[int64]bool{}
-	var states = map[int64]struct{ state, version string }{}
-	if a.d.Presence != nil {
-		list, err := a.d.Presence.List(ctx, clubID)
-		if err != nil {
-			a.o.Log.WarnContext(ctx, "legacy presence", "err", err)
-		}
-		for id, st := range clubmap.PresenceByID(list) {
-			pres[id] = true
-			states[id] = struct{ state, version string }{st.AgentState, st.AgentVersion}
-		}
-	}
+		Zones     []staffZoneJSON     `json:"zones"`
+		Computers []staffComputerJSON `json:"computers"`
+		GuestMode bool                `json:"guest_mode"`
+		Tariffs   []staffTariffJSON   `json:"tariffs"`
+	}{Zones: []staffZoneJSON{}, Computers: []staffComputerJSON{}, Tariffs: []staffTariffJSON{}}
+	pres := a.presence(ctx, clubID)
 	err := a.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		zones, err := q.MobileStaffZones(ctx, clubID)
 		if err != nil {
 			return err
 		}
 		for _, z := range zones {
-			zj := zoneJSON{ID: z.ID, Name: z.Name}
+			zj := staffZoneJSON{ID: z.ID, Name: z.Name}
 			if z.PricePerHour != nil {
-				zj.PricePerHou = ptr(moneyStr(*z.PricePerHour))
+				zj.PricePerHour = ptr(moneyStr(*z.PricePerHour))
 			}
 			out.Zones = append(out.Zones, zj)
 		}
@@ -528,30 +575,7 @@ func (a *API) staffComputers(w http.ResponseWriter, r *http.Request) {
 		}
 		latest := latestAgent(ctx, q, clubID)
 		for _, c := range comps {
-			pc, row := c.pc(pres, now), c.row
-			cj := computerJSON{ID: row.ID, Number: row.Number, Name: clubmap.DisplayName(row.DisplayName, row.DeviceName, row.Number),
-				ZoneID: row.ClubZoneID, Status: pc.CurrentStatus(), Connection: pc.Connection(), AgentState: row.AgentState,
-				AgentVersion: row.AgentVersion, Reserved: row.IsReserved, BookedNow: c.held}
-			if st, ok := states[row.ID]; ok {
-				if st.state != "" {
-					cj.AgentState = ptr(st.state)
-				}
-				if st.version != "" {
-					cj.AgentVersion = ptr(st.version)
-				}
-			}
-			cj.AgentOutdated = clubmap.IsOutdated(cj.AgentVersion, latest)
-			if pc.HasPaidSession(now) {
-				s := &sessionJSON{ID: row.CurrentSessionID, EndsAt: zulu(row.SessionEndsAt), Guest: row.SessionGuest}
-				if row.CurrentSessionUserID != nil {
-					s.User = &userRef{ID: *row.CurrentSessionUserID, Name: row.SessionUserName}
-				}
-				cj.Session = s
-			}
-			if pc.HasStaffVisit(now) {
-				cj.StaffVisit = &visitJSON{Until: zulu(row.StaffUntil), Name: row.StaffName}
-			}
-			out.Computers = append(out.Computers, cj)
+			out.Computers = append(out.Computers, staffComputerOf(c, pres, latest, now))
 		}
 		raw, err := q.GetClubSettingsForCash(ctx, clubID)
 		if err != nil {
@@ -563,16 +587,7 @@ func (a *API) staffComputers(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		for _, t := range tariffs {
-			// AgentTariffPurchaseService::effectiveMinutes(): с лимитом использования — min(длительность, лимит).
-			minutes := t.DurationMinutes
-			if t.UsageLimitEnabled && t.UsageLimitMinutes != nil {
-				minutes = min(minutes, *t.UsageLimitMinutes)
-			}
-			ids := t.ZoneIds
-			if ids == nil {
-				ids = []int64{}
-			}
-			out.Tariffs = append(out.Tariffs, tariffJSON{ID: t.ID, Name: t.Name, Minutes: minutes, Price: moneyStr(t.Price), ZoneIDs: ids})
+			out.Tariffs = append(out.Tariffs, staffTariffOf(t))
 		}
 		return nil
 	})
@@ -663,7 +678,7 @@ func (a *API) control(w http.ResponseWriter, r *http.Request) {
 		pres := a.presence(ctx, env.ClubID)
 		for _, c := range comps {
 			if slices.Contains(ids, c.row.ID) {
-				statuses = append(statuses, map[string]any{"id": c.row.ID, "status": c.pc(pres, env.Now).CurrentStatus()})
+				statuses = append(statuses, map[string]any{"id": c.row.ID, "status": c.pc(pres).CurrentStatus()})
 			}
 		}
 		return nil
@@ -700,10 +715,8 @@ func (a *API) control(w http.ResponseWriter, r *http.Request) {
 // endSession — POST /api/staff/computers/{computer}/end-session {session_id}: ClubComputerController::endSession().
 func (a *API) endSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	s := chi.URLParam(r, "computer")
-	computerID, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || computerID <= 0 {
-		modelNotFound(w, "ClubComputer", s)
+	computerID, s, ok := pathID(w, r, "computer", "ClubComputer")
+	if !ok {
 		return
 	}
 	b := readBody(r)
@@ -745,13 +758,7 @@ func (a *API) endSession(w http.ResponseWriter, r *http.Request) {
 // guestSession — POST /api/staff/computers/guest-session: GuestSessionController::store() (GuestSessions::sell()).
 func (a *API) guestSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	cs, err := a.settings(ctx)
-	if err != nil {
-		a.fail(w, r, "settings", err)
-		return
-	}
-	if !cs.guestMode() {
-		writeMessage(w, http.StatusForbidden, a.t(r, msgGuestModeOff, nil))
+	if !a.requireSetting(w, r, clubSetting.guestMode, msgGuestModeOff) {
 		return
 	}
 	b := readBody(r)
@@ -893,48 +900,44 @@ func (a *API) cashShow(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	p := httpx.Principal(ctx)
-	out := map[string]any{"shift": nil, "totals": nil, "report": nil, "transactions": []transactionJSON{}}
+	// Без открытой смены shift, totals и report — null.
+	out := struct {
+		Currency     string            `json:"currency"`
+		Shift        *shiftJSON        `json:"shift"`
+		Totals       map[string]string `json:"totals"`
+		Report       *reportJSON       `json:"report"`
+		Transactions []transactionJSON `json:"transactions"`
+	}{Transactions: []transactionJSON{}}
 	err := a.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		raw, err := q.GetClubSettingsForCash(ctx, p.ClubID)
 		if err != nil {
 			return err
 		}
-		out["currency"] = parseClubSetting(raw).currency()
+		out.Currency = parseClubSetting(raw).currency()
 		shift, totals, err := a.d.Cash.CurrentShift(ctx, q, p.ClubID)
 		if err != nil || shift == nil {
 			return err
 		}
-		out["shift"], out["totals"] = shiftOf(*shift), totalsOf(totals)
-		if out["report"], err = a.report(ctx, q, cash.ReportX, shift.ID); err != nil {
+		out.Shift, out.Totals = ptr(shiftOf(*shift)), totalsOf(totals)
+		report, err := a.report(ctx, q, cash.ReportX, shift.ID)
+		if err != nil {
 			return err
 		}
+		out.Report = &report
 		rows, err := q.MobileStaffShiftTransactions(ctx, store.MobileStaffShiftTransactionsParams{ClubID: p.ClubID, ShiftID: shift.ID, PageSize: shiftTransactions})
 		if err != nil {
 			return err
 		}
-		list := make([]transactionJSON, 0, len(rows))
 		for _, t := range rows {
-			list = append(list, transactionOf(t.ID, t.Type, t.Amount, t.Description, t.CreatedAt))
+			out.Transactions = append(out.Transactions, transactionOf(t.ID, t.Type, t.Amount, t.Description, t.CreatedAt))
 		}
-		out["transactions"] = list
 		return nil
 	})
 	if err != nil {
 		a.fail(w, r, "cash", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, orderedCash(out))
-}
-
-// orderedCash — порядок ключей ответа show() (currency, shift, totals, report, transactions).
-func orderedCash(m map[string]any) any {
-	return struct {
-		Currency     any `json:"currency"`
-		Shift        any `json:"shift"`
-		Totals       any `json:"totals"`
-		Report       any `json:"report"`
-		Transactions any `json:"transactions"`
-	}{m["currency"], m["shift"], m["totals"], m["report"], m["transactions"]}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // amountArg — сумма из тела как строка для cash.Parse*: число — его литерал, строка — как есть; нет — "".
@@ -973,10 +976,8 @@ func (a *API) cashClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	s := chi.URLParam(r, "shift")
-	shiftID, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || shiftID <= 0 {
-		modelNotFound(w, "CashShift", s)
+	shiftID, s, ok := pathID(w, r, "shift", "CashShift")
+	if !ok {
 		return
 	}
 	var out struct {
@@ -988,7 +989,7 @@ func (a *API) cashClose(w http.ResponseWriter, r *http.Request) {
 		Totals map[string]string `json:"totals"`
 		Report reportJSON        `json:"report"`
 	}
-	err = a.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
+	err := a.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		res, err := a.d.Cash.CloseShift(ctx, q, cashsvc.CloseShiftParams{ClubID: httpx.ClubID(ctx), ShiftID: shiftID, Actor: httpx.Actor(ctx)})
 		if err != nil {
 			return err
@@ -1037,14 +1038,14 @@ func (a *API) cashTopUp(w http.ResponseWriter, r *http.Request) {
 		// StoreBalanceTopUpRequest: все ошибки полей сразу.
 		var form httpx.FormErrors
 		if !b.filled("user_id") {
-			form.Add("user_id", httpx.RuleMessage("user_id", cash.RuleRequired, ""))
+			form.Rule("user_id", cash.RuleRequired, "")
 		} else {
 			names, err := q.ListClubUserNames(ctx, store.ListClubUserNamesParams{ClubID: clubID, Ids: []int64{userID}})
 			if err != nil {
 				return err
 			}
 			if len(names) == 0 {
-				form.Add("user_id", httpx.RuleMessage("user_id", cash.RuleIn, ""))
+				form.Rule("user_id", cash.RuleIn, "")
 			}
 		}
 		amount, perr := cash.ParseTopUpAmount(amountArg(b, "amount"))
@@ -1052,10 +1053,10 @@ func (a *API) cashTopUp(w http.ResponseWriter, r *http.Request) {
 			return perr
 		}
 		if !cash.BalanceField(balanceType).Valid() {
-			form.Add("balance_type", httpx.RuleMessage("balance_type", cash.RuleIn, ""))
+			form.Rule("balance_type", cash.RuleIn, "")
 		}
 		if !cash.PaymentMethod(method).Valid() {
-			form.Add("payment_method", httpx.RuleMessage("payment_method", cash.RuleIn, ""))
+			form.Rule("payment_method", cash.RuleIn, "")
 		}
 		if err := form.Err(); err != nil {
 			return err
@@ -1190,12 +1191,7 @@ func (a *API) customers(w http.ResponseWriter, r *http.Request) {
 	var nameLike, phoneLike string
 	if utf8.RuneCountInString(search) >= 2 {
 		nameLike = likePattern(search)
-		digits := strings.Map(func(c rune) rune {
-			if c >= '0' && c <= '9' {
-				return c
-			}
-			return -1
-		}, search)
+		digits := digitsOnly(search)
 		if strings.HasPrefix(digits, "8") { // номера хранятся как +7…: набранный с 8 ищется с 7
 			digits = "7" + digits[1:]
 		}
@@ -1315,32 +1311,32 @@ func (a *API) stockMove(receiveOnly bool) http.HandlerFunc {
 		productID, ok := b.integer("product_id")
 		switch {
 		case !b.filled("product_id"):
-			form.Add("product_id", httpx.RuleMessage("product_id", "required", ""))
+			form.Rule("product_id", "required", "")
 		case !ok:
-			form.Add("product_id", httpx.RuleMessage("product_id", "integer", ""))
+			form.Rule("product_id", "integer", "")
 		}
 		typ := stock.Receipt
 		if !receiveOnly {
 			s, _ := b.str("type")
 			typ = stock.MovementType(s)
 			if typ != stock.Receipt && typ != stock.WriteOff {
-				form.Add("type", httpx.RuleMessage("type", "in", ""))
+				form.Rule("type", "in", "")
 			}
 		}
 		qty, qok := b.integer("quantity")
 		switch {
 		case !b.filled("quantity"):
-			form.Add("quantity", httpx.RuleMessage("quantity", "required", ""))
+			form.Rule("quantity", "required", "")
 		case !qok:
-			form.Add("quantity", httpx.RuleMessage("quantity", "integer", ""))
+			form.Rule("quantity", "integer", "")
 		case qty < 1:
-			form.Add("quantity", httpx.RuleMessage("quantity", "min_numeric", "1"))
+			form.Rule("quantity", "min_numeric", "1")
 		case receiveOnly && qty > stock.MaxReceiveQuantity:
-			form.Add("quantity", httpx.RuleMessage("quantity", "max_numeric", "100000"))
+			form.Rule("quantity", "max_numeric", "100000")
 		}
 		note, _ := b.str("note")
 		if utf8.RuneCountInString(note) > 255 {
-			form.Add("note", httpx.RuleMessage("note", "max_string", "255"))
+			form.Rule("note", "max_string", "255")
 		}
 		if err := form.Err(); err != nil {
 			a.writeError(w, r, err)
@@ -1405,11 +1401,7 @@ func orderOf(r store.MobileStaffOrderRow) orderJSON {
 		if !ok {
 			continue
 		}
-		name := ""
-		if v, ok := m["name"]; ok && v != nil {
-			name = scalar(v)
-		}
-		o.Items = append(o.Items, map[string]any{"name": name, "quantity": int64Of(m["quantity"]),
+		o.Items = append(o.Items, map[string]any{"name": scalarOr(m["name"], ""), "quantity": int64Of(m["quantity"]),
 			"price": itemMoney(m["price"]), "total": itemMoney(m["total"])})
 	}
 	return o
@@ -1476,18 +1468,17 @@ func (a *API) orders(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleOrder(fn func(context.Context, *store.Queries, shop.HandleParams) (shop.Handled, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		s := chi.URLParam(r, "order")
-		id, err := strconv.ParseInt(s, 10, 64)
-		if err != nil || id <= 0 {
-			modelNotFound(w, "ShopOrder", s)
+		id, s, ok := pathID(w, r, "order", "ShopOrder")
+		if !ok {
 			return
 		}
 		var row store.MobileStaffOrderRow
-		err = a.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
+		err := a.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 			clubID := httpx.ClubID(ctx)
 			if _, err := fn(ctx, q, shop.HandleParams{ClubID: clubID, OrderID: id, Actor: httpx.Actor(ctx), Now: a.d.NowFunc()}); err != nil {
 				return err
 			}
+			var err error
 			row, err = q.MobileStaffOrder(ctx, store.MobileStaffOrderParams{ClubID: clubID, ID: id})
 			return err
 		})
@@ -1629,10 +1620,8 @@ func (a *API) chatReply(w http.ResponseWriter, r *http.Request) {
 		writeMessage(w, http.StatusForbidden, a.t(r, msgNoAnswerRight, nil))
 		return
 	}
-	s := chi.URLParam(r, "customer")
-	customer, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || customer <= 0 {
-		modelNotFound(w, "User", s)
+	customer, _, ok := pathID(w, r, "customer", "User")
+	if !ok {
 		return
 	}
 	raw, _ := readBody(r).str("body")
@@ -1640,7 +1629,7 @@ func (a *API) chatReply(w http.ResponseWriter, r *http.Request) {
 	now := a.d.NowFunc()
 	var out chatMessageJSON
 	notFound := false
-	err = a.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
+	err := a.d.Tx(ctx, func(ctx context.Context, q *store.Queries) error {
 		if _, err := q.ChatCustomer(ctx, store.ChatCustomerParams{ClubID: p.ClubID, CustomerID: customer}); errors.Is(err, pgx.ErrNoRows) {
 			notFound = true
 			return nil

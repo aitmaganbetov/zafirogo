@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	billingsvc "github.com/aitmaganbetov/zafirogo/server/internal/billing/service"
 	"github.com/aitmaganbetov/zafirogo/server/internal/http/httpx"
 	"github.com/aitmaganbetov/zafirogo/server/internal/reservations"
 	"github.com/aitmaganbetov/zafirogo/server/internal/store"
@@ -43,20 +44,16 @@ type bookingJSON struct {
 func bookingOf(b reservations.AppBooking) bookingJSON {
 	return bookingJSON{
 		ID: b.ID, Code: b.Code, Computer: strings.Join(b.Computers, ", "), Computers: b.Computers, Zone: b.Zone, Tariff: b.Tariff,
-		StartsAt: b.StartsAt.UTC().Format("2006-01-02T15:04:05-07:00"), EndsAt: b.EndsAt.UTC().Format("2006-01-02T15:04:05-07:00"),
+		StartsAt: billingsvc.ISO8601(b.StartsAt), EndsAt: billingsvc.ISO8601(b.EndsAt),
 		State: b.State, Paid: moneyStr(int64(b.Paid)), PaidBonus: moneyStr(int64(b.PaidBonus)), CanCancel: b.CanCancel,
 	}
 }
 
 // bookingEnv — окружение операции гостя: журнал и ledger — от его имени; агенту — баланс после коммита.
 func (a *API) bookingEnv(r *http.Request) reservations.Env {
-	env := reservations.Env{Now: a.d.NowFunc(), Actor: guestActor(r), T: func(key string, params map[string]string) string {
+	return reservations.Env{Now: a.d.NowFunc(), Actor: guestActor(r), Notifier: a.notifier(), T: func(key string, params map[string]string) string {
 		return a.t(r, key, params)
 	}}
-	if a.d.Cash != nil && a.d.Cash.Notifier != nil {
-		env.Notifier = a.d.Cash.Notifier
-	}
-	return env
 }
 
 // bookingError — ошибки сервиса броней в формате Laravel: выключено в клубе — 403, правило — 422 с полем.
@@ -163,16 +160,7 @@ func (a *API) bookingsComputers(w http.ResponseWriter, r *http.Request) {
 
 // bookingEnabled — ensureEnabled() до проверки запроса (контроллер вызывает его первым): false — ответ записан.
 func (a *API) bookingEnabled(w http.ResponseWriter, r *http.Request) bool {
-	cs, err := a.settings(r.Context())
-	if err != nil {
-		a.fail(w, r, "settings", err)
-		return false
-	}
-	if !cs.flag("club", "app_booking_enabled", false) {
-		writeMessage(w, http.StatusForbidden, a.t(r, reservations.MsgAppDisabled, nil))
-		return false
-	}
-	return true
+	return a.requireSetting(w, r, func(cs clubSetting) bool { return cs.flag("club", "app_booking_enabled", false) }, reservations.MsgAppDisabled)
 }
 
 // dateLayouts — что присылает приложение (DateTime.toUtc().toIso8601String()) и что ещё понимает правило 'date'
@@ -198,6 +186,11 @@ func (e *ruleErrors) add(field, msg string) {
 		e.order = append(e.order, field)
 	}
 	e.fe.Add(field, msg)
+}
+
+// rule — ошибка правила с текстом валидатора Laravel (как httpx.FormErrors.Rule).
+func (e *ruleErrors) rule(field, rule, param string) {
+	e.add(field, httpx.RuleMessage(field, rule, param))
 }
 
 // orderedErrors — errors ответа 422 с порядком полей, как в Laravel (encoding/json сортирует ключи map).
@@ -239,13 +232,8 @@ func (a *API) writeRuleErrors(w http.ResponseWriter, r *http.Request, e *ruleErr
 	if err == nil {
 		return false
 	}
-	rec := &bufferWriter{h: http.Header{}}
-	a.d.ResponseError()(rec, r, err)
-	var body struct {
-		Errors map[string][]string `json:"errors"`
-	}
-	_ = json.Unmarshal(rec.buf.Bytes(), &body)
-	if rec.status != http.StatusUnprocessableEntity || len(body.Errors) == 0 || len(e.order) == 0 {
+	status, body := a.renderError(r, err)
+	if status != http.StatusUnprocessableEntity || len(body.Errors) == 0 || len(e.order) == 0 {
 		a.writeError(w, r, err)
 		return true
 	}
@@ -287,7 +275,7 @@ func (a *API) bookingPeriod(w http.ResponseWriter, r *http.Request, b body) (sta
 		if n, isInt := b.integer("tariff_id"); isInt {
 			tariffID = &n
 		} else {
-			fe.add("tariff_id", httpx.RuleMessage("tariff_id", "integer", ""))
+			fe.rule("tariff_id", "integer", "")
 		}
 	}
 	switch {
@@ -299,11 +287,11 @@ func (a *API) bookingPeriod(w http.ResponseWriter, r *http.Request, b body) (sta
 		n, isInt := b.integer("duration_minutes")
 		switch {
 		case !isInt:
-			fe.add("duration_minutes", httpx.RuleMessage("duration_minutes", "integer", ""))
+			fe.rule("duration_minutes", "integer", "")
 		case n < reservations.MinMinutes:
-			fe.add("duration_minutes", httpx.RuleMessage("duration_minutes", "min", strconv.Itoa(reservations.MinMinutes)))
+			fe.rule("duration_minutes", "min", strconv.Itoa(reservations.MinMinutes))
 		case n > reservations.MaxMinutes:
-			fe.add("duration_minutes", httpx.RuleMessage("duration_minutes", "max", strconv.Itoa(reservations.MaxMinutes)))
+			fe.rule("duration_minutes", "max", strconv.Itoa(reservations.MaxMinutes))
 		default:
 			minutes = &n
 		}
@@ -450,15 +438,15 @@ func (a *API) bookingComputerIDs(w http.ResponseWriter, r *http.Request, b body)
 	case !listFilled && !oneFilled:
 		fe.add("club_computer_ids", msgRequiredWithout)
 	case listFilled && !isArr:
-		fe.add("club_computer_ids", httpx.RuleMessage("club_computer_ids", "array", ""))
+		fe.rule("club_computer_ids", "array", "")
 	case listFilled && len(arr) > reservations.MaxComputers:
-		fe.add("club_computer_ids", httpx.RuleMessage("club_computer_ids", "max_array", strconv.Itoa(reservations.MaxComputers)))
+		fe.rule("club_computer_ids", "max_array", strconv.Itoa(reservations.MaxComputers))
 	case listFilled:
 		for i, v := range arr {
-			n, isInt := (body{"v": v}).integer("v")
+			n, isInt := integerOf(v)
 			if !isInt {
 				field := "club_computer_ids." + strconv.Itoa(i)
-				fe.add(field, httpx.RuleMessage(field, "integer", ""))
+				fe.rule(field, "integer", "")
 				continue
 			}
 			ids = append(ids, n)
@@ -470,7 +458,7 @@ func (a *API) bookingComputerIDs(w http.ResponseWriter, r *http.Request, b body)
 	case oneFilled:
 		n, isInt := b.integer("club_computer_id")
 		if !isInt {
-			fe.add("club_computer_id", httpx.RuleMessage("club_computer_id", "integer", ""))
+			fe.rule("club_computer_id", "integer", "")
 		} else if !listFilled {
 			ids = []int64{n} // $data['club_computer_ids'] ?? [$data['club_computer_id']]
 		}
@@ -500,7 +488,7 @@ func (a *API) bookingsStore(w http.ResponseWriter, r *http.Request) {
 	}
 	p := httpx.Principal(r.Context())
 	req := reservations.BookRequest{ClubID: p.ClubID, UserID: p.UserID, ComputerIDs: ids, StartsAt: startsAt, Minutes: minutes, TariffID: tariffID}
-	if k := strings.TrimSpace(r.Header.Get("Idempotency-Key")); k != "" && len(k) <= 100 {
+	if k := clientIdempotencyKey(r); k != "" {
 		req.IdempotencyKey = "mobile:booking:" + strconv.FormatInt(p.UserID, 10) + ":" + k
 	}
 	var booking reservations.AppBooking

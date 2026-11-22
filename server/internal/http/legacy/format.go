@@ -1,9 +1,7 @@
 package legacy
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -22,8 +20,6 @@ type phpFloat float64
 func (f phpFloat) MarshalJSON() ([]byte, error) {
 	return []byte(strconv.FormatFloat(float64(f), 'f', -1, 64)), nil
 }
-
-func phpFloatOf(f float64) phpFloat { return phpFloat(f) }
 
 // tenge — (float) decimal(12,2) тенге из тиынов: деление точное до ближайшего double, как разбор "1500.50".
 func tenge(t int64) phpFloat { return phpFloat(float64(t) / 100) }
@@ -51,7 +47,7 @@ func iso(t *time.Time) *string {
 	if t == nil {
 		return nil
 	}
-	s := t.UTC().Format("2006-01-02T15:04:05-07:00")
+	s := billingsvc.ISO8601(*t)
 	return &s
 }
 
@@ -117,8 +113,6 @@ func (cs clubSetting) features() map[string]bool {
 	}
 	return out
 }
-
-func nopBody(raw []byte) io.ReadCloser { return io.NopCloser(bytes.NewReader(raw)) }
 
 // tiynOf — сумма из JSON приложения (число или строка тенге) → тиыны точно; ok=false — не число.
 func tiynOf(s string) (money.Tiyn, bool) {

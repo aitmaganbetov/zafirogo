@@ -31,7 +31,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/cash"
@@ -249,24 +248,6 @@ func (a *API) logoURL(clubID int64, p *string) *string {
 	return &u
 }
 
-// marshalCatalog — JSON ответа (как writeJSON: без экранирования HTML).
-func marshalCatalog(v any) ([]byte, error) {
-	var buf strings.Builder
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	return []byte(buf.String()), nil
-}
-
-func writeRawJSON(w http.ResponseWriter, body []byte) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-cache, private")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(body)
-}
-
 // ---------------------------------------------------------------------------
 // Свободные ПК
 // ---------------------------------------------------------------------------
@@ -331,7 +312,7 @@ func (a *API) catalogIndex(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		a.fail(w, r, "catalog index", err)
 	default:
-		writeRawJSON(w, body)
+		writeRawJSON(w, http.StatusOK, body)
 	}
 }
 
@@ -395,7 +376,7 @@ func (a *API) buildCatalogIndex(ctx context.Context, from catalogClient, city, l
 			p := tengeFloat(c.PriceFrom)
 			card.PriceFrom = &p
 		}
-		raw, err := marshalCatalog(card)
+		raw, err := marshalJSON(card)
 		if err != nil {
 			return nil, false, err
 		}
@@ -410,27 +391,7 @@ func (a *API) buildCatalogIndex(ctx context.Context, from catalogClient, city, l
 			a.o.Log.WarnContext(ctx, "legacy catalog: upstream", slog.String("err", err.Error()))
 			cache = false
 		} else {
-			for _, c := range up.Cities {
-				byCity[c.Key] += c.Clubs
-			}
-			var upCards []json.RawMessage
-			var upNames []string
-			for _, raw := range up.Clubs {
-				var head struct {
-					ID   int64  `json:"id"`
-					Name string `json:"name"`
-				}
-				if json.Unmarshal(raw, &head) != nil || head.ID == 0 {
-					continue
-				}
-				if local[head.ID] {
-					// Клуб уже переехал, а на старом сервере его город не очищен: показываем один раз, наш.
-					byCity[city]--
-					continue
-				}
-				upCards, upNames = append(upCards, raw), append(upNames, head.Name)
-			}
-			cards = mergeByName(cards, names, upCards, upNames)
+			cards = up.mergeInto(byCity, city, cards, names, local)
 		}
 	}
 
@@ -443,7 +404,7 @@ func (a *API) buildCatalogIndex(ctx context.Context, from catalogClient, city, l
 	for i, o := range opts {
 		out.Cities[i] = catalogCity{Key: o.Key, Name: o.Label, Lat: o.Lat, Lng: o.Lng, Clubs: byCity[o.Key]}
 	}
-	body, err := marshalCatalog(out)
+	body, err := marshalJSON(out)
 	return body, cache, err
 }
 
@@ -484,6 +445,32 @@ type upstreamIndex struct {
 		Clubs int64  `json:"clubs"`
 	} `json:"cities"`
 	Clubs []json.RawMessage `json:"clubs"`
+}
+
+// mergeInto добавляет к своему списку города клубы старого сервера: его счётчики городов — в byCity, его карточки —
+// в общий список по названию. Клуб, который есть в local (уже переехал, а на старом сервере его город не очищен),
+// показывается один раз — наш.
+func (up upstreamIndex) mergeInto(byCity map[string]int64, city string, cards []json.RawMessage, names []string, local map[int64]bool) []json.RawMessage {
+	for _, c := range up.Cities {
+		byCity[c.Key] += c.Clubs
+	}
+	var upCards []json.RawMessage
+	var upNames []string
+	for _, raw := range up.Clubs {
+		var head struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(raw, &head) != nil || head.ID == 0 {
+			continue
+		}
+		if local[head.ID] {
+			byCity[city]--
+			continue
+		}
+		upCards, upNames = append(upCards, raw), append(upNames, head.Name)
+	}
+	return mergeByName(cards, names, upCards, upNames)
 }
 
 // upstreamCatalog — GET /api/catalog/clubs старого сервера (тот же город и язык). Адрес клиента — в
@@ -543,10 +530,8 @@ var errCatalogNoClub = errors.New("catalog: no club")
 
 // catalogShow — ClubCatalogController::show(): страница клуба; клуб без города — 404.
 func (a *API) catalogShow(w http.ResponseWriter, r *http.Request) {
-	idText := chi.URLParam(r, "club")
-	id, err := strconv.ParseInt(idText, 10, 64)
-	if err != nil || id <= 0 {
-		modelNotFound(w, "Club", idText)
+	id, _, ok := pathID(w, r, "club", "Club")
+	if !ok {
 		return
 	}
 	locale := a.locale(r)
@@ -567,7 +552,7 @@ func (a *API) catalogShow(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		a.fail(w, r, "catalog club", err)
 	default:
-		writeRawJSON(w, body)
+		writeRawJSON(w, http.StatusOK, body)
 	}
 }
 
@@ -642,5 +627,5 @@ func (a *API) buildCatalogClub(ctx context.Context, id int64, locale string) ([]
 		}
 		out.Zones = append(out.Zones, zone)
 	}
-	return marshalCatalog(out)
+	return marshalJSON(out)
 }

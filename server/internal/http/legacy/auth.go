@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
@@ -73,15 +74,19 @@ var (
 	codeRe       = regexp.MustCompile(`^\d{6}$`)
 )
 
+// digitsOnly — только цифры 0–9: нецифры (\D+) удаляются, как в PhoneNumber::normalize().
+func digitsOnly(s string) string {
+	return strings.Map(func(c rune) rune {
+		if c >= '0' && c <= '9' {
+			return c
+		}
+		return -1
+	}, s)
+}
+
 // normalizePhone — App\Support\PhoneNumber::normalize().
 func normalizePhone(phone string) string {
-	var b strings.Builder
-	for _, r := range phone {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	d := b.String()
+	d := digitsOnly(phone)
 	if d == "" {
 		return ""
 	}
@@ -165,10 +170,21 @@ func (a *API) lookupToken(ctx context.Context, id int64, plain string) (row stor
 
 // userTx — транзакция с app.user_id без клуба: свои членства (member_self_read) и свои токены.
 func (a *API) userTx(ctx context.Context, userID int64, fn func(q *store.Queries) error) error {
-	return pgx.BeginTxFunc(ctx, a.d.Pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
+	return inUserTx(ctx, a.d.Pool, userID, fn)
+}
+
+func inUserTx(ctx context.Context, pool db.Beginner, userID int64, fn func(q *store.Queries) error) error {
+	return pgx.BeginTxFunc(ctx, pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SELECT set_config('app.user_id', $1, true)", strconv.FormatInt(userID, 10)); err != nil {
 			return err
 		}
+		return fn(store.New(tx))
+	})
+}
+
+// readTx — транзакция только для чтения без клуба и пользователя (поиск аккаунта и клуба до входа).
+func (a *API) readTx(ctx context.Context, fn func(q *store.Queries) error) error {
+	return pgx.BeginTxFunc(ctx, a.d.Pool, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		return fn(store.New(tx))
 	})
 }
@@ -470,7 +486,7 @@ func (a *API) profile(ctx context.Context, clubID, userID int64) (userData, erro
 		cid, role := clubID, p.Role
 		cs := parseClubSetting(p.Settings)
 		u = userData{ID: userID, Name: p.UserName, Phone: p.UserPhone, ClubID: &cid, Role: &role,
-			Discount: phpFloatOf(p.Discount), Balance: tenge(p.Balance), BonusBalance: tenge(p.BonusBalance),
+			Discount: phpFloat(p.Discount), Balance: tenge(p.Balance), BonusBalance: tenge(p.BonusBalance),
 			Currency: cs.currency(), clubName: p.ClubName, settings: cs}
 		return nil
 	})
@@ -494,9 +510,9 @@ func (a *API) clubList(ctx context.Context, userID, current int64) ([]clubInfo, 
 // localUser — аккаунт с этим телефоном и его клубы на этом сервере (маршрутизация входа).
 func (a *API) localUser(ctx context.Context, phone string) (store.GetUserByPhoneRow, []store.MobileUserClubsRow, bool, error) {
 	var u store.GetUserByPhoneRow
-	err := pgx.BeginTxFunc(ctx, a.d.Pool, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+	err := a.readTx(ctx, func(q *store.Queries) error {
 		var err error
-		u, err = store.New(tx).GetUserByPhone(ctx, phone)
+		u, err = q.GetUserByPhone(ctx, phone)
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -512,9 +528,9 @@ func (a *API) localUser(ctx context.Context, phone string) (store.GetUserByPhone
 // clubHere — клуб есть на этом сервере (маршрутизация входа при поклубном переходе).
 func (a *API) clubHere(ctx context.Context, clubID int64) (bool, error) {
 	var here bool
-	err := pgx.BeginTxFunc(ctx, a.d.Pool, pgx.TxOptions{AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+	err := a.readTx(ctx, func(q *store.Queries) error {
 		var err error
-		here, err = store.New(tx).CatalogClubExists(ctx, clubID)
+		here, err = q.CatalogClubExists(ctx, clubID)
 		return err
 	})
 	return here, err
@@ -594,9 +610,7 @@ func (a *API) record(ctx context.Context, clubID int64, e activity.Entry) {
 // login — POST /api/auth/login (AuthController::login() → issueUserLoginResponse(..., false)).
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	raw := peekBody(r)
-	b := readBody(r)
-	restore(r, raw)
+	b := readBodyKeep(r)
 	phone, _ := b.str("phone")
 	// Маршрутизация: телефон без клубов на этом сервере — на старый сервер.
 	user, clubs, found, err := a.localUser(ctx, phone)
@@ -623,46 +637,57 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	})).ServeHTTP(w, r)
 }
 
-func (a *API) doLogin(w http.ResponseWriter, r *http.Request, b body, user store.GetUserByPhoneRow, clubs []store.MobileUserClubsRow, found bool) {
-	ctx := r.Context()
-	// LoginRequest.
-	form := &httpx.FormErrors{}
-	phone, has := b.str("phone")
+// loginInput — поля LoginRequest после проверки.
+type loginInput struct {
+	password, device string
+	requested        int64 // club_id; 0 — не выбран
+}
+
+// parseLogin — правила LoginRequest (все ошибки полей сразу); device_name по умолчанию — "mobile".
+func parseLogin(b body) (loginInput, error) {
+	var form httpx.FormErrors
+	phone, _ := b.str("phone")
 	switch {
 	case !b.filled("phone"):
-		form.AddErr(httpx.RuleError("phone", "required"))
+		form.Rule("phone", "required", "")
 	case !b.isString("phone"):
-		form.AddErr(httpx.RuleError("phone", "string"))
+		form.Rule("phone", "string", "")
 	case !loginPhoneRe.MatchString(phone):
-		form.AddErr(httpx.RuleError("phone", "regex"))
+		form.Rule("phone", "regex", "")
 	}
-	_ = has
-	pass, _ := b.str("password")
+	var in loginInput
+	in.password, _ = b.str("password")
 	switch {
 	case !b.filled("password"):
-		form.AddErr(httpx.RuleError("password", "required"))
+		form.Rule("password", "required", "")
 	case !b.isString("password"):
-		form.AddErr(httpx.RuleError("password", "string"))
+		form.Rule("password", "string", "")
 	}
-	device, _ := b.str("device_name")
-	if b.filled("device_name") && len([]rune(device)) > 255 {
-		form.AddErr(httpx.RuleErrorWith("device_name", "max_string", "255"))
+	in.device, _ = b.str("device_name")
+	if b.filled("device_name") && utf8.RuneCountInString(in.device) > 255 {
+		form.Rule("device_name", "max_string", "255")
 	}
-	var requested int64
 	if b.filled("club_id") {
 		n, ok := b.integer("club_id")
 		if !ok {
-			form.AddErr(httpx.RuleError("club_id", "integer"))
+			form.Rule("club_id", "integer", "")
 		}
-		requested = n
+		in.requested = n
 	}
-	if err := form.Err(); err != nil {
+	if strings.TrimSpace(in.device) == "" {
+		in.device = "mobile"
+	}
+	return in, form.Err()
+}
+
+func (a *API) doLogin(w http.ResponseWriter, r *http.Request, b body, user store.GetUserByPhoneRow, clubs []store.MobileUserClubsRow, found bool) {
+	ctx := r.Context()
+	in, err := parseLogin(b)
+	if err != nil {
 		a.writeError(w, r, err)
 		return
 	}
-	if strings.TrimSpace(device) == "" {
-		device = "mobile"
-	}
+	pass, device, requested := in.password, in.device, in.requested
 	failed := func(reason string) { a.recordLoginFailed(ctx, user, clubs, reason, device) }
 
 	if !found {
@@ -696,25 +721,10 @@ func (a *API) doLogin(w http.ResponseWriter, r *http.Request, b body, user store
 	//   ->when(! $requestedClubId, fn ($query) => $query
 	//       ->orderByDesc(ClubSubscription::query()->active()->whereColumn(…club_id…)->selectRaw('1'))->orderBy('id'))
 	// Laravel: app/Http/Controllers/Api/AuthController.php issueUserLoginResponse() (Zafiro fcd5d41).
-	var membership *store.MobileUserClubsRow
-	var active bool
-	for i := range clubs {
-		c := clubs[i]
-		if requested != 0 && c.ClubID != requested {
-			continue
-		}
-		on, err := a.clubActive(ctx, c.ClubID)
-		if err != nil {
-			a.fail(w, r, "subscription", err)
-			return
-		}
-		better := membership == nil || c.MembershipID < membership.MembershipID
-		if requested == 0 && membership != nil && on != active {
-			better = on
-		}
-		if better {
-			membership, active = &c, on
-		}
+	membership, active, err := a.pickMembership(ctx, clubs, requested)
+	if err != nil {
+		a.fail(w, r, "subscription", err)
+		return
 	}
 	// Гость входит в клуб, выбранный в списке клубов города: аккаунт становится клиентом этого клуба.
 	// Laravel: app/Http/Controllers/Api/AuthController.php issueUserLoginResponse() (Zafiro 1a0487a):
@@ -746,6 +756,31 @@ func (a *API) doLogin(w http.ResponseWriter, r *http.Request, b body, user store
 		return
 	}
 	a.respondToken(w, r, membership.ClubID, user.ID, device, "auth.api_login", "Вход через API: :user", 0)
+}
+
+// pickMembership — членство для входа (см. doLogin): выбранного клуба (requested); без выбора — сначала клуб с
+// активной подпиской, затем меньший id членства. active — подписка его клуба активна. nil — членства нет.
+func (a *API) pickMembership(ctx context.Context, clubs []store.MobileUserClubsRow, requested int64) (*store.MobileUserClubsRow, bool, error) {
+	var membership *store.MobileUserClubsRow
+	var active bool
+	for i := range clubs {
+		c := clubs[i]
+		if requested != 0 && c.ClubID != requested {
+			continue
+		}
+		on, err := a.clubActive(ctx, c.ClubID)
+		if err != nil {
+			return nil, false, err
+		}
+		better := membership == nil || c.MembershipID < membership.MembershipID
+		if requested == 0 && membership != nil && on != active {
+			better = on
+		}
+		if better {
+			membership, active = &c, on
+		}
+	}
+	return membership, active, nil
 }
 
 // respondToken — новый токен клуба и ответ входа/смены клуба. revoke — текущий токен (смена клуба), 0 — нет.
@@ -785,8 +820,6 @@ func (a *API) respondToken(w http.ResponseWriter, r *http.Request, clubID, userI
 	writeJSON(w, http.StatusOK, loginPayload{TokenType: "Bearer", ExpiresAt: billingsvc.ISO8601(expires), User: u,
 		ClubID: clubID, ClubName: u.clubName, Token: plain, AccessToken: plain, Clubs: clubs})
 }
-
-func restore(r *http.Request, raw []byte) { r.Body = nopBody(raw) }
 
 // me — GET /api/auth/me: {"user": userData}.
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
@@ -921,9 +954,7 @@ func (a *API) recoveryPhone(w http.ResponseWriter, r *http.Request, b body) (str
 // passwordRoute — маршрутизация по телефону (как вход) и лимит password-recovery.
 func (a *API) passwordRoute(h func(w http.ResponseWriter, r *http.Request, b body)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		raw := peekBody(r)
-		b := readBody(r)
-		restore(r, raw)
+		b := readBodyKeep(r)
 		s, _ := b.str("phone")
 		_, clubs, _, err := a.localUser(r.Context(), normalizePhone(s))
 		if err != nil {
@@ -966,7 +997,7 @@ func (a *API) passwordReset(w http.ResponseWriter, r *http.Request, b body) {
 	if !ok {
 		return
 	}
-	form := &httpx.FormErrors{}
+	var form httpx.FormErrors
 	code, _ := b.str("code")
 	switch {
 	case !b.filled("code"):
@@ -979,7 +1010,7 @@ func (a *API) passwordReset(w http.ResponseWriter, r *http.Request, b body) {
 	switch {
 	case !b.filled("password"):
 		form.Add("password", a.t(r, msgPasswordRequired, nil))
-	case len([]rune(pw)) < 6:
+	case utf8.RuneCountInString(pw) < 6:
 		form.Add("password", a.t(r, msgPasswordMin, nil))
 	case pw != confirm:
 		form.Add("password", a.t(r, msgPasswordMismatch, nil))
@@ -1015,11 +1046,8 @@ func RevokeUserTokens(ctx context.Context, pool db.Beginner, userID int64, now t
 	if userID <= 0 {
 		return nil
 	}
-	return pgx.BeginTxFunc(ctx, pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SELECT set_config('app.user_id', $1, true)", strconv.FormatInt(userID, 10)); err != nil {
-			return err
-		}
-		_, err := store.New(tx).MobileTokensRevokeUser(ctx, store.MobileTokensRevokeUserParams{Now: &now, UserID: userID})
+	return inUserTx(ctx, pool, userID, func(q *store.Queries) error {
+		_, err := q.MobileTokensRevokeUser(ctx, store.MobileTokensRevokeUserParams{Now: &now, UserID: userID})
 		return err
 	})
 }

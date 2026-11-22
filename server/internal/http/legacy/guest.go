@@ -1,7 +1,7 @@
 package legacy
 
-// Маршруты mobileclient (routes/api.php, группа auth:sanctum + current-club + subscription): новости, журнал,
-// QR-вход на ПК, друзья и перевод по коду из Telegram. Laravel: GuestNewsController, GuestHistoryController
+// Маршруты mobileclient (routes/api.php, группа auth:sanctum + current-club; подписка клуба — только у QR-входа,
+// см. routes.go): новости, журнал, QR-вход на ПК, друзья и перевод по коду из Telegram. Laravel: GuestNewsController, GuestHistoryController
 // (App\Services\GuestHistory), GuestQrLoginController, GuestFriendController (App\Services\Friends,
 // FriendTransferCodes).
 
@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -67,6 +68,14 @@ func guestActor(r *http.Request) billing.BalanceActor {
 	return a
 }
 
+// notifier — уведомления агента после коммита (баланс гостя на ПК); nil — касса без уведомлений.
+func (a *API) notifier() billingsvc.SessionNotifier {
+	if a.d.Cash == nil {
+		return nil
+	}
+	return a.d.Cash.Notifier
+}
+
 // settings — настройки клуба запроса.
 func (a *API) settings(ctx context.Context) (clubSetting, error) {
 	var cs clubSetting
@@ -78,18 +87,23 @@ func (a *API) settings(ctx context.Context) (clubSetting, error) {
 	return cs, err
 }
 
-// requireFeature — GuestFeatures::ensure(): 403 «Эта возможность отключена в клубе.»; false — ответ записан.
-func (a *API) requireFeature(w http.ResponseWriter, r *http.Request, feature string) bool {
+// requireSetting — проверка настройки клуба до разбора запроса: выключено — 403 с текстом msg; false — ответ записан.
+func (a *API) requireSetting(w http.ResponseWriter, r *http.Request, enabled func(clubSetting) bool, msg string) bool {
 	cs, err := a.settings(r.Context())
 	if err != nil {
 		a.fail(w, r, "settings", err)
 		return false
 	}
-	if !cs.features()[feature] {
-		writeMessage(w, http.StatusForbidden, a.t(r, msgFeatureOff, nil))
+	if !enabled(cs) {
+		writeMessage(w, http.StatusForbidden, a.t(r, msg, nil))
 		return false
 	}
 	return true
+}
+
+// requireFeature — GuestFeatures::ensure(): 403 «Эта возможность отключена в клубе.»; false — ответ записан.
+func (a *API) requireFeature(w http.ResponseWriter, r *http.Request, feature string) bool {
+	return a.requireSetting(w, r, func(cs clubSetting) bool { return cs.features()[feature] }, msgFeatureOff)
 }
 
 // ---------------------------------------------------------------------------
@@ -385,54 +399,30 @@ func (a *API) historyEntry(r *http.Request, l historyLog, userID int64, tariffs,
 		if v, ok := d["duration_minutes"]; ok && v != nil {
 			e.Note = ptr(t(":count минута|:count минуты|:count минут", map[string]string{"count": strconv.FormatInt(int64Of(v), 10)}))
 		}
-		e.Amount = historyAmount(first(d, "main_balance_amount", "amount"), true)
-		e.BonusAmount = historyAmount(d["bonus_balance_amount"], true)
+		e.setAmounts(first(d, "main_balance_amount", "amount"), d["bonus_balance_amount"], true)
 	case "time.purchased":
 		e.Kind = "purchase"
 		e.Title = t("Поминутная оплата: :count мин.", map[string]string{"count": strconv.FormatInt(int64Of(d["duration_minutes"]), 10)})
 		if v, ok := d["price_per_hour"]; ok && v != nil {
 			e.Note = ptr(t(":price за час", map[string]string{"price": scalar(v)}))
 		}
-		e.Amount = historyAmount(first(d, "main_balance_amount", "amount"), true)
-		e.BonusAmount = historyAmount(d["bonus_balance_amount"], true)
+		e.setAmounts(first(d, "main_balance_amount", "amount"), d["bonus_balance_amount"], true)
 	case "reservation.paid":
 		// Laravel: app/Services/GuestHistory.php entry() — бронь ПК из приложения: note — время начала (время клуба).
 		e.Kind = "purchase"
-		name := "—"
-		if v, ok := d["computer"]; ok && v != nil {
-			name = scalar(v)
-		}
-		e.Title = t("Бронь ПК :computer", map[string]string{"computer": name})
+		e.Title = t("Бронь ПК :computer", map[string]string{"computer": scalarOr(d["computer"], "—")})
 		if v, ok := d["starts_at"]; ok && v != nil {
 			e.Note = ptr(scalar(v))
 		}
-		e.Amount = historyAmount(d["main_balance_amount"], true)
-		e.BonusAmount = historyAmount(d["bonus_balance_amount"], true)
+		e.setAmounts(d["main_balance_amount"], d["bonus_balance_amount"], true)
 	case "reservation.refunded":
 		e.Kind = "refund"
 		e.Title = t("Возврат за отменённую бронь", nil)
-		e.Amount = historyAmount(d["main_balance_amount"], false)
-		e.BonusAmount = historyAmount(d["bonus_balance_amount"], false)
+		e.setAmounts(d["main_balance_amount"], d["bonus_balance_amount"], false)
 	case "shop.purchased":
 		e.Kind = "shop"
 		e.Title = t("Заказ в магазине клуба", nil)
-		if items, ok := d["items"].([]any); ok {
-			var parts []string
-			for _, it := range items {
-				line, ok := it.(map[string]any)
-				if !ok {
-					continue
-				}
-				name := "—"
-				if v, ok := line["name"]; ok && v != nil {
-					name = scalar(v)
-				}
-				parts = append(parts, name+" × "+strconv.FormatInt(int64Of(line["quantity"]), 10))
-			}
-			if len(parts) > 0 {
-				e.Note = ptr(strings.Join(parts, ", "))
-			}
-		}
+		e.Note = shopItemsNote(d["items"])
 		e.Amount = historyAmount(d["amount"], true)
 	case "shop.order_cancelled": //nolint:misspell // код события старого журнала
 		e.Kind = "refund"
@@ -441,8 +431,7 @@ func (a *API) historyEntry(r *http.Request, l historyLog, userID int64, tariffs,
 	case "time.refunded":
 		e.Kind = "refund"
 		e.Title = t("Возврат за неиспользованное время", nil)
-		e.Amount = historyAmount(d["main_balance_amount"], false)
-		e.BonusAmount = historyAmount(d["bonus_balance_amount"], false)
+		e.setAmounts(d["main_balance_amount"], d["bonus_balance_amount"], false)
 	case "user.balance_topped_up":
 		e.Kind = "top_up"
 		e.Title = t("Пополнение на кассе", nil)
@@ -491,11 +480,7 @@ func (a *API) historyEntry(r *http.Request, l historyLog, userID int64, tariffs,
 		}
 	case "session.transferred":
 		e.Kind = "seat"
-		to := "—"
-		if v, ok := d["to"]; ok && v != nil {
-			to = scalar(v)
-		}
-		e.Title = t("Пересадка на ПК :computer", map[string]string{"computer": to})
+		e.Title = t("Пересадка на ПК :computer", map[string]string{"computer": scalarOr(d["to"], "—")})
 		if v, ok := d["from"]; ok && v != nil {
 			e.Note = ptr(t("С ПК :computer", map[string]string{"computer": scalar(v)}))
 		}
@@ -511,6 +496,36 @@ func (a *API) historyEntry(r *http.Request, l historyLog, userID int64, tariffs,
 		}
 	}
 	return e
+}
+
+// setAmounts — суммы с основного и бонусного баланса (historyAmount каждой).
+func (e *historyEntry) setAmounts(main, bonus any, negative bool) {
+	e.Amount, e.BonusAmount = historyAmount(main, negative), historyAmount(bonus, negative)
+}
+
+// shopItemsNote — «Название × 2, …» строк заказа магазина; null без строк.
+func shopItemsNote(v any) *string {
+	items, _ := v.([]any)
+	var parts []string
+	for _, it := range items {
+		line, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		parts = append(parts, scalarOr(line["name"], "—")+" × "+strconv.FormatInt(int64Of(line["quantity"]), 10))
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return ptr(strings.Join(parts, ", "))
+}
+
+// scalarOr — scalar(v), а для отсутствующего значения или null — def ($v ?? def).
+func scalarOr(v any, def string) string {
+	if v == nil {
+		return def
+	}
+	return scalar(v)
 }
 
 // scalar — (string) скаляра PHP для подстановки.
@@ -699,16 +714,7 @@ func (a *API) friendsStore(w http.ResponseWriter, r *http.Request) {
 	}
 	b := readBody(r)
 	raw, _ := b.str("phone")
-	digits := strings.Map(func(c rune) rune {
-		if c >= '0' && c <= '9' {
-			return c
-		}
-		return -1
-	}, raw)
-	if len(digits) == 11 && (digits[0] == '7' || digits[0] == '8') {
-		digits = digits[1:]
-	}
-	phone := "+7" + digits
+	phone := normalizePhone(raw)
 	if !kzPhoneRe.MatchString(phone) {
 		writeValidation(w, "phone", a.t(r, msgPhoneDigits, nil))
 		return
@@ -738,13 +744,8 @@ func (a *API) friendsStore(w http.ResponseWriter, r *http.Request) {
 
 // friendshipID — {friendship} пути: не число — 404 модели (route model binding).
 func friendshipID(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	s := chi.URLParam(r, "friendship")
-	id, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || id <= 0 {
-		modelNotFound(w, "Friendship", s)
-		return 0, false
-	}
-	return id, true
+	id, _, ok := pathID(w, r, "friendship", "Friendship")
+	return id, ok
 }
 
 // friendsAccept — POST /api/guest/friends/{friendship}/accept.
@@ -798,7 +799,7 @@ func (a *API) transferAmount(w http.ResponseWriter, r *http.Request, b body) (st
 	case !b.isString("amount"):
 		a.writeError(w, r, httpx.RuleError("amount", "string"))
 		return "", false
-	case len([]rune(amount)) > 20:
+	case utf8.RuneCountInString(amount) > 20:
 		a.writeError(w, r, httpx.RuleErrorWith("amount", "max_string", "20"))
 		return "", false
 	}
@@ -819,22 +820,30 @@ func (a *API) friendshipExists(ctx context.Context, id int64) (bool, error) {
 	return found, err
 }
 
+// transferFriendship — {friendship} перевода: route model binding в клубе токена, затем функция balance_transfer
+// (порядок контроллера). ok=false — ответ записан.
+func (a *API) transferFriendship(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, ok := friendshipID(w, r)
+	if !ok {
+		return 0, false
+	}
+	found, err := a.friendshipExists(r.Context(), id)
+	switch {
+	case err != nil:
+		a.fail(w, r, "friendship", err)
+		return 0, false
+	case !found:
+		modelNotFound(w, "Friendship", strconv.FormatInt(id, 10))
+		return 0, false
+	}
+	return id, a.requireFeature(w, r, "balance_transfer")
+}
+
 // transferCode — POST /api/guest/friends/{friendship}/transfer/code {amount}: код в Telegram (FriendTransferCodes,
 // сервис Telegram — Options.TransferCodes).
 func (a *API) transferCode(w http.ResponseWriter, r *http.Request) {
-	id, ok := friendshipID(w, r)
+	id, ok := a.transferFriendship(w, r)
 	if !ok {
-		return
-	}
-	if found, err := a.friendshipExists(r.Context(), id); err != nil || !found {
-		if err != nil {
-			a.fail(w, r, "friendship", err)
-		} else {
-			modelNotFound(w, "Friendship", strconv.FormatInt(id, 10))
-		}
-		return
-	}
-	if !a.requireFeature(w, r, "balance_transfer") {
 		return
 	}
 	amount, ok := a.transferAmount(w, r, readBody(r))
@@ -860,19 +869,8 @@ func (a *API) transferCode(w http.ResponseWriter, r *http.Request) {
 // transferConfirm — POST /api/guest/friends/{friendship}/transfer/confirm {amount, code}: перевод по коду
 // (billing.ConfirmFriendTransferCode — через ledger; неверный код засчитывает попытку отдельной транзакцией).
 func (a *API) transferConfirm(w http.ResponseWriter, r *http.Request) {
-	id, ok := friendshipID(w, r)
+	id, ok := a.transferFriendship(w, r)
 	if !ok {
-		return
-	}
-	if found, err := a.friendshipExists(r.Context(), id); err != nil || !found {
-		if err != nil {
-			a.fail(w, r, "friendship", err)
-		} else {
-			modelNotFound(w, "Friendship", strconv.FormatInt(id, 10))
-		}
-		return
-	}
-	if !a.requireFeature(w, r, "balance_transfer") {
 		return
 	}
 	b := readBody(r)
@@ -906,11 +904,7 @@ func (a *API) transferConfirm(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		// BalanceChanged на ПК, где вошли отправитель и друг (как перевод агента, guestapi.transferResponse).
-		var n billingsvc.SessionNotifier
-		if a.d.Cash != nil && a.d.Cash.Notifier != nil {
-			n = a.d.Cash.Notifier
-		}
-		return billingsvc.NotifyBalancesAfterCommit(ctx, q, n, p.ClubID, p.UserID, res.FriendID)
+		return billingsvc.NotifyBalancesAfterCommit(ctx, q, a.notifier(), p.ClubID, p.UserID, res.FriendID)
 	})
 	var mismatch *billing.TransferCodeMismatchError
 	if errors.As(err, &mismatch) {
