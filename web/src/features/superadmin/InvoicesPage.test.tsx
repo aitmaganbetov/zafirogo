@@ -1,8 +1,8 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { session } from '../../auth/session';
-import { apiError, mockApi, renderPage, signIn } from '../../test/pages';
+import { apiError, mockApi, renderPage, signIn, stubDialog } from '../../test/pages';
 import { ClubPage } from './ClubPage';
 import { FlashContext } from './flash';
 import { InvoicesPage } from './InvoicesPage';
@@ -30,6 +30,7 @@ describe('кабинет суперадмина: оплаты', () => {
   beforeEach(() => {
     flash.status.mockReset();
     flash.error.mockReset();
+    stubDialog();
     signIn('', [], SUPER as never);
   });
   afterEach(() => {
@@ -39,22 +40,64 @@ describe('кабинет суперадмина: оплаты', () => {
   });
   const render = (ui: ReactNode) => renderPage(<FlashContext.Provider value={flash}>{ui}</FlashContext.Provider>);
 
-  it('счёт, ожидающий оплаты: «Оплата получена» после подтверждения', async () => {
-    const api = mockApi({ 'GET /api/superadmin/invoices': board, 'POST /api/superadmin/invoices/7/pay': { message: 'Счёт ZF-00007 оплачен, подписка продлена до 25.05.2027.' } });
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValue(true);
+  /** Окно свежего кода второго фактора: ввести код и подтвердить. */
+  const confirmWith = (code: string) => {
+    const dialog = within(screen.getByRole('dialog'));
+    fireEvent.change(dialog.getByLabelText('Код из приложения'), { target: { value: code } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Подтвердить' }));
+    return dialog;
+  };
+
+  it('счёт, ожидающий оплаты: «Оплата получена» — вопрос и свежий код в одном окне', async () => {
+    let attempt = 0;
+    const api = mockApi({
+      'GET /api/superadmin/invoices': board,
+      'POST /api/superadmin/invoices/7/pay': () =>
+        ++attempt === 1
+          ? apiError(422, { error: 'validation_failed', message: 'Неверный код.', errors: { code: ['Неверный код.'] } })
+          : { message: 'Счёт ZF-00007 оплачен, подписка продлена до 25.05.2027.' },
+    });
+    const confirm = vi.spyOn(window, 'confirm');
     render(<InvoicesPage />);
     expect(await screen.findByText('10 800 ₸')).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'Cyber Arena' })[0]).toHaveAttribute('href', '/superadmin/clubs/5');
     expect(screen.getByText(/Базовый, .*, 2 ПК × 1 000 ₸, скидка 10% · 15\.11\.2026 07:00/)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // «Отмена» в окне — запрос не уходит.
     fireEvent.click(screen.getByRole('button', { name: 'Оплата получена' }));
-    expect(confirm).toHaveBeenCalledWith('Деньги по счёту ZF-00007 пришли? Подписка клуба будет продлена.');
+    let dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('Деньги по счёту ZF-00007 пришли? Подписка клуба будет продлена.')).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole('button', { name: 'Отмена' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(api.of('POST', '/api/superadmin/invoices/7/pay')).toHaveLength(0);
+
+    // Неверный код — под полем, окно открыто; верный — счёт оплачен.
     fireEvent.click(screen.getByRole('button', { name: 'Оплата получена' }));
+    dialog = confirmWith('111111');
+    expect(await dialog.findByRole('alert')).toHaveTextContent('Неверный код.');
+    expect(flash.error).not.toHaveBeenCalled();
+    confirmWith('222222');
     await waitFor(() => expect(flash.status).toHaveBeenCalledWith('Счёт ZF-00007 оплачен, подписка продлена до 25.05.2027.'));
-    expect(api.of('POST', '/api/superadmin/invoices/7/pay')).toHaveLength(1);
+    const calls = api.of('POST', '/api/superadmin/invoices/7/pay');
+    expect(calls.map((c) => c.body)).toEqual([{ code: '111111' }, { code: '222222' }]);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(confirm).not.toHaveBeenCalled();
   });
 
-  it('отмена счёта, история и настройка Kaspi', async () => {
+  it('оплата: ошибка не про код закрывает окно и показывается в layout', async () => {
+    mockApi({
+      'GET /api/superadmin/invoices': board,
+      'POST /api/superadmin/invoices/7/pay': () => apiError(422, { error: 'validation_failed', message: 'Счёт уже закрыт.', errors: { invoice: ['Счёт уже закрыт.'] } }),
+    });
+    render(<InvoicesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Оплата получена' }));
+    confirmWith('123456');
+    await waitFor(() => expect(flash.error).toHaveBeenCalledWith('Счёт уже закрыт.'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('отмена счёта, история и настройка Kaspi со свежим кодом', async () => {
     const api = mockApi({
       'GET /api/superadmin/invoices': board,
       'POST /api/superadmin/invoices/7/cancel': { message: 'Счёт отменён.' },
@@ -72,9 +115,13 @@ describe('кабинет суперадмина: оплаты', () => {
     expect((screen.getByLabelText('Получатель (видят клубы)') as HTMLInputElement).value).toBe('ИП Zafiro');
     fireEvent.change(url, { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
+    // Сначала окно кода: без него запрос не уходит.
+    expect(within(screen.getByRole('dialog')).getByText('Изменить настройки оплаты через Kaspi? По этой ссылке платят все клубы.')).toBeInTheDocument();
+    expect(api.of('POST', '/api/superadmin/invoices/kaspi')).toHaveLength(0);
+    confirmWith('123456');
     await waitFor(() => expect(flash.status).toHaveBeenCalledWith('Настройки оплаты сохранены.'));
     // Пустая ссылка выключает оплату.
-    expect(api.of('POST', '/api/superadmin/invoices/kaspi')[0]?.body).toEqual({ url: null, recipient: 'ИП Zafiro' });
+    expect(api.of('POST', '/api/superadmin/invoices/kaspi')[0]?.body).toEqual({ url: null, recipient: 'ИП Zafiro', code: '123456' });
   });
 
   it('пусто: нет счетов и истории', async () => {
@@ -107,8 +154,34 @@ describe('кабинет суперадмина: оплаты', () => {
     fireEvent.change(percent, { target: { value: '0' } });
     fireEvent.change(until, { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить скидку' }));
+    // Скидка — деньги платформы: сначала окно свежего кода второго фактора.
+    expect(within(screen.getByRole('dialog')).getByText('Сохранить скидку 0% для клуба Cyber Arena?')).toBeInTheDocument();
+    expect(api.of('POST', '/api/superadmin/clubs/5/subscription/discount')).toHaveLength(0);
+    confirmWith('123456');
     await waitFor(() => expect(flash.status).toHaveBeenCalledWith('Скидка снята.'));
-    expect(api.of('POST', '/api/superadmin/clubs/5/subscription/discount')[0]?.body).toEqual({ discount_percent: 0, discount_until: null, discount_note: 'Партнёр' });
+    expect(api.of('POST', '/api/superadmin/clubs/5/subscription/discount')[0]?.body).toEqual({ discount_percent: 0, discount_until: null, discount_note: 'Партнёр', code: '123456' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('карточка клуба: неверный код скидки — под полем окна, окно открыто', async () => {
+    let attempt = 0;
+    const api = mockApi({
+      'GET /api/superadmin/clubs/5': club({ monthly_price_tiyn: 5000000, discount_percent: 0, stored_discount_percent: 0, discount_until: null, discount_until_label: null, discount_note: null }),
+      'POST /api/superadmin/clubs/5/subscription/discount': () =>
+        ++attempt === 1 ? apiError(422, { error: 'validation_failed', message: 'Неверный код.', errors: { code: ['Неверный код.'] } }) : { message: 'Скидка сохранена.' },
+    });
+    render(<ClubPage clubId={5} />);
+    fireEvent.change(await screen.findByLabelText('Скидка, %'), { target: { value: '15' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить скидку' }));
+    const dialog = confirmWith('111111');
+    expect(await dialog.findByRole('alert')).toHaveTextContent('Неверный код.');
+    expect(flash.error).not.toHaveBeenCalled();
+    confirmWith('222222');
+    await waitFor(() => expect(flash.status).toHaveBeenCalledWith('Скидка сохранена.'));
+    expect(api.of('POST', '/api/superadmin/clubs/5/subscription/discount').map((c) => c.body)).toEqual([
+      { discount_percent: 15, discount_until: null, discount_note: null, code: '111111' },
+      { discount_percent: 15, discount_until: null, discount_note: null, code: '222222' },
+    ]);
   });
 
   it('карточка клуба: ошибка поля скидки — под формой и в layout', async () => {
@@ -120,7 +193,9 @@ describe('кабинет суперадмина: оплаты', () => {
     render(<ClubPage clubId={5} />);
     fireEvent.change(await screen.findByLabelText('Скидка, %'), { target: { value: '101' } });
     fireEvent.submit(screen.getByRole('button', { name: 'Сохранить скидку' }).closest('form') as HTMLFormElement);
+    confirmWith('123456');
     await waitFor(() => expect(flash.error).toHaveBeenCalledWith(message));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByText(message)).toHaveClass('text-red-600');
   });
 

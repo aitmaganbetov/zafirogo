@@ -160,7 +160,7 @@ func (h *handlers) Register(ctx context.Context, req authapi.RegisterRequestObje
 	if err != nil {
 		return nil, err
 	}
-	h.reportNewClub(ctx, r, telegram.NewClub{Name: clubName, OwnerName: name, OwnerPhone: phone, TrialEndsAt: trialEnds}, clubID)
+	h.reportNewClub(ctx, telegram.NewClub{Name: clubName, OwnerName: name, OwnerPhone: phone, TrialEndsAt: trialEnds}, clubID)
 	body2, err := h.startSession(ctx, w, userID, clubID)
 	if err != nil {
 		return nil, err
@@ -171,16 +171,13 @@ func (h *handlers) Register(ctx context.Context, req authapi.RegisterRequestObje
 // reportNewClub — сообщение о новом клубе в чат оповещений платформы, в фоне: медленный Telegram не должен
 // задерживать нового владельца (app()->terminating(fn () => $alerts->clubRegistered($club, $user))).
 // Laravel: app/Http/Controllers/AuthController.php register() (Zafiro e872af0).
-func (h *handlers) reportNewClub(ctx context.Context, r *http.Request, c telegram.NewClub, clubID int64) {
+func (h *handlers) reportNewClub(ctx context.Context, c telegram.NewClub, clubID int64) {
 	alerts := h.d.Superadmin.TelegramAlerts
 	if alerts == nil {
 		return
 	}
-	var host string
-	if r != nil {
-		host = r.Host
-	}
-	c.URL = cabinetClubURL(h.d.Superadmin.Domain, host, clubID)
+	// Ссылка — только из конфигурации (superadmin.domain или http.public_url); без неё сообщение уходит без ссылки.
+	c.URL = h.d.Superadmin.CabinetURL("/clubs/" + strconv.FormatInt(clubID, 10))
 	log := h.d.Log()
 	(*safego.Group)(nil).Go("club-registered-alert", func() { // паника отправки не роняет процесс (BC-04)
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
@@ -189,16 +186,6 @@ func (h *handlers) reportNewClub(ctx context.Context, r *http.Request, c telegra
 			log.WarnContext(ctx, "new club was not reported to the alerts chat", "club_id", clubID, "err", err)
 		}
 	})
-}
-
-// cabinetClubURL — route('superadmin.clubs.show', $club): на хосте кабинета (SUPERADMIN_DOMAIN) — /clubs/{id},
-// иначе /superadmin/clubs/{id} на хосте запроса. Схема — https (панель работает только по HTTPS: cookie Secure).
-func cabinetClubURL(domain, requestHost string, clubID int64) string {
-	id := strconv.FormatInt(clubID, 10)
-	if domain != "" {
-		return "https://" + domain + "/clubs/" + id
-	}
-	return "https://" + requestHost + "/superadmin/clubs/" + id
 }
 
 // validatePhone — 'phone' => ['required', 'regex:/^\+7\d{10}$/', 'unique:users'].

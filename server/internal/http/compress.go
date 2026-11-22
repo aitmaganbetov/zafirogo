@@ -17,6 +17,7 @@ import (
 // Правила:
 //   - только клиентам с Accept-Encoding: gzip; только текстовые типы (JSON, text/*, JS, SVG, XML);
 //   - ответы меньше compressMin байт, уже сжатые (Content-Encoding), 1xx/204/304, HEAD — как есть;
+//   - частичные ответы (206, Content-Range) — как есть: смещения диапазона — по несжатым байтам;
 //   - WebSocket (заголовок Upgrade) и потоки (text/event-stream, Flush до набора compressMin) — как есть;
 //   - /api/auth/* — как есть: в ответах токены (сжатие секрета вместе с управляемым извне текстом — BREACH);
 //   - сильный ETag обработчика становится слабым (W/): тело на проводе другое; Vary: Accept-Encoding.
@@ -104,7 +105,9 @@ func (c *compressWriter) WriteHeader(code int) {
 	}
 	c.status = code
 	h := c.Header()
+	// 206 и любой ответ с Content-Range: диапазон посчитан по несжатым байтам — сжатие сделало бы его неверным.
 	if code == http.StatusNoContent || code == http.StatusNotModified || h.Get("Content-Encoding") != "" ||
+		code == http.StatusPartialContent || h.Get("Content-Range") != "" ||
 		(h.Get("Content-Type") != "" && !compressibleType(h.Get("Content-Type"))) {
 		_ = c.passthrough() // буфер пуст: только статус
 		return
@@ -142,6 +145,7 @@ func (c *compressWriter) Write(b []byte) (int, error) {
 		return len(b), nil
 	}
 	h.Del("Content-Length")
+	h.Del("Accept-Ranges") // диапазоны сжатого потока не отдаются
 	h.Set("Content-Encoding", "gzip")
 	addVary(h)
 	if tag := h.Get("ETag"); tag != "" && !strings.HasPrefix(tag, "W/") {

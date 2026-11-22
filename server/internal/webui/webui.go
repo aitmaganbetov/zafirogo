@@ -58,6 +58,7 @@ type Option func(*options)
 
 type options struct {
 	cabinetDomain, resellerDomain string
+	publicURL                     string
 	site                          bool
 	siteTexts                     SiteTexts
 }
@@ -182,7 +183,7 @@ func Handler(fsys fs.FS, opts ...Option) http.Handler {
 	fileServer := http.FileServerFS(fsys)
 	var site *siteIndex
 	if o.site {
-		site = newSiteIndex(index, o.siteTexts)
+		site = newSiteIndex(index, o.siteTexts, o.publicURL)
 	}
 
 	// variants — файлы сборки по имени: набор конечен (вшитая ФС), сжатие — один раз на файл.

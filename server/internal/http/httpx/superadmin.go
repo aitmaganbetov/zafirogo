@@ -15,6 +15,9 @@ import (
 type SuperadminDeps struct {
 	// Domain — хост кабинета (SUPERADMIN_DOMAIN, Q-069); пусто — кабинет по /superadmin на любом хосте.
 	Domain string
+	// PublicURL — адрес сайта из конфигурации (http.public_url), без «/» в конце; пусто — не задан. Ссылки, которые
+	// уходят за пределы ответа на запрос (оповещения Telegram), строятся только из конфигурации, не из заголовка Host.
+	PublicURL string
 	// BackupPath, SSLHosts — экран «Сервер» (BACKUP_PATH, MONITORING_SSL_HOSTS).
 	BackupPath string
 	SSLHosts   []string
@@ -34,4 +37,18 @@ type SuperadminDeps struct {
 	TelegramAlerts *telegram.Alerts
 	// HTTPClient — загрузка манифеста подписи установщика агента (nil — клиент с таймаутом 15 с).
 	HTTPClient *http.Client
+}
+
+// CabinetURL — адрес страницы кабинета суперадмина (route('superadmin.…')): на хосте кабинета (SUPERADMIN_DOMAIN) —
+// path с корня, иначе <адрес сайта>/superadmin + path. Схема хоста кабинета — https (панель работает только по
+// HTTPS: cookie Secure). Ни домен кабинета, ни адрес сайта не заданы — пустая строка: адрес не строится из
+// заголовка Host запроса (его задаёт клиент), ссылка просто не отправляется.
+func (s SuperadminDeps) CabinetURL(path string) string {
+	switch {
+	case s.Domain != "":
+		return "https://" + s.Domain + path
+	case s.PublicURL != "":
+		return s.PublicURL + "/superadmin" + path
+	}
+	return ""
 }

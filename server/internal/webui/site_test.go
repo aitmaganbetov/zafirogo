@@ -3,6 +3,7 @@ package webui
 import (
 	"compress/gzip"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -60,7 +61,7 @@ func TestSiteMetaPerPage(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for p, pg := range sitePages {
-		rec := siteGet(h, p, map[string]string{"Host": "zafiro.kz", "X-Forwarded-Proto": "https"})
+		rec := siteGet(h, p, map[string]string{"Host": "zafiro.kz"})
 		body := rec.Body.String()
 		for _, want := range []string{
 			"<title>" + pg.title + "</title>",
@@ -195,7 +196,11 @@ func TestSiteMetaEscapes(t *testing.T) {
 			t.Fatalf("host %q: заголовок: %q", host, body)
 		}
 		valid := !strings.ContainsAny(host, `"< `)
-		if got := strings.Contains(body, `og:image" content="http://`+host+`/icons/icon-512.png"`); got != valid {
+		scheme := "https" // http — только у прямого запроса на локальный адрес
+		if strings.HasPrefix(host, "[::1]") {
+			scheme = "http"
+		}
+		if got := strings.Contains(body, `og:image" content="`+scheme+`://`+host+`/icons/icon-512.png"`); got != valid {
 			t.Errorf("host %q: og:image присутствует = %v", host, got)
 		}
 		if !valid && strings.Contains(body, "og:image") {
@@ -269,5 +274,55 @@ func TestSitePagesMatchClient(t *testing.T) {
 				t.Errorf("%s: текста нет в страницах клиента: %q", p, text)
 			}
 		}
+	}
+}
+
+// Адрес сайта для og:image: из конфигурации — заголовки Host и X-Forwarded-Proto клиента на страницу не влияют; без
+// конфигурации — из Host, но число разных адресов в кэше ограничено (ревью 22.11.2026).
+func TestSiteOriginFromConfigOrBounded(t *testing.T) {
+	h := Handler(siteFS(), WithSiteMeta(nil), WithPublicURL("https://zafiro.kz/"))
+	first := siteGet(h, "/pricing", map[string]string{"Host": "zafiro.kz"})
+	for _, hdr := range []map[string]string{
+		{"Host": "evil.example"}, {"Host": "evil.example", "X-Forwarded-Proto": "http"}, {"Host": "a b"}, {"Host": "localhost:8080"},
+	} {
+		rec := siteGet(h, "/pricing", hdr)
+		if !strings.Contains(rec.Body.String(), `og:image" content="https://zafiro.kz/icons/icon-512.png"`) || rec.Header().Get("ETag") != first.Header().Get("ETag") {
+			t.Errorf("%v: страница зависит от заголовков клиента", hdr)
+		}
+	}
+
+	// Без конфигурации: X-Forwarded-Proto от клиента схему не меняет.
+	h = Handler(siteFS(), WithSiteMeta(nil))
+	for _, proto := range []string{"", "http", "https"} {
+		body := siteGet(h, "/", map[string]string{"Host": "zafiro.kz", "X-Forwarded-Proto": proto}).Body.String()
+		if !strings.Contains(body, `og:image" content="https://zafiro.kz/icons/icon-512.png"`) {
+			t.Errorf("X-Forwarded-Proto %q: %q", proto, body)
+		}
+	}
+	if body := siteGet(h, "/", map[string]string{"Host": "localhost:8080", "X-Forwarded-Proto": "https"}).Body.String(); !strings.Contains(body, `content="http://localhost:8080/icons/`) {
+		t.Errorf("локальный адрес: %q", body)
+	}
+
+	// Перебор хостов: кэш не растёт сверх предела, лишние адреса получают страницу без og:image.
+	idx := newSiteIndex([]byte("<html><head><title>Zafiro</title></head></html>"), nil, "")
+	for i := range siteOriginsMax * 4 {
+		req := httptest.NewRequest(http.MethodGet, "/pricing", nil)
+		req.Host = fmt.Sprintf("h%d.example", i)
+		body, _, ok := idx.page(req, "/pricing")
+		if !ok {
+			t.Fatal("страница сайта не найдена")
+		}
+		if has := strings.Contains(string(body), "og:image"); has != (i < siteOriginsMax) {
+			t.Fatalf("хост №%d: og:image = %v", i, has)
+		}
+	}
+	if n := len(idx.pages); n != siteOriginsMax+1 {
+		t.Fatalf("записей кэша: %d, ожидалось %d", n, siteOriginsMax+1)
+	}
+	// Запомненный адрес по-прежнему получает свою страницу.
+	req := httptest.NewRequest(http.MethodGet, "/pricing", nil)
+	req.Host = "h0.example"
+	if body, _, _ := idx.page(req, "/pricing"); !strings.Contains(string(body), "https://h0.example/icons/") {
+		t.Fatalf("запомненный адрес: %q", body)
 	}
 }

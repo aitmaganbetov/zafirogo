@@ -71,6 +71,7 @@ NATS и gRPC. Нужен для смоук-теста собранного би�
 | `ZAFIRO_HTTP_REQUEST_TIMEOUT` | `30s` | дедлайн контекста обработчика (кроме `/ws`) |
 | `ZAFIRO_HTTP_TRUSTED_PROXIES` | пусто | IP/CIDR через запятую; только от них принимается `X-Forwarded-For` |
 | `ZAFIRO_HTTP_WIKI_HOST` | пусто | хост wiki (`WIKI_DOMAIN` старого, Q-069): wiki на его корне, `/wiki` сайта — 301 туда; пусто — wiki на `/wiki` |
+| `ZAFIRO_HTTP_PUBLIC_URL` | пусто | адрес сайта (`https://zafiro.kz`, без пути) для ссылок вне ответа на запрос: оповещения Telegram (без `superadmin.domain`), `og:image`, адрес входа реселлеров; пусто — оповещения без ссылки, из заголовка `Host` адрес не берётся |
 | `ZAFIRO_DATABASE_URL` \* | пусто | DSN логина ∈ `zafiro_app`; пусто — режим без зависимостей |
 | `ZAFIRO_DATABASE_PLATFORM_URL` \* | пусто | DSN логина ∈ `zafiro_platform`; обязателен вместе с `DATABASE_URL` |
 | `ZAFIRO_VALKEY_ADDR`, `ZAFIRO_VALKEY_PASSWORD` \* | `localhost:6379` | Valkey: сессии, лимиты, присутствие ПК |

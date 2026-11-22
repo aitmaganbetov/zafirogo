@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func gunzipBody(t *testing.T, b []byte) string {
@@ -157,5 +159,49 @@ func TestCompressPanic(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "partial") {
 		t.Fatalf("panic: %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+// Частичный ответ (Range → 206, Content-Range по несжатым смещениям) не сжимается: иначе клиент получил бы gzip-поток
+// с диапазоном, который к нему не относится (ревью 22.11.2026).
+func TestCompressLeavesPartialContent(t *testing.T) {
+	text := strings.Repeat("строка текста для частичной отдачи\n", 400)
+	h := compress(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		http.ServeContent(w, r, "", time.Time{}, strings.NewReader(text))
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/file", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set("Range", "bytes=100-4099")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", rec.Code)
+	}
+	if enc := rec.Header().Get("Content-Encoding"); enc != "" {
+		t.Fatalf("Content-Encoding = %q у частичного ответа", enc)
+	}
+	if got, want := rec.Header().Get("Content-Range"), "bytes 100-4099/"+strconv.Itoa(len(text)); got != want {
+		t.Fatalf("Content-Range = %q, want %q", got, want)
+	}
+	if rec.Header().Get("Content-Length") != "4000" || rec.Body.String() != text[100:4100] {
+		t.Fatalf("тело частичного ответа изменено: Content-Length = %q, %d байт", rec.Header().Get("Content-Length"), rec.Body.Len())
+	}
+	// Диапазон вне файла: 416 с Content-Range — тоже как есть.
+	req = httptest.NewRequest(http.MethodGet, "/api/file", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set("Range", "bytes=999999-")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestedRangeNotSatisfiable || rec.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("416: status = %d, Content-Encoding = %q", rec.Code, rec.Header().Get("Content-Encoding"))
+	}
+	// Тот же ресурс целиком — сжимается.
+	req = httptest.NewRequest(http.MethodGet, "/api/file", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Encoding") != "gzip" || gunzipBody(t, rec.Body.Bytes()) != text {
+		t.Fatalf("полный ответ: status = %d, Content-Encoding = %q", rec.Code, rec.Header().Get("Content-Encoding"))
 	}
 }

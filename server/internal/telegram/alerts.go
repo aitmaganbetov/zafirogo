@@ -159,7 +159,7 @@ type NewClub struct {
 	OwnerPhone string
 	// TrialEndsAt — конец пробного периода (нулевое время — «—»).
 	TrialEndsAt time.Time
-	// URL — страница клуба в кабинете суперадмина (route('superadmin.clubs.show', $club)).
+	// URL — страница клуба в кабинете суперадмина (route('superadmin.clubs.show', $club)); пусто — без ссылки.
 	URL string
 }
 
@@ -192,12 +192,11 @@ func (a *Alerts) ClubRegistered(ctx context.Context, c NewClub) (bool, error) {
 	if !c.TrialEndsAt.IsZero() {
 		date = c.TrialEndsAt.UTC().Format("02.01.2006")
 	}
-	text := strings.Join([]string{
+	text := withLink(strings.Join([]string{
 		"🎉 " + t(MsgNewClub, map[string]string{"club": c.Name}),
 		t(MsgNewClubOwner, map[string]string{"owner": c.OwnerName, "phone": c.OwnerPhone}),
 		t(MsgNewClubTrial, map[string]string{"date": date}),
-		c.URL,
-	}, "\n")
+	}, "\n"), c.URL)
 	return a.deliver(ctx, s.Token, s.ChatID, text), nil
 }
 
@@ -218,7 +217,7 @@ type OpenedInvoice struct {
 	Computers int64
 	// AmountTenge — сумма счёта в целых тенге (сумма счёта всегда целые тенге, BR-180).
 	AmountTenge int64
-	// URL — страница «Оплаты» кабинета суперадмина (route('superadmin.invoices.index')).
+	// URL — страница «Оплаты» кабинета суперадмина (route('superadmin.invoices.index')); пусто — без ссылки.
 	URL string
 }
 
@@ -246,13 +245,20 @@ func (a *Alerts) InvoiceOpened(ctx context.Context, inv OpenedInvoice) (bool, er
 		}
 		return i18n.Render(i18n.SourceLocale, key, params)
 	}
-	text := strings.Join([]string{
+	text := withLink(strings.Join([]string{
 		"💳 " + t(MsgInvoice, map[string]string{"number": inv.Number, "club": inv.Club}),
 		t(MsgInvoiceTerms, map[string]string{"plan": inv.Plan, "months": strconv.Itoa(inv.Months), "computers": strconv.FormatInt(inv.Computers, 10)}),
 		t(MsgInvoiceAmount, map[string]string{"amount": money.GroupThousands(inv.AmountTenge, " ")}),
-		inv.URL,
-	}, "\n")
+	}, "\n"), inv.URL)
 	return a.deliver(ctx, s.Token, s.ChatID, text), nil
+}
+
+// withLink — текст оповещения со ссылкой последней строкой; адрес кабинета не настроен (url пуст) — без неё.
+func withLink(text, url string) string {
+	if url == "" {
+		return text
+	}
+	return text + "\n" + url
 }
 
 // deliver — sendMessage без превью ссылок; описание ошибки Telegram — в лог (без токена).

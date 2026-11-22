@@ -17,11 +17,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +52,12 @@ const (
 	catalogUpstreamTimeout = 5 * time.Second
 	// catalogUpstreamMax — предел ответа старого сервера (500 карточек — сотни килобайт).
 	catalogUpstreamMax = 4 << 20
+	// catalogBuildTimeout — срок общего расчёта ответа (база, Valkey и старый сервер с его catalogUpstreamTimeout).
+	catalogBuildTimeout = 15 * time.Second
+	// catalogMissTTL — на сколько запоминается «клуба здесь нет»: короче catalogTTL, чтобы клуб, только что
+	// переехавший или получивший город, появился быстро. catalogMissMax — предел таких записей.
+	catalogMissTTL = 30 * time.Second
+	catalogMissMax = 1024
 )
 
 // onlineChecker — присутствие ПК для «свободных ПК» (*presence.Store).
@@ -62,6 +70,9 @@ type onlineChecker interface {
 type catalogCache struct {
 	mu      sync.Mutex
 	entries map[string]catalogEntry
+	// missing — «клуба здесь нет» (errCatalogNoClub) до указанного времени: перебор номеров не ходит в базу на
+	// каждый запрос. Отдельно от entries, чтобы такой перебор не вытеснял готовые ответы.
+	missing map[string]time.Time
 	// flights — один расчёт на ключ: одновременные запросы ждут его, а не считают каждый своё.
 	flights map[string]*catalogFlight
 }
@@ -78,39 +89,85 @@ type catalogFlight struct {
 }
 
 // get — ответ из кэша или build(); cache=false от build — ответ не запоминается (например, старый сервер не ответил).
-func (c *catalogCache) get(key string, build func() (body []byte, cache bool, err error)) ([]byte, error) {
+//
+// Расчёт общий для всех ждущих, поэтому идёт не в контексте запроса, который его начал (обрыв этого клиента не
+// должен давать ошибку остальным), а в своём: значения контекста сохраняются, отмена — нет, срок — catalogBuildTimeout.
+// Каждый запрос ждёт результат до отмены своего контекста.
+func (c *catalogCache) get(ctx context.Context, key string, build func(context.Context) (body []byte, cache bool, err error)) ([]byte, error) {
 	now := time.Now()
 	c.mu.Lock()
 	if e, ok := c.entries[key]; ok && now.Before(e.expires) {
 		c.mu.Unlock()
 		return e.body, nil
 	}
-	if f, ok := c.flights[key]; ok {
-		c.mu.Unlock()
-		<-f.done
-		return f.body, f.err
-	}
-	if c.flights == nil {
-		c.flights, c.entries = map[string]*catalogFlight{}, map[string]catalogEntry{}
-	}
-	f := &catalogFlight{done: make(chan struct{})}
-	c.flights[key] = f
-	c.mu.Unlock()
-
-	body, cache, err := build()
-	f.body, f.err = body, err
-
-	c.mu.Lock()
-	delete(c.flights, key)
-	if err == nil && cache {
-		if len(c.entries) >= catalogCacheMax {
-			c.entries = map[string]catalogEntry{}
+	if until, ok := c.missing[key]; ok {
+		if now.Before(until) {
+			c.mu.Unlock()
+			return nil, errCatalogNoClub
 		}
-		c.entries[key] = catalogEntry{body: body, expires: time.Now().Add(catalogTTL)}
+		delete(c.missing, key)
+	}
+	f, ok := c.flights[key]
+	if !ok {
+		if c.flights == nil {
+			c.flights, c.entries, c.missing = map[string]*catalogFlight{}, map[string]catalogEntry{}, map[string]time.Time{}
+		}
+		f = &catalogFlight{done: make(chan struct{})}
+		c.flights[key] = f
+		go c.run(context.WithoutCancel(ctx), key, f, build)
 	}
 	c.mu.Unlock()
-	close(f.done)
-	return body, err
+
+	select {
+	case <-f.done:
+		return f.body, f.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// run — расчёт одного ключа. Расчёт закрывается всегда, и при панике build: иначе ключ не считался бы больше никогда,
+// а ждущие висели бы до своих таймаутов.
+func (c *catalogCache) run(ctx context.Context, key string, f *catalogFlight, build func(context.Context) ([]byte, bool, error)) {
+	ctx, cancel := context.WithTimeout(ctx, catalogBuildTimeout)
+	defer cancel()
+	var cache bool
+	defer func() {
+		if p := recover(); p != nil {
+			f.body, cache = nil, false
+			f.err = fmt.Errorf("catalog: build panic: %v\n%s", p, debug.Stack())
+		}
+		c.mu.Lock()
+		delete(c.flights, key)
+		switch {
+		case f.err == nil && cache:
+			if len(c.entries) >= catalogCacheMax {
+				c.entries = map[string]catalogEntry{}
+			}
+			c.entries[key] = catalogEntry{body: f.body, expires: time.Now().Add(catalogTTL)}
+		case errors.Is(f.err, errCatalogNoClub):
+			if len(c.missing) >= catalogMissMax {
+				c.dropMissing()
+			}
+			c.missing[key] = time.Now().Add(catalogMissTTL)
+		}
+		c.mu.Unlock()
+		close(f.done)
+	}()
+	f.body, cache, f.err = build(ctx)
+}
+
+// dropMissing — место для новой записи «клуба нет»: сначала уходят просроченные, если их нет — все.
+func (c *catalogCache) dropMissing() {
+	now := time.Now()
+	for k, until := range c.missing {
+		if !now.Before(until) {
+			delete(c.missing, k)
+		}
+	}
+	if len(c.missing) >= catalogMissMax {
+		c.missing = map[string]time.Time{}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -264,18 +321,31 @@ func (a *API) catalogIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	locale := a.locale(r)
-	body, err := a.catalog.get("index|"+city+"|"+locale, func() ([]byte, bool, error) {
-		return a.buildCatalogIndex(r, city, locale)
+	from := catalogClientOf(r)
+	body, err := a.catalog.get(r.Context(), "index|"+city+"|"+locale, func(ctx context.Context) ([]byte, bool, error) {
+		return a.buildCatalogIndex(ctx, from, city, locale)
 	})
-	if err != nil {
+	switch {
+	case err != nil && r.Context().Err() != nil:
+		// Клиент ушёл, не дождавшись: отвечать некому, расчёт закончится для остальных.
+	case err != nil:
 		a.fail(w, r, "catalog index", err)
-		return
+	default:
+		writeRawJSON(w, body)
 	}
-	writeRawJSON(w, body)
 }
 
-func (a *API) buildCatalogIndex(r *http.Request, city, locale string) ([]byte, bool, error) {
-	ctx := r.Context()
+// catalogClient — то из запроса, что нужно запросу к старому серверу. Снимается до расчёта: расчёт может пережить
+// запрос, который его начал.
+type catalogClient struct {
+	remoteAddr, forwardedFor, host string
+}
+
+func catalogClientOf(r *http.Request) catalogClient {
+	return catalogClient{remoteAddr: r.RemoteAddr, forwardedFor: r.Header.Get("X-Forwarded-For"), host: r.Host}
+}
+
+func (a *API) buildCatalogIndex(ctx context.Context, from catalogClient, city, locale string) ([]byte, bool, error) {
 	if a.d.PlatformPool == nil {
 		return nil, false, httpx.ErrNotConfigured
 	}
@@ -335,7 +405,7 @@ func (a *API) buildCatalogIndex(r *http.Request, city, locale string) ([]byte, b
 	// Поклубный переход (UQ-2): клубы, которые ещё на старом сервере, — из его каталога.
 	cache := true
 	if a.o.Upstream != nil {
-		up, err := a.upstreamCatalog(r, city, locale)
+		up, err := a.upstreamCatalog(ctx, from, city, locale)
 		if err != nil {
 			a.o.Log.WarnContext(ctx, "legacy catalog: upstream", slog.String("err", err.Error()))
 			cache = false
@@ -418,7 +488,7 @@ type upstreamIndex struct {
 
 // upstreamCatalog — GET /api/catalog/clubs старого сервера (тот же город и язык). Адрес клиента — в
 // X-Forwarded-For: лимит throttle:30,1 старого сервера считается по нему (доверенный прокси), а не по нашему адресу.
-func (a *API) upstreamCatalog(r *http.Request, city, locale string) (upstreamIndex, error) {
+func (a *API) upstreamCatalog(ctx context.Context, from catalogClient, city, locale string) (upstreamIndex, error) {
 	var out upstreamIndex
 	u := *a.o.Upstream
 	u.Path = strings.TrimRight(u.Path, "/") + "/api/catalog/clubs"
@@ -426,7 +496,7 @@ func (a *API) upstreamCatalog(r *http.Request, city, locale string) (upstreamInd
 	if city != "" {
 		u.RawQuery = url.Values{"city": {city}}.Encode()
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), catalogUpstreamTimeout)
+	ctx, cancel := context.WithTimeout(ctx, catalogUpstreamTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -434,8 +504,8 @@ func (a *API) upstreamCatalog(r *http.Request, city, locale string) (upstreamInd
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Language", locale)
-	if ip, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		if prior := r.Header.Get("X-Forwarded-For"); prior != "" {
+	if ip, _, err := net.SplitHostPort(from.remoteAddr); err == nil {
+		if prior := from.forwardedFor; prior != "" {
 			ip = prior + ", " + ip
 		}
 		req.Header.Set("X-Forwarded-For", ip)
@@ -443,8 +513,8 @@ func (a *API) upstreamCatalog(r *http.Request, city, locale string) (upstreamInd
 	switch {
 	case a.o.UpstreamHost != "":
 		req.Host = a.o.UpstreamHost
-	case r.Host != "":
-		req.Host = r.Host
+	case from.host != "":
+		req.Host = from.host
 	}
 	res, err := a.upstreamClient.Do(req)
 	if err != nil {
@@ -480,17 +550,20 @@ func (a *API) catalogShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	locale := a.locale(r)
-	body, err := a.catalog.get("club|"+strconv.FormatInt(id, 10)+"|"+locale, func() ([]byte, bool, error) {
-		b, err := a.buildCatalogClub(r.Context(), id, locale)
+	body, err := a.catalog.get(r.Context(), "club|"+strconv.FormatInt(id, 10)+"|"+locale, func(ctx context.Context) ([]byte, bool, error) {
+		b, err := a.buildCatalogClub(ctx, id, locale)
 		return b, true, err
 	})
 	switch {
 	case errors.Is(err, errCatalogNoClub):
+		// «Клуба нет» запоминается на catalogMissTTL (catalogCache.missing).
 		// Клуб ещё на старом сервере (UQ-2) — его страницу отдаёт он.
 		if a.forward(w, r) {
 			return
 		}
 		modelNotFound(w, "Club", strconv.FormatInt(id, 10))
+	case err != nil && r.Context().Err() != nil:
+		// Клиент ушёл, не дождавшись.
 	case err != nil:
 		a.fail(w, r, "catalog club", err)
 	default:

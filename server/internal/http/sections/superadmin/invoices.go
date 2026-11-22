@@ -19,6 +19,11 @@ import (
 
 // «Оплаты» — счета клубов за подписку: суперадмин отмечает их оплаченными, когда приходит платёж Kaspi.
 // Laravel: app/Http/Controllers/Superadmin/InvoiceController.php, superadmin/invoices/index.blade.php.
+//
+// Отличие от Laravel (решение владельца, ревью 22.11.2026): «Оплата получена» и ссылка на оплату Kaspi требуют
+// свежего кода TOTP действующего суперадмина и закрыты в режиме просмотра клуба — как выплата реселлеру (аудит
+// A-10). Первое продлевает подписку без денег, второе направляет платежи всех клубов по новой ссылке: украденной
+// сессии для этого недостаточно.
 const (
 	invoicesPage   = 30
 	subjectInvoice = `App\Models\SubscriptionInvoice`
@@ -108,6 +113,14 @@ func invoiceError(err error) error {
 
 // SaPayInvoice — InvoiceController::pay(): деньги по счёту пришли, подписка клуба продлевается (BR-183).
 func (h *handlers) SaPayInvoice(ctx context.Context, req superadminapi.SaPayInvoiceRequestObject) (superadminapi.SaPayInvoiceResponseObject, error) {
+	if ro := readOnly(ctx); ro != nil {
+		return superadminapi.SaPayInvoice403JSONResponse{ForbiddenJSONResponse: *ro}, nil
+	}
+	if limited, err := h.confirmSecondFactor(ctx, req.Body); err != nil {
+		return nil, err
+	} else if limited != nil {
+		return superadminapi.SaPayInvoice429JSONResponse{TooManyRequestsJSONResponse: *limited}, nil
+	}
 	now := h.d.NowFunc()
 	by := httpx.Principal(ctx).UserID
 	var paid subscription.Paid
@@ -170,8 +183,12 @@ func (h *handlers) SaCancelInvoice(ctx context.Context, req superadminapi.SaCanc
 //	'url' => ['nullable', 'url:https', 'max:500'],
 //	'recipient' => ['nullable', 'string', 'max:200'],
 func (h *handlers) SaSetInvoiceKaspi(ctx context.Context, req superadminapi.SaSetInvoiceKaspiRequestObject) (superadminapi.SaSetInvoiceKaspiResponseObject, error) {
-	var link, recipient string
+	if ro := readOnly(ctx); ro != nil {
+		return superadminapi.SaSetInvoiceKaspi403JSONResponse{ForbiddenJSONResponse: *ro}, nil
+	}
+	var link, recipient, code string
 	if req.Body != nil {
+		code = req.Body.Code
 		// TrimStrings.
 		if req.Body.Url != nil {
 			link = strings.TrimSpace(*req.Body.Url)
@@ -193,6 +210,12 @@ func (h *handlers) SaSetInvoiceKaspi(ctx context.Context, req superadminapi.SaSe
 	}
 	if err := fe.Err(); err != nil {
 		return nil, err
+	}
+	// Код — после проверки полей: ошибка в ссылке не расходует код (один код — одно действие).
+	if limited, err := h.confirmSecondFactor(ctx, &superadminapi.SecondFactorConfirm{Code: code}); err != nil {
+		return nil, err
+	} else if limited != nil {
+		return superadminapi.SaSetInvoiceKaspi429JSONResponse{TooManyRequestsJSONResponse: *limited}, nil
 	}
 	now := h.d.NowFunc()
 	uid := httpx.Principal(ctx).UserID

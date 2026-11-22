@@ -46,15 +46,13 @@ const (
 	maxResellerSearch = 120
 )
 
-// resellerHost — где входят реселлеры: `config('app.reseller_domain') ?? url('/reseller')`.
-func (h *handlers) resellerHost(ctx context.Context) string {
+// resellerHost — где входят реселлеры: `config('app.reseller_domain') ?? url('/reseller')`. Адрес сайта — из
+// конфигурации (http.public_url), не из заголовка Host запроса; не задан — путь на этом же сайте.
+func (h *handlers) resellerHost() string {
 	if h.d.ResellerDomain != "" {
 		return h.d.ResellerDomain
 	}
-	if _, r := httpx.HTTPFrom(ctx); r != nil {
-		return "https://" + r.Host + "/reseller" // панель работает только по HTTPS (cookie Secure)
-	}
-	return "/reseller"
+	return h.d.Superadmin.PublicURL + "/reseller"
 }
 
 // resellerError — ошибки сервиса реселлеров: нет реселлера (или клуб не его) — 404 (привязка модели маршрута,
@@ -89,7 +87,7 @@ func (h *handlers) SaListResellers(ctx context.Context, req superadminapi.SaList
 	// $like = '%'.addcslashes($search, '\\%_').'%'
 	pattern := httpx.LikePattern(req.Params.Q)
 	pg := page(req.Params.Page)
-	out := superadminapi.ResellerBoard{Host: h.resellerHost(ctx), Items: []superadminapi.ResellerCard{}, Page: pg, PerPage: reseller.ListPage}
+	out := superadminapi.ResellerBoard{Host: h.resellerHost(), Items: []superadminapi.ResellerCard{}, Page: pg, PerPage: reseller.ListPage}
 	err := h.tx(ctx, func(q *store.Queries) error {
 		var err error
 		if out.Total, err = q.ResellerCount(ctx, pattern); err != nil {
@@ -215,7 +213,7 @@ func (h *handlers) SaCreateReseller(ctx context.Context, req superadminapi.SaCre
 	if created.ExistingAccount {
 		key = msgResellerCreatedExisting
 	}
-	return superadminapi.SaCreateReseller201JSONResponse(msg(h.d.T(ctx, key, map[string]string{"code": created.Code, "host": h.resellerHost(ctx)}))), nil
+	return superadminapi.SaCreateReseller201JSONResponse(msg(h.d.T(ctx, key, map[string]string{"code": created.Code, "host": h.resellerHost()}))), nil
 }
 
 // phpBool — (string) true = "1", (string) false = "" (детали журнала старого кода: изменённые поля строками).

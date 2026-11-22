@@ -534,7 +534,13 @@ const (
 //	'discount_percent' => ['required', 'integer', 'min:0', 'max:100'],
 //	'discount_until' => ['nullable', 'date', 'after_or_equal:today'],
 //	'discount_note' => ['nullable', 'string', 'max:200'],
+//
+// Отличие от Laravel (решение владельца, ревью 22.11.2026): нужен свежий код TOTP действующего суперадмина (скидка
+// до 100 % — это деньги платформы; как выплата реселлеру, аудит A-10); в режиме просмотра клуба действие закрыто.
 func (h *handlers) SaSetClubDiscount(ctx context.Context, req superadminapi.SaSetClubDiscountRequestObject) (superadminapi.SaSetClubDiscountResponseObject, error) {
+	if ro := readOnly(ctx); ro != nil {
+		return superadminapi.SaSetClubDiscount403JSONResponse{ForbiddenJSONResponse: *ro}, nil
+	}
 	now := h.d.NowFunc()
 	var fe httpx.FormErrors
 	var percent int
@@ -575,6 +581,19 @@ func (h *handlers) SaSetClubDiscount(ctx context.Context, req superadminapi.SaSe
 	// 'discount_until' => $percent > 0 ? … : null — 0 % стирает дату и причину.
 	if percent == 0 {
 		until, note = nil, nil
+	}
+	// Код проверяется, только когда форма верна: ошибка в поле не расходует код (один код — одно действие). С ошибкой
+	// формы транзакция ниже ничего не пишет — отвечает 404 (нет клуба) или ошибками полей, как раньше.
+	if fe.Err() == nil {
+		var confirm superadminapi.SecondFactorConfirm
+		if req.Body != nil {
+			confirm.Code = req.Body.Code
+		}
+		if limited, err := h.confirmSecondFactor(ctx, &confirm); err != nil {
+			return nil, err
+		} else if limited != nil {
+			return superadminapi.SaSetClubDiscount429JSONResponse{TooManyRequestsJSONResponse: *limited}, nil
+		}
 	}
 	err := h.tx(ctx, func(q *store.Queries) error {
 		name, err := q.SuperadminClubExists(ctx, req.ClubId)

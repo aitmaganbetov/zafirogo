@@ -44,6 +44,13 @@ func readOnlyAllowed(method, path string) bool {
 	if path == "/api/superadmin/resellers" || strings.HasPrefix(path, "/api/superadmin/resellers/") {
 		return false
 	}
+	// Деньги платформы под свежим кодом второго фактора (решение владельца, ревью 22.11.2026): «Оплата получена»,
+	// ссылка на оплату Kaspi и скидка клуба — не из режима просмотра.
+	if path == "/api/superadmin/invoices/kaspi" ||
+		(strings.HasPrefix(path, "/api/superadmin/invoices/") && strings.HasSuffix(path, "/pay")) ||
+		(strings.HasPrefix(path, "/api/superadmin/clubs/") && strings.HasSuffix(path, "/subscription/discount")) {
+		return false
+	}
 	// Действия своей учётной записи вне клуба (в Laravel — не под current-club): подтверждение входа на ПК по QR,
 	// принятие приглашения, восстановление пароля, регистрация.
 	if strings.HasPrefix(path, "/api/superadmin/") || strings.HasPrefix(path, "/api/pc-login/") ||

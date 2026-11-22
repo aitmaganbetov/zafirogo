@@ -201,7 +201,7 @@ func Build(ctx context.Context, cfg *config.Config, log *slog.Logger) (_ *App, e
 		Logger:         log,
 		RequestTimeout: cfg.HTTP.RequestTimeout,
 		TrustedProxies: trusted,
-		Frontend:       webui.Handler(webui.FS(), webui.WithSuperadminDomain(cfg.Superadmin.Domain), webui.WithResellerDomain(cfg.Reseller.Domain), webui.WithSiteMeta(siteTexts{a})),
+		Frontend:       webui.Handler(webui.FS(), webui.WithSuperadminDomain(cfg.Superadmin.Domain), webui.WithResellerDomain(cfg.Reseller.Domain), webui.WithPublicURL(cfg.HTTP.PublicOrigin()), webui.WithSiteMeta(siteTexts{a})),
 		Checkers:       []httpserver.Checker{httpserver.CheckFunc{CheckName: "shutdown", Fn: a.checkNotDraining}},
 		Observe:        a.Obs.HTTPMiddleware,
 	}
@@ -705,7 +705,7 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 	ro.Metrics = metrics
 	ro.ResellerDomain = cfg.Reseller.Domain
 	ro.Superadmin = httpx.SuperadminDeps{
-		Domain: cfg.Superadmin.Domain, BackupPath: cfg.Superadmin.BackupPath, SSLHosts: cfg.Superadmin.SSLHosts,
+		Domain: cfg.Superadmin.Domain, PublicURL: cfg.HTTP.PublicOrigin(), BackupPath: cfg.Superadmin.BackupPath, SSLHosts: cfg.Superadmin.SSLHosts,
 		LedgerReconcileInterval: cfg.Workers.LedgerReconcile.Interval,
 		Secrets:                 box, UpdateKeys: updateKeys, TelegramGateway: tg.gateway, TelegramAlerts: tg.alerts,
 		BroadcastOnline: broadcastOnline(a.bg, a.Stream.Commands(), a.Stream.Presence(), log),

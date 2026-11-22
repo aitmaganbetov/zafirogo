@@ -275,9 +275,12 @@ func TestTelegram_NewClubReported(t *testing.T) {
 		t.Fatalf("сообщений о клубе: %d", len(got)-before)
 	}
 	msg := got[len(got)-1]
-	host := strings.TrimPrefix(e.srv.URL, "http://")
-	want := "🎉 Новый клуб: Cyber Arena\nВладелец: Асель, +7" + phone + "\nПробный период до " + trial.UTC().Format("02.01.2006") +
-		fmt.Sprintf("\nhttps://%s/superadmin/clubs/%d", host, clubID)
+	// Адрес кабинета не задан в конфигурации (ни superadmin.domain, ни http.public_url): сообщение уходит без ссылки —
+	// из заголовка Host запроса адрес не строится (ревью 22.11.2026). Со ссылкой — TestSubscriptionInvoices GS-559.
+	want := "🎉 Новый клуб: Cyber Arena\nВладелец: Асель, +7" + phone + "\nПробный период до " + trial.UTC().Format("02.01.2006")
+	if text, _ := msg.Body["text"].(string); strings.Contains(text, "http") || strings.Contains(text, strings.TrimPrefix(e.srv.URL, "http://")) {
+		t.Fatalf("в сообщении адрес из запроса: %q", text)
+	}
 	if msg.Body["text"] != want || fmt.Sprint(msg.Body["chat_id"]) != "42" || msg.Token != tgBotToken || msg.Body["disable_web_page_preview"] != true {
 		t.Fatalf("сообщение:\n%v\nожидалось:\n%s", msg.Body, want)
 	}

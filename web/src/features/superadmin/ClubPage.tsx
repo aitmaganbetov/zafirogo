@@ -11,11 +11,21 @@ import { changeClubPlan, clubQuery, extendSubscription, firstError, setClubDisco
 import { roleLabel } from './roles';
 import { LogRows, SubscriptionBadgeView } from './components';
 import { saHref } from './host';
+import { SecondFactorDialog } from './SecondFactorDialog';
 import { useSuperadminFlash } from './flash';
 
 /*
  * Клуб — перенос resources/views/superadmin/clubs/show.blade.php (ClubController::show/extend/suspend/changePlan/view).
+ *
+ * Отличие от Blade (решение владельца, ревью 22.11.2026): сохранение скидки требует свежего кода второго фактора —
+ * окно SecondFactorDialog, как выплата реселлеру.
  */
+
+interface DiscountDraft {
+  readonly discount_percent: number;
+  readonly discount_until: string | null;
+  readonly discount_note: string | null;
+}
 
 const CARD = 'rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900';
 const INPUT = 'rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100';
@@ -42,13 +52,23 @@ export function ClubPage({ clubId, page }: { readonly clubId: number; readonly p
   const suspend = useMutation({ mutationFn: () => suspendSubscription(clubId), onSuccess: done, onError: fail });
   // @error($field) под формой скидки (вдобавок к первой ошибке в layout).
   const [discountErrors, setDiscountErrors] = useState<readonly string[]>([]);
+  const [pendingDiscount, setPendingDiscount] = useState<DiscountDraft | null>(null);
+  const [codeError, setCodeError] = useState<string | null>(null);
   const discount = useMutation({
-    mutationFn: (b: { discount_percent: number; discount_until: string | null; discount_note: string | null }) => setClubDiscount(clubId, b),
+    mutationFn: ({ draft, code }: { draft: DiscountDraft; code: string }) => setClubDiscount(clubId, { ...draft, code }),
     onSuccess: (r) => {
+      setPendingDiscount(null);
       setDiscountErrors([]);
       return done(r);
     },
     onError: (e) => {
+      // Ошибка кода (неверный, уже использованный, не введён) — под полем окна, окно остаётся открытым.
+      const code = isApiError(e) ? e.field('code') : undefined;
+      if (code) {
+        setCodeError(code);
+        return;
+      }
+      setPendingDiscount(null);
       setDiscountErrors(isApiError(e) ? ['discount_percent', 'discount_until', 'discount_note'].flatMap((f) => e.fieldErrors[f]?.slice(0, 1) ?? []) : []);
       fail(e);
     },
@@ -87,7 +107,8 @@ export function ClubPage({ clubId, page }: { readonly clubId: number; readonly p
       const v = f.get(name);
       return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
     };
-    discount.mutate({ discount_percent: Number(f.get('discount_percent')), discount_until: text('discount_until'), discount_note: text('discount_note') });
+    setCodeError(null);
+    setPendingDiscount({ discount_percent: Number(f.get('discount_percent')), discount_until: text('discount_until'), discount_note: text('discount_note') });
   };
   const submitSuspend = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -333,6 +354,18 @@ export function ClubPage({ clubId, page }: { readonly clubId: number; readonly p
           <LogRows logs={data.platform_logs} platform />
         </section>
       </div>
+
+      <SecondFactorDialog
+        question={pendingDiscount === null ? null : t('Сохранить скидку {{percent}}% для клуба {{club}}?', { percent: pendingDiscount.discount_percent, club: data.name })}
+        error={codeError}
+        busy={discount.isPending}
+        onClose={() => setPendingDiscount(null)}
+        onSubmit={(code) => {
+          if (!pendingDiscount) return;
+          setCodeError(null);
+          discount.mutate({ draft: pendingDiscount, code });
+        }}
+      />
     </>
   );
 }

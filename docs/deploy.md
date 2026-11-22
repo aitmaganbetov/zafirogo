@@ -73,6 +73,10 @@ job миграций (goose, роль-владелец схемы) ──► Pos
 | `zafiro.kz/api/v1/` | zafirogo; ключи, которых нет в его базе, он сам проксирует в Laravel | `integrations.legacy_upstream`, `integrations.legacy_upstream_host` (пусто — `mobile.upstream`, `mobile.upstream_host`; S6-O1-4) |
 | `agent.zafiro.kz:8443` | zafirogo, gRPC агентов | `agent.grpc.endpoint` (уходит агенту в ответе Enroll) |
 
+Адрес сайта для ссылок вне ответа на запрос (оповещения Telegram без `superadmin.domain`, `og:image`, адрес входа
+реселлеров) — `http.public_url` (`ZAFIRO_HTTP_PUBLIC_URL=https://zafiro.kz`): из заголовка `Host` он не берётся; не задан —
+оповещения уходят без ссылки (`docs/DECISIONS.md`, «HTTP и второй фактор»).
+
 Go-live клуба не меняет балансировщик: `/api/(auth|guest|staff|v1)/` всегда идут в zafirogo, и он решает сам —
 токен или ключ клуба есть в его базе (в том числе выпущенный уже в zafirogo) → ответ здесь, нет → обратный прокси
 в Laravel без изменений (`server/internal/http/sections/v1/upstream.go`, `server/internal/http/legacy`). Свой ключ,

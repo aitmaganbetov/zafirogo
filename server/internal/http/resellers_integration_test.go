@@ -81,7 +81,9 @@ func makeReseller(e *billingEnv, bp, discount int, active bool) (id int64, code 
 func superadminWithPhone(e *billingEnv) (id int64, tok, phone string) {
 	e.t.Helper()
 	id, phone = e.member("Супер Админ", "", "", true)
-	return id, e.login(phone), phone
+	tok = e.login(phone)
+	saPhones.Store(tok, phone)
+	return id, tok, phone
 }
 
 func (e *billingEnv) del(tok, path string, body any) resp {
@@ -391,7 +393,7 @@ func TestResellers(t *testing.T) {
 		if c := e.resellerCard(sa, code); num(c["earned_tiyn"]) != 0 || num(c["balance_tiyn"]) != 0 {
 			t.Fatalf("до оплаты: %v", c)
 		}
-		expect(t, e.post(sa, fmt.Sprintf("/api/superadmin/invoices/%d/pay", id), nil), http.StatusOK, "оплата")
+		expect(t, e.pay(e.another(), id), http.StatusOK, "оплата")
 		// 4 800 ₸ × 10 % = 480 ₸.
 		if n := e.scalar("SELECT count(*) FROM subscription_invoices WHERE id = $1 AND status = 'paid' AND reseller_amount = 48000", id); n != 1 {
 			t.Fatal("начисление реселлеру")
@@ -661,7 +663,7 @@ func TestResellers(t *testing.T) {
 		expect(t, e.post(owner, "/api/settings/reseller", map[string]any{"reseller_code": code}), http.StatusOK, "код")
 		id := e.invoiceID(e.open(owner, 1)) // 1000 ₸ − 15 % = 850 ₸
 		expect(t, e.del(sa, fmt.Sprintf("/api/superadmin/resellers/%d/clubs/%d", rid, e.club), nil), http.StatusOK, "отвязка")
-		expect(t, e.post(sa, fmt.Sprintf("/api/superadmin/invoices/%d/pay", id), nil), http.StatusOK, "оплата")
+		expect(t, e.pay(e.another(), id), http.StatusOK, "оплата")
 		// 850 ₸ × 12,35 % = 104,975 → 104,98 ₸.
 		if c := e.resellerCard(sa, code); num(c["earned_tiyn"]) != 10498 || len(c["clubs"].([]any)) != 0 {
 			t.Fatalf("начисление по снимку: %v", c)

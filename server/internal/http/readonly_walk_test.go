@@ -74,6 +74,9 @@ func TestReadOnlyCannotWriteAnywhere(t *testing.T) {
 			(strings.HasSuffix(path, "/second-factor") || strings.HasSuffix(path, "/superadmin"))
 		// Реселлеры (тема Д): в режиме просмотра раздел только читается.
 		resetSecondFactor = resetSecondFactor || strings.HasPrefix(path, "/api/superadmin/resellers")
+		// Деньги платформы под свежим кодом (ревью 22.11.2026): оплата счёта, ссылка Kaspi, скидка клуба.
+		resetSecondFactor = resetSecondFactor || path == "/api/superadmin/invoices/kaspi" || path == "/api/superadmin/invoices/1/pay" ||
+			path == "/api/superadmin/clubs/1/subscription/discount"
 		if !resetSecondFactor && (strings.HasPrefix(path, "/api/v1") || strings.HasPrefix(path, "/api/superadmin/") || !strings.HasPrefix(path, "/api/")) {
 			// /api/v1 — API-ключ, не сессия; кабинет суперадмина — RequireSuperadmin (не клуб).
 			continue

@@ -555,3 +555,22 @@ func TestAgentHealth(t *testing.T) {
 		})
 	}
 }
+
+// http.public_url — адрес сайта для ссылок вне ответа на запрос (ревью 22.11.2026): http(s)://хост без пути.
+func TestHTTPPublicURL(t *testing.T) {
+	cfg, err := Load("", environ())
+	if err != nil || cfg.HTTP.PublicOrigin() != "" {
+		t.Fatalf("по умолчанию: %q, %v", cfg.HTTP.PublicOrigin(), err)
+	}
+	for raw, want := range map[string]string{"https://zafiro.kz": "https://zafiro.kz", "https://zafiro.kz/": "https://zafiro.kz", "http://localhost:8080": "http://localhost:8080"} {
+		cfg, err := Load("", environ("ZAFIRO_HTTP_PUBLIC_URL="+raw))
+		if err != nil || cfg.HTTP.PublicOrigin() != want {
+			t.Errorf("%s: %q, %v", raw, cfg.HTTP.PublicOrigin(), err)
+		}
+	}
+	for _, bad := range []string{"zafiro.kz", "ftp://zafiro.kz", "https://", "https://zafiro.kz/app", "https://zafiro.kz?x=1", "https://user@zafiro.kz"} {
+		if _, err := Load("", environ("ZAFIRO_HTTP_PUBLIC_URL="+bad)); err == nil || !strings.Contains(err.Error(), "http.public_url") {
+			t.Errorf("%s: %v", bad, err)
+		}
+	}
+}

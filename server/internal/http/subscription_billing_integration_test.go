@@ -65,7 +65,7 @@ func newBillingEnv(t *testing.T, now time.Time, computers int) *billingEnv {
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: svc, Limiter: lim, Passwords: h,
 		Pool: d.App, PlatformPool: d.Platform, Presence: &fakePresence{states: map[int64][]presence.State{}},
 		Now: func() time.Time { return now }, RequireSubscription: true,
-		Superadmin: httpx.SuperadminDeps{Secrets: box,
+		Superadmin: httpx.SuperadminDeps{Secrets: box, PublicURL: "https://zafiro.test",
 			TelegramAlerts: &telegram.Alerts{API: &telegram.BotClient{URL: tg.BotURL()}, Store: &telegram.Store{Pool: d.Platform, Box: box}}},
 	}))
 	t.Cleanup(srv.Close)
@@ -108,8 +108,39 @@ func (e *billingEnv) subscribe(status string, trialEnds, periodEnds *time.Time) 
 
 func (e *billingEnv) superadmin() (int64, string) {
 	e.t.Helper()
-	id, phone := e.member("Супер Админ", "", "", true)
-	return id, e.login(phone)
+	id, tok, _ := superadminWithPhone(e)
+	return id, tok
+}
+
+// saPhones — телефон суперадмина по его токену (для свежих кодов TOTP).
+var saPhones sync.Map
+
+// coded — тело запроса со свежим кодом TOTP суперадмина tok (оплата счёта, ссылка Kaspi, скидка клуба — ревью
+// 22.11.2026). После входа суперадмин получает без ожидания шага TOTP один код; следующему действию — another().
+func (e *billingEnv) coded(tok string, body map[string]any) map[string]any {
+	e.t.Helper()
+	phone, ok := saPhones.Load(tok)
+	if !ok {
+		e.t.Fatal("coded: токен не суперадмина этого теста")
+	}
+	out := map[string]any{"code": sfCode(e.t, phone.(string))}
+	for k, v := range body {
+		out[k] = v
+	}
+	return out
+}
+
+// another — токен ещё одного суперадмина (свои свежие коды).
+func (e *billingEnv) another() string {
+	e.t.Helper()
+	_, tok := e.superadmin()
+	return tok
+}
+
+// pay — «Оплата получена» со свежим кодом суперадмина tok.
+func (e *billingEnv) pay(tok string, invoice int64) resp {
+	e.t.Helper()
+	return e.post(tok, fmt.Sprintf("/api/superadmin/invoices/%d/pay", invoice), e.coded(tok, nil))
 }
 
 func (e *billingEnv) open(tok string, months int) resp {
@@ -331,7 +362,9 @@ func TestSubscriptionInvoices(t *testing.T) {
 		expect(t, e.post(owner, fmt.Sprintf("/api/superadmin/invoices/%d/pay", id), nil), http.StatusForbidden, "владелец отмечает оплату")
 
 		want := time.Date(2027, 5, 25, 7, 0, 0, 0, time.UTC) // +10 дней, +6 месяцев (addMonthsNoOverflow)
-		r = e.post(sa, fmt.Sprintf("/api/superadmin/invoices/%d/pay", id), nil)
+		// Без свежего кода второго фактора оплата не отмечается.
+		expectField(t, e.post(sa, fmt.Sprintf("/api/superadmin/invoices/%d/pay", id), map[string]any{}), "code", "Введите код.")
+		r = e.pay(sa, id)
 		if r.status != http.StatusOK || r.body["message"] != "Счёт "+number+" оплачен, подписка продлена до 25.05.2027." {
 			t.Fatalf("pay: %d %v", r.status, r.body)
 		}
@@ -363,13 +396,13 @@ func TestSubscriptionInvoices(t *testing.T) {
 		}
 
 		// Повтор: ошибка, срок и журнал не меняются.
-		expectField(t, e.post(sa, fmt.Sprintf("/api/superadmin/invoices/%d/pay", id), nil), "invoice", "Счёт уже закрыт.")
+		expectField(t, e.pay(e.another(), id), "invoice", "Счёт уже закрыт.")
 		expectField(t, e.post(sa, fmt.Sprintf("/api/superadmin/invoices/%d/cancel", id), nil), "invoice", "Счёт уже закрыт.")
 		if got := e.periodEnd(); !got.Equal(want) || e.scalar("SELECT count(*) FROM platform_money_log WHERE invoice_id = $1", id) != 1 ||
 			e.scalar("SELECT count(*) FROM platform_logs WHERE event = 'superadmin.invoice_paid' AND club_id = $1", e.club) != 1 {
 			t.Fatalf("повторная оплата изменила срок или журнал: %s", got)
 		}
-		expect(t, e.post(sa, "/api/superadmin/invoices/999999999/pay", nil), http.StatusNotFound, "нет такого счёта")
+		expect(t, e.pay(e.another(), 999999999), http.StatusNotFound, "нет такого счёта")
 
 		// Клуб видит оплаченный счёт и срок; история кабинета — тоже.
 		r = e.get(owner, "/api/billing")
@@ -397,7 +430,7 @@ func TestSubscriptionInvoices(t *testing.T) {
 		_, owner := e.staff("Владелец", "owner")
 		_, sa := e.superadmin()
 		id := e.invoiceID(e.open(owner, 1))
-		expect(t, e.post(sa, fmt.Sprintf("/api/superadmin/invoices/%d/pay", id), nil), http.StatusOK, "pay")
+		expect(t, e.pay(sa, id), http.StatusOK, "pay")
 		if got, want := e.periodEnd(), time.Date(2026, 12, 15, 7, 0, 0, 0, time.UTC); !got.Equal(want) {
 			t.Fatalf("конец периода %s, want %s", got, want)
 		}
@@ -426,7 +459,7 @@ func TestSubscriptionInvoices(t *testing.T) {
 				_, owner := e.staff("Владелец", "owner")
 				_, sa := e.superadmin()
 				id := e.invoiceID(e.open(owner, tc.months))
-				expect(t, e.post(sa, fmt.Sprintf("/api/superadmin/invoices/%d/pay", id), nil), http.StatusOK, "pay")
+				expect(t, e.pay(sa, id), http.StatusOK, "pay")
 				if got := e.periodEnd(); !got.Equal(tc.want) {
 					t.Fatalf("конец периода %s, want %s", got, tc.want)
 				}
@@ -458,7 +491,9 @@ func TestSubscriptionInvoices(t *testing.T) {
 		expectField(t, e.post(sa, "/api/superadmin/invoices/kaspi", map[string]any{"url": "https://pay.kaspi.kz/pay/new", "recipient": strings.Repeat("я", 201)}),
 			"recipient", "The recipient field must not be greater than 200 characters.")
 
-		r := e.post(sa, "/api/superadmin/invoices/kaspi", map[string]any{"url": "https://pay.kaspi.kz/pay/new", "recipient": "ТОО Zafiro"})
+		// Ссылка на оплату — только со свежим кодом второго фактора; ошибки полей выше код не расходуют.
+		expectField(t, e.post(sa, "/api/superadmin/invoices/kaspi", map[string]any{"url": "https://pay.kaspi.kz/pay/new"}), "code", "Введите код.")
+		r := e.post(sa, "/api/superadmin/invoices/kaspi", e.coded(sa, map[string]any{"url": "https://pay.kaspi.kz/pay/new", "recipient": "ТОО Zafiro"}))
 		if r.status != http.StatusOK || r.body["message"] != "Настройки оплаты сохранены." {
 			t.Fatalf("kaspi: %d %v", r.status, r.body)
 		}
@@ -482,17 +517,18 @@ func TestSubscriptionInvoices(t *testing.T) {
 			t.Fatal("журнал платформы superadmin.invoice_canceled")
 		}
 		// Отменённый счёт оплатить нельзя: подписка не продлевается, денег в журнале нет.
-		expectField(t, e.post(sa, fmt.Sprintf("/api/superadmin/invoices/%d/pay", id), nil), "invoice", "Счёт уже закрыт.")
+		expectField(t, e.pay(e.another(), id), "invoice", "Счёт уже закрыт.")
 		if e.scalar("SELECT count(*) FROM platform_money_log WHERE invoice_id = $1", id) != 0 {
 			t.Fatal("оплата отменённого счёта попала в журнал денег")
 		}
 
 		// Пустая ссылка выключает оплату: настройка удаляется, клубы не могут выставить счёт.
-		r = e.post(sa, "/api/superadmin/invoices/kaspi", map[string]any{"url": "", "recipient": "ТОО Zafiro"})
+		offID, off := e.superadmin()
+		r = e.post(off, "/api/superadmin/invoices/kaspi", e.coded(off, map[string]any{"url": "", "recipient": "ТОО Zafiro"}))
 		if r.status != http.StatusOK || e.scalar("SELECT count(*) FROM platform_settings WHERE key = 'billing_kaspi'") != 0 {
 			t.Fatalf("kaspi off: %d %v", r.status, r.body)
 		}
-		if n := e.scalar("SELECT count(*) FROM platform_logs WHERE event = 'superadmin.billing_kaspi_changed' AND description = 'Оплата через Kaspi отключена' AND user_id = $1", saID); n != 1 {
+		if n := e.scalar("SELECT count(*) FROM platform_logs WHERE event = 'superadmin.billing_kaspi_changed' AND description = 'Оплата через Kaspi отключена' AND user_id = $1", offID); n != 1 {
 			t.Fatal("журнал платформы: оплата отключена")
 		}
 		expectField(t, e.open(owner, 1), "invoice", "Оплата пока не настроена. Напишите в поддержку Zafiro.")
@@ -542,7 +578,8 @@ func TestSubscriptionInvoices(t *testing.T) {
 			t.Fatalf("сообщений о счёте: %d", len(got)-before)
 		}
 		msg := got[len(got)-1]
-		want := fmt.Sprintf("💳 Счёт ZF-%05d: %s\nБазовый, 1 мес., 2 ПК\nК оплате 2 000 ₸\nhttps://%s/superadmin/invoices", id, clubName(e), strings.TrimPrefix(e.srv.URL, "http://"))
+		// Ссылка — из адреса сайта в конфигурации (http.public_url), не из заголовка Host запроса.
+		want := fmt.Sprintf("💳 Счёт ZF-%05d: %s\nБазовый, 1 мес., 2 ПК\nК оплате 2 000 ₸\nhttps://zafiro.test/superadmin/invoices", id, clubName(e))
 		if msg.Body["text"] != want || fmt.Sprint(msg.Body["chat_id"]) != "42" || msg.Body["disable_web_page_preview"] != true {
 			t.Fatalf("сообщение:\n%v\nожидалось:\n%s", msg.Body["text"], want)
 		}
@@ -659,7 +696,7 @@ func TestSubscriptionInvoices_Reseller(t *testing.T) {
 		}
 		// Процент меняется после выставления — счёт хранит снимок.
 		e.exec("UPDATE resellers SET commission_bp = 5000, is_active = false WHERE id = $1", rid)
-		expect(t, e.post(sa, fmt.Sprintf("/api/superadmin/invoices/%d/pay", id), nil), http.StatusOK, "pay")
+		expect(t, e.pay(sa, id), http.StatusOK, "pay")
 		// 2550 ₸ × 12,35 % = 314,925 → 314,93 ₸.
 		if n := e.scalar("SELECT count(*) FROM subscription_invoices WHERE id = $1 AND status = 'paid' AND reseller_amount = 31493", id); n != 1 {
 			t.Fatal("начисление реселлеру в счёте")
@@ -692,7 +729,7 @@ func TestSubscriptionInvoices_Reseller(t *testing.T) {
 		_, sa := e.superadmin()
 		id := e.invoiceID(e.open(owner, 1))
 		e.exec("DELETE FROM resellers WHERE id = $1", rid) // reseller_id → NULL (ON DELETE SET NULL)
-		expect(t, e.post(sa, fmt.Sprintf("/api/superadmin/invoices/%d/pay", id), nil), http.StatusOK, "pay")
+		expect(t, e.pay(sa, id), http.StatusOK, "pay")
 		if n := e.scalar("SELECT count(*) FROM subscription_invoices WHERE id = $1 AND status = 'paid' AND amount = 90000 AND reseller_amount IS NULL", id); n != 1 {
 			t.Fatal("счёт: скидка осталась, начисления нет")
 		}
@@ -726,7 +763,9 @@ func TestSubscriptionDiscount(t *testing.T) {
 		expectField(t, e.post(sa, path, map[string]any{"discount_percent": 20, "discount_note": strings.Repeat("я", 201)}), "discount_note",
 			"The discount note field must not be greater than 200 characters.")
 
-		r := e.post(sa, path, map[string]any{"discount_percent": 20, "discount_until": "2026-11-25", "discount_note": "Партнёр"})
+		// Скидка — только со свежим кодом второго фактора; ошибки полей выше код не расходуют.
+		expectField(t, e.post(sa, path, map[string]any{"discount_percent": 20}), "code", "Введите код.")
+		r := e.post(sa, path, e.coded(sa, map[string]any{"discount_percent": 20, "discount_until": "2026-11-25", "discount_note": "Партнёр"}))
 		if r.status != http.StatusOK || r.body["message"] != "Скидка сохранена." {
 			t.Fatalf("discount: %d %v", r.status, r.body)
 		}
@@ -761,7 +800,8 @@ func TestSubscriptionDiscount(t *testing.T) {
 		}
 
 		// 0 % снимает скидку вместе с датой и причиной.
-		r = e.post(sa, path, map[string]any{"discount_percent": 0, "discount_note": "x"})
+		second := e.another()
+		r = e.post(second, path, e.coded(second, map[string]any{"discount_percent": 0, "discount_note": "x"}))
 		if r.status != http.StatusOK || r.body["message"] != "Скидка снята." {
 			t.Fatalf("discount off: %d %v", r.status, r.body)
 		}
@@ -775,7 +815,8 @@ func TestSubscriptionDiscount(t *testing.T) {
 			t.Fatalf("цена без скидки: %v", r.body["subscription"])
 		}
 		// Бессрочная скидка.
-		expect(t, e.post(sa, path, map[string]any{"discount_percent": 7, "discount_until": "", "discount_note": " "}), http.StatusOK, "бессрочная")
+		other := e.another()
+		expect(t, e.post(other, path, e.coded(other, map[string]any{"discount_percent": 7, "discount_until": "", "discount_note": " "})), http.StatusOK, "бессрочная")
 		if n := e.scalar("SELECT count(*) FROM club_subscriptions WHERE club_id = $1 AND discount_percent = 7 AND discount_until IS NULL AND discount_note IS NULL", e.club); n != 1 {
 			t.Fatal("бессрочная скидка")
 		}
@@ -825,7 +866,81 @@ func TestSubscriptionDiscount(t *testing.T) {
 	t.Run("GS-537 клубу без подписки скидку не дать", func(t *testing.T) {
 		e := newBillingEnv(t, now, 1)
 		_, sa := e.superadmin()
-		expect(t, e.post(sa, fmt.Sprintf("/api/superadmin/clubs/%d/subscription/discount", e.club), map[string]any{"discount_percent": 10}), http.StatusNotFound, "без подписки")
-		expect(t, e.post(sa, "/api/superadmin/clubs/999999999/subscription/discount", map[string]any{"discount_percent": 10}), http.StatusNotFound, "нет клуба")
+		expect(t, e.post(sa, fmt.Sprintf("/api/superadmin/clubs/%d/subscription/discount", e.club), e.coded(sa, map[string]any{"discount_percent": 10})), http.StatusNotFound, "без подписки")
+		other := e.another()
+		expect(t, e.post(other, "/api/superadmin/clubs/999999999/subscription/discount", e.coded(other, map[string]any{"discount_percent": 10})), http.StatusNotFound, "нет клуба")
+		// Ошибка формы у несуществующего клуба — по-прежнему 404, код не нужен.
+		expect(t, e.post(sa, "/api/superadmin/clubs/999999999/subscription/discount", map[string]any{"discount_percent": 101}), http.StatusNotFound, "нет клуба, ошибка формы")
 	})
+}
+
+// Решение владельца (ревью 22.11.2026): «Оплата получена», ссылка на оплату Kaspi и скидка клуба — деньги платформы.
+// Каждое действие требует свежего кода TOTP действующего суперадмина (как выплата реселлеру, аудит A-10) и закрыто
+// в режиме просмотра клуба. Без кода, с неверным или уже использованным кодом ничего не меняется.
+func TestPlatformMoneyActionsRequireFreshCode(t *testing.T) {
+	now := time.Date(2026, 11, 15, 7, 0, 0, 0, time.UTC)
+	e := newBillingEnv(t, now, 2)
+	ends := now.Add(240 * time.Hour)
+	e.subscribe("active", nil, &ends)
+	_, owner := e.staff("Владелец", "owner")
+	id := e.invoiceID(e.open(owner, 1))
+	kaspiBefore := e.text("SELECT value::text FROM platform_settings WHERE key = 'billing_kaspi'")
+
+	actions := []struct {
+		name, path string
+		body       map[string]any
+		unchanged  func() bool
+	}{
+		{"оплата счёта", fmt.Sprintf("/api/superadmin/invoices/%d/pay", id), nil,
+			func() bool { return e.invoices(e.club, "pending") == 1 && e.periodEnd().Equal(ends) }},
+		{"ссылка Kaspi", "/api/superadmin/invoices/kaspi", map[string]any{"url": "https://pay.kaspi.kz/pay/thief"},
+			func() bool {
+				return e.text("SELECT value::text FROM platform_settings WHERE key = 'billing_kaspi'") == kaspiBefore
+			}},
+		{"скидка клуба", fmt.Sprintf("/api/superadmin/clubs/%d/subscription/discount", e.club), map[string]any{"discount_percent": 100},
+			func() bool {
+				return e.scalar("SELECT count(*) FROM club_subscriptions WHERE club_id = $1 AND discount_percent = 0", e.club) == 1
+			}},
+	}
+	with := func(body map[string]any, code string) map[string]any {
+		out := map[string]any{"code": code}
+		for k, v := range body {
+			out[k] = v
+		}
+		return out
+	}
+	for _, a := range actions {
+		t.Run(a.name, func(t *testing.T) {
+			_, sa, phone := superadminWithPhone(e)
+			// Без кода и с пустым кодом.
+			empty := a.body
+			if empty == nil {
+				empty = map[string]any{} // тело обязательно (без него — 400)
+			}
+			expectField(t, e.post(sa, a.path, empty), "code", "Введите код.")
+			expectField(t, e.post(sa, a.path, with(a.body, "  ")), "code", "Введите код.")
+			// Неверный код.
+			expectField(t, e.post(sa, a.path, with(a.body, "000000")), "code", "Неверный код.")
+			if !a.unchanged() {
+				t.Fatal("действие выполнено без верного кода")
+			}
+			// Режим просмотра клуба: запрещено даже с верным кодом.
+			expect(t, e.post(sa, fmt.Sprintf("/api/superadmin/clubs/%d/view", e.club), nil), http.StatusOK, "view")
+			code := sfCode(t, phone)
+			if r := e.post(sa, a.path, with(a.body, code)); r.status != http.StatusForbidden || r.body["error"] != "read_only" {
+				t.Fatalf("режим просмотра: %d %v", r.status, r.body)
+			}
+			if !a.unchanged() {
+				t.Fatal("действие выполнено в режиме просмотра")
+			}
+			expect(t, e.post(sa, "/api/superadmin/leave-club", nil), http.StatusOK, "leave")
+			// Код в режиме просмотра не проверялся и не израсходован.
+			// Свежий код — действие выполняется; тот же код второй раз не принимается.
+			expect(t, e.post(sa, a.path, with(a.body, code)), http.StatusOK, "со свежим кодом")
+			if a.unchanged() {
+				t.Fatal("со свежим кодом действие не выполнено")
+			}
+			expectField(t, e.post(sa, a.path, with(a.body, code)), "code", "Неверный код.")
+		})
+	}
 }

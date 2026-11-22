@@ -114,6 +114,7 @@ test('кабинет: «Оплаты» в меню, суперадмин отм�
         kaspi: { url: 'https://pay.kaspi.kz/pay/zafiro', recipient: 'ИП Zafiro' },
       }),
     'POST /api/superadmin/invoices/42/pay': (r) => {
+      expect(r.request().postDataJSON()).toEqual({ code: '123456' });
       paid = true;
       return json(r, { message: 'Счёт ZF-00042 оплачен, подписка продлена до 01.03.2027.' });
     },
@@ -125,11 +126,12 @@ test('кабинет: «Оплаты» в меню, суперадмин отм�
   await expect(page.getByText('Пока пусто.')).toBeVisible();
   await expect(page.locator('input[name="url"]')).toHaveValue('https://pay.kaspi.kz/pay/zafiro');
 
-  page.once('dialog', (d) => {
-    expect(d.message()).toBe('Деньги по счёту ZF-00042 пришли? Подписка клуба будет продлена.');
-    void d.accept();
-  });
+  // Вопрос и свежий код второго фактора — в одном окне (решение владельца, ревью 22.11.2026).
   await page.getByRole('button', { name: 'Оплата получена' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('Деньги по счёту ZF-00042 пришли? Подписка клуба будет продлена.');
+  await dialog.locator('input[name=code]').fill('123456');
+  await dialog.getByRole('button', { name: 'Подтвердить' }).click();
   await expect(page.getByRole('status')).toHaveText('Счёт ZF-00042 оплачен, подписка продлена до 01.03.2027.');
   await expect(page.getByText('Неоплаченных счетов нет.')).toBeVisible();
   await expect(page.getByRole('row', { name: /ZF-00042.*Оплачен 15\.11\.2026/ })).toBeVisible();

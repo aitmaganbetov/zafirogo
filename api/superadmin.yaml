@@ -273,7 +273,7 @@ paths:
       summary: Индивидуальная скидка клуба на тариф
       description: 'Laravel: ClubController::discount() (superadmin.clubs.discount). Процент 0…100, срок — последний
         день включительно (не раньше сегодня) или бессрочно, причина до 200 символов; 0 % снимает скидку вместе с датой
-        и причиной. Клуб без подписки — 404. Журнал платформы superadmin.subscription_discount_changed.'
+        и причиной. Клуб без подписки — 404. Журнал платформы superadmin.subscription_discount_changed. Отличие от Laravel (ревью 22.11.2026): нужен свежий код TOTP действующего суперадмина в теле (поле code; без кода или с неверным/уже использованным — 422 по полю code, лимит superadmin-totp — 429); не в режиме просмотра клуба (403 read_only).'
       parameters:
       - $ref: '#/components/parameters/ClubId'
       requestBody:
@@ -297,6 +297,8 @@ paths:
           $ref: common.yaml#/components/responses/NotFound
         '422':
           $ref: common.yaml#/components/responses/ValidationFailed
+        '429':
+          $ref: common.yaml#/components/responses/TooManyRequests
   /api/superadmin/invoices:
     get:
       operationId: saListInvoices
@@ -331,7 +333,7 @@ paths:
       summary: Ссылка на оплату Kaspi и получатель
       description: 'Laravel: InvoiceController::kaspi() (superadmin.invoices.kaspi): url — https, до 500 символов;
         recipient — до 200. Пустая ссылка выключает оплату: клубы не могут выставить счёт. Журнал платформы
-        superadmin.billing_kaspi_changed.'
+        superadmin.billing_kaspi_changed. Отличие от Laravel (ревью 22.11.2026): нужен свежий код TOTP действующего суперадмина в теле (поле code; без кода или с неверным/уже использованным — 422 по полю code, лимит superadmin-totp — 429); не в режиме просмотра клуба (403 read_only).'
       requestBody:
         required: true
         content:
@@ -351,6 +353,8 @@ paths:
           $ref: common.yaml#/components/responses/Forbidden
         '422':
           $ref: common.yaml#/components/responses/ValidationFailed
+        '429':
+          $ref: common.yaml#/components/responses/TooManyRequests
   /api/superadmin/invoices/{invoiceId}/pay:
     post:
       operationId: saPayInvoice
@@ -360,9 +364,15 @@ paths:
       description: 'Laravel: InvoiceController::pay(), SubscriptionBilling::markPaid() (superadmin.invoices.pay):
         подписка клуба — тариф счёта, активна ещё N месяцев от конца текущего периода (или от сегодня, BR-183); счёт —
         оплачен. Повтор — 422 invoice «Счёт уже закрыт.». Журнал платформы superadmin.invoice_paid, журнал денег
-        платформы invoice_paid:<id>.'
+        платформы invoice_paid:<id>. Отличие от Laravel (ревью 22.11.2026): нужен свежий код TOTP действующего суперадмина в теле (поле code; без кода или с неверным/уже использованным — 422 по полю code, лимит superadmin-totp — 429); не в режиме просмотра клуба (403 read_only).'
       parameters:
       - $ref: '#/components/parameters/InvoiceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecondFactorConfirm'
       responses:
         '200':
           description: OK
@@ -378,6 +388,8 @@ paths:
           $ref: common.yaml#/components/responses/NotFound
         '422':
           $ref: common.yaml#/components/responses/ValidationFailed
+        '429':
+          $ref: common.yaml#/components/responses/TooManyRequests
   /api/superadmin/invoices/{invoiceId}/cancel:
     post:
       operationId: saCancelInvoice
@@ -2020,7 +2032,12 @@ components:
       type: object
       required:
       - discount_percent
+      - code
       properties:
+        code:
+          type: string
+          maxLength: 16
+          description: Свежий код TOTP действующего суперадмина (см. SecondFactorConfirm).
         discount_percent:
           type: integer
         discount_until:
@@ -2032,7 +2049,13 @@ components:
           nullable: true
     KaspiForm:
       type: object
+      required:
+      - code
       properties:
+        code:
+          type: string
+          maxLength: 16
+          description: Свежий код TOTP действующего суперадмина (см. SecondFactorConfirm).
         url:
           type: string
           nullable: true

@@ -1,17 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { isApiError } from '../../api/http';
 import { Pagination } from '../../components/Pagination';
 import { useAdminPageTitle } from '../../layouts/adminSession';
 import { formatMoney } from '../../lib/money';
 import { cancelInvoice, firstError, invoicesQuery, payInvoice, qs, setInvoiceKaspi } from './api';
 import { useSuperadminFlash } from './flash';
 import { saHref } from './host';
+import { SecondFactorDialog } from './SecondFactorDialog';
 
 /*
  * Оплаты — перенос resources/views/superadmin/invoices/index.blade.php (Superadmin\InvoiceController): счета клубов
  * за подписку, которые суперадмин отмечает оплаченными, когда приходит платёж Kaspi, и ссылка на оплату.
+ *
+ * Отличие от Blade (решение владельца, ревью 22.11.2026): «Оплата получена» и сохранение ссылки Kaspi требуют свежего
+ * кода второго фактора — вопрос и поле кода в одном окне (SecondFactorDialog, как выплата реселлеру), не window.confirm.
  */
+
+type Pending =
+  | { readonly kind: 'pay'; readonly id: number; readonly number: string }
+  | { readonly kind: 'kaspi'; readonly url: string | null; readonly recipient: string | null };
 
 const MONTHS_KEY = '{{count}} месяц|{{count}} месяца|{{count}} месяцев';
 
@@ -30,15 +39,37 @@ export function InvoicesPage({ page }: { readonly page?: number }) {
     return queryClient.invalidateQueries({ queryKey: ['superadmin'] });
   };
   const fail = (e: unknown) => flash.error(firstError(e));
-  const pay = useMutation({ mutationFn: payInvoice, onSuccess: done, onError: fail });
   const cancel = useMutation({ mutationFn: cancelInvoice, onSuccess: done, onError: fail });
-  const kaspi = useMutation({ mutationFn: setInvoiceKaspi, onSuccess: done, onError: fail });
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const confirmed = useMutation({
+    mutationFn: ({ action, code }: { action: Pending; code: string }) =>
+      action.kind === 'pay' ? payInvoice(action.id, code) : setInvoiceKaspi({ url: action.url, recipient: action.recipient, code }),
+    onSuccess: (r) => {
+      setPending(null);
+      return done(r);
+    },
+    onError: (e) => {
+      // Ошибка кода (неверный, уже использованный, не введён) — под полем, окно остаётся открытым.
+      const code = isApiError(e) ? e.field('code') : undefined;
+      if (code) {
+        setCodeError(code);
+        return;
+      }
+      setPending(null);
+      fail(e);
+    },
+  });
+  const ask = (action: Pending) => {
+    setCodeError(null);
+    setPending(action);
+  };
 
   if (!data) return null;
 
   const submitPay = (id: number, number: string) => (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (window.confirm(t('Деньги по счёту {{number}} пришли? Подписка клуба будет продлена.', { number }))) pay.mutate(id);
+    ask({ kind: 'pay', id, number });
   };
   const submitCancel = (id: number) => (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -51,7 +82,7 @@ export function InvoicesPage({ page }: { readonly page?: number }) {
       const v = f.get(name);
       return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
     };
-    kaspi.mutate({ url: text('url'), recipient: text('recipient') });
+    ask({ kind: 'kaspi', url: text('url'), recipient: text('recipient') });
   };
 
   return (
@@ -68,7 +99,7 @@ export function InvoicesPage({ page }: { readonly page?: number }) {
             </div>
             <p className="text-xl font-bold text-gray-900 dark:text-white">{money(invoice.amount_tiyn)} ₸</p>
             <form method="POST" onSubmit={submitPay(invoice.id, invoice.number)}>
-              <button type="submit" disabled={pay.isPending} className="brand-button rounded-lg px-4 py-2 text-sm">{t('Оплата получена')}</button>
+              <button type="submit" disabled={confirmed.isPending} className="brand-button rounded-lg px-4 py-2 text-sm">{t('Оплата получена')}</button>
             </form>
             <form method="POST" onSubmit={submitCancel(invoice.id)}>
               <button type="submit" disabled={cancel.isPending} className="rounded-lg border border-gray-300 px-4 py-2 text-sm dark:border-gray-700">{t('Отменить')}</button>
@@ -86,7 +117,7 @@ export function InvoicesPage({ page }: { readonly page?: number }) {
           <label className="block text-sm"><span className="mb-1 block text-gray-600 dark:text-gray-300">{t('Ссылка на оплату')}</span><input type="url" name="url" defaultValue={data.kaspi?.url ?? ''} placeholder="https://pay.kaspi.kz/pay/…" className="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-800" /></label>
           <label className="block text-sm"><span className="mb-1 block text-gray-600 dark:text-gray-300">{t('Получатель (видят клубы)')}</span><input type="text" name="recipient" maxLength={200} defaultValue={data.kaspi?.recipient ?? ''} className="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-800" /></label>
         </div>
-        <button type="submit" disabled={kaspi.isPending} className="mt-3 rounded-lg border border-gray-300 px-4 py-2 text-sm dark:border-gray-700">{t('Сохранить')}</button>
+        <button type="submit" disabled={confirmed.isPending} className="mt-3 rounded-lg border border-gray-300 px-4 py-2 text-sm dark:border-gray-700">{t('Сохранить')}</button>
       </form>
 
       <section aria-labelledby="closed-title">
@@ -117,6 +148,24 @@ export function InvoicesPage({ page }: { readonly page?: number }) {
           </>
         )}
       </section>
+
+      <SecondFactorDialog
+        question={
+          pending === null
+            ? null
+            : pending.kind === 'pay'
+              ? t('Деньги по счёту {{number}} пришли? Подписка клуба будет продлена.', { number: pending.number })
+              : t('Изменить настройки оплаты через Kaspi? По этой ссылке платят все клубы.')
+        }
+        error={codeError}
+        busy={confirmed.isPending}
+        onClose={() => setPending(null)}
+        onSubmit={(code) => {
+          if (!pending) return;
+          setCodeError(null);
+          confirmed.mutate({ action: pending, code });
+        }}
+      />
     </>
   );
 }

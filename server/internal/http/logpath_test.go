@@ -23,12 +23,16 @@ func TestRequestLoggerHidesPathSecrets(t *testing.T) {
 	r.Get("/api/pc-login/{code}", ok)
 	r.Get("/api/future/{token}/x", ok) // новый маршрут с параметром-секретом скрывается без правки списка путей
 	r.Get("/api/customers/{userId}", ok)
+	r.Get("/api/future/{token}/of/{name}", ok)
 
 	cases := []struct{ method, path, want string }{
 		{"GET", "/api/invitations/" + secret, "path=/api/invitations/***"},
 		{"POST", "/api/invitations/" + secret + "/accept", "path=/api/invitations/***/accept"},
 		{"GET", "/api/pc-login/" + secret, "path=/api/pc-login/***"},
 		{"GET", "/api/future/" + secret + "/x", "path=/api/future/***/x"},
+		// Скрывается только сегмент на месте параметра, а не все сегменты с тем же значением (ревью 22.11.2026).
+		{"GET", "/api/pc-login/api", "path=/api/pc-login/*** "},
+		{"GET", "/api/future/same/of/same", "path=/api/future/***/of/same "},
 		// Маршрут не найден (не тот метод, лишний сегмент) и страницы SPA — тоже без секрета.
 		{"DELETE", "/api/invitations/" + secret, "path=/api/invitations/***"},
 		{"GET", "/api/pc-login/" + secret + "/unknown", "path=/api/pc-login/***/unknown"},

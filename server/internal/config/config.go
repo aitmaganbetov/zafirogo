@@ -97,7 +97,15 @@ type HTTP struct {
 	// WikiHost — хост wiki (WIKI_DOMAIN старого, config app.wiki_domain; решение Q-069), например wiki.zafiro.kz.
 	// Пусто — wiki на /wiki этого сайта. ZAFIRO_HTTP_WIKI_HOST.
 	WikiHost string `koanf:"wiki_host"`
+	// PublicURL — адрес сайта, каким его видят люди: https://zafiro.kz (без пути). Из него строятся ссылки, которые
+	// уходят за пределы ответа на запрос: оповещения Telegram (если нет superadmin.domain), og:image страниц сайта,
+	// адрес входа реселлеров. Пусто — такие ссылки не строятся из заголовка Host: оповещения уходят без ссылки.
+	// ZAFIRO_HTTP_PUBLIC_URL.
+	PublicURL string `koanf:"public_url"`
 }
+
+// PublicOrigin — PublicURL без «/» в конце.
+func (h HTTP) PublicOrigin() string { return strings.TrimRight(h.PublicURL, "/") }
 
 // Database — подключения к PostgreSQL. Два логина (db/migrations/0004_rls.sql):
 // URL — член роли zafiro_app (RLS по клубу), PlatformURL — член роли zafiro_platform
@@ -579,6 +587,7 @@ func Defaults() map[string]any {
 		"http.max_header_bytes":    1 << 20,
 		"http.trusted_proxies":     []string{},
 		"http.wiki_host":           "",
+		"http.public_url":          "",
 		"database.url":             "",
 		"database.platform_url":    "",
 		"valkey.addr":              "localhost:6379",
@@ -1203,6 +1212,12 @@ func (c *Config) Validate() error {
 			add("reseller.domain: ожидается имя хоста без схемы и порта, получено %q", d)
 		case strings.EqualFold(d, c.Superadmin.Domain) || strings.EqualFold(d, c.HTTP.WikiHost):
 			add("reseller.domain: хост %q уже занят кабинетом суперадмина или wiki", d)
+		}
+	}
+	if raw := c.HTTP.PublicURL; raw != "" {
+		if u, err := url.Parse(raw); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
+			strings.Trim(u.Path, "/") != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			add("http.public_url: ожидается http(s)://хост без пути, получено %q", raw)
 		}
 	}
 	if _, err := c.Agent.Update.UpdatePublicKeys(); err != nil {

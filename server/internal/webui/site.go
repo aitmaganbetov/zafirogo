@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"html"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -113,9 +114,22 @@ func siteLanguage(accept string, enabled []string) string {
 	return enabled[0]
 }
 
-// siteOrigin — адрес сайта для og:image (клиент: location.origin; Laravel: asset()). Хост — из запроса и только
-// из допустимых символов имени хоста (иначе og:image не ставится); схема — https за TLS или прокси с
-// X-Forwarded-Proto: https.
+// WithPublicURL — адрес сайта из конфигурации (http.public_url, без «/» в конце) для og:image страниц сайта. Пусто —
+// адрес берётся из запроса (siteOrigin).
+func WithPublicURL(origin string) Option {
+	return func(o *options) { o.publicURL = strings.TrimRight(origin, "/") }
+}
+
+// siteOriginsMax — сколько разных адресов из заголовка Host запоминает кэш страниц сайта, когда http.public_url не
+// задан. Заголовок задаёт клиент: без предела перебор хостов пересобирал бы и сжимал страницу на каждый запрос и
+// растил бы кэш. Сверх предела страница отдаётся без og:image (готовая запись на путь и язык).
+const siteOriginsMax = 32
+
+// siteOrigin — адрес сайта для og:image (клиент: location.origin; Laravel: asset()), когда он не задан в
+// конфигурации. Хост — из запроса и только из допустимых символов имени хоста (иначе og:image не ставится).
+// Схема — https: сайт работает только по HTTPS (HSTS на каждом ответе, cookie Secure — SEC-018), а заголовку
+// X-Forwarded-Proto от клиента сервер не доверяет нигде; http — только у прямого запроса на локальный адрес
+// (разработка).
 func siteOrigin(r *http.Request) string {
 	host := r.Host
 	if host == "" || len(host) > 255 {
@@ -128,11 +142,25 @@ func siteOrigin(r *http.Request) string {
 			return ""
 		}
 	}
-	scheme := "http"
-	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
-		scheme = "https"
+	scheme := "https"
+	if r.TLS == nil && loopbackHost(host) {
+		scheme = "http"
 	}
 	return scheme + "://" + host
+}
+
+// loopbackHost — localhost или адрес обратной петли (с портом или без).
+func loopbackHost(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // siteHead — <title> и meta страницы; все значения экранируются (переводы правятся в суперадминке — это текст,
@@ -152,24 +180,27 @@ func siteHead(title, description, origin string) []byte {
 }
 
 // siteIndex — index.html страниц сайта: общий index.html, в котором <title>…</title> заменён на siteHead.
-// Готовые страницы (тело, ETag, сжатая копия) хранятся по ключу «путь + язык» — набор конечен (шесть путей ×
-// включённые языки); запись пересобирается, когда изменился перевод (правка в суперадминке) или адрес сайта.
+// Готовые страницы (тело, ETag, сжатая копия) хранятся по ключу «путь + язык + адрес сайта»; запись пересобирается,
+// когда изменился перевод (правка в суперадминке). Набор конечен: шесть путей × включённые языки × адреса — один из
+// конфигурации (http.public_url) либо не больше siteOriginsMax из заголовка Host.
 type siteIndex struct {
 	texts          SiteTexts
+	publicURL      string
 	prefix, suffix []byte // index.html до <title> и после </title>
 
-	mu    sync.RWMutex
-	pages map[string]*siteEntry
+	mu      sync.RWMutex
+	pages   map[string]*siteEntry
+	origins map[string]bool // адреса из заголовка Host, для которых есть записи
 }
 
 type siteEntry struct {
-	title, description, origin string
-	body                       []byte
-	v                          *variant
+	title, description string
+	body               []byte
+	v                  *variant
 }
 
 // newSiteIndex — nil, если в index.html нет <title> (заглушка без фронта его содержит; чужой index.html — без подстановки).
-func newSiteIndex(index []byte, texts SiteTexts) *siteIndex {
+func newSiteIndex(index []byte, texts SiteTexts, publicURL string) *siteIndex {
 	start := bytes.Index(index, []byte("<title>"))
 	if start < 0 {
 		return nil
@@ -179,8 +210,8 @@ func newSiteIndex(index []byte, texts SiteTexts) *siteIndex {
 		return nil
 	}
 	return &siteIndex{
-		texts: texts, prefix: index[:start], suffix: index[start+end+len("</title>"):],
-		pages: map[string]*siteEntry{},
+		texts: texts, publicURL: publicURL, prefix: index[:start], suffix: index[start+end+len("</title>"):],
+		pages: map[string]*siteEntry{}, origins: map[string]bool{},
 	}
 }
 
@@ -202,19 +233,46 @@ func (s *siteIndex) page(r *http.Request, p string) (body []byte, v *variant, ok
 			}
 		}
 	}
-	origin := siteOrigin(r)
-	key := p + "\x00" + lang
+	origin := s.publicURL
+	if origin == "" {
+		origin = s.knownOrigin(siteOrigin(r))
+	}
+	key := p + "\x00" + lang + "\x00" + origin
 	s.mu.RLock()
 	e := s.pages[key]
 	s.mu.RUnlock()
-	if e == nil || e.title != title || e.description != description || e.origin != origin {
+	if e == nil || e.title != title || e.description != description {
 		head := siteHead(title, description, origin)
 		b := make([]byte, 0, len(s.prefix)+len(head)+len(s.suffix))
 		b = append(append(append(b, s.prefix...), head...), s.suffix...)
-		e = &siteEntry{title: title, description: description, origin: origin, body: b, v: newVariant("index.html", b)}
+		e = &siteEntry{title: title, description: description, body: b, v: newVariant("index.html", b)}
 		s.mu.Lock()
 		s.pages[key] = e
 		s.mu.Unlock()
 	}
 	return e.body, e.v, true
+}
+
+// knownOrigin — origin, если это один из первых siteOriginsMax адресов из заголовка Host, иначе пусто (страница
+// без og:image).
+func (s *siteIndex) knownOrigin(origin string) string {
+	if origin == "" {
+		return ""
+	}
+	s.mu.RLock()
+	known, full := s.origins[origin], len(s.origins) >= siteOriginsMax
+	s.mu.RUnlock()
+	switch {
+	case known:
+		return origin
+	case full:
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.origins) >= siteOriginsMax {
+		return ""
+	}
+	s.origins[origin] = true
+	return origin
 }

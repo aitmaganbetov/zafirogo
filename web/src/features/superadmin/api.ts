@@ -137,7 +137,9 @@ export const invoicesQuery = (page?: number) =>
     queryFn: ({ signal }) => unwrap(saApi.GET('/api/superadmin/invoices', { params: { query: { page } }, signal })),
   });
 
-export const payInvoice = (invoiceId: number) => unwrap(saApi.POST('/api/superadmin/invoices/{invoiceId}/pay', { params: { path: { invoiceId } } }));
+/** «Оплата получена» и ссылка Kaspi — со свежим кодом TOTP действующего суперадмина (как выплата реселлеру). */
+export const payInvoice = (invoiceId: number, code: string) =>
+  unwrap(saApi.POST('/api/superadmin/invoices/{invoiceId}/pay', { params: { path: { invoiceId } }, body: { code } }));
 export const cancelInvoice = (invoiceId: number) => unwrap(saApi.POST('/api/superadmin/invoices/{invoiceId}/cancel', { params: { path: { invoiceId } } }));
 export const setInvoiceKaspi = (body: S['KaspiForm']) => unwrap(saApi.POST('/api/superadmin/invoices/kaspi', { body }));
 

@@ -11,16 +11,6 @@ import (
 	"github.com/aitmaganbetov/zafirogo/server/internal/subscription"
 )
 
-// route('superadmin.invoices.index'): на хосте кабинета — /invoices, иначе /superadmin/invoices на хосте запроса.
-func TestCabinetInvoicesURL(t *testing.T) {
-	if got := cabinetInvoicesURL("superadmin.zafiro.kz", "zafiro.kz"); got != "https://superadmin.zafiro.kz/invoices" {
-		t.Fatal(got)
-	}
-	if got := cabinetInvoicesURL("", "zafiro.kz"); got != "https://zafiro.kz/superadmin/invoices" {
-		t.Fatal(got)
-	}
-}
-
 // Ошибки сервиса счетов → ответы формы: поля как в $request->validate() и withErrors(['invoice' => …]).
 func TestInvoiceError(t *testing.T) {
 	fields := func(err error) (int, map[string][]string) {

@@ -159,7 +159,7 @@ export interface paths {
         put?: never;
         /**
          * Индивидуальная скидка клуба на тариф
-         * @description Laravel: ClubController::discount() (superadmin.clubs.discount). Процент 0…100, срок — последний день включительно (не раньше сегодня) или бессрочно, причина до 200 символов; 0 % снимает скидку вместе с датой и причиной. Клуб без подписки — 404. Журнал платформы superadmin.subscription_discount_changed.
+         * @description Laravel: ClubController::discount() (superadmin.clubs.discount). Процент 0…100, срок — последний день включительно (не раньше сегодня) или бессрочно, причина до 200 символов; 0 % снимает скидку вместе с датой и причиной. Клуб без подписки — 404. Журнал платформы superadmin.subscription_discount_changed. Отличие от Laravel (ревью 22.11.2026): нужен свежий код TOTP действующего суперадмина в теле (поле code; без кода или с неверным/уже использованным — 422 по полю code, лимит superadmin-totp — 429); не в режиме просмотра клуба (403 read_only).
          */
         post: operations["saSetClubDiscount"];
         delete?: never;
@@ -199,7 +199,7 @@ export interface paths {
         put?: never;
         /**
          * Ссылка на оплату Kaspi и получатель
-         * @description Laravel: InvoiceController::kaspi() (superadmin.invoices.kaspi): url — https, до 500 символов; recipient — до 200. Пустая ссылка выключает оплату: клубы не могут выставить счёт. Журнал платформы superadmin.billing_kaspi_changed.
+         * @description Laravel: InvoiceController::kaspi() (superadmin.invoices.kaspi): url — https, до 500 символов; recipient — до 200. Пустая ссылка выключает оплату: клубы не могут выставить счёт. Журнал платформы superadmin.billing_kaspi_changed. Отличие от Laravel (ревью 22.11.2026): нужен свежий код TOTP действующего суперадмина в теле (поле code; без кода или с неверным/уже использованным — 422 по полю code, лимит superadmin-totp — 429); не в режиме просмотра клуба (403 read_only).
          */
         post: operations["saSetInvoiceKaspi"];
         delete?: never;
@@ -219,7 +219,7 @@ export interface paths {
         put?: never;
         /**
          * Оплата получена — продлить подписку клуба
-         * @description Laravel: InvoiceController::pay(), SubscriptionBilling::markPaid() (superadmin.invoices.pay): подписка клуба — тариф счёта, активна ещё N месяцев от конца текущего периода (или от сегодня, BR-183); счёт — оплачен. Повтор — 422 invoice «Счёт уже закрыт.». Журнал платформы superadmin.invoice_paid, журнал денег платформы invoice_paid:<id>.
+         * @description Laravel: InvoiceController::pay(), SubscriptionBilling::markPaid() (superadmin.invoices.pay): подписка клуба — тариф счёта, активна ещё N месяцев от конца текущего периода (или от сегодня, BR-183); счёт — оплачен. Повтор — 422 invoice «Счёт уже закрыт.». Журнал платформы superadmin.invoice_paid, журнал денег платформы invoice_paid:<id>. Отличие от Laravel (ревью 22.11.2026): нужен свежий код TOTP действующего суперадмина в теле (поле code; без кода или с неверным/уже использованным — 422 по полю code, лимит superadmin-totp — 429); не в режиме просмотра клуба (403 read_only).
          */
         post: operations["saPayInvoice"];
         delete?: never;
@@ -1054,12 +1054,16 @@ export interface components {
             platform_logs: components["schemas"]["LogRow"][];
         };
         DiscountForm: {
+            /** @description Свежий код TOTP действующего суперадмина (см. SecondFactorConfirm). */
+            code: string;
             discount_percent: number;
             /** @description Последний день скидки, Y-m-d; пусто — бессрочно. */
             discount_until?: string | null;
             discount_note?: string | null;
         };
         KaspiForm: {
+            /** @description Свежий код TOTP действующего суперадмина (см. SecondFactorConfirm). */
+            code: string;
             url?: string | null;
             recipient?: string | null;
         };
@@ -1710,6 +1714,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     saListInvoices: {
@@ -1761,6 +1766,7 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     saPayInvoice: {
@@ -1772,7 +1778,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecondFactorConfirm"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -1787,6 +1797,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
         };
     };
     saCancelInvoice: {

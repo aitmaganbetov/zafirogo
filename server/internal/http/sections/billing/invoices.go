@@ -161,13 +161,10 @@ func (h *handlers) reportInvoice(ctx context.Context, inv subscription.Opened, c
 	if alerts == nil {
 		return
 	}
-	var host string
-	if _, r := httpx.HTTPFrom(ctx); r != nil {
-		host = r.Host
-	}
+	// Ссылка — только из конфигурации (superadmin.domain или http.public_url); без неё сообщение уходит без ссылки.
 	msg := telegram.OpenedInvoice{
 		Number: subscription.Number(inv.ID), Club: clubName, Plan: inv.PlanName, Months: inv.Months, Computers: inv.Computers,
-		AmountTenge: inv.Amount / 100, URL: cabinetInvoicesURL(h.d.Superadmin.Domain, host),
+		AmountTenge: inv.Amount / 100, URL: h.d.Superadmin.CabinetURL("/invoices"),
 	}
 	log := h.d.Log()
 	(*safego.Group)(nil).Go("invoice-opened-alert", func() { // паника отправки не роняет процесс (BC-04)
@@ -177,13 +174,4 @@ func (h *handlers) reportInvoice(ctx context.Context, inv subscription.Opened, c
 			log.WarnContext(ctx, "opened invoice was not reported to the alerts chat", "invoice_id", inv.ID, "err", err)
 		}
 	})
-}
-
-// cabinetInvoicesURL — route('superadmin.invoices.index'): на хосте кабинета (SUPERADMIN_DOMAIN) — /invoices, иначе
-// /superadmin/invoices на хосте запроса. Схема — https (панель работает только по HTTPS: cookie Secure).
-func cabinetInvoicesURL(domain, requestHost string) string {
-	if domain != "" {
-		return "https://" + domain + "/invoices"
-	}
-	return "https://" + requestHost + "/superadmin/invoices"
 }

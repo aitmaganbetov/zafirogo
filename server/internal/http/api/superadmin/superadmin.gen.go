@@ -463,6 +463,8 @@ type Dashboard struct {
 
 // DiscountForm defines model for DiscountForm.
 type DiscountForm struct {
+	// Code Свежий код TOTP действующего суперадмина (см. SecondFactorConfirm).
+	Code            string  `json:"code"`
 	DiscountNote    *string `json:"discount_note,omitempty"`
 	DiscountPercent int     `json:"discount_percent"`
 
@@ -533,6 +535,8 @@ type IssueKind string
 
 // KaspiForm defines model for KaspiForm.
 type KaspiForm struct {
+	// Code Свежий код TOTP действующего суперадмина (см. SecondFactorConfirm).
+	Code      string  `json:"code"`
 	Recipient *string `json:"recipient,omitempty"`
 	Url       *string `json:"url,omitempty"`
 }
@@ -998,6 +1002,9 @@ type SaChangeClubPlanJSONRequestBody = PlanChoice
 
 // SaSetInvoiceKaspiJSONRequestBody defines body for SaSetInvoiceKaspi for application/json ContentType.
 type SaSetInvoiceKaspiJSONRequestBody = KaspiForm
+
+// SaPayInvoiceJSONRequestBody defines body for SaPayInvoice for application/json ContentType.
+type SaPayInvoiceJSONRequestBody = SecondFactorConfirm
 
 // SaCreateLanguageJSONRequestBody defines body for SaCreateLanguage for application/json ContentType.
 type SaCreateLanguageJSONRequestBody = LanguageCreate
@@ -3971,6 +3978,25 @@ func (response SaSetClubDiscount422JSONResponse) VisitSaSetClubDiscountResponse(
 	return err
 }
 
+type SaSetClubDiscount429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response SaSetClubDiscount429JSONResponse) VisitSaSetClubDiscountResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SaExtendSubscriptionRequestObject struct {
 	ClubId ClubId `json:"clubId"`
 	Body   *SaExtendSubscriptionJSONRequestBody
@@ -4393,6 +4419,25 @@ func (response SaSetInvoiceKaspi422JSONResponse) VisitSaSetInvoiceKaspiResponse(
 	return err
 }
 
+type SaSetInvoiceKaspi429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response SaSetInvoiceKaspi429JSONResponse) VisitSaSetInvoiceKaspiResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SaCancelInvoiceRequestObject struct {
 	InvoiceId InvoiceId `json:"invoiceId"`
 }
@@ -4481,6 +4526,7 @@ func (response SaCancelInvoice422JSONResponse) VisitSaCancelInvoiceResponse(w ht
 
 type SaPayInvoiceRequestObject struct {
 	InvoiceId InvoiceId `json:"invoiceId"`
+	Body      *SaPayInvoiceJSONRequestBody
 }
 
 type SaPayInvoiceResponseObject interface {
@@ -4561,6 +4607,25 @@ func (response SaPayInvoice422JSONResponse) VisitSaPayInvoiceResponse(w http.Res
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SaPayInvoice429JSONResponse struct {
+	externalRef0.TooManyRequestsJSONResponse
+}
+
+func (response SaPayInvoice429JSONResponse) VisitSaPayInvoiceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -7391,6 +7456,13 @@ func (sh *strictHandler) SaPayInvoice(w http.ResponseWriter, r *http.Request, in
 	var request SaPayInvoiceRequestObject
 
 	request.InvoiceId = invoiceId
+
+	var body SaPayInvoiceJSONRequestBody
+	if err := runtime.BindJSONBody(r, &body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.SaPayInvoice(ctx, request.(SaPayInvoiceRequestObject))

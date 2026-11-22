@@ -49,6 +49,7 @@ x-app: &app
     ZAFIRO_SUPERADMIN_DOMAIN: superadmin.staging.zafiro.test
     ZAFIRO_RESELLER_DOMAIN: resseler.staging.zafiro.test
     ZAFIRO_HTTP_WIKI_HOST: wiki.staging.zafiro.test
+    ZAFIRO_HTTP_PUBLIC_URL: https://app.staging.zafiro.test
     # Мобильные запросы и ключи /api/v1 клубов, которых здесь нет, — в старый Laravel (docs/mobile-compat.md §3,
     # S6-O1-4; integrations.legacy_upstream не задан — берётся mobile.upstream).
     ZAFIRO_MOBILE_UPSTREAM: http://legacy:80
