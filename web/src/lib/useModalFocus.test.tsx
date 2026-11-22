@@ -1,11 +1,11 @@
 import { act, fireEvent, render } from '@testing-library/react';
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useModalFocus } from './useModalFocus';
 
 /* UI-09: окна карты клуба и склада (блок, не <dialog>) — Escape, ловушка фокуса, возврат фокуса. */
 
-function Screen() {
+function Screen({ extra }: { extra?: ReactNode }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useModalFocus(ref, open, () => setOpen(false));
@@ -18,6 +18,7 @@ function Screen() {
         <input id="field" />
         <input type="hidden" name="h" />
         <button id="save">Сохранить</button>
+        {extra}
       </div>
     </>
   );
@@ -29,8 +30,8 @@ describe('useModalFocus', () => {
   const el = (id: string) => document.getElementById(id) as HTMLElement;
   const key = (k: string, shiftKey = false) => fireEvent.keyDown(document.activeElement ?? document.body, { key: k, shiftKey });
 
-  function open() {
-    render(<Screen />);
+  function open(extra?: ReactNode) {
+    render(<Screen extra={extra} />);
     el('opener').focus();
     fireEvent.click(el('opener'));
     act(() => void vi.advanceTimersByTime(100));
@@ -48,6 +49,25 @@ describe('useModalFocus', () => {
     el('menu').focus();
     key('Tab');
     expect(document.activeElement).toBe(el('close'));
+  });
+
+  // Ревью 22.11.2026: скрытые CSS элементы (вкладка, свёрнутый блок) в ловушку фокуса не входят.
+  it('элементы, скрытые CSS, Tab пропускает', () => {
+    open(
+      <>
+        <style>{'.tw-hidden { display: none; }'}</style>
+        <div style={{ display: 'none' }}><button id="in-none">в скрытом блоке</button></div>
+        <div className="tw-hidden"><button id="in-class">в блоке с классом</button></div>
+        <button id="invisible" style={{ visibility: 'hidden' }}>невидимая</button>
+        <div hidden><button id="in-hidden">в hidden</button></div>
+      </>,
+    );
+    // Последний видимый — «Сохранить»: с него Tab уходит на первый, Shift+Tab с первого — на него.
+    el('save').focus();
+    key('Tab');
+    expect(document.activeElement).toBe(el('close'));
+    key('Tab', true);
+    expect(document.activeElement).toBe(el('save'));
   });
 
   it('Escape закрывает окно и возвращает фокус на кнопку, которой его открыли', () => {

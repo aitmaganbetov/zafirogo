@@ -28,9 +28,10 @@ export function I18nGate({ children }: { children: ReactNode }) {
     let cancelled = false;
     void (async () => {
       const enabled = (await enabledLanguages()).map((l) => l.code);
+      if (cancelled) return;
       const code = status === 'authenticated' && clubLocale ? clubLanguage(clubLocale, enabled) : guestLanguage(enabled);
-      await applyLanguage(code);
-      if (!cancelled) setReady(true);
+      // Отменённый эффект (сессия или язык клуба сменились) язык не переключает и в хранилище его не пишет.
+      if (await applyLanguage(code, () => cancelled)) setReady(true);
     })();
     return () => {
       cancelled = true;

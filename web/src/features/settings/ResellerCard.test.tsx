@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../../api/http';
 import { session } from '../../auth/session';
-import { mockApi, renderPage, signIn } from '../../test/pages';
+import { apiError, mockApi, renderPage, signIn } from '../../test/pages';
 import { ResellerCard } from './ResellerCard';
 
 /* Карточка «Реселлер» настроек клуба (settings/club.blade.php, #reseller; GS-562). */
@@ -51,6 +51,19 @@ describe('настройки клуба: карточка «Реселлер»',
     fireEvent.click(screen.getByRole('button', { name: 'Привязать' }));
     expect(api.of('POST', '/api/settings/reseller')).toHaveLength(0);
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  // Ревью 22.11.2026: при ошибке GET карточка не исчезает молча.
+  it('данные не загрузились: карточка с ошибкой, формы кода нет', async () => {
+    show({ 'GET /api/settings/reseller': () => apiError(500, { error: 'internal', message: '' }) });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Нет связи с сервером. Повторите попытку.');
+    expect(screen.getByRole('heading', { name: 'Реселлер' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Код реселлера')).not.toBeInTheDocument();
+  });
+
+  it('данные не загрузились: текст ошибки сервера', async () => {
+    show({ 'GET /api/settings/reseller': () => apiError(403, { error: 'forbidden', message: 'Недостаточно прав.' }) });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Недостаточно прав.');
   });
 
   it('текст ошибки поля reseller_code показывается над формой', async () => {

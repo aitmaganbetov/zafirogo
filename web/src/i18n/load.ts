@@ -215,16 +215,23 @@ export function clubLanguage(clubLocale: string | null | undefined, enabled: rea
   return enabled.includes(DEFAULT_LANGUAGE) ? DEFAULT_LANGUAGE : (enabled[0] ?? DEFAULT_LANGUAGE);
 }
 
-/** Переключить интерфейс на язык (загрузив пакет). Ошибка загрузки — остаются ключи (русский текст). */
-export async function applyLanguage(code: string): Promise<void> {
+/**
+ * Переключить интерфейс на язык (загрузив пакет). Ошибка загрузки — остаются ключи (русский текст).
+ * cancelled — вызов устарел (язык сменился, пока шла загрузка пакета): язык и запись о нём не трогаются, иначе
+ * опоздавший пакет прежнего языка переключил бы интерфейс обратно. Возвращает, применён ли язык.
+ */
+export async function applyLanguage(code: string, cancelled: () => boolean = () => false): Promise<boolean> {
   try {
     await loadLanguage(code);
   } catch {
     // сервер недоступен — ключи
   }
+  if (cancelled()) return false;
   if (i18n.language !== code) await i18n.changeLanguage(code);
+  if (cancelled()) return false;
   document.documentElement.lang = code;
   writeJSON(KEY_STATE, { ...cachedState(), lang: code });
+  return true;
 }
 
 /** Сбросить состояние модуля (тесты). */

@@ -134,6 +134,87 @@ describe('кабинет суперадмина: реселлеры', () => {
     expect(calls[1]?.headers.get('Idempotency-Key')).toBe(key);
   });
 
+  // Ревью 22.11.2026: потерянный ответ (обрыв, 5xx) не должен приводить ко второй выплате — ключ живёт до успеха.
+  it('выплата: ответ потерян → повтор с тем же ключом, и из окна, и после его закрытия; после успеха ключ новый', async () => {
+    let attempt = 0;
+    const api = mockApi({
+      'GET /api/superadmin/resellers': board,
+      'POST /api/superadmin/resellers/3/payouts': () => {
+        attempt++;
+        if (attempt === 1) throw new TypeError('Failed to fetch');
+        if (attempt === 2) return apiError(502, { error: 'bad_gateway', message: '' });
+        if (attempt === 3) return apiError(403, { error: 'forbidden', message: 'Недостаточно прав.' });
+        return { message: 'Выплата реселлеру arman-games записана.' };
+      },
+    });
+    render(<ResellersPage search={{}} />);
+    await screen.findByText('arman-games');
+    const a = within(card('arman-games'));
+    const calls = () => api.of('POST', '/api/superadmin/resellers/3/payouts');
+    const lists = () => api.of('GET', '/api/superadmin/resellers').length;
+    const confirm = (code: string) => {
+      const dialog = within(screen.getByRole('dialog'));
+      fireEvent.change(dialog.getByLabelText('Код из приложения'), { target: { value: code } });
+      fireEvent.click(dialog.getByRole('button', { name: 'Подтвердить' }));
+      return dialog;
+    };
+
+    fireEvent.click(a.getByRole('button', { name: 'Записать выплату' }));
+    // 1: сети нет — окно остаётся, ошибка в окне, список перечитан (выплата могла записаться).
+    const before = lists();
+    let dialog = confirm('111111');
+    expect(await dialog.findByRole('alert')).toHaveTextContent('Нет связи с сервером. Повторите попытку.');
+    await waitFor(() => expect(lists()).toBeGreaterThan(before));
+    // 2: 502 — то же окно, тот же ключ.
+    dialog = confirm('222222');
+    await waitFor(() => expect(calls()).toHaveLength(2));
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Подтвердить' })).toBeEnabled());
+    expect(screen.getByRole('dialog')).toHaveAttribute('open');
+    // 3: отказ (403) закрывает окно, но ключ выплаты остаётся.
+    confirm('333333');
+    await waitFor(() => expect(flash.error).toHaveBeenCalledWith('Недостаточно прав.'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // 4: та же форма отправлена заново — тот же ключ.
+    fireEvent.click(a.getByRole('button', { name: 'Записать выплату' }));
+    confirm('444444');
+    await waitFor(() => expect(flash.status).toHaveBeenCalledWith('Выплата реселлеру arman-games записана.'));
+    const keys = calls().map((c) => c.headers.get('Idempotency-Key'));
+    expect(keys).toHaveLength(4);
+    expect(keys[0]).toBeTruthy();
+    expect(new Set(keys).size).toBe(1);
+
+    // После успеха — новая выплата, новый ключ; другая сумма — тоже новый ключ.
+    fireEvent.change(a.getByLabelText('Выплата, ₸'), { target: { value: '180' } });
+    fireEvent.click(a.getByRole('button', { name: 'Записать выплату' }));
+    confirm('555555');
+    await waitFor(() => expect(calls()).toHaveLength(5));
+    expect(calls()[4]?.headers.get('Idempotency-Key')).not.toBe(keys[0]);
+  });
+
+  it('выплата: изменилась сумма — ключ новый', async () => {
+    const api = mockApi({
+      'GET /api/superadmin/resellers': board,
+      'POST /api/superadmin/resellers/3/payouts': () => apiError(503, { error: 'unavailable', message: '' }),
+    });
+    render(<ResellersPage search={{}} />);
+    await screen.findByText('arman-games');
+    const a = within(card('arman-games'));
+    const calls = () => api.of('POST', '/api/superadmin/resellers/3/payouts');
+    for (const [n, amount] of [[1, '100'], [2, '100'], [3, '150']] as const) {
+      fireEvent.change(a.getByLabelText('Выплата, ₸'), { target: { value: amount } });
+      fireEvent.click(a.getByRole('button', { name: 'Записать выплату' }));
+      const dialog = within(screen.getByRole('dialog'));
+      fireEvent.change(dialog.getByLabelText('Код из приложения'), { target: { value: '111111' } });
+      fireEvent.click(dialog.getByRole('button', { name: 'Подтвердить' }));
+      await waitFor(() => expect(calls()).toHaveLength(n));
+      await dialog.findByRole('alert');
+      fireEvent.click(dialog.getByRole('button', { name: 'Отмена' }));
+    }
+    const keys = calls().map((c) => c.headers.get('Idempotency-Key'));
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+
   it('удаление — с кодом; отвязка клуба — после подтверждения', async () => {
     const api = mockApi({
       'GET /api/superadmin/resellers': board,

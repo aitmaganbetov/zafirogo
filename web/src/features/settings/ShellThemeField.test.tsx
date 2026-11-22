@@ -25,7 +25,7 @@ const themes: ClubSettings['shell_themes'] = [
   { key: 'pink', accent: '#db2777', accent_2: '#f472b6', bg_1: '#1f0716' },
 ];
 
-const page = (theme: string): ClubSettings => ({
+const page = (theme: string, shellThemes: ClubSettings['shell_themes'] = themes): ClubSettings => ({
   club_name: 'Zafiro Arena',
   settings: {
     club: {
@@ -42,7 +42,7 @@ const page = (theme: string): ClubSettings => ({
   },
   timezone: 'Asia/Almaty', timezones_kazakhstan: [], timezones_all: [], club_time: '16.11.2026 12:00', agent_pin_set_at: null,
   agent_staff_minutes: 15, can_manage_agent_pin: true, logo_url: null, signin_image_url: null, city: null, address: null, cities: [],
-  shell_themes: themes,
+  shell_themes: shellThemes,
 });
 
 describe('Настройка клуба: тема оформления на ПК', () => {
@@ -74,6 +74,24 @@ describe('Настройка клуба: тема оформления на ПК
     fireEvent.click(screen.getAllByRole('button', { name: 'Сохранить' })[0] as HTMLElement);
     await waitFor(() => expect(api.of('PUT', '/api/settings/sections/club')).toHaveLength(1));
     expect(api.of('PUT', '/api/settings/sections/club')[0]?.body).toMatchObject({ agent_shell_theme: 'red' });
+  });
+
+  // Ревью 22.11.2026: сервер уже знает тему, фронт названия ещё не знает — вариант с ключом, отмечен и сохраняется.
+  it('тема сервера без названия во фронте: вариант с ключом, отмечен, уходит в форму', async () => {
+    signIn('owner', ['settings.view', 'settings.update']);
+    const api = mockApi({
+      'GET /api/settings': page('gold', [...themes, { key: 'gold', accent: '#ca8a04', accent_2: '#fde047', bg_1: '#1c1503' }]),
+      'PUT /api/settings/sections/club': { message: 'Настройки сохранены' },
+    });
+    renderPage(<ClubSettingsPage />);
+    const group = await fieldset();
+    const radios = within(group).getAllByRole('radio') as HTMLInputElement[];
+    expect(radios).toHaveLength(8);
+    expect(radios.filter((r) => r.checked).map((r) => r.value)).toEqual(['gold']);
+    expect(within(group).getByLabelText('gold')).toBeChecked();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Сохранить' })[0] as HTMLElement);
+    await waitFor(() => expect(api.of('PUT', '/api/settings/sections/club')).toHaveLength(1));
+    expect(api.of('PUT', '/api/settings/sections/club')[0]?.body).toMatchObject({ agent_shell_theme: 'gold' });
   });
 
   it('сохранённая тема отмечена; неизвестная — не отмечена ни одна и в форму не уходит', async () => {

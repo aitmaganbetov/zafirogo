@@ -12,6 +12,8 @@ import { billingQuery, cancelInvoice, createInvoice, firstError, safePayUrl, typ
  * неоплаченный счёт с оплатой по ссылке Kaspi, форма «Продлить подписку», последние счета. Даты — в часовом поясе
  * клуба (модели ClubSubscription и SubscriptionInvoice — UsesClubTimezone). «К оплате» по срокам приходит с сервера:
  * скрипт старого шаблона считал сумму во float, здесь расчёта во фронте нет.
+ * Отличие от Blade: ссылка Kaspi показывается, только если она https (safePayUrl). Без неё шаги «Откройте оплату по
+ * кнопке ниже» вели бы в никуда — вместо них текст «Оплата пока не настроена…» (тот же, что у формы без Kaspi).
  */
 
 const STATE_LABEL: Record<BillingSubscription['state'], string> = {
@@ -110,7 +112,8 @@ export function BillingPage() {
           <h4 id="pending-title" className="font-semibold text-gray-900 dark:text-white">{t('Счёт {{number}} ожидает оплаты', { number: pending.number })}</h4>
           <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-white">{money(pending.amount_tiyn)} ₸</p>
           <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">{t('{{plan}}, {{months}}, {{computers}} ПК × {{price}} ₸', { plan: pending.plan_name, months: t(MONTHS_KEY, { count: pending.months }), computers: pending.computers, price: money(pending.price_per_computer_tiyn) })}{pending.discount_percent > 0 && <>, {t('скидка {{percent}}%', { percent: pending.discount_percent })}</>}</p>
-          {kaspi && (
+          {kaspi && !payUrl && <p className="mt-4 text-sm text-gray-500">{t('Оплата пока не настроена. Напишите в поддержку Zafiro.')}</p>}
+          {kaspi && payUrl && (
             <>
               <ol className="mt-4 list-decimal space-y-1 pl-5 text-sm text-gray-700 dark:text-gray-200">
                 <li>{t('Откройте оплату в Kaspi по кнопке ниже.')}</li>
@@ -118,9 +121,7 @@ export function BillingPage() {
                 <li>{t('В комментарии к платежу укажите номер счёта {{number}}.', { number: pending.number })}</li>
               </ol>
               {kaspi.recipient && <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">{t('Получатель: {{recipient}}', { recipient: kaspi.recipient })}</p>}
-              {payUrl && (
-                <a href={payUrl} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[#f14635] px-5 py-2.5 font-semibold text-white hover:bg-[#d93a2b]">{t('Оплатить в Kaspi')}<i className="fas fa-arrow-up-right-from-square text-sm" aria-hidden="true"></i></a>
-              )}
+              <a href={payUrl} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[#f14635] px-5 py-2.5 font-semibold text-white hover:bg-[#d93a2b]">{t('Оплатить в Kaspi')}<i className="fas fa-arrow-up-right-from-square text-sm" aria-hidden="true"></i></a>
             </>
           )}
           <p className="mt-4 text-sm text-gray-600 dark:text-gray-300">{t('Подписка продлится, как только мы увидим оплату — обычно в течение рабочего дня.')}</p>

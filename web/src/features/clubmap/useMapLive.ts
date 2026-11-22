@@ -9,6 +9,8 @@ import { pushSample, sample } from './liveSeries';
  * computer.state по WebSocket (docs/realtime.md). Событие несёт дифф одного ПК; состояние, которое считает
  * сервер (статус с бронью, подсветка, что куплено), досылается одним запросом /club-map/state?ids=… на пачку
  * событий (300 мс). Событие без computer_id (удалена зона) или о неизвестном ПК — перечитать экран.
+ * Ответы досылки могут прийти не по порядку: состояние ПК берётся только из последнего запроса о нём (номер
+ * запроса на ПК), ответ более раннего запроса об этом ПК отбрасывается.
  */
 
 interface StateEvent {
@@ -56,6 +58,14 @@ export function mergeLoads(page: ClubMapPage, events: ReadonlyMap<number, LoadEv
 /** Окно склейки computer.load, мс: при 300 ПК это до 20 событий/с — в кэш они попадают одним обновлением. */
 export const LOAD_BATCH_MS = 250;
 
+/**
+ * Состояния из ответа запроса seq, которые ещё не устарели: о ПК не было запроса новее (latest: ПК → номер его
+ * последнего запроса).
+ */
+export function currentStates(fresh: readonly ComputerState[], seq: number, latest: ReadonlyMap<number, number>): ComputerState[] {
+  return fresh.filter((s) => (latest.get(s.id) ?? seq) <= seq);
+}
+
 /** Подставить свежие состояния ПК в данные экрана. */
 export function mergeStates(page: ClubMapPage, fresh: readonly ComputerState[]): ClubMapPage {
   if (fresh.length === 0) return page;
@@ -67,17 +77,22 @@ export function useMapLive(): void {
   const qc = useQueryClient();
   const pending = useRef(new Set<number>());
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Номер последнего запроса досылки и номер последнего запроса о каждом ПК (не больше записей, чем ПК в клубе). */
+  const seq = useRef(0);
+  const latest = useRef(new Map<number, number>());
+  const alive = useRef(true);
 
   const loads = useRef(new Map<number, LoadEvent>());
   const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
       if (timer.current) clearTimeout(timer.current);
       if (loadTimer.current) clearTimeout(loadTimer.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   // Загрузка, проблемы и температуры — сразу из события (и точкой в живой график панели ПК); открытая панель перечитывает
   // остальное (диски, периферия, сеть, сбои).
@@ -117,9 +132,17 @@ export function useMapLive(): void {
       timer.current = null;
       const ids = [...pending.current];
       pending.current.clear();
+      const mine = ++seq.current;
+      for (const pc of ids) latest.current.set(pc, mine);
       void fetchStates(ids)
-        .then((r) => qc.setQueryData<ClubMapPage>(clubMapKey, (old) => (old ? mergeStates(old, r.computers) : old)))
-        .catch(() => void qc.invalidateQueries({ queryKey: clubMapKey }));
+        .then((r) => {
+          if (!alive.current) return;
+          const fresh = currentStates(r.computers, mine, latest.current);
+          qc.setQueryData<ClubMapPage>(clubMapKey, (old) => (old ? mergeStates(old, fresh) : old));
+        })
+        .catch(() => {
+          if (alive.current) void qc.invalidateQueries({ queryKey: clubMapKey });
+        });
     }, 300);
   });
 }

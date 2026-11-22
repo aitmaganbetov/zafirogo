@@ -33,8 +33,20 @@ export interface ResellerCardProps {
 
 export function ResellerCard({ readOnly, onDone, onError, error }: ResellerCardProps) {
   const { t } = useTranslation();
-  const { data } = useQuery(clubResellerQuery());
+  const { data, error: loadError } = useQuery(clubResellerQuery());
   const attach = useMutation({ mutationFn: attachReseller, onSuccess: (r) => onDone(r.message), onError });
+  // Данные не загрузились: карточка остаётся на месте с ошибкой (а не исчезает молча); формы кода нет — неизвестно,
+  // привязан ли клуб.
+  if (!data && loadError) {
+    return (
+      <SettingsCard id="reseller" aria-labelledby="reseller-title">
+        <h5 id="reseller-title" className="mb-2 font-semibold text-gray-900 dark:text-white">{t('Реселлер')}</h5>
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+          {firstError(loadError) || t('Нет связи с сервером. Повторите попытку.')}
+        </div>
+      </SettingsCard>
+    );
+  }
   // Пока ответа нет, карточки нет: иначе привязанный клуб на миг увидел бы форму кода.
   if (!data) return null;
   const reseller = data.reseller;

@@ -60,7 +60,9 @@ export const INVALIDATE_WINDOW_MS = 1500;
  * Перечитать запросы с префиксом queryKey при событиях patterns. События склеиваются: первое перечитывает сразу,
  * остальные за окно INVALIDATE_WINDOW_MS — одним запросом в конце окна (пачка событий ≠ пачка запросов).
  * except — точные типы, которые шаблон ловит, но экран не слушает (телеметрия).
- * Идущий запрос отменяется (signal в queryFn) и заменяется новым: ответ, начатый до события, мог устареть.
+ * Идущий запрос не отменяется (cancelRefetch: false): при событиях чаще окна и ответе дольше окна отменяемый запрос
+ * не завершился бы никогда и экран застыл бы на старых данных. Но ответ, начатый до события, мог устареть — после
+ * его завершения запрос перечитывается ещё один раз (сколько бы событий за это время ни пришло).
  */
 export function useInvalidateOn(patterns: readonly string[], queryKey: QueryKey, except: readonly string[] = []): void {
   const client = useRealtimeClient();
@@ -73,7 +75,19 @@ export function useInvalidateOn(patterns: readonly string[], queryKey: QueryKey,
     const qk = JSON.parse(key) as QueryKey;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let dirty = false;
-    const run = () => void queryClient.invalidateQueries({ queryKey: qk });
+    // Событие пришло, пока запрос шёл: перечитать ещё раз, когда он завершится.
+    let again = false;
+    const invalidate = () => void queryClient.invalidateQueries({ queryKey: qk }, { cancelRefetch: false });
+    const run = () => {
+      if (queryClient.isFetching({ queryKey: qk }) > 0) again = true;
+      invalidate();
+    };
+    const offCache = queryClient.getQueryCache().subscribe(() => {
+      if (!again || queryClient.isFetching({ queryKey: qk }) > 0) return;
+      again = false;
+      dirty = false; // новый запрос начат после всех пришедших событий
+      invalidate();
+    });
     const onEvent = (m: RealtimeMessage) => {
       if (skip.includes(m.type)) return;
       if (timer) {
@@ -93,6 +107,7 @@ export function useInvalidateOn(patterns: readonly string[], queryKey: QueryKey,
     const offs = pkey.split('|').map((p) => client.on(p, onEvent));
     return () => {
       offs.forEach((off) => off());
+      offCache();
       if (timer) clearTimeout(timer);
     };
   }, [client, queryClient, key, pkey, ekey]);

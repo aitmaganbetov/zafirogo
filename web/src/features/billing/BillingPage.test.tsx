@@ -122,6 +122,20 @@ describe('Подписка', () => {
     expect(await screen.findByText('Оплата пока не настроена. Напишите в поддержку Zafiro.')).toBeInTheDocument();
   });
 
+  // Ревью 22.11.2026: ссылка не https → кнопки нет, значит и шага «по кнопке ниже» быть не должно.
+  it('счёт при негодной ссылке Kaspi: шагов оплаты нет, «Оплата пока не настроена»', async () => {
+    signIn('owner', ['billing.view', 'billing.pay']);
+    mockApi({ 'GET /api/billing': billing({ pending: invoice(), kaspi: { url: 'http://pay.kaspi.kz/pay/zafiro', recipient: 'ИП Zafiro' } }) });
+    renderPage(<BillingPage />);
+    expect(await screen.findByText('Счёт ZF-00042 ожидает оплаты')).toBeInTheDocument();
+    expect(screen.getByText('Оплата пока не настроена. Напишите в поддержку Zafiro.')).toBeInTheDocument();
+    expect(screen.queryByText('Откройте оплату в Kaspi по кнопке ниже.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Переведите/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Оплатить в Kaspi' })).not.toBeInTheDocument();
+    // Счёт по-прежнему можно отменить.
+    expect(screen.getByRole('button', { name: 'Отменить счёт' })).toBeInTheDocument();
+  });
+
   it('ошибка сервера показывается, как $errors->first()', async () => {
     signIn('owner', ['billing.view', 'billing.pay']);
     mockApi({

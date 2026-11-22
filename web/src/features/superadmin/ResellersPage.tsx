@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isApiError } from '../../api/http';
 import { Pagination } from '../../components/Pagination';
@@ -22,6 +22,8 @@ import { SecondFactorDialog } from './SecondFactorDialog';
  * Отличие от Blade (docs/open-questions/upstream-resellers.md UR-2): выплата и удаление необратимы, поэтому
  * подтверждаются окном со свежим кодом TOTP (как выдача прав суперадмина на экране «Пользователи»), а не сразу и
  * не window.confirm. Суммы и проценты уходят на сервер целыми (тиыны, базисные пункты) — без float.
+ * Ключ идемпотентности выплаты живёт до успеха: ответ мог потеряться (обрыв, таймаут, 5xx), а выплата — записаться;
+ * повтор с тем же ключом сервер узнаёт (reseller.Payout: Replayed) и второй выплаты не создаёт.
  */
 
 const CLUBS_KEY = '{{count}} клуб|{{count}} клуба|{{count}} клубов';
@@ -31,6 +33,18 @@ const FIELD = 'rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm te
 const money = (tiyn: number) => formatMoney(tiyn, 0, '.', ' ') + ' ₸';
 
 /** Необратимое действие, которое ждёт кода: выплата (с ключом идемпотентности формы) или удаление. */
+/** Ключ незавершённой выплаты реселлера и данные, с которыми он ушёл (сервер сверяет сумму и комментарий). */
+interface PayoutKey {
+  readonly key: string;
+  readonly amount: number;
+  readonly note: string;
+  /** «Выплачено» на момент создания ключа: изменилось — та выплата уже записана, следующая отправка формы — новая. */
+  readonly paidOut: number;
+}
+
+/** Ответа нет или сервер упал: исход запроса неизвестен — действие могло выполниться. */
+const outcomeUnknown = (e: unknown) => !isApiError(e) || e.kind === 'network' || e.status >= 500;
+
 type Pending =
   | { readonly kind: 'payout'; readonly reseller: ResellerCard; readonly amount: number; readonly note: string; readonly key: string; readonly form: HTMLFormElement }
   | { readonly kind: 'delete'; readonly reseller: ResellerCard };
@@ -50,6 +64,7 @@ export function ResellersPage({ search }: { readonly search: ResellersSearch }) 
     return queryClient.invalidateQueries({ queryKey: ['superadmin'] });
   };
   const fail = (e: unknown) => flash.error(firstError(e));
+  const payoutKeys = useRef(new Map<number, PayoutKey>());
   const create = useMutation({ mutationFn: createReseller, onError: fail });
   const update = useMutation({ mutationFn: ({ id, body }: { id: number; body: Parameters<typeof updateReseller>[1] }) => updateReseller(id, body), onSuccess: done, onError: fail });
   const detach = useMutation({ mutationFn: ({ id, club }: { id: number; club: number }) => detachResellerClub(id, club), onSuccess: done, onError: fail });
@@ -60,14 +75,25 @@ export function ResellersPage({ search }: { readonly search: ResellersSearch }) 
         : deleteReseller(action.reseller.id, code),
     onSuccess: (r, { action }) => {
       setPending(null);
-      if (action.kind === 'payout') action.form.reset();
+      if (action.kind === 'payout') {
+        // Ключ отработал — следующая выплата этому реселлеру пойдёт с новым.
+        payoutKeys.current.delete(action.reseller.id);
+        action.form.reset();
+      }
       return done(r);
     },
-    onError: (e) => {
+    onError: (e, { action }) => {
+      // Список перечитывается при любом исходе: выплата или удаление могли пройти, хотя ответ не дошёл.
+      void queryClient.invalidateQueries({ queryKey: ['superadmin'] });
       // Ошибка кода (неверный, уже использованный, не введён) — под полем, окно остаётся открытым.
       const code = isApiError(e) ? e.field('code') : undefined;
       if (code) {
         setCodeError(code);
+        return;
+      }
+      // Исход выплаты неизвестен — окно остаётся: повтор уйдёт с тем же ключом и второй выплаты не создаст.
+      if (action.kind === 'payout' && outcomeUnknown(e)) {
+        setCodeError(firstError(e) || t('Нет связи с сервером. Повторите попытку.'));
         return;
       }
       setPending(null);
@@ -121,8 +147,14 @@ export function ResellersPage({ search }: { readonly search: ResellersSearch }) 
       return;
     }
     setCodeError(null);
-    // Ключ — на отправку формы: повторный ввод кода в окне идёт с тем же ключом и второй выплаты не создаёт.
-    setPending({ kind: 'payout', reseller, amount: amount.tiyn, note: text(f, 'note'), key: idempotencyKey(), form });
+    const note = text(f, 'note');
+    // Ключ — на выплату, а не на отправку формы: он живёт до успеха, пока не изменились реселлер, сумма и комментарий
+    // (сервер на тот же ключ с другими данными ответит конфликтом). Закрытое после ошибки окно ключ не сбрасывает.
+    const kept = payoutKeys.current.get(reseller.id);
+    const same = kept && kept.amount === amount.tiyn && kept.note === note && kept.paidOut === reseller.paid_out_tiyn;
+    const key = same ? kept.key : idempotencyKey();
+    payoutKeys.current.set(reseller.id, { key, amount: amount.tiyn, note, paidOut: reseller.paid_out_tiyn });
+    setPending({ kind: 'payout', reseller, amount: amount.tiyn, note, key, form });
   };
   const submitDelete = (reseller: ResellerCard) => (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();

@@ -9,8 +9,23 @@ import { useEffect, useRef, type RefObject } from 'react';
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/**
+ * Элемент виден: ни он, ни предки до окна не скрыты атрибутом hidden или CSS (display: none — класс hidden Tailwind,
+ * вкладки и раскрывающиеся блоки окон; visibility: hidden). Скрытый элемент фокус не принимает — ловушка Tab на нём
+ * застряла бы. Не offsetParent/getClientRects: в jsdom вёрстки нет (тесты), а у position: fixed offsetParent — null.
+ */
+function visible(el: HTMLElement, root: HTMLElement): boolean {
+  const visibility = getComputedStyle(el).visibility;
+  if (visibility === 'hidden' || visibility === 'collapse') return false;
+  for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+    if (node.hidden || getComputedStyle(node).display === 'none') return false;
+    if (node === root) break;
+  }
+  return true;
+}
+
 function focusable(root: HTMLElement): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => !el.hidden && el.closest('[hidden]') === null);
+  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => visible(el, root));
 }
 
 export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean, onClose: () => void): void {
