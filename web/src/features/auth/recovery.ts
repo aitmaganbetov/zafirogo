@@ -9,7 +9,7 @@ import type { paths } from '../../api/gen/recovery';
 
 const KEY = 'zafiro.recoveryPhone';
 
-const recoveryApi = createApiClient<paths>();
+export const recoveryApi = createApiClient<paths>();
 
 /** PasswordRecovery::available(). */
 export const recoveryQuery = () =>

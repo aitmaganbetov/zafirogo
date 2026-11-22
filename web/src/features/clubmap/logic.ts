@@ -4,13 +4,13 @@
  */
 
 /** Сетка зон (drag/resize) и минимальные размеры (UpdateClubZoneLayoutRequest; диван меньше). */
-export const ZONE_GRID = 20;
-export const ZONE_GAP = 20;
+const ZONE_GRID = 20;
+const ZONE_GAP = 20;
 /** Сетка ПК в зоне: шаг 47×42, отступ 5 (ClubZoneComputerService). */
 export const PC_GRID_X = 47;
 export const PC_GRID_Y = 42;
-export const PC_OFFSET = 5;
-export const MIN_CANVAS = 430;
+const PC_OFFSET = 5;
+const MIN_CANVAS = 430;
 
 export interface Rect {
   readonly x: number;

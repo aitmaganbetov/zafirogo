@@ -5,7 +5,8 @@ import { can, useSession } from '../../auth/session';
 import { Pagination } from '../../components/Pagination';
 import { useAdminPageTitle } from '../../layouts/adminSession';
 import { formatDate } from '../../lib/datetime';
-import { allErrors, createNews, deleteNews, newsQuery, updateNews, type NewsItem, type NewsPage as NewsPageData } from './api';
+import { allErrors } from '../../api/errors';
+import { createNews, deleteNews, newsQuery, updateNews, type NewsItem, type NewsPage as NewsPageData } from './api';
 
 /*
  * Новости клуба — перенос resources/views/news/index.blade.php в режиме клуба (NewsController::index(),

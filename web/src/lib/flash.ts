@@ -18,7 +18,7 @@ export function setFlash(key: FlashKey, message: string): void {
   }
 }
 
-export function takeFlash(key: FlashKey): string | null {
+function takeFlash(key: FlashKey): string | null {
   try {
     const v = sessionStorage.getItem(PREFIX + key);
     if (v !== null) sessionStorage.removeItem(PREFIX + key);

@@ -3,7 +3,8 @@ import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAdminPageTitle } from '../../layouts/adminSession';
 import { PARSE_MONEY_MESSAGES, parseMoney } from '../../lib/money';
-import { createPlan, firstError, plansQuery, updatePlan, type Plan, type PlanForm } from './api';
+import { firstError } from '../../api/errors';
+import { createPlan, plansQuery, updatePlan, type Plan, type PlanForm } from './api';
 import { useSuperadminFlash } from './flash';
 
 /* Тарифы платформы — перенос resources/views/superadmin/plans/index.blade.php и plans/fields.blade.php (PlanController). */

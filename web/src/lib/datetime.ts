@@ -85,24 +85,11 @@ export function formatDate(value: Date | string | number, timeZone: string, form
   return out;
 }
 
-/** Локальная дата клуба «YYYY-MM-DD» (Carbon::now($tz)->toDateString()) — для фильтров ?date=. */
-export function clubDate(value: Date | string | number, timeZone: string): string {
-  return formatDate(value, timeZone, 'Y-m-d');
-}
-
 /** Сдвиг даты «YYYY-MM-DD» на n дней (кнопки пред./след. день). */
 export function addDays(date: string, n: number): string {
   const [y, m, d] = date.split('-').map(Number);
   const t = new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, (d ?? 1) + n));
   return t.toISOString().slice(0, 10);
-}
-
-/**
- * Часы с поправкой на неверные часы устройства: смещение = время сервера − время устройства в момент
- * получения me (server_time). Возвращает «сейчас» по серверу.
- */
-export function serverNow(serverTimeMs: number, receivedAtMs: number, nowMs: number = Date.now()): number {
-  return nowMs + (serverTimeMs - receivedAtMs);
 }
 
 /**

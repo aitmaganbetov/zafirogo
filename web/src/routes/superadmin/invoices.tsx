@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { intParam, invoicesQuery } from '../../features/superadmin/api';
+import { invoicesQuery } from '../../features/superadmin/api';
+import { intParam } from '../../lib/searchParams';
 import { InvoicesPage } from '../../features/superadmin/InvoicesPage';
 
 // GET /invoices — superadmin.invoices.index (routes/web.php:95).

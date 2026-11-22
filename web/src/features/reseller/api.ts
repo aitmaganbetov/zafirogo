@@ -7,7 +7,7 @@ import type { components, paths } from '../../api/gen/reseller';
  * ['reseller', …]. Суммы — целые тиыны, процент — базисные пункты.
  */
 
-const resellerApi = createApiClient<paths>();
+export const resellerApi = createApiClient<paths>();
 
 export type ResellerCabinet = components['schemas']['ResellerCabinet'];
 

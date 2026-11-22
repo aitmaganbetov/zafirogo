@@ -1,5 +1,5 @@
 /** Подписи ролей ($roles в superadmin/users/index и clubs/show) — ключи перевода. */
-export const ROLES: Record<string, string> = { owner: 'Владелец', admin: 'Администратор', manager: 'Менеджер', cashier: 'Кассир', operator: 'Оператор' };
+const ROLES: Record<string, string> = { owner: 'Владелец', admin: 'Администратор', manager: 'Менеджер', cashier: 'Кассир', operator: 'Оператор' };
 
 /** $roles[$role] ?? $role. */
 export function roleLabel(t: (key: string) => string, role: string): string {

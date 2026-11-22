@@ -60,7 +60,7 @@ export const Route = createFileRoute('/_admin/todos/')({
 import { createApiClient, unwrap, idempotencyKey } from '../../api/http';
 import type { paths, components } from '../../api/gen/cash';
 export const cashApi = createApiClient<paths>();
-export type CashShiftState = components['schemas']['CashShiftState'];
+export type CashShift = components['schemas']['CashShift'];
 
 export const shiftQuery = () => queryOptions({ queryKey: ['cash', 'shift'], queryFn: () => unwrap(cashApi.GET('/api/cash/shift')) });
 await unwrap(cashApi.POST('/api/cash/sales', { params: { header: { 'Idempotency-Key': idempotencyKey() } }, body }));
@@ -73,7 +73,8 @@ await unwrap(cashApi.POST('/api/cash/sales', { params: { header: { 'Idempotency-
   `setQueryData`.
 - Денежный POST — новый `Idempotency-Key` на каждую отправку формы (повтор той же отправки — тот же ключ).
 - Ошибки 422 — под полем, как `@error` в Blade (`<p className="…">{t(e.field('x'))}</p>` с классами шаблона);
-  общий текст — `t(e.message)`.
+  общий текст — `t(e.message)`. `$errors->first()` / `$errors->all()` — `firstError(e)` / `allErrors(e)` (`src/api/errors.ts`).
+- Параметры адреса в `validateSearch` — `intParam`, `strParam`, `pageParam` (`src/lib/searchParams.ts`).
 
 ## Деньги и даты (`src/lib/money.ts`, `src/lib/datetime.ts`)
 
@@ -82,7 +83,7 @@ await unwrap(cashApi.POST('/api/cash/sales', { params: { header: { 'Idempotency-
 - Ввод — строка; `parseMoney(s)` → тиыны; > 2 знаков после точки — ошибка формы (Q-002), никакого округления.
   Тексты ошибок — `PARSE_MONEY_MESSAGES` (ключи валидатора Laravel). Никаких `parseFloat`/`Number(x) * 100`.
 - Даты — в поясе клуба `me.club.timezone`: `formatDate(iso, tz, 'd.m.Y H:i')` (токены PHP `date()`),
-  `clubDate(now, tz)` — «сегодня» клуба для `?date=`.
+  `formatDate(now, tz, 'Y-m-d')` — «сегодня» клуба для `?date=`.
 
 ## Переводы (`src/i18n/`)
 
@@ -106,7 +107,7 @@ await unwrap(cashApi.POST('/api/cash/sales', { params: { header: { 'Idempotency-
 ## Компоненты (`src/components/`)
 
 `Pagination` (вид `$paginator->links()` Laravel: `page`, `perPage`, `total`, `count`, `hrefFor`), `ConfirmForm`
-(`<form onsubmit="return confirm(…)">`), `FieldError` (ошибка под полем с классами шаблона), `SettingsCard`
+(`<form onsubmit="return confirm(…)">`), `SettingsCard`
 (`<x-settings.card>`), `PhoneLocalInput` (маска телефона входа). Страницы ошибок 403/404/500 — `pages/ErrorPage.tsx`
 (стандартные шаблоны Laravel). Модалки не обобщаем — каждая переносится своей разметкой. Новый общий компонент — только если разметка повторяется в
 нескольких шаблонах дословно; классы — из Blade без изменений.

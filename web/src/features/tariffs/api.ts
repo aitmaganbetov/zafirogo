@@ -1,6 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
-import { createApiClient, isApiError, unwrap } from '../../api/http';
+import { createApiClient, unwrap } from '../../api/http';
 import type { components, paths } from '../../api/gen/tariffs';
+import { intParam } from '../../lib/searchParams';
 
 /*
  * Зоны и тарифы (api/tariffs.yaml). Laravel: TariffController. Ключи Query — ['tariffs', …].
@@ -9,7 +10,6 @@ import type { components, paths } from '../../api/gen/tariffs';
 export const tariffsApi = createApiClient<paths>();
 
 type S = components['schemas'];
-export type TariffsPage = S['TariffsPage'];
 export type PageTariff = S['PageTariff'];
 export type TariffInput = S['TariffInput'];
 export type WeeklyPeriod = S['WeeklyPeriod'];
@@ -19,8 +19,7 @@ export interface TariffsSearch {
 }
 
 export function parseTariffsSearch(s: Record<string, unknown>): TariffsSearch {
-  const n = typeof s.zone === 'number' ? s.zone : typeof s.zone === 'string' ? Number(s.zone) : NaN;
-  return { zone: Number.isSafeInteger(n) && n > 0 ? n : undefined };
+  return { zone: intParam(s.zone) };
 }
 
 export const tariffsPageQuery = (zone?: number) =>
@@ -32,12 +31,6 @@ export const tariffsPageQuery = (zone?: number) =>
 export const createTariff = (body: TariffInput) => unwrap(tariffsApi.POST('/api/tariffs', { body }));
 export const updateTariff = (id: number, body: TariffInput) => unwrap(tariffsApi.PATCH('/api/tariffs/{tariffId}', { params: { path: { tariffId: id } }, body }));
 export const deleteTariff = (id: number) => unwrap(tariffsApi.DELETE('/api/tariffs/{tariffId}', { params: { path: { tariffId: id } } }));
-
-/** $errors->first(). */
-export function firstError(e: unknown): string {
-  if (isApiError(e)) return Object.values(e.fieldErrors)[0]?.[0] ?? e.message;
-  return e instanceof Error ? e.message : String(e);
-}
 
 export type DurationUnit = 'minutes' | 'hours' | 'days';
 

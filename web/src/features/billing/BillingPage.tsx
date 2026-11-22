@@ -5,7 +5,8 @@ import { useSession } from '../../auth/session';
 import { useAdminPageTitle } from '../../layouts/adminSession';
 import { formatDate } from '../../lib/datetime';
 import { formatMoney } from '../../lib/money';
-import { billingQuery, cancelInvoice, createInvoice, firstError, safePayUrl, type BillingSubscription, type Invoice } from './api';
+import { firstError } from '../../api/errors';
+import { billingQuery, cancelInvoice, createInvoice, safePayUrl, type BillingSubscription, type Invoice } from './api';
 
 /*
  * Подписка — перенос resources/views/billing/index.blade.php (BillingController::show/store/cancel): подписка клуба,

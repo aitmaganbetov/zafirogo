@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { requirePermission } from '../../../auth/guards';
-import { pageParam } from '../../../features/cash/search';
+import { pageParam } from '../../../lib/searchParams';
 import { shopOrdersQuery, type OrderStatusFilter } from '../../../features/shop-orders/api';
 import { ShopOrdersPage } from '../../../features/shop-orders/ShopOrdersPage';
 

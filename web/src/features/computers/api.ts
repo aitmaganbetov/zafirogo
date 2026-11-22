@@ -1,6 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
 import { createApiClient, unwrap } from '../../api/http';
 import type { components, paths } from '../../api/gen/computers';
+import { intParam } from '../../lib/searchParams';
 
 /*
  * Список ПК и подключение ПК (api/computers.yaml). Laravel: ClubComputerListController; коды регистрации, ключи
@@ -9,17 +10,13 @@ import type { components, paths } from '../../api/gen/computers';
 
 export const computersApi = createApiClient<paths>();
 type S = components['schemas'];
-export type ComputerList = S['ComputerList'];
-export type ListedComputer = S['ListedComputer'];
-export type Enrollment = S['Enrollment'];
 
 export interface ComputersSearch {
   readonly page?: number;
 }
 
 export function parseComputersSearch(s: Record<string, unknown>): ComputersSearch {
-  const n = typeof s.page === 'number' ? s.page : typeof s.page === 'string' ? Number(s.page) : NaN;
-  return { page: Number.isSafeInteger(n) && n > 1 ? n : undefined };
+  return { page: intParam(s.page, 2) };
 }
 
 export const computersQuery = (page?: number) =>

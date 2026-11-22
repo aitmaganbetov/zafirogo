@@ -3,7 +3,8 @@ import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isApiError } from '../../api/http';
 import { useAdminPageTitle } from '../../layouts/adminSession';
-import { createLanguage, deleteLanguage, exportTranslations, firstError, importTranslations, languagesQuery, updateLanguage, type ImportResult } from './api';
+import { firstError } from '../../api/errors';
+import { createLanguage, deleteLanguage, exportTranslations, importTranslations, languagesQuery, updateLanguage, type ImportResult } from './api';
 import { saHref } from './host';
 import { useSuperadminFlash } from './flash';
 

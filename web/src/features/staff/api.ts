@@ -11,9 +11,7 @@ export const staffApi = createApiClient<paths>();
 
 type S = components['schemas'];
 export type Worker = S['Worker'];
-export type WorkerPage = S['WorkerPage'];
 export type StaffPermissions = S['StaffPermissions'];
-export type PermissionStaffMember = S['PermissionStaffMember'];
 
 /** ?cursor=… (вперёд) / ?before=… (назад) — keyset вместо ?page= (paginate(50)). */
 export interface WorkersSearch {

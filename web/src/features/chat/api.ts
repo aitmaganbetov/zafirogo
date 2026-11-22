@@ -1,6 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
 import { createApiClient, unwrap } from '../../api/http';
 import type { components, paths } from '../../api/gen/chat';
+import { intParam } from '../../lib/searchParams';
 
 /*
  * Чат с клиентами (api/chat.yaml). Laravel: ChatController. Ключи Query — ['chat', …]; новые сообщения —
@@ -18,8 +19,7 @@ export interface ChatSearch {
 }
 
 export function parseChatSearch(s: Record<string, unknown>): ChatSearch {
-  const n = typeof s.customer === 'number' ? s.customer : typeof s.customer === 'string' ? Number(s.customer) : NaN;
-  return { customer: Number.isSafeInteger(n) && n > 0 ? n : undefined };
+  return { customer: intParam(s.customer) };
 }
 
 export const chatQuery = (customer?: number) =>

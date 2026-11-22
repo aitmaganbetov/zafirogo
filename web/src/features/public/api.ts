@@ -1,12 +1,10 @@
 import { queryOptions } from '@tanstack/react-query';
 import { createApiClient, unwrap } from '../../api/http';
-import type { components, paths } from '../../api/gen/public';
+import type { paths } from '../../api/gen/public';
 
 /* Публичные страницы (api/public.yaml). Ключи Query — ['public', …]. */
 
 export const publicApi = createApiClient<paths>();
-export type Landing = components['schemas']['Landing'];
-export type PricingPlan = components['schemas']['PricingPlan'];
 
 /** Данные всех страниц сайта (LandingController::data()): пробный период и ссылка на установщик агента. */
 export const landingQuery = () =>

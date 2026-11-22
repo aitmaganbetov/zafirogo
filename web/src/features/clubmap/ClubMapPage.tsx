@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { can, useSession } from '../../auth/session';
 import { useAdminPageTitle } from '../../layouts/adminSession';
@@ -23,14 +23,12 @@ import {
 } from './api';
 import { PcLoad } from './PcLoad';
 import { loadTitle } from './healthText';
+import { ComputerInfoPanel } from './ComputerInfoPanel';
 import { BookingModal, ComputerModal, GuestSessionModal, NotifyModal, ZoneModal, type ZoneModalState } from './ClubMapModals';
 import { allErrors, firstError } from './errors';
 import { canvasHeight, collides, computerClasses, PC_GRID_X, PC_GRID_Y, snapComputer, snapSize, snapZone, zoneMinSize, type Rect } from './logic';
 import { useMapLive } from './useMapLive';
 import { useStableHandlers } from '../../lib/useStableHandlers';
-
-// Раздел «Состояние» с графиком (Chart.js) — только когда открыта панель ПК (FE-08).
-const HealthSections = lazy(() => import('./ComputerHealth').then((m) => ({ default: m.HealthSections })));
 
 /*
  * Карта клуба — перенос resources/views/club-map/index.blade.php (ClubZoneController::index()) один-в-один:
@@ -50,11 +48,6 @@ type Drag =
   | { kind: 'zone'; id: number; startX: number; startY: number; start: Layout; mode: 'move' | 'resize' }
   | { kind: 'pc'; id: number; startX: number; startY: number; left: number; top: number; limitX: number; limitY: number };
 
-const STATE_LABELS: Record<string, string> = {
-  online: 'Онлайн', offline: 'Офлайн', available: 'Доступен', busy: 'Занят', service: 'Сервис', restarting: 'Перезапуск',
-  reserved: 'Забронирован', idle: 'Ожидает', in_session: 'В сессии', locked: 'Заблокирован', shutting_down: 'Выключается',
-};
-const STAFF_KINDS: Record<string, string> = { pin: 'Выход из агента по PIN-коду', signin: 'Сотрудник вошёл на ПК', panel: 'Техрежим из панели' };
 const ZONE_STATUS: Record<string, string> = { available: 'Свободно', busy: 'Занято', service: 'Сервис' };
 
 const NO_IDS: readonly number[] = [];
@@ -68,7 +61,7 @@ interface PcHandlers {
 }
 
 /**
- * Плитка ПК. memo: событие computer.load об одном ПК меняет только его `st` (mergeLoad сохраняет ссылки
+ * Плитка ПК. memo: событие computer.load об одном ПК меняет только его `st` (mergeLoads сохраняет ссылки
  * остальных состояний), обработчики стабильны — перерисовывается одна плитка, а не все (FE-03).
  */
 const PcTile = memo(function PcTile({ c, st, x, y, selected, moving, blocked, on }: {
@@ -422,13 +415,6 @@ function ClubMapView({ data, computer }: { readonly data: Page; readonly compute
   });
 
   const info = infoId != null ? data.computers.find((c) => c.id === infoId) : undefined;
-  const infoState = info ? stateOf(info.id) : undefined;
-  const fmt = (v?: string | null) => {
-    if (!v) return t('Нет данных');
-    const d = new Date(v);
-    return Number.isNaN(d.getTime()) ? t('Нет данных') : new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: tz }).format(d);
-  };
-  const label = (v?: string) => (v ? (STATE_LABELS[v] ? t(STATE_LABELS[v] ?? v) : v) : t('Нет данных'));
   const hint = editMode
     ? t('Перетаскивайте карточки мышью. Размер меняется за зелёный угол снизу справа.')
     : canEdit
@@ -488,36 +474,7 @@ function ClubMapView({ data, computer }: { readonly data: Page; readonly compute
             })}
           </div>
         </div>
-        <aside id="computer-info-panel" className="cm-info-panel" hidden={!info} aria-live="polite">
-          <div className="cm-info-heading"><h3>{t('Информация о ПК')}</h3><button id="computer-info-close" type="button" className="cm-info-close" title={t('Закрыть')} aria-label={t('Закрыть')} onClick={() => setInfoId(null)}><i className="fas fa-xmark"></i></button></div>
-          <dl className="cm-info-list">
-            <div><dt>{t('Компьютер')}</dt><dd id="computer-info-name">{info ? `${info.name} (#${info.number})` : '—'}</dd></div>
-            <div><dt>{t('Зона')}</dt><dd id="computer-info-zone">{info ? data.zones.find((z) => z.id === info.zone_id)?.name || t('Нет данных') : '—'}</dd></div>
-            <div><dt>{t('Статус')}</dt><dd id="computer-info-status">{info ? label(infoState?.status) : '—'}</dd></div>
-            <div><dt>{t('Подключение')}</dt><dd id="computer-info-connection">{info ? label(infoState?.connection) : '—'}</dd></div>
-            <div><dt>{t('Последний сигнал')}</dt><dd id="computer-info-last-seen">{info ? fmt(infoState?.last_seen) : '—'}</dd></div>
-            <div><dt>{t('Версия агента')}</dt><dd id="computer-info-agent-version" className={infoState?.agent_outdated ? 'cm-info-warning' : undefined}>{info ? (infoState?.agent_version ? (infoState.agent_outdated ? t('{{version}} · устарела', { version: infoState.agent_version }) : infoState.agent_version) : t('Нет данных')) : '—'}</dd></div>
-          </dl>
-          <section id="computer-session-info" className="cm-info-section" hidden={!(infoState && (infoState.has_session || infoState.agent_state === 'in_session'))}>
-            <h4>{t('Активная сессия')}</h4>
-            <dl className="cm-info-list">
-              <div><dt>{t('Состояние сессии')}</dt><dd id="computer-info-session-state">{infoState?.agent_state ? label(infoState.agent_state) : t('В сессии')}</dd></div>
-              <div><dt>{t('Сессия закончится')}</dt><dd id="computer-info-session-end">{fmt(infoState?.session_ends_at)}</dd></div>
-              <div><dt>{t('Аккаунт')}</dt><dd id="computer-info-session-user">{infoState?.session_user || t('Нет данных')}</dd></div>
-              <div><dt>{t('Куплено')}</dt><dd id="computer-info-session-tariff">{infoState?.session_tariff || t('Нет данных')}</dd></div>
-            </dl>
-          </section>
-          <section id="computer-staff-info" className="cm-info-section" hidden={!infoState?.staff_until}>
-            <h4>{t('Обслуживание')}</h4>
-            <dl className="cm-info-list">
-              <div><dt>{t('Как начато')}</dt><dd id="computer-info-staff-kind">{t(STAFF_KINDS[infoState?.staff_kind ?? ''] ?? 'Нет данных')}</dd></div>
-              <div><dt>{t('Сотрудник')}</dt><dd id="computer-info-staff-name">{infoState?.staff_name || t('Не указан (общий PIN-код)')}</dd></div>
-              <div><dt>{t('До')}</dt><dd id="computer-info-staff-until">{fmt(infoState?.staff_until)}</dd></div>
-            </dl>
-          </section>
-          <section id="computer-reservation-info" className="cm-info-section" hidden={!infoState?.is_reserved}><h4>{t('Информация о брони')}</h4><p>{t('Бронь активна')}</p></section>
-          {info && <Suspense fallback={null}><HealthSections key={info.id} computerId={info.id} fmt={fmt} locale={locale} tz={tz} /></Suspense>}
-        </aside>
+        <ComputerInfoPanel info={info} state={info ? stateOf(info.id) : undefined} zones={data.zones} locale={locale} tz={tz} onClose={() => setInfoId(null)} />
       </div>
       <div id="layout-status" className={`cm-saving${notice.show ? ' show' : ''}`}>{notice.text}</div>
 

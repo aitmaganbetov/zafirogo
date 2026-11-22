@@ -11,7 +11,6 @@ export const warehouseApi = createApiClient<paths>();
 
 type S = components['schemas'];
 export type Product = S['Product'];
-export type WarehouseOverview = S['WarehouseOverview'];
 export type StockPage = S['StockPage'];
 
 export const overviewQuery = () =>

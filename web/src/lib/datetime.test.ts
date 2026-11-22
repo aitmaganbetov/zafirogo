@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addDays, clubDate, clubLocalToISO, formatDate, serverNow } from './datetime';
+import { addDays, clubLocalToISO, formatDate } from './datetime';
 
 describe('даты в поясе клуба', () => {
   const at = '2026-10-30T19:05:09Z';
@@ -10,15 +10,12 @@ describe('даты в поясе клуба', () => {
     expect(formatDate(at, 'UTC', 'j.n.y G:i:s \\d')).toBe('30.10.26 19:05:09 d');
   });
   it('локальная дата клуба', () => {
-    expect(clubDate(at, 'Asia/Almaty')).toBe('2026-10-31');
-    expect(clubDate(at, 'Europe/Moscow')).toBe('2026-10-30');
+    expect(formatDate(at, 'Asia/Almaty', 'Y-m-d')).toBe('2026-10-31');
+    expect(formatDate(at, 'Europe/Moscow', 'Y-m-d')).toBe('2026-10-30');
   });
   it('addDays через границу месяца', () => {
     expect(addDays('2026-10-31', 1)).toBe('2026-11-01');
     expect(addDays('2026-03-01', -1)).toBe('2026-02-28');
-  });
-  it('поправка часов', () => {
-    expect(serverNow(1_000_000, 900_000, 950_000)).toBe(1_050_000);
   });
 });
 

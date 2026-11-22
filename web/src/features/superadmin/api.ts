@@ -1,6 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
-import { apiFetch, createApiClient, errorFromResponse, idempotencyKey, isApiError, unwrap } from '../../api/http';
+import { apiFetch, createApiClient, errorFromResponse, unwrap } from '../../api/http';
 import type { components, paths } from '../../api/gen/superadmin';
+import { intParam, strParam } from '../../lib/searchParams';
 
 /*
  * Кабинет суперадмина (api/superadmin.yaml). Laravel: app/Http/Controllers/Superadmin/*. Ключи Query — ['superadmin', …].
@@ -10,33 +11,12 @@ import type { components, paths } from '../../api/gen/superadmin';
 export const saApi = createApiClient<paths>();
 
 type S = components['schemas'];
-export type Dashboard = S['Dashboard'];
 export type Chart = S['Chart'];
 export type LogRow = S['LogRow'];
-export type ClubList = S['ClubList'];
-export type ClubCard = S['ClubCard'];
 export type SubscriptionBadge = S['SubscriptionBadge'];
-export type AccountList = S['AccountList'];
 export type Plan = S['Plan'];
 export type PlanForm = S['PlanForm'];
-export type LogList = S['LogList'];
-export type PlatformNewsPage = S['PlatformNewsPage'];
-export type PlatformNewsItem = S['PlatformNewsItem'];
-export type LanguageList = S['LanguageList'];
-export type TranslationPage = S['TranslationPage'];
-export type TelegramState = S['TelegramState'];
 export type ImportResult = S['ImportResult'];
-
-/** Число из параметра адреса (страница, id) или undefined. */
-export function intParam(v: unknown, min = 1): number | undefined {
-  const n = typeof v === 'number' ? v : typeof v === 'string' && v !== '' ? Number(v) : NaN;
-  return Number.isSafeInteger(n) && n >= min ? n : undefined;
-}
-
-export function strParam(v: unknown): string | undefined {
-  if (typeof v === 'number') return String(v);
-  return typeof v === 'string' && v !== '' ? v : undefined;
-}
 
 /** Строка запроса без пустых значений (withQueryString()). */
 export function qs(params: Record<string, string | number | boolean | readonly (string | number)[] | undefined | null>): string {
@@ -129,8 +109,6 @@ export const setClubDiscount = (clubId: number, body: S['DiscountForm']) =>
 // Оплаты: счета клубов за подписку (InvoiceController)
 // ---------------------------------------------------------------------------
 
-export type InvoiceBoard = S['InvoiceBoard'];
-
 export const invoicesQuery = (page?: number) =>
   queryOptions({
     queryKey: ['superadmin', 'invoices', page ?? 1],
@@ -147,7 +125,6 @@ export const setInvoiceKaspi = (body: S['KaspiForm']) => unwrap(saApi.POST('/api
 // Реселлеры (тема Д)
 // ---------------------------------------------------------------------------
 
-export type ResellerBoard = S['ResellerBoard'];
 export type ResellerCard = S['ResellerCard'];
 
 export interface ResellersSearch {
@@ -176,7 +153,6 @@ export const deleteReseller = (resellerId: number, code: string) =>
 /** Выплата — со свежим кодом TOTP и ключом идемпотентности формы (повтор не создаёт вторую выплату). */
 export const payoutReseller = (resellerId: number, body: S['ResellerPayoutForm'], key: string) =>
   unwrap(saApi.POST('/api/superadmin/resellers/{resellerId}/payouts', { params: { path: { resellerId }, header: { 'Idempotency-Key': key } }, body }));
-export { idempotencyKey };
 
 // ---------------------------------------------------------------------------
 // Пользователи, тарифы, журнал
@@ -334,12 +310,3 @@ export const setAlerts = (botToken: string, chatId: string) =>
   unwrap(saApi.POST('/api/superadmin/telegram/alerts', { body: { bot_token: botToken, chat_id: chatId || null } }));
 export const testAlerts = () => unwrap(saApi.POST('/api/superadmin/telegram/alerts/test'));
 export const clearAlerts = () => unwrap(saApi.DELETE('/api/superadmin/telegram/alerts'));
-
-/** Первая ошибка ответа ($errors->first()). */
-export function firstError(e: unknown): string {
-  if (isApiError(e)) {
-    const list = Object.values(e.fieldErrors).flat();
-    return list[0] ?? e.message;
-  }
-  return e instanceof Error ? e.message : String(e);
-}

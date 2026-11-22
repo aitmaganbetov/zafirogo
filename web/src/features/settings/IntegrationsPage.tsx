@@ -5,7 +5,8 @@ import { useSession } from '../../auth/session';
 import { SettingsCard } from '../../components/SettingsCard';
 import { SettingsLayout } from '../../components/SettingsLayout';
 import { formatDate } from '../../lib/datetime';
-import { allErrors, deliveriesPage, integrationsApi, integrationsQuery, type CreatedSecret, type DeliveryPage } from './api';
+import { allErrors } from '../../api/errors';
+import { deliveriesPage, integrationsApi, integrationsQuery, type CreatedSecret, type DeliveryPage } from './api';
 import { unwrap } from '../../api/http';
 import { useSettingsResult } from './status';
 

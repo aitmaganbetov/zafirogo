@@ -9,7 +9,7 @@ import createClient, { type Client } from 'openapi-fetch';
  * - ошибки — ApiError с типом (validation/forbidden/conflict/rate_limited/…), 422 — ошибки полей формы.
  */
 
-export const CSRF_COOKIE = '__Host-zafiro_csrf';
+const CSRF_COOKIE = '__Host-zafiro_csrf';
 const REFRESH_PATH = '/api/auth/refresh';
 
 /** Ответ входа/обновления (AuthSession в api/auth.yaml), без привязки к сгенерированным типам. */
@@ -64,7 +64,7 @@ export class ApiError extends Error {
   }
 }
 
-export function kindOf(status: number): ApiErrorKind {
+function kindOf(status: number): ApiErrorKind {
   switch (status) {
     case 0:
       return 'network';
@@ -137,7 +137,7 @@ export function setUnauthenticatedHandler(fn: (() => void) | null): void {
   onUnauthenticated = fn;
 }
 
-export function readCookie(name: string): string | null {
+function readCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
   for (const part of document.cookie.split(';')) {
     const [k, ...v] = part.trim().split('=');

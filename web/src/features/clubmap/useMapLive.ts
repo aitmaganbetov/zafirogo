@@ -30,15 +30,6 @@ export interface LoadEvent {
   readonly gpu_temp_deci?: number;
 }
 
-/** Подставить загрузку и проблемы из computer.load в данные экрана. */
-export function mergeLoad(page: ClubMapPage, ev: LoadEvent): ClubMapPage {
-  if (!ev.computer_id) return page;
-  return {
-    ...page,
-    states: page.states.map((s) => (s.id === ev.computer_id ? { ...s, load: ev.load ?? null, problems: ev.problems ?? [], rtt_ms: ev.rtt_ms ?? s.rtt_ms } : s)),
-  };
-}
-
 /**
  * Подставить пачку computer.load (последнее событие каждого ПК) одним проходом. Ссылки состояний остальных ПК,
  * zones и computers сохраняются — перерисовываются только плитки ПК из пачки.

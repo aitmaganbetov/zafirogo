@@ -10,19 +10,15 @@ import type { components, paths } from '../../api/gen/cash';
 export const cashApi = createApiClient<paths>();
 
 type S = components['schemas'];
-export type CashShiftState = S['CashShiftState'];
 export type CashShift = S['CashShift'];
-export type CashCatalog = S['CashCatalog'];
 export type CashProduct = S['CashProduct'];
 export type CashService = S['CashService'];
 export type CashCustomer = S['CashCustomer'];
 export type CashReceipt = S['CashReceipt'];
-export type CashTransaction = S['CashTransaction'];
 export type CashReport = S['CashReport'];
-export type CashOperationPage = S['CashOperationPage'];
 
 /** Товаров витрины на одну подгрузку (решение Q-070: вместо всех товаров в HTML). */
-export const POS_PAGE_SIZE = 60;
+const POS_PAGE_SIZE = 60;
 
 export const shiftQuery = () =>
   queryOptions({ queryKey: ['cash', 'shift'], queryFn: ({ signal }) => unwrap(cashApi.GET('/api/cash/shift', { signal })) });
@@ -30,7 +26,7 @@ export const shiftQuery = () =>
 export const catalogQuery = () =>
   queryOptions({ queryKey: ['cash', 'catalog'], queryFn: ({ signal }) => unwrap(cashApi.GET('/api/cash/catalog', { signal })) });
 
-export function fetchProducts(category: string, cursor: string | null, signal?: AbortSignal) {
+function fetchProducts(category: string, cursor: string | null, signal?: AbortSignal) {
   return unwrap(
     cashApi.GET('/api/cash/products', {
       params: { query: { category: category || undefined, cursor: cursor ?? undefined, limit: POS_PAGE_SIZE } },

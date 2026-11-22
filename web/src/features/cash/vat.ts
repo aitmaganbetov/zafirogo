@@ -4,7 +4,7 @@
  * Laravel: cash-register/index.blade.php render(): Math.round(total * 5 / 105) (total в тенге).
  */
 
-export const VAT_RATE_PERCENT = 5;
+const VAT_RATE_PERCENT = 5;
 
 /** НДС, включённый в сумму (тиыны), — целые тенге (половина вверх), результат в тиынах (кратен 100). */
 export function vatIncludedTiyn(totalTiyn: number): number {

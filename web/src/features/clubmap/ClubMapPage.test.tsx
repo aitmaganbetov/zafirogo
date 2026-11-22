@@ -8,7 +8,7 @@ import { ClubMapPage } from './ClubMapPage';
 import { durationLabel } from './errors';
 import { percent } from './healthText';
 import { LIVE_WINDOW_MS, pushSample, resetLiveSeries, sample, samplesOf } from './liveSeries';
-import { mergeLoad, mergeStates } from './useMapLive';
+import { mergeLoads, mergeStates } from './useMapLive';
 
 const page: Page = {
   zones: [
@@ -454,8 +454,8 @@ describe('ClubMapPage', () => {
   });
 
   it('merges computer.load and converts basis points', () => {
-    expect(mergeLoad(page, { computer_id: 8, load: { cpu_bp: 1, ram_bp: 2, idle_seconds: 3 }, problems: [] }).states[1]?.load?.ram_bp).toBe(2);
-    expect(mergeLoad(page, {})).toBe(page);
+    expect(mergeLoads(page, new Map([[8, { computer_id: 8, load: { cpu_bp: 1, ram_bp: 2, idle_seconds: 3 }, problems: [] }]])).states[1]?.load?.ram_bp).toBe(2);
+    expect(mergeLoads(page, new Map())).toBe(page);
     expect([percent(0), percent(4249), percent(4250), percent(10000), percent(20000)]).toEqual([0, 42, 43, 100, 100]);
   });
 });

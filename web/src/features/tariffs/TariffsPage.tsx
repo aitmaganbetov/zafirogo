@@ -7,11 +7,11 @@ import { ConfirmForm } from '../../components/ConfirmForm';
 import { useAdminPageTitle } from '../../layouts/adminSession';
 import { setFlash, useFlash } from '../../lib/flash';
 import { formatMoney, parseMoney, PARSE_MONEY_MESSAGES } from '../../lib/money';
+import { firstError } from '../../api/errors';
 import {
   ALWAYS,
   createTariff,
   deleteTariff,
-  firstError,
   perMinuteTiyn,
   priceInput,
   splitMinutes,
@@ -226,118 +226,7 @@ export function TariffsPage({ zone, editId }: { zone?: number; editId?: number }
           <div className="tariff-dialog-body">
             {error && <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">{error}</div>}
             <form method="POST" className="space-y-7" onSubmit={submit}>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div>
-                  <label htmlFor="payment-method" className={LABEL}>
-                    {t('Как клиент может оплатить этот абонемент?')}
-                  </label>
-                  <select id="payment-method" name="payment_method" required className={FIELD} value={values.payment_method} onChange={(e) => set('payment_method', e.target.value)}>
-                    <option value="main_balance_only">{t('Можно приобрести только за основной баланс')}</option>
-                    <option value="main_or_bonus">{t('Можно приобрести за основной или бонусный баланс')}</option>
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="tariff-name" className={LABEL}>
-                    {t('Название')}
-                  </label>
-                  <input id="tariff-name" name="name" value={values.name} onChange={(e) => set('name', e.target.value)} required maxLength={100} className={FIELD} />
-                </div>
-                <div>
-                  <label htmlFor="tariff-duration" className={LABEL}>
-                    {t('Длительность')}
-                  </label>
-                  <div className="tariff-duration-fields">
-                    <input id="tariff-duration" name="duration_value" type="number" value={values.duration_value} onChange={(e) => set('duration_value', e.target.value)} required min={1} max={10080} className={FIELD} />
-                    <select name="duration_unit" className={SELECT} value={values.duration_unit} onChange={(e) => set('duration_unit', e.target.value)}>
-                      <option value="hours">{t('Часов')}</option>
-                      <option value="minutes">{t('Минут')}</option>
-                      <option value="days">{t('Дней')}</option>
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label htmlFor="tariff-price" className={LABEL}>
-                    {t('Стоимость')}
-                  </label>
-                  <input id="tariff-price" name="price" type="number" value={values.price} onChange={(e) => set('price', e.target.value)} required min={0} max="9999999999.99" step="0.01" className={FIELD} />
-                </div>
-                <div className="flex items-center gap-3 pt-6">
-                  <input id="discount-enabled" type="checkbox" name="discount_enabled" value="1" checked={values.discount_enabled} onChange={(e) => set('discount_enabled', e.target.checked)} className="brand-check rounded border-gray-300" />
-                  <label htmlFor="discount-enabled" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    {t('Применять скидку')}
-                  </label>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 border-t border-gray-200 pt-6 dark:border-gray-800 md:grid-cols-2">
-                <div>
-                  <label htmlFor="tariff-zones" className={LABEL}>
-                    {t('Зоны')}
-                  </label>
-                  <select
-                    id="tariff-zones"
-                    name="zone_ids[]"
-                    multiple
-                    size={3}
-                    className={FIELD}
-                    value={values.zone_ids}
-                    onChange={(e) =>
-                      set(
-                        'zone_ids',
-                        [...e.target.selectedOptions].map((o) => o.value),
-                      )
-                    }
-                  >
-                    {data.zones.map((z) => (
-                      <option key={z.id} value={z.id}>
-                        {z.name}
-                      </option>
-                    ))}
-                  </select>
-                  {data.zones.length === 0 && <p className="mt-1 text-xs text-gray-500">{t('Сначала создайте зону.')}</p>}
-                </div>
-                <div className="space-y-4">
-                  <div>
-                    <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                      <input type="checkbox" name="usage_limit_enabled" value="1" checked={values.usage_limit_enabled} onChange={(e) => set('usage_limit_enabled', e.target.checked)} className="brand-check rounded border-gray-300" />
-                      {t('Ограничить использование')}
-                    </label>
-                    <p className="mb-2 text-xs text-gray-500">{t('Абонемент сгорит через указанное время после активации.')}</p>
-                    <div className="tariff-duration-fields">
-                      <input name="usage_limit_value" type="number" min={1} max={10080} value={values.usage_limit_value} onChange={(e) => set('usage_limit_value', e.target.value)} className={SMALL_INPUT} />
-                      <select name="usage_limit_unit" className={SMALL_SELECT} value={values.usage_limit_unit} onChange={(e) => set('usage_limit_unit', e.target.value)}>
-                        <option value="hours">{t('Часов')}</option>
-                        <option value="minutes">{t('Минут')}</option>
-                        <option value="days">{t('Дней')}</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-                      <input type="checkbox" name="quantity_limit_enabled" value="1" checked={values.quantity_limit_enabled} onChange={(e) => set('quantity_limit_enabled', e.target.checked)} className="brand-check rounded border-gray-300" />
-                      {t('Ограничить количество')}
-                    </label>
-                    <p className="mb-2 text-xs text-gray-500">{t('Сколько абонементов будет доступно к продаже.')}</p>
-                    <input name="quantity_limit" type="number" min={1} max={1000000} value={values.quantity_limit} onChange={(e) => set('quantity_limit', e.target.value)} className={SMALL_INPUT} />
-                  </div>
-                </div>
-              </div>
-
-              <section className="border-t border-gray-200 pt-6 dark:border-gray-800">
-                <div className="mb-3">
-                  <h5 className="text-sm font-semibold text-gray-900 dark:text-white">{t('Время продажи')}</h5>
-                  <p className="text-xs text-gray-500">{t('Дни и время, когда тариф продаётся в агенте и на кассе. В другое время он не показывается.')}</p>
-                </div>
-                <TariffPeriods field="sale_periods" periods={values.sale_periods} onChange={(p) => set('sale_periods', p)} />
-              </section>
-
-              <section className="border-t border-gray-200 pt-6 dark:border-gray-800">
-                <div className="mb-3">
-                  <h5 className="text-sm font-semibold text-gray-900 dark:text-white">{t('Период действия')}</h5>
-                  <p className="text-xs text-gray-500">{t('Дни и время, когда абонемент можно использовать.')}</p>
-                </div>
-                <TariffPeriods field="validity_periods" periods={values.validity_periods} onChange={(p) => set('validity_periods', p)} />
-              </section>
+              <TariffFields values={values} set={set} zones={data.zones} />
 
               <div className="flex flex-wrap items-center justify-between gap-4 border-t border-gray-200 pt-5 dark:border-gray-800">
                 <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
@@ -514,5 +403,125 @@ export function TariffsPage({ zone, editId }: { zone?: number; editId?: number }
         </div>
       </section>
     </div>
+  );
+}
+
+/** Поля формы тарифа (tariffs/index.blade.php: оплата, длительность, цена, зоны, лимиты, периоды продажи и действия). */
+function TariffFields({ values, set, zones }: {
+  readonly values: FormValues;
+  readonly set: <K extends keyof FormValues>(k: K, v: FormValues[K]) => void;
+  readonly zones: readonly { readonly id: number; readonly name: string }[];
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div>
+          <label htmlFor="payment-method" className={LABEL}>
+            {t('Как клиент может оплатить этот абонемент?')}
+          </label>
+          <select id="payment-method" name="payment_method" required className={FIELD} value={values.payment_method} onChange={(e) => set('payment_method', e.target.value)}>
+            <option value="main_balance_only">{t('Можно приобрести только за основной баланс')}</option>
+            <option value="main_or_bonus">{t('Можно приобрести за основной или бонусный баланс')}</option>
+          </select>
+        </div>
+        <div>
+          <label htmlFor="tariff-name" className={LABEL}>
+            {t('Название')}
+          </label>
+          <input id="tariff-name" name="name" value={values.name} onChange={(e) => set('name', e.target.value)} required maxLength={100} className={FIELD} />
+        </div>
+        <div>
+          <label htmlFor="tariff-duration" className={LABEL}>
+            {t('Длительность')}
+          </label>
+          <div className="tariff-duration-fields">
+            <input id="tariff-duration" name="duration_value" type="number" value={values.duration_value} onChange={(e) => set('duration_value', e.target.value)} required min={1} max={10080} className={FIELD} />
+            <select name="duration_unit" className={SELECT} value={values.duration_unit} onChange={(e) => set('duration_unit', e.target.value)}>
+              <option value="hours">{t('Часов')}</option>
+              <option value="minutes">{t('Минут')}</option>
+              <option value="days">{t('Дней')}</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label htmlFor="tariff-price" className={LABEL}>
+            {t('Стоимость')}
+          </label>
+          <input id="tariff-price" name="price" type="number" value={values.price} onChange={(e) => set('price', e.target.value)} required min={0} max="9999999999.99" step="0.01" className={FIELD} />
+        </div>
+        <div className="flex items-center gap-3 pt-6">
+          <input id="discount-enabled" type="checkbox" name="discount_enabled" value="1" checked={values.discount_enabled} onChange={(e) => set('discount_enabled', e.target.checked)} className="brand-check rounded border-gray-300" />
+          <label htmlFor="discount-enabled" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            {t('Применять скидку')}
+          </label>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 border-t border-gray-200 pt-6 dark:border-gray-800 md:grid-cols-2">
+        <div>
+          <label htmlFor="tariff-zones" className={LABEL}>
+            {t('Зоны')}
+          </label>
+          <select
+            id="tariff-zones"
+            name="zone_ids[]"
+            multiple
+            size={3}
+            className={FIELD}
+            value={values.zone_ids}
+            onChange={(e) => set('zone_ids', [...e.target.selectedOptions].map((o) => o.value))}
+          >
+            {zones.map((z) => (
+              <option key={z.id} value={z.id}>
+                {z.name}
+              </option>
+            ))}
+          </select>
+          {zones.length === 0 && <p className="mt-1 text-xs text-gray-500">{t('Сначала создайте зону.')}</p>}
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+              <input type="checkbox" name="usage_limit_enabled" value="1" checked={values.usage_limit_enabled} onChange={(e) => set('usage_limit_enabled', e.target.checked)} className="brand-check rounded border-gray-300" />
+              {t('Ограничить использование')}
+            </label>
+            <p className="mb-2 text-xs text-gray-500">{t('Абонемент сгорит через указанное время после активации.')}</p>
+            <div className="tariff-duration-fields">
+              <input name="usage_limit_value" type="number" min={1} max={10080} value={values.usage_limit_value} onChange={(e) => set('usage_limit_value', e.target.value)} className={SMALL_INPUT} />
+              <select name="usage_limit_unit" className={SMALL_SELECT} value={values.usage_limit_unit} onChange={(e) => set('usage_limit_unit', e.target.value)}>
+                <option value="hours">{t('Часов')}</option>
+                <option value="minutes">{t('Минут')}</option>
+                <option value="days">{t('Дней')}</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+              <input type="checkbox" name="quantity_limit_enabled" value="1" checked={values.quantity_limit_enabled} onChange={(e) => set('quantity_limit_enabled', e.target.checked)} className="brand-check rounded border-gray-300" />
+              {t('Ограничить количество')}
+            </label>
+            <p className="mb-2 text-xs text-gray-500">{t('Сколько абонементов будет доступно к продаже.')}</p>
+            <input name="quantity_limit" type="number" min={1} max={1000000} value={values.quantity_limit} onChange={(e) => set('quantity_limit', e.target.value)} className={SMALL_INPUT} />
+          </div>
+        </div>
+      </div>
+
+      <section className="border-t border-gray-200 pt-6 dark:border-gray-800">
+        <div className="mb-3">
+          <h5 className="text-sm font-semibold text-gray-900 dark:text-white">{t('Время продажи')}</h5>
+          <p className="text-xs text-gray-500">{t('Дни и время, когда тариф продаётся в агенте и на кассе. В другое время он не показывается.')}</p>
+        </div>
+        <TariffPeriods field="sale_periods" periods={values.sale_periods} onChange={(p) => set('sale_periods', p)} />
+      </section>
+
+      <section className="border-t border-gray-200 pt-6 dark:border-gray-800">
+        <div className="mb-3">
+          <h5 className="text-sm font-semibold text-gray-900 dark:text-white">{t('Период действия')}</h5>
+          <p className="text-xs text-gray-500">{t('Дни и время, когда абонемент можно использовать.')}</p>
+        </div>
+        <TariffPeriods field="validity_periods" periods={values.validity_periods} onChange={(p) => set('validity_periods', p)} />
+      </section>
+    </>
   );
 }

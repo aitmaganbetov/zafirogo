@@ -4,7 +4,8 @@ import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pagination } from '../../components/Pagination';
 import { useAdminPageTitle } from '../../layouts/adminSession';
-import { firstError, qs, saveTranslations, translationsQuery, type TranslationsSearch } from './api';
+import { firstError } from '../../api/errors';
+import { qs, saveTranslations, translationsQuery, type TranslationsSearch } from './api';
 import { saHref } from './host';
 import { useSuperadminFlash } from './flash';
 

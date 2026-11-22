@@ -1,7 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ConfirmForm } from './ConfirmForm';
-import { FieldError } from './FieldError';
 import { PhoneLocalInput } from './PhoneLocalInput';
 import { SettingsCard } from './SettingsCard';
 
@@ -29,13 +28,6 @@ describe('общие компоненты', () => {
     fireEvent.click(screen.getByText('Удалить'));
     expect(ok).toHaveBeenCalledTimes(1);
     expect(confirm).toHaveBeenCalledWith('Удалить?');
-  });
-
-  it('FieldError: класс шаблона и ключ перевода', () => {
-    const { container, rerender } = render(<FieldError message={null} className="text-red-600" />);
-    expect(container).toBeEmptyDOMElement();
-    rerender(<FieldError message="Имя обязательно." className="text-red-600" />);
-    expect(screen.getByText('Имя обязательно.')).toHaveClass('text-red-600');
   });
 
   it('PhoneLocalInput: маска при вводе и атрибуты шаблона', () => {

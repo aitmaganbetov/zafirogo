@@ -21,7 +21,6 @@ export type ComputerCard = S['ComputerCard'];
 export type ComputerState = S['ComputerState'];
 export type MapTariff = S['MapTariff'];
 export type ZoneInput = S['ZoneInput'];
-export type ControlResult = S['ControlResult'];
 export type HealthView = S['ComputerHealthView'];
 export type HealthEvent = S['HealthEvent'];
 export type HealthProblem = S['HealthProblem'];

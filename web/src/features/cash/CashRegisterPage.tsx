@@ -428,7 +428,7 @@ function TopUp({ hidden, readOnly, onStatus, onError }: { hidden: boolean; readO
   });
 
   const list = users.data ?? [];
-    return (
+  return (
     <section id="balance-view" className="pos-balance-view" hidden={hidden}>
       <div className="pos-order-head">
         <h3>{t('Пополнение баланса')}</h3>

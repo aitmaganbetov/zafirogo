@@ -1,7 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useTranslation } from 'react-i18next';
 import { NewsPage, type NewsMode } from '../../features/news/NewsPage';
-import { createPlatformNews, deletePlatformNews, intParam, listPlatformNews, platformNewsQuery, updatePlatformNews } from '../../features/superadmin/api';
+import { createPlatformNews, deletePlatformNews, listPlatformNews, platformNewsQuery, updatePlatformNews } from '../../features/superadmin/api';
+import { intParam } from '../../lib/searchParams';
 import { saHref } from '../../features/superadmin/host';
 import { useSuperadminFlash } from '../../features/superadmin/flash';
 

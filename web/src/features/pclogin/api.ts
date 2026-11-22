@@ -1,13 +1,12 @@
 import { queryOptions } from '@tanstack/react-query';
 import { createApiClient, unwrap } from '../../api/http';
-import type { components, paths } from '../../api/gen/pclogin';
+import type { paths } from '../../api/gen/pclogin';
 
 /*
  * Вход на ПК по QR с телефона (api/pclogin.yaml; QrLoginController). Ключи Query — ['pclogin', code].
  */
 
 export const pcLoginApi = createApiClient<paths>();
-export type PcLogin = components['schemas']['PcLogin'];
 
 export const pcLoginQuery = (code: string) =>
   queryOptions({

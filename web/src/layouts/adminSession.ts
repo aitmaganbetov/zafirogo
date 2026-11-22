@@ -5,10 +5,10 @@ import type { AdminSession } from './types';
 export const APP_NAME = 'Zafiro';
 
 /**
- * Заглушка до появления API сессии (Этап 1): пустой пользователь-владелец без клубов.
- * Приложение передаёт настоящие данные через <AdminSessionContext.Provider value={...}>.
+ * Значение по умолчанию (вне AdminShell — например, в тестах компонентов): пустой пользователь-владелец без клубов.
+ * Настоящие данные (/api/auth/me) передаёт AdminShell через <AdminSessionContext.Provider value={...}>.
  */
-export const STUB_ADMIN_SESSION: AdminSession = {
+const STUB_ADMIN_SESSION: AdminSession = {
   user: { name: '' },
   membership: { clubId: 0, clubName: '', role: 'owner', permissions: {} },
   availableClubs: [],

@@ -14,7 +14,7 @@ import { useRealtimeClient } from '../../realtime/context';
 const api = createApiClient<paths>();
 
 /** События, после которых список уведомлений может измениться (docs/realtime.md). */
-export const NOTIFICATION_EVENTS = ['notifications.*', 'chat.unread', 'shop_order.*', 'stock.*'] as const;
+const NOTIFICATION_EVENTS = ['notifications.*', 'chat.unread', 'shop_order.*', 'stock.*'] as const;
 
 export function notificationsSource(client: RealtimeClient): NotificationsSource {
   const load = (): Promise<NotificationsPayload> => unwrap(api.GET('/api/notifications'));

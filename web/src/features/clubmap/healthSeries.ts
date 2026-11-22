@@ -7,7 +7,7 @@ import type { ChartSeries } from './HealthChart';
 export type HealthSeriesKey = 'cpu' | 'ram' | 'cpuTemp' | 'gpuTemp';
 
 /** Цвета серий графиков здоровья (как у дашборда и полосок карточки ПК). */
-export const SERIES_COLORS: Readonly<Record<HealthSeriesKey, string>> = {
+const SERIES_COLORS: Readonly<Record<HealthSeriesKey, string>> = {
   cpu: 'rgba(22, 163, 74, 1)',
   ram: 'rgba(14, 165, 233, 1)',
   cpuTemp: 'rgba(245, 158, 11, 1)',

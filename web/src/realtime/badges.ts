@@ -10,7 +10,7 @@ import { useRealtimeEvent } from './hooks';
  * shop_order.created|updated {new_count} (docs/realtime.md).
  */
 
-const layoutApi = createApiClient<paths>();
+export const layoutApi = createApiClient<paths>();
 export const BADGES_KEY = ['layout', 'badges'] as const;
 
 export function useSidebarBadges(): SidebarBadges {

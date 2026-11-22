@@ -1,5 +1,6 @@
 import { createFileRoute, notFound } from '@tanstack/react-router';
-import { clubQuery, intParam } from '../../../features/superadmin/api';
+import { clubQuery } from '../../../features/superadmin/api';
+import { intParam } from '../../../lib/searchParams';
 import { ClubPage } from '../../../features/superadmin/ClubPage';
 
 // GET /clubs/{club} — superadmin.clubs.show (routes/web.php:65).

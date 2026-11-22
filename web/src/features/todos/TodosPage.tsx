@@ -8,7 +8,8 @@ import { useAdminPageTitle } from '../../layouts/adminSession';
 import { addDays, formatDate } from '../../lib/datetime';
 import { setFlash, useFlash } from '../../lib/flash';
 import { useInvalidateOn } from '../../realtime/hooks';
-import { createTodo, deleteTodo, firstError, todosQuery, toggleTodo, type Todo } from './api';
+import { firstError } from '../../api/errors';
+import { createTodo, deleteTodo, todosQuery, toggleTodo, type Todo } from './api';
 
 /*
  * To Do List — перенос resources/views/todos/index.blade.php (TodoController::index()). Опрос /todos/state раз в

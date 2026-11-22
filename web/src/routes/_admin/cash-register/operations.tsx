@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { requirePermission } from '../../../auth/guards';
 import { operationsQuery } from '../../../features/cash/api';
 import { OperationsPage } from '../../../features/cash/OperationsPage';
-import { pageParam } from '../../../features/cash/search';
+import { pageParam } from '../../../lib/searchParams';
 
 // GET /cash-register/operations (routes/web.php:278): cash.view; без открытой смены — 404 (firstOrFail).
 export const Route = createFileRoute('/_admin/cash-register/operations')({

@@ -1,6 +1,6 @@
 import { queryOptions } from '@tanstack/react-query';
 import { createApiClient, unwrap } from '../../api/http';
-import type { components, paths } from '../../api/gen/activitylogs';
+import type { paths } from '../../api/gen/activitylogs';
 
 /*
  * Логи действий (api/activitylogs.yaml). Laravel: ActivityLogController::index(). Страницы — keyset (cursor):
@@ -8,10 +8,6 @@ import type { components, paths } from '../../api/gen/activitylogs';
  */
 
 export const activityLogsApi = createApiClient<paths>();
-
-type S = components['schemas'];
-export type ActivityLogPage = S['ActivityLogPage'];
-export type ActivityLogEntry = S['ActivityLogEntry'];
 
 export interface ActivityLogsSearch {
   readonly from?: string;

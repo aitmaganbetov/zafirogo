@@ -11,7 +11,7 @@ import { operationsQuery } from './api';
 import { RefundButton } from './RefundButton';
 
 /** Маркер описания продажи POS (App\Models\CashTransaction::POS_SALE): показывается переведённым. */
-export const POS_SALE = 'Продажа POS';
+const POS_SALE = 'Продажа POS';
 
 /*
  * Операции смены — перенос cash-register/operations.blade.php (CashRegisterController::operations()): приходы открытой

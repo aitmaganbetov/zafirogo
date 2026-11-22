@@ -14,8 +14,6 @@ export const integrationsApi = createApiClient<IP>();
 
 export type ClubSettingsPage = SC['schemas']['ClubSettingsPage'];
 export type PercentLevel = SC['schemas']['PercentLevel'];
-export type LanguagesPage = SC['schemas']['LanguagesPage'];
-export type IntegrationsPage = IC['schemas']['IntegrationsPage'];
 export type CreatedSecret = IC['schemas']['CreatedSecret'];
 export type DeliveryPage = IC['schemas']['DeliveryPage'];
 export type SettingsSection = 'club' | 'finances' | 'guests';
@@ -71,15 +69,6 @@ export function firstError(e: unknown, ...fields: string[]): string | undefined 
     if (m) return m;
   }
   return fields.length === 0 ? e.message : undefined;
-}
-
-/** $errors->all(). */
-export function allErrors(e: unknown): string[] {
-  if (isApiError(e)) {
-    const list = Object.values(e.fieldErrors).flat();
-    return list.length > 0 ? list : [e.message];
-  }
-  return [e instanceof Error ? e.message : String(e)];
 }
 
 /** Сотые (тиыны, базисные пункты) → число PHP для поля ввода: 100050 → «1000.5», 500 → «5». */

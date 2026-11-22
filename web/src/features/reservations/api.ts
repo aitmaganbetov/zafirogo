@@ -1,6 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
-import { createApiClient, isApiError, unwrap } from '../../api/http';
+import { createApiClient, unwrap } from '../../api/http';
 import type { components, paths } from '../../api/gen/reservations';
+import { intParam } from '../../lib/searchParams';
 
 /*
  * Брони ПК (api/reservations.yaml). Laravel: ComputerReservationController, ComputerReservations.
@@ -11,7 +12,6 @@ export const reservationsApi = createApiClient<paths>();
 
 type S = components['schemas'];
 export type Reservation = S['Reservation'];
-export type ReservationsPage = S['ReservationsPage'];
 export type ReservationInput = S['ReservationInput'];
 export type ReservationCustomer = S['ReservationCustomer'];
 
@@ -21,10 +21,9 @@ export interface ReservationsSearch {
 }
 
 export function parseReservationsSearch(s: Record<string, unknown>): ReservationsSearch {
-  const n = typeof s.page === 'number' ? s.page : typeof s.page === 'string' ? Number(s.page) : NaN;
   return {
     date: typeof s.date === 'string' && s.date !== '' ? s.date : undefined,
-    page: Number.isSafeInteger(n) && n > 1 ? n : undefined,
+    page: intParam(s.page, 2),
   };
 }
 
@@ -46,11 +45,3 @@ export async function searchCustomers(q: string, signal: AbortSignal): Promise<R
   return r.data;
 }
 
-/** $errors->all(): все ошибки ответа по порядку (тексты сервер перевёл на язык клуба). */
-export function allErrors(e: unknown): string[] {
-  if (isApiError(e)) {
-    const list = Object.values(e.fieldErrors).flat();
-    return list.length > 0 ? list : [e.message];
-  }
-  return [e instanceof Error ? e.message : String(e)];
-}

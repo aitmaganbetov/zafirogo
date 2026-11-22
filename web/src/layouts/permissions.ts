@@ -47,7 +47,7 @@ function rolesFor(right: string): readonly ClubRole[] | undefined {
 }
 
 /** ClubPermissions::exists() */
-export function permissionExists(right: string): boolean {
+function permissionExists(right: string): boolean {
   return rolesFor(right) !== undefined;
 }
 

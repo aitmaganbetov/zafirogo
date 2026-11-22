@@ -2,13 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { isApiError } from '../../api/http';
+import { idempotencyKey, isApiError } from '../../api/http';
 import { Pagination } from '../../components/Pagination';
 import { useAdminPageTitle } from '../../layouts/adminSession';
 import { PARSE_MONEY_MESSAGES, formatMoney, parseMoney } from '../../lib/money';
 import { formatPercent, trimHundredths } from '../reseller/percent';
+import { firstError } from '../../api/errors';
 import {
-  createReseller, deleteReseller, detachResellerClub, firstError, idempotencyKey, payoutReseller, qs, resellersQuery, updateReseller,
+  createReseller, deleteReseller, detachResellerClub, payoutReseller, qs, resellersQuery, updateReseller,
   type ResellerCard, type ResellersSearch,
 } from './api';
 import { useSuperadminFlash } from './flash';

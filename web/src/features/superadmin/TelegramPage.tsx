@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAdminPageTitle } from '../../layouts/adminSession';
-import { clearAlerts, clearGateway, firstError, setAlerts, setGateway, telegramQuery, testAlerts } from './api';
+import { firstError } from '../../api/errors';
+import { clearAlerts, clearGateway, setAlerts, setGateway, telegramQuery, testAlerts } from './api';
 import { useSuperadminFlash } from './flash';
 
 /*

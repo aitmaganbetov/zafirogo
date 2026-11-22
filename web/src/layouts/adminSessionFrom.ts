@@ -3,7 +3,7 @@ import { SECTIONS } from './permissions';
 import type { AdminSession, ClubRole, Membership, PermissionOverrides } from './types';
 
 /** Права из me.permissions в виде «выбора владельца» для permissions.allows(): всё известное — да/нет. */
-export function permissionsOf(me: Me): PermissionOverrides {
+function permissionsOf(me: Me): PermissionOverrides {
   const out: Record<string, boolean> = {};
   for (const [section, actions] of Object.entries(SECTIONS)) {
     for (const action of Object.keys(actions)) out[`${section}.${action}`] = false;

@@ -12,7 +12,7 @@ export interface FormServerErrors {
 export const NO_ERRORS: FormServerErrors = { first: null, fields: {} };
 
 /** Laravel ThrottleRequests: 429 «Too Many Attempts.» */
-export const MSG_TOO_MANY = 'Too Many Attempts.';
+const MSG_TOO_MANY = 'Too Many Attempts.';
 
 export function serverErrors(e: unknown): FormServerErrors {
   if (isApiError(e)) {

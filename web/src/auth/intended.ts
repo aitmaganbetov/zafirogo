@@ -37,7 +37,7 @@ export function peekIntended(): string | null {
  * Только путь этого сайта (SEC-020, docs/security-review.md): «//evil» и «/\evil» браузер разбирает как адрес
  * другого хоста (обратная косая в http(s) — та же косая), поэтому проверка — разбором URL, а не по префиксу.
  */
-export function isSameSitePath(v: string): boolean {
+function isSameSitePath(v: string): boolean {
   if (!v.startsWith('/') || v.includes('\\') || [...v].some((c) => c.charCodeAt(0) < 0x20)) return false;
   try {
     const base = 'https://zafiro.invalid';

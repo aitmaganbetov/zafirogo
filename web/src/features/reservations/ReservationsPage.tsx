@@ -10,8 +10,8 @@ import { addDays, formatDate } from '../../lib/datetime';
 import { setFlash, useFlash } from '../../lib/flash';
 import { formatMoney } from '../../lib/money';
 import { useInvalidateOn } from '../../realtime/hooks';
+import { allErrors } from '../../api/errors';
 import {
-  allErrors,
   arriveReservation,
   cancelReservation,
   createReservation,

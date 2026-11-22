@@ -170,7 +170,7 @@ export function roleOf(me: Me | null): string | null {
 }
 
 /** Роли персонала (ClubRoles::STAFF + owner). */
-export const STAFF_ROLES = ['owner', 'admin', 'manager', 'cashier', 'operator'] as const;
+const STAFF_ROLES = ['owner', 'admin', 'manager', 'cashier', 'operator'] as const;
 
 export function isStaff(me: Me | null): boolean {
   const r = roleOf(me);

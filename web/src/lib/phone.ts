@@ -13,11 +13,6 @@ export function formatPhone(digits: string): string {
   return formatted;
 }
 
-/** value="{{ substr(preg_replace('/\D+/', '', old('phone')), -10) }}" → в формате маски. */
-export function initialPhone(old: string): string {
-  return formatPhone(old.replace(/\D+/g, '').slice(-10).slice(0, 10));
-}
-
 /** Только цифры (перед отправкой). */
 export function phoneDigits(value: string): string {
   return value.replace(/\D/g, '');

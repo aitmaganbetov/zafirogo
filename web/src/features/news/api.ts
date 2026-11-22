@@ -1,6 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
-import { apiFetch, createApiClient, errorFromResponse, isApiError, unwrap } from '../../api/http';
+import { apiFetch, createApiClient, errorFromResponse, unwrap } from '../../api/http';
 import type { components, paths } from '../../api/gen/news';
+import { intParam } from '../../lib/searchParams';
 
 /*
  * Новости клуба (api/news.yaml). Laravel: NewsController, NewsManager. Формы — multipart (картинка), как
@@ -19,8 +20,7 @@ export interface NewsSearch {
 }
 
 export function parseNewsSearch(s: Record<string, unknown>): NewsSearch {
-  const n = typeof s.page === 'number' ? s.page : typeof s.page === 'string' ? Number(s.page) : NaN;
-  return { page: Number.isSafeInteger(n) && n > 1 ? n : undefined };
+  return { page: intParam(s.page, 2) };
 }
 
 export const newsQuery = (page?: number) =>
@@ -39,12 +39,3 @@ async function sendForm(method: 'POST' | 'PATCH', url: string, form: FormData): 
 export const createNews = (form: FormData) => sendForm('POST', '/api/news', form);
 export const updateNews = (id: number, form: FormData) => sendForm('PATCH', `/api/news/${id}`, form);
 export const deleteNews = (id: number) => unwrap(newsApi.DELETE('/api/news/{newsId}', { params: { path: { newsId: id } } }));
-
-/** $errors->all(): все ошибки ответа по порядку (сервер уже перевёл тексты). */
-export function allErrors(e: unknown): string[] {
-  if (isApiError(e)) {
-    const list = Object.values(e.fieldErrors).flat();
-    return list.length > 0 ? list : [e.message];
-  }
-  return [e instanceof Error ? e.message : String(e)];
-}

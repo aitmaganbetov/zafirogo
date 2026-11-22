@@ -2,7 +2,7 @@ import { createContext, useContext } from 'react';
 import { RealtimeClient } from './client';
 
 /** Один клиент WebSocket на вкладку (тесты подставляют свой через RealtimeContext.Provider). */
-export const realtime = new RealtimeClient();
+const realtime = new RealtimeClient();
 
 export const RealtimeContext = createContext<RealtimeClient>(realtime);
 

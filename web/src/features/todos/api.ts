@@ -1,5 +1,5 @@
 import { queryOptions } from '@tanstack/react-query';
-import { createApiClient, isApiError, unwrap } from '../../api/http';
+import { createApiClient, unwrap } from '../../api/http';
 import type { components, paths } from '../../api/gen/todos';
 
 /*
@@ -11,7 +11,6 @@ export const todosApi = createApiClient<paths>();
 
 type S = components['schemas'];
 export type Todo = S['Todo'];
-export type TodoDay = S['TodoDay'];
 
 export interface TodosSearch {
   readonly date?: string;
@@ -37,13 +36,4 @@ export function toggleTodo(id: number, done: boolean) {
 
 export function deleteTodo(id: number) {
   return unwrap(todosApi.DELETE('/api/todos/{todoId}', { params: { path: { todoId: id } } }));
-}
-
-/** $errors->first(): первая ошибка ответа (сервер уже перевёл текст на язык клуба). */
-export function firstError(e: unknown): string {
-  if (isApiError(e)) {
-    const first = Object.values(e.fieldErrors)[0]?.[0];
-    return first ?? e.message;
-  }
-  return e instanceof Error ? e.message : String(e);
 }

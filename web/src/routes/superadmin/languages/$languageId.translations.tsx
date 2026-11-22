@@ -1,5 +1,6 @@
 import { createFileRoute, notFound } from '@tanstack/react-router';
-import { intParam, parseTranslationsSearch, translationsQuery } from '../../../features/superadmin/api';
+import { parseTranslationsSearch, translationsQuery } from '../../../features/superadmin/api';
+import { intParam } from '../../../lib/searchParams';
 import { TranslationsPage } from '../../../features/superadmin/TranslationsPage';
 
 // GET /languages/{language}/translations — languages.translations (routes/web.php:104).

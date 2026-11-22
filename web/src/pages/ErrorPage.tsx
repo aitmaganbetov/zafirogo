@@ -45,7 +45,7 @@ function Minimal({ code, title, message }: { code: string; title: string; messag
 }
 
 /** 403.blade.php: title __('Forbidden'), message __($exception->getMessage() ?: 'Forbidden'). */
-export function ForbiddenPage({ message }: { message?: string }) {
+function ForbiddenPage({ message }: { message?: string }) {
   const { t } = useTranslation();
   useDocumentTitle(t('Forbidden'));
   return <Minimal code="403" title={t('Forbidden')} message={t(message || 'Forbidden')} />;
@@ -59,7 +59,7 @@ export function NotFoundPage() {
 }
 
 /** 500.blade.php: __('Server Error'). */
-export function ServerErrorPage() {
+function ServerErrorPage() {
   const { t } = useTranslation();
   useDocumentTitle(t('Server Error'));
   return <Minimal code="500" title={t('Server Error')} message={t('Server Error')} />;

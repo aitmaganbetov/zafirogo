@@ -11,14 +11,13 @@ export const customersApi = createApiClient<paths>();
 
 type S = components['schemas'];
 export type Customer = S['Customer'];
-export type CustomerPage = S['CustomerPage'];
 export type CustomerCreateRequest = S['CustomerCreateRequest'];
 export type CustomerUpdateRequest = S['CustomerUpdateRequest'];
 export type CustomerSaved = S['CustomerSaved'];
 export type CustomerPasswordReset = S['CustomerPasswordReset'];
 
 /** UserController::index() paginate(25). */
-export const CUSTOMERS_PER_PAGE = 25;
+const CUSTOMERS_PER_PAGE = 25;
 
 /** Параметры страницы списка (?after=…, ?before=…, ?q=…). */
 export interface CustomersSearch {
