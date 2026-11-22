@@ -410,6 +410,9 @@ func (a *App) buildCore(ctx context.Context, ro *httpserver.Options) error {
 		QRBaseURL: cfg.Agent.Guest.QRBaseURL, PublicBaseURL: cfg.Agent.Guest.PublicBaseURL,
 		QRPollEvery: cfg.Agent.Guest.QRPollEvery, Log: log,
 	}
+	if a.I18n != nil {
+		guestOpts.I18n = a.I18n
+	}
 	hooks, err := guestapi.NewHooks(guestOpts)
 	if err != nil {
 		return fmt.Errorf("guest api hooks: %w", err)

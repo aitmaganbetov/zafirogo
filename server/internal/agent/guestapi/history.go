@@ -69,6 +69,13 @@ func (gs *guestService) ListHistory(ctx context.Context, req *agentv1.ListHistor
 	} else if req.GetFilter() != agentv1.HistoryFilter_HISTORY_FILTER_UNSPECIFIED {
 		return nil, validation("filter", "Неизвестный фильтр.")
 	}
+	// Заголовки — на языке гостя (как __() в GuestHistory::entry()); язык выбирается до транзакции.
+	tr := substitute
+	if t := s.o.I18n; t != nil {
+		if locale := requestLocale(ctx, t); locale != "" {
+			tr = func(key string, params map[string]string) string { return t.Translate(ctx, locale, key, params) }
+		}
+	}
 	out := &agentv1.ListHistoryResponse{}
 	err = db.InTenantTx(ctx, s.o.Pool, id.ClubID, func(q *store.Queries) error {
 		var logs []historyRow
@@ -110,7 +117,7 @@ func (gs *guestService) ListHistory(ctx context.Context, req *agentv1.ListHistor
 			return err
 		}
 		for _, l := range page {
-			out.Entries = append(out.Entries, historyEntry(l, g.UserID, tariffs, users))
+			out.Entries = append(out.Entries, historyEntryIn(l, g.UserID, tariffs, users, tr))
 		}
 		return nil
 	})
@@ -210,8 +217,14 @@ func str(v any) string {
 	return s
 }
 
-// historyEntry — GuestHistory::entry(): заголовок и изменения балансов по событию.
+// historyEntry — historyEntryIn без перевода: заголовок — русский ключ с подставленными параметрами.
 func historyEntry(l historyRow, userID int64, tariffs, users map[int64]string) *agentv1.HistoryEntry {
+	return historyEntryIn(l, userID, tariffs, users, substitute)
+}
+
+// historyEntryIn — GuestHistory::entry(): заголовок и изменения балансов по событию. Заголовок — ключ перевода
+// (русский текст, как `__()` в Laravel) с параметрами :name; tr переводит его на язык гостя.
+func historyEntryIn(l historyRow, userID int64, tariffs, users map[int64]string, tr func(string, map[string]string) string) *agentv1.HistoryEntry {
 	d := l.Details
 	e := &agentv1.HistoryEntry{EntryId: l.ID, Event: l.Event, OccurredAt: l.CreatedAt}
 	switch l.Event {
@@ -220,11 +233,11 @@ func historyEntry(l historyRow, userID int64, tariffs, users map[int64]string) *
 		if l.SubjectID != nil && tariffs[*l.SubjectID] != "" {
 			name = tariffs[*l.SubjectID]
 		}
-		e.Title = "Покупка тарифа «" + name + "»"
+		e.Title = tr("Покупка тарифа «:tariff»", map[string]string{"tariff": name})
 		e.MainDeltaTiyn = -int64(firstAmount(d, "main_balance_amount", "amount"))
 		e.BonusDeltaTiyn = -int64(firstAmount(d, "bonus_balance_amount"))
 	case "time.purchased":
-		e.Title = "Поминутная оплата: " + strconv.FormatInt(int64Of(d["duration_minutes"]), 10) + " мин."
+		e.Title = tr("Поминутная оплата: :count мин.", map[string]string{"count": strconv.FormatInt(int64Of(d["duration_minutes"]), 10)})
 		e.MainDeltaTiyn = -int64(firstAmount(d, "main_balance_amount", "amount"))
 		e.BonusDeltaTiyn = -int64(firstAmount(d, "bonus_balance_amount"))
 	case "reservation.paid":
@@ -234,25 +247,25 @@ func historyEntry(l historyRow, userID int64, tariffs, users map[int64]string) *
 		if name == "" {
 			name = "—"
 		}
-		e.Title = "Бронь ПК " + name
+		e.Title = tr("Бронь ПК :computer", map[string]string{"computer": name})
 		e.MainDeltaTiyn = -int64(firstAmount(d, "main_balance_amount"))
 		e.BonusDeltaTiyn = -int64(firstAmount(d, "bonus_balance_amount"))
 	case "reservation.refunded":
-		e.Title = "Возврат за отменённую бронь"
+		e.Title = tr("Возврат за отменённую бронь", nil)
 		e.MainDeltaTiyn = int64(firstAmount(d, "main_balance_amount"))
 		e.BonusDeltaTiyn = int64(firstAmount(d, "bonus_balance_amount"))
 	case "shop.purchased":
-		e.Title = "Заказ в магазине клуба"
+		e.Title = tr("Заказ в магазине клуба", nil)
 		e.MainDeltaTiyn = -int64(amountOf(d["amount"]))
 	case "shop.order_cancelled": //nolint:misspell // код события старого журнала
-		e.Title = "Возврат за отменённый заказ"
+		e.Title = tr("Возврат за отменённый заказ", nil)
 		e.MainDeltaTiyn = int64(amountOf(d["amount"]))
 	case "time.refunded":
-		e.Title = "Возврат за неиспользованное время"
+		e.Title = tr("Возврат за неиспользованное время", nil)
 		e.MainDeltaTiyn = int64(firstAmount(d, "main_balance_amount"))
 		e.BonusDeltaTiyn = int64(firstAmount(d, "bonus_balance_amount"))
 	case "user.balance_topped_up":
-		e.Title = "Пополнение на кассе"
+		e.Title = tr("Пополнение на кассе", nil)
 		bt := strings.ToLower(str(d["balance_type"]))
 		if strings.Contains(bt, "бонус") || strings.Contains(bt, "bonus") {
 			e.BonusDeltaTiyn = int64(amountOf(d["amount"]))
@@ -261,7 +274,7 @@ func historyEntry(l historyRow, userID int64, tariffs, users map[int64]string) *
 			e.BonusDeltaTiyn = int64(amountOf(d["bonus_amount"]))
 		}
 	case "user.balance_refunded":
-		e.Title = "Возврат пополнения на кассе"
+		e.Title = tr("Возврат пополнения на кассе", nil)
 		if str(d["balance_field"]) == "bonus_balance" {
 			e.BonusDeltaTiyn = -int64(amountOf(d["amount"]))
 		} else {
@@ -269,7 +282,7 @@ func historyEntry(l historyRow, userID int64, tariffs, users map[int64]string) *
 			e.BonusDeltaTiyn = -int64(amountOf(d["bonus_taken_back"]))
 		}
 	case "user.balance_written_off":
-		e.Title = "Списание с баланса администрацией клуба"
+		e.Title = tr("Списание с баланса администрацией клуба", nil)
 		if str(d["balance_field"]) == "bonus_balance" {
 			e.BonusDeltaTiyn = -int64(amountOf(d["amount"]))
 		} else {
@@ -277,10 +290,10 @@ func historyEntry(l historyRow, userID int64, tariffs, users map[int64]string) *
 		}
 	case "balance.transferred":
 		if l.UserID == userID {
-			e.Title = "Перевод другу " + nameOr(users, int64Of(d["to_user_id"]))
+			e.Title = tr("Перевод другу :name", map[string]string{"name": nameOr(users, int64Of(d["to_user_id"]))})
 			e.MainDeltaTiyn = -int64(amountOf(d["amount"]))
 		} else {
-			e.Title = "Перевод от друга " + nameOr(users, l.UserID)
+			e.Title = tr("Перевод от друга :name", map[string]string{"name": nameOr(users, l.UserID)})
 			e.MainDeltaTiyn = int64(amountOf(d["amount"]))
 		}
 	case "session.transferred":
@@ -288,11 +301,11 @@ func historyEntry(l historyRow, userID int64, tariffs, users map[int64]string) *
 		if to == "" {
 			to = "—"
 		}
-		e.Title = "Пересадка на ПК " + to
+		e.Title = tr("Пересадка на ПК :computer", map[string]string{"computer": to})
 	case "auth.qr_login":
-		e.Title = "Вход на ПК по QR-коду"
+		e.Title = tr("Вход на ПК по QR-коду", nil)
 	default:
-		e.Title = "Вход в аккаунт"
+		e.Title = tr("Вход в аккаунт", nil)
 	}
 	return e
 }

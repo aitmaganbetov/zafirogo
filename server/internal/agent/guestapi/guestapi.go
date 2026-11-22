@@ -53,6 +53,8 @@ const (
 
 // Options — зависимости и настройки сервисов (подключает cmd/zafiro через server/internal/app).
 type Options struct {
+	// I18n — каталог переводов (заголовки журнала гостя на его языке); nil — русские тексты.
+	I18n Translator
 	// Pool — пул логина zafiro_app (тенантные транзакции, RLS).
 	Pool db.Beginner
 	// Valkey — токены гостя, идемпотентность, лимиты.

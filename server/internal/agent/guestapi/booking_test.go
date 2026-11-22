@@ -86,3 +86,25 @@ func TestHistoryEntryBooking(t *testing.T) {
 		}
 	}
 }
+
+// Заголовки журнала гостя — ключ перевода с плейсхолдерами (CLAUDE.md «Локализация»), как __() в GuestHistory::entry().
+func TestHistoryTitleTranslated(t *testing.T) {
+	var gotKey string
+	var gotParams map[string]string
+	tr := func(key string, params map[string]string) string {
+		gotKey, gotParams = key, params
+		return "kk:" + key
+	}
+	e := historyEntryIn(historyRow{Event: "reservation.paid", Details: map[string]any{"computer": "PC-07"}}, 5, nil, nil, tr)
+	if gotKey != "Бронь ПК :computer" || gotParams["computer"] != "PC-07" || e.GetTitle() != "kk:Бронь ПК :computer" {
+		t.Fatalf("key %q params %v title %q", gotKey, gotParams, e.GetTitle())
+	}
+	historyEntryIn(historyRow{Event: "session.transferred", Details: map[string]any{"to": "PC-2"}}, 5, nil, nil, tr)
+	if gotKey != "Пересадка на ПК :computer" || gotParams["computer"] != "PC-2" {
+		t.Fatalf("transfer key %q params %v", gotKey, gotParams)
+	}
+	historyEntryIn(historyRow{Event: "time.purchased", Details: map[string]any{"duration_minutes": 30.0}}, 5, nil, nil, tr)
+	if gotKey != "Поминутная оплата: :count мин." || gotParams["count"] != "30" {
+		t.Fatalf("minutes key %q params %v", gotKey, gotParams)
+	}
+}
