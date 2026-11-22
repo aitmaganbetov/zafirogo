@@ -112,7 +112,7 @@ const SETTINGS = {
   club_name: 'Zafiro Arena',
   settings: {
     club: {
-      session_idle_timeout: 15, pc_action_after_session_end: 'none', pc_restart_after_session_end: 0.5,
+      agent_shell_theme: 'standard', session_idle_timeout: 15, pc_action_after_session_end: 'none', pc_restart_after_session_end: 0.5,
       session_auto_terminate_when_pc_unavailable: 5, booking_interval: 30, max_cashiers_on_shift: 0, max_operators_on_shift: 0,
       agent_idle_logout_minutes: 0, agent_shop_enabled: true, agent_auto_update: true, app_booking_enabled: false, app_booking_cancel: true,
     },
@@ -122,6 +122,7 @@ const SETTINGS = {
     },
     guests: { show_qr_code_on_login: false, allow_guest_self_transfer: false, allow_adding_friends: false, allow_balance_transfer_to_friends: false, guest_mode_enabled: true },
   },
+  shell_themes: [{ key: 'standard', accent: '#8b5cf6', accent_2: '#5eb7ff', bg_1: '#071018' }],
   timezone: 'Asia/Almaty', timezones_kazakhstan: [{ id: 'Asia/Almaty', label: '(UTC+05:00) Asia/Almaty' }], timezones_all: [],
   club_time: '15.10.2026 12:00', agent_pin_set_at: null, agent_staff_minutes: 15, can_manage_agent_pin: true, logo_url: null, signin_image_url: null,
   city: null, address: null, cities: [{ key: 'almaty', name: 'Алматы' }],
