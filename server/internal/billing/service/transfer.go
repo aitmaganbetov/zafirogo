@@ -141,11 +141,6 @@ func allowedZones(ctx context.Context, q *store.Queries, clubID int64, sessionID
 	if err != nil {
 		return nil, err
 	}
-	// Laravel: SeatTransfers::allowedZoneIds() — ClubZone::query()->where('level', '<=', $level) (79d014f, 55e3878).
-	levelZones, err := q.ListLevelZoneIDs(ctx, store.ListLevelZoneIDsParams{ClubID: clubID, ZoneID: fromZoneID})
-	if err != nil {
-		return nil, err
-	}
 	purchases := make([]session.ZonePurchase, 0, len(rows))
 	for _, r := range rows {
 		src := session.PurchaseSource(r.Kind)
@@ -160,6 +155,14 @@ func allowedZones(ctx context.Context, q *store.Queries, clubID int64, sessionID
 			zp.ZoneID = *r.ZoneID
 		}
 		purchases = append(purchases, zp)
+	}
+	var levelZones []int64
+	if session.NeedsLevelZones(purchases) {
+		// Laravel: SeatTransfers::allowedZoneIds() — ClubZone::query()->where('level', '<=', $level) (79d014f, 55e3878),
+		// только когда у тарифа есть зоны.
+		if levelZones, err = q.ListLevelZoneIDs(ctx, store.ListLevelZoneIDsParams{ClubID: clubID, ZoneID: fromZoneID}); err != nil {
+			return nil, err
+		}
 	}
 	return session.AllowedZones(purchases, levelZones), nil
 }

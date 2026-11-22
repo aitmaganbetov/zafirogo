@@ -232,3 +232,23 @@ func TestFreeEdges(t *testing.T) {
 		t.Error("истёкшая сессия не занимает ПК")
 	}
 }
+
+// Зоны уровня нужны только тарифу с зонами (allowedZoneIds() запрашивает уровень лишь в этой ветке).
+func TestNeedsLevelZones(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in   []ZonePurchase
+		want bool
+	}{
+		"нет покупок":           {nil, false},
+		"поминутно":             {[]ZonePurchase{{ID: 1, Source: SourceMinutes, ZoneID: 3}}, false},
+		"тариф удалён":          {[]ZonePurchase{{ID: 1, Source: SourceTariff, TariffZoneIDs: []int64{1}}}, false},
+		"тариф без зон":         {[]ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true}}, false},
+		"тариф с зонами":        {[]ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{1}}}, true},
+		"последний — поминутно": {[]ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{1}}, {ID: 2, Source: SourceMinutes, ZoneID: 3}}, false},
+		"пакет не считается":    {[]ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{1}}, {ID: 2, Source: SourcePackage}}, true},
+	} {
+		if got := NeedsLevelZones(tc.in); got != tc.want {
+			t.Errorf("%s: %v, want %v", name, got, tc.want)
+		}
+	}
+}

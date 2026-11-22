@@ -45,16 +45,7 @@ type ZonePurchase struct {
 // Решение Q-007/OQ-BR-04 (docs/DECISIONS.md) — источник не журнал, а покупки сессии; смысл тот же, пакеты
 // не учитываются.
 func AllowedZones(purchases []ZonePurchase, levelZoneIDs []int64) []int64 {
-	var last *ZonePurchase
-	for i := range purchases {
-		p := &purchases[i]
-		if p.Source == SourcePackage {
-			continue
-		}
-		if last == nil || p.ID > last.ID {
-			last = p
-		}
-	}
+	last := lastZonePurchase(purchases)
 	if last == nil {
 		return nil
 	}
@@ -142,4 +133,26 @@ func PlanTransfer(from Computer, target *Computer, userID int64, zones []int64, 
 		SecondsMoved:  SecondsUntil(from.SessionEndsAt, now),
 		ClearFrom:     true,
 	}, nil
+}
+
+// lastZonePurchase — последняя по id покупка сессии без пакетов (allowedZoneIds(): последняя запись журнала).
+func lastZonePurchase(purchases []ZonePurchase) *ZonePurchase {
+	var last *ZonePurchase
+	for i := range purchases {
+		p := &purchases[i]
+		if p.Source == SourcePackage {
+			continue
+		}
+		if last == nil || p.ID > last.ID {
+			last = p
+		}
+	}
+	return last
+}
+
+// NeedsLevelZones — AllowedZones использует зоны уровня: последняя покупка — найденный тариф с зонами.
+// Laravel запрашивает уровень только в этой ветке allowedZoneIds(); иначе запрос зон уровня не нужен.
+func NeedsLevelZones(purchases []ZonePurchase) bool {
+	last := lastZonePurchase(purchases)
+	return last != nil && last.Source != SourceMinutes && last.TariffFound && len(last.TariffZoneIDs) > 0
 }
