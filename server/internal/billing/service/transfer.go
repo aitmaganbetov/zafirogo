@@ -134,7 +134,8 @@ func (s *Service) TransferSeat(ctx context.Context, req TransferRequest) (Transf
 
 // allowedZones — SeatTransfers::allowedZoneIds() по частям сессии. Части до миграции 0006 (source NULL):
 // kind tariff — как покупка тарифа (запуск пакета от неё не отличить), kind minutes без зоны — пропускается
-// (зона неизвестна; см. open-questions/stage1-service.md SV-3). fromZoneID — зона ПК клиента: тариф пересаживается
+// (зона неизвестна; см. open-questions/stage1-service.md SV-3). Время оплаченной брони (source booking) и запуск
+// пакета покупкой не считаются: в Laravel они пишут reservation.arrived / time.package_started. fromZoneID — зона ПК клиента: тариф пересаживается
 // ещё и в зоны с уровнем не выше её уровня (BR-196).
 func allowedZones(ctx context.Context, q *store.Queries, clubID int64, sessionID string, fromZoneID int64) ([]int64, error) {
 	rows, err := q.ListSessionZonePurchases(ctx, store.ListSessionZonePurchasesParams{ClubID: clubID, SessionID: sessionID})

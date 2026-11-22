@@ -110,6 +110,8 @@ func TestAllowedZones(t *testing.T) {
 		{"нет-покупок", nil, nil},
 		{"только-пакет", []ZonePurchase{{ID: 1, Source: SourcePackage, TariffFound: true, TariffZoneIDs: []int64{zoneVIP}}}, nil},
 		{"пакет-после-поминутки", []ZonePurchase{{ID: 1, Source: SourceMinutes, ZoneID: zoneHall}, {ID: 2, Source: SourcePackage, TariffFound: true, TariffZoneIDs: []int64{zoneVIP}}}, []int64{zoneHall}},
+		{"только-бронь", []ZonePurchase{{ID: 1, Source: SourceBooking, ZoneID: zoneHall}}, nil},
+		{"бронь-после-тарифа", []ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{zoneVIP, 3}}, {ID: 2, Source: SourceBooking, ZoneID: zoneHall}}, []int64{zoneVIP, 3}},
 		{"последняя-поминутка", []ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{zoneVIP}}, {ID: 2, Source: SourceMinutes, ZoneID: zoneHall}}, []int64{zoneHall}},
 		{"последний-тариф", []ZonePurchase{{ID: 2, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{zoneVIP, 3}}, {ID: 1, Source: SourceMinutes, ZoneID: zoneHall}}, []int64{zoneVIP, 3}},
 		{"тариф-без-зон", []ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true}}, nil},
@@ -245,6 +247,7 @@ func TestNeedsLevelZones(t *testing.T) {
 		"тариф без зон":         {[]ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true}}, false},
 		"тариф с зонами":        {[]ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{1}}}, true},
 		"последний — поминутно": {[]ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{1}}, {ID: 2, Source: SourceMinutes, ZoneID: 3}}, false},
+		"бронь не считается":    {[]ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{1}}, {ID: 2, Source: SourceBooking}}, true},
 		"пакет не считается":    {[]ZonePurchase{{ID: 1, Source: SourceTariff, TariffFound: true, TariffZoneIDs: []int64{1}}, {ID: 2, Source: SourcePackage}}, true},
 	} {
 		if got := NeedsLevelZones(tc.in); got != tc.want {

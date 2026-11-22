@@ -27,13 +27,14 @@ const StartAppBookingsJob = "app-bookings:start"
 // как подошёл интервал до её начала (в старом — на ближайшем heartbeat ПК, раз в несколько секунд).
 const StartAppBookingsInterval = time.Minute
 
-// startAppBookingsWindow — насколько вперёд смотреть: интервал между бронями клуба — до 10 080 минут (правило
-// настроек), бронь из приложения — не дальше 7 дней.
-const startAppBookingsWindow = 7 * 24 * time.Hour
+// startAppBookingsMaxGap — наибольший интервал между бронями клуба, минут (правило настроек: до 10 080); бронь из
+// приложения — не дальше 7 дней вперёд. Оценка интервала в запросе этим ограничена.
+const startAppBookingsMaxGap = 7 * 24 * 60
 
-// startAppBookingsBatch — предел строк за тик (ожидающих оплаченных броней на ближайшие дни немного; хвост
-// возьмёт следующий тик — запрос идёт по времени начала).
-const startAppBookingsBatch = 2000
+// startAppBookingsBatch — строк на страницу. За тик проходятся все страницы (по (ends_at, id)): кандидатов —
+// оплаченных ожидающих броней, которые ещё не закончились и до начала которых осталось не больше интервала клуба, —
+// немного, но хвост не откладывается на следующий тик.
+const startAppBookingsBatch = 1000
 
 // StartAppBookings — запуск оплаченного времени брони из приложения для гостей, которые УЖЕ сидят за своим
 // забронированным ПК (решение UQ-11, docs/open-questions/upstream-bookings.md).
@@ -63,6 +64,8 @@ type StartAppBookings struct {
 	Now func() time.Time
 	// Interval — период (0 — StartAppBookingsInterval).
 	Interval time.Duration
+	// Batch — строк на страницу (0 — startAppBookingsBatch); тесты.
+	Batch int32
 	// Log — журнал (nil — slog.Default()).
 	Log *slog.Logger
 }
@@ -85,38 +88,55 @@ func (w *StartAppBookings) Tick(ctx context.Context) (ran bool, n int, err error
 		now = w.Now()
 	}
 	ran, err = leader.RunOnce(ctx, w.Platform, StartAppBookingsJob, func(ctx context.Context, _ *pgxpool.Conn) error {
-		var due []store.AppBookingDueCandidatesRow
-		if err := db.InPlatformTx(ctx, w.Platform, func(q *store.Queries) error {
-			var err error
-			due, err = q.AppBookingDueCandidates(ctx, store.AppBookingDueCandidatesParams{
-				Until: now.Add(startAppBookingsWindow), Now: now, MaxRows: startAppBookingsBatch,
-			})
-			return err
-		}); err != nil {
-			return err
+		batch := w.Batch
+		if batch <= 0 {
+			batch = startAppBookingsBatch
 		}
 		var errs []error
-		for _, d := range due {
-			// Интервал клуба: бронь можно начинать с starts_at − интервал.
-			gap := time.Duration(billingsvc.BookingGapMinutes(d.GapSettings)) * time.Minute
-			if d.UserID == nil || d.StartsAt.After(now.Add(gap)) {
-				continue
+		// Курсор: (ends_at, id) последней строки страницы. Запущенная бронь из выборки выпадает (arrived_at), но
+		// курсор уже за ней — страницы не сдвигаются.
+		afterEnds, afterID := now, int64(0)
+		for {
+			var due []store.AppBookingDueCandidatesRow
+			if err := db.InPlatformTx(ctx, w.Platform, func(q *store.Queries) error {
+				var err error
+				due, err = q.AppBookingDueCandidates(ctx, store.AppBookingDueCandidatesParams{
+					Now: now, AfterEndsAt: afterEnds, AfterID: afterID,
+					DefaultGap: int32(billingsvc.DefaultBookingGapMinutes), MaxGap: startAppBookingsMaxGap, MaxRows: batch,
+				})
+				return err
+			}); err != nil {
+				return errors.Join(append(errs, err)...)
 			}
-			pcs, err := w.SignedIn(ctx, d.ClubID, *d.UserID)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("club %d user %d presence: %w", d.ClubID, *d.UserID, err))
-				continue
+			for _, d := range due {
+				// Точный интервал клуба (в запросе — оценка сверху): бронь можно начинать с starts_at − интервал.
+				gap := time.Duration(billingsvc.BookingGapMinutes(d.GapSettings)) * time.Minute
+				if d.UserID == nil || d.StartsAt.After(now.Add(gap)) {
+					continue
+				}
+				pcs, err := w.SignedIn(ctx, d.ClubID, *d.UserID)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("club %d user %d presence: %w", d.ClubID, *d.UserID, err))
+					continue
+				}
+				if !slices.Contains(pcs, d.ClubComputerID) {
+					continue
+				}
+				started, err := w.start(ctx, d.ClubID, d.ClubComputerID, *d.UserID, now)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("club %d reservation %d: %w", d.ClubID, d.ID, err))
+					continue
+				}
+				if started {
+					n++
+				}
 			}
-			if !slices.Contains(pcs, d.ClubComputerID) {
-				continue
+			if len(due) < int(batch) {
+				break
 			}
-			started, err := w.start(ctx, d.ClubID, d.ClubComputerID, *d.UserID, now)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("club %d reservation %d: %w", d.ClubID, d.ID, err))
-				continue
-			}
-			if started {
-				n++
+			afterEnds, afterID = due[len(due)-1].EndsAt, due[len(due)-1].ID
+			if err := ctx.Err(); err != nil {
+				return errors.Join(append(errs, err)...)
 			}
 		}
 		if n > 0 {

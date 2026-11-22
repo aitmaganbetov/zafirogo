@@ -62,8 +62,10 @@ const (
 	MsgDuration       = "Длительность брони — от :min до :max минут."
 	MsgTooFar         = "Бронь — не дальше чем на :count день вперёд.|Бронь — не дальше чем на :count дня вперёд.|Бронь — не дальше чем на :count дней вперёд."
 	// Ответы контроллера.
-	MsgBookedMany     = "ПК забронированы. Код брони :code: на забронированных ПК его вводят на экране входа — оплаченное время начнётся само."
-	MsgBookedOne      = "ПК забронирован. Войдите на нём в своё время — оплаченное время начнётся само."
+	MsgBookedMany = "ПК забронированы. Код брони :code: на забронированных ПК его вводят на экране входа — оплаченное время начнётся само."
+	MsgBookedOne  = "ПК забронирован. Войдите на нём в своё время — оплаченное время начнётся само."
+	// MsgCancelled — ComputerReservationController::cancel(): здесь — ответ на повтор запроса брони, которая уже отменена.
+	MsgCancelled      = "Бронь отменена."
 	MsgGuestCancelled = "Бронь отменена, деньги вернулись на баланс."
 
 	logPaid = "Оплачена бронь ПК :computer на :from"
@@ -889,7 +891,7 @@ func groupRows(ctx context.Context, q *store.Queries, clubID, userID, id int64) 
 
 // CancelByGuest — GuestBookings::cancel(): гость отменяет свою бронь (все её ПК) до начала, если клуб разрешает, —
 // деньги возвращаются. Чужая бронь — ErrNotFound (404). Все ПК группы отменяются одной транзакцией; состояние
-// каждой брони проверяется под блокировкой (ПК → бронь): если хоть одна уже началась или закрыта — ошибка, и
+// каждой брони проверяется под блокировкой (все ПК группы по возрастанию id → брони): если хоть одна уже началась или закрыта — ошибка, и
 // транзакция вызывающего откатывается целиком.
 func CancelByGuest(ctx context.Context, q *store.Queries, clubID, userID, id int64, env Env) error {
 	info, err := club.Load(ctx, q, clubID)
@@ -902,6 +904,15 @@ func CancelByGuest(ctx context.Context, q *store.Queries, clubID, userID, id int
 	}
 	if !GuestMayCancel(info.Settings) {
 		return &Error{Field: "reservation", Message: MsgGuestNoCancel}
+	}
+	// Все ПК группы — сразу и по возрастанию id, как в Book (один порядок блокировок: отмена и встречная бронь тех
+	// же ПК не блокируют друг друга накрест, даже если id броней группы идут не в порядке id ПК).
+	pcs := make([]int64, 0, len(rows))
+	for _, r := range rows {
+		pcs = append(pcs, r.ClubComputerID)
+	}
+	if _, err := q.AppBookingLockComputers(ctx, store.AppBookingLockComputersParams{ClubID: clubID, Ids: pcs}); err != nil {
+		return err
 	}
 	for _, r := range rows {
 		if _, err := closeBooking(ctx, q, info, r.ID, env, false, true); err != nil {

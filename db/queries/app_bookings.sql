@@ -50,6 +50,8 @@ FOR UPDATE;
 
 -- name: AppBookingBookedComputerIDs :many
 -- options(): ПК с ожидающей бронью, пересекающей [from, to) (границы уже с интервалом между бронями).
+-- Историю отсекает «ends_at > from» по частичному индексу computer_reservations_club_id_pending_ends_at_index
+-- (0044): по (club_id, starts_at) условие «starts_at < to» читало все прошлые брони клуба.
 SELECT DISTINCT club_computer_id
 FROM computer_reservations
 WHERE club_id = sqlc.arg(club_id)
@@ -161,20 +163,40 @@ SELECT EXISTS (
 );
 
 -- name: AppBookingDueCandidates :many
--- Воркер app-bookings:start (UQ-11): оплаченные ожидающие брони всех клубов, которые ещё не закончились и начнутся
--- не позже until (сейчас + наибольший интервал между бронями — 7 дней, как предел брони вперёд). gap_settings —
--- настройка интервала клуба в виде {"club": {"booking_interval": …}} (её разбирает тот же код, что и везде).
--- Пул zafiro_platform; вход гостя на ПК и условия запуска проверяет StartForSignedIn под блокировкой. Частичный
--- индекс computer_reservations_app_pending_starts_at_index (0040).
-SELECT r.id, r.club_id, r.club_computer_id, r.user_id, r.starts_at,
-       jsonb_build_object('club', jsonb_build_object('booking_interval', c.settings -> 'club' -> 'booking_interval')) AS gap_settings
+-- Воркер app-bookings:start (UQ-11): оплаченные ожидающие брони всех клубов, которые ещё не закончились
+-- (ends_at > now — неявки прошлых дней никто не закрывает, они остаются ожидающими навсегда) и до начала которых
+-- осталось не больше интервала между бронями клуба. Страницами по (ends_at, id): after_ends_at / after_id — последняя
+-- строка предыдущей страницы (первая страница — after_ends_at = now, after_id = 0); частичный индекс
+-- computer_reservations_app_pending_ends_at_index (0044).
+-- Интервал клуба здесь — оценка СВЕРХУ (число или строка из цифр — округление вверх, нет настройки — default_gap,
+-- всё прочее — max_gap); точное значение считает воркер тем же кодом, что и везде (BookingGapMinutes), из
+-- gap_settings — {"club": {"booking_interval": …}}. max_gap — предел настройки (10 080 минут), он же предел брони
+-- вперёд. Пул zafiro_platform; вход гостя на ПК и условия запуска проверяет StartForSignedIn под блокировкой.
+WITH gaps AS MATERIALIZED (
+    -- Интервал считается один раз на клуб, а не на каждую бронь.
+    SELECT c.id,
+           jsonb_build_object('club', jsonb_build_object('booking_interval', c.settings -> 'club' -> 'booking_interval')) AS gap_settings,
+           make_interval(mins => (CASE
+               WHEN c.settings #> '{club,booking_interval}' IS NULL
+                 OR jsonb_typeof(c.settings #> '{club,booking_interval}') = 'null' THEN sqlc.arg(default_gap)::int
+               WHEN jsonb_typeof(c.settings #> '{club,booking_interval}') = 'number'
+                 OR (jsonb_typeof(c.settings #> '{club,booking_interval}') = 'string'
+                     AND c.settings #>> '{club,booking_interval}' ~ '^[0-9]{1,9}(\.[0-9]{1,9})?$')
+                 THEN LEAST(GREATEST(ceil((c.settings #>> '{club,booking_interval}')::numeric), 0), sqlc.arg(max_gap)::int)::int
+               ELSE sqlc.arg(max_gap)::int
+           END)) AS gap
+    FROM clubs c
+)
+SELECT r.id, r.club_id, r.club_computer_id, r.user_id, r.starts_at, r.ends_at, g.gap_settings
 FROM computer_reservations r
-JOIN clubs c ON c.id = r.club_id
+JOIN gaps g ON g.id = r.club_id
 WHERE r.from_app AND r.cancelled_at IS NULL AND r.arrived_at IS NULL
   AND r.user_id IS NOT NULL
   AND (r.paid_main_cents > 0 OR r.paid_bonus_cents > 0)
-  AND r.starts_at <= sqlc.arg(until) AND r.ends_at > sqlc.arg(now)
-ORDER BY r.starts_at, r.id
+  AND r.ends_at > sqlc.arg(now)::timestamptz
+  AND (r.ends_at, r.id) > (sqlc.arg(after_ends_at)::timestamptz, sqlc.arg(after_id)::bigint)
+  AND r.starts_at <= sqlc.arg(now)::timestamptz + g.gap
+ORDER BY r.ends_at, r.id
 LIMIT sqlc.arg(max_rows);
 
 -- name: AppBookingTariff :one
@@ -189,3 +211,18 @@ SELECT u.id, u.name, u.phone
 FROM club_memberships m
 JOIN users u ON u.id = m.user_id
 WHERE m.club_id = sqlc.arg(club_id) AND m.user_id = sqlc.arg(user_id);
+
+-- name: AppBookingPaidPendingComputer :one
+-- Удаление ПК или зоны (clubmap.DeleteComputer / DeleteZone, ревью 22.11.2026): ПК из списка, на котором есть
+-- оплаченная ожидающая бронь, которая ещё не закончилась (первая по времени начала). Брони удаляются вместе с ПК
+-- каскадом внешнего ключа — без этой проверки оплата гостя пропала бы без возврата. Вызывать под блокировкой этих ПК
+-- (бронирование блокирует ПК — AppBookingLockComputers). Индекс computer_reservations_club_id_pending_ends_at_index.
+SELECT c.id, c.number, c.display_name, c.device_name
+FROM computer_reservations r
+JOIN club_computers c ON c.club_id = r.club_id AND c.id = r.club_computer_id
+WHERE r.club_id = sqlc.arg(club_id) AND r.club_computer_id = ANY(sqlc.arg(computer_ids)::bigint[])
+  AND r.cancelled_at IS NULL AND r.arrived_at IS NULL
+  AND (r.paid_main_cents > 0 OR r.paid_bonus_cents > 0)
+  AND r.ends_at > sqlc.arg(now)
+ORDER BY r.starts_at, r.id
+LIMIT 1;

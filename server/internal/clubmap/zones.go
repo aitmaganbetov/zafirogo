@@ -57,29 +57,32 @@ func notFound(err error) error {
 
 // Тексты старого кода (ключи перевода).
 const (
-	MsgZoneAdded          = "Зона добавлена."                                                    // store()
-	MsgZoneUpdated        = "Зона обновлена."                                                    // update()
-	MsgZoneDeleted        = "Зона удалена."                                                      // destroy()
-	MsgZonesOverlap       = "Карточки залов не могут пересекаться."                              // updateLayout() 409
-	MsgZoneHasSessions    = "На ПК зоны идёт сессия: удалить зону можно после её окончания."     // Q-018 (новый)
-	MsgZoneCreated        = "Создана зона: :zone"                                                // журнал zone.created
-	MsgZoneChanged        = "Изменена зона: :zone"                                               // журнал zone.updated
-	MsgZoneRemoved        = "Удалена зона: :zone"                                                // журнал zone.deleted
-	MsgTariffsDisabled    = "Тарифы без зон выключены: :names"                                   // Q-018 (новый)
-	MsgZoneCapacity       = "Достигнута вместимость зоны."                                       // ClubComputerController
-	MsgComputerAdded      = "Компьютер добавлен в зону."                                         // store()
-	MsgComputerUpdated    = "Данные компьютера обновлены."                                       // update()
-	MsgComputerDeleted    = "ПК :computer удалён."                                               // destroy()
-	MsgComputerBusy       = "На ПК :computer идёт сессия: удалить его можно после её окончания." // destroy()
-	MsgZoneNoRoom         = "В выбранной зоне нет свободного места."                             // update()
-	MsgCellTaken          = "Эта ячейка уже занята другим компьютером."                          // __invoke() 409
-	MsgNumberTaken        = "Номер уже используется в этой зоне."                                // UpdateClubComputerRequest
-	MsgNameTaken          = "Это имя уже используется в клубе."                                  // UpdateClubComputerRequest
-	MsgMacFormat          = "Введите MAC-адрес в формате AA:BB:CC:DD:EE:FF."                     // UpdateClubComputerRequest
-	MsgMacTaken           = "Этот MAC-адрес уже привязан к другому ПК клуба."                    // UpdateClubComputerRequest
-	MsgComputerCreatedLog = "Добавлен ПК :computer в зону :zone"                                 // журнал computer.created
-	MsgComputerChangedLog = "Изменён компьютер: :computer"                                       // журнал computer.updated
-	MsgComputerRemovedLog = "Удалён ПК :computer"                                                // журнал computer.deleted
+	MsgZoneAdded       = "Зона добавлена."                                                    // store()
+	MsgZoneUpdated     = "Зона обновлена."                                                    // update()
+	MsgZoneDeleted     = "Зона удалена."                                                      // destroy()
+	MsgZonesOverlap    = "Карточки залов не могут пересекаться."                              // updateLayout() 409
+	MsgZoneHasSessions = "На ПК зоны идёт сессия: удалить зону можно после её окончания."     // Q-018 (новый)
+	MsgZoneCreated     = "Создана зона: :zone"                                                // журнал zone.created
+	MsgZoneChanged     = "Изменена зона: :zone"                                               // журнал zone.updated
+	MsgZoneRemoved     = "Удалена зона: :zone"                                                // журнал zone.deleted
+	MsgTariffsDisabled = "Тарифы без зон выключены: :names"                                   // Q-018 (новый)
+	MsgZoneCapacity    = "Достигнута вместимость зоны."                                       // ClubComputerController
+	MsgComputerAdded   = "Компьютер добавлен в зону."                                         // store()
+	MsgComputerUpdated = "Данные компьютера обновлены."                                       // update()
+	MsgComputerDeleted = "ПК :computer удалён."                                               // destroy()
+	MsgComputerBusy    = "На ПК :computer идёт сессия: удалить его можно после её окончания." // destroy()
+	// Ревью 22.11.2026 (новые): оплаченные брони удалились бы каскадом вместе с ПК — без возврата денег гостю.
+	MsgComputerHasPaidBooking = "На ПК :computer есть оплаченная бронь: удалить его можно после её отмены или окончания."
+	MsgZoneHasPaidBooking     = "На ПК :computer этой зоны есть оплаченная бронь: удалить зону можно после её отмены или окончания."
+	MsgZoneNoRoom             = "В выбранной зоне нет свободного места."          // update()
+	MsgCellTaken              = "Эта ячейка уже занята другим компьютером."       // __invoke() 409
+	MsgNumberTaken            = "Номер уже используется в этой зоне."             // UpdateClubComputerRequest
+	MsgNameTaken              = "Это имя уже используется в клубе."               // UpdateClubComputerRequest
+	MsgMacFormat              = "Введите MAC-адрес в формате AA:BB:CC:DD:EE:FF."  // UpdateClubComputerRequest
+	MsgMacTaken               = "Этот MAC-адрес уже привязан к другому ПК клуба." // UpdateClubComputerRequest
+	MsgComputerCreatedLog     = "Добавлен ПК :computer в зону :zone"              // журнал computer.created
+	MsgComputerChangedLog     = "Изменён компьютер: :computer"                    // журнал computer.updated
+	MsgComputerRemovedLog     = "Удалён ПК :computer"                             // журнал computer.deleted
 )
 
 // SubjectZone / SubjectComputer — морф-классы предметов журнала (как в старом activity_logs.subject_type).
@@ -392,18 +395,32 @@ func UpdateZone(ctx context.Context, q *store.Queries, env Env, zoneID int64, in
 // зоны, у которых не останется других зон, выключаются (иначе тариф «только этой зоны» стал бы продаваться
 // во всех зонах). ПК зоны удаляются каскадом (их брони — тоже, сертификаты отзывает триггер). Возвращает
 // имена выключенных тарифов.
+// Решение владельца (ревью 22.11.2026, docs/DECISIONS.md): пока на ПК зоны есть оплаченная ожидающая бронь, которая
+// ещё не закончилась, — 422: каскад стёр бы её без возврата денег гостю. ПК зоны блокируются (по id, как при
+// бронировании и продаже времени) до проверок — новая бронь или сессия не появятся между проверкой и удалением.
 func DeleteZone(ctx context.Context, q *store.Queries, env Env, zoneID int64) ([]string, error) {
 	zone, err := q.ClubMapLockZone(ctx, store.ClubMapLockZoneParams{ClubID: env.ClubID, ID: zoneID})
 	if err != nil {
 		return nil, notFound(err)
 	}
 	now := env.Now
+	pcs, err := q.ClubMapZoneComputersForUpdate(ctx, store.ClubMapZoneComputersForUpdateParams{ClubID: env.ClubID, ZoneID: zoneID})
+	if err != nil {
+		return nil, err
+	}
 	running, err := q.ClubMapZoneRunningSessions(ctx, store.ClubMapZoneRunningSessionsParams{ClubID: env.ClubID, ZoneID: zoneID, Now: &now})
 	if err != nil {
 		return nil, err
 	}
 	if running > 0 {
 		return nil, invalid("zone", MsgZoneHasSessions, nil)
+	}
+	pcIDs := make([]int64, len(pcs))
+	for i, pc := range pcs {
+		pcIDs[i] = pc.ID
+	}
+	if err := paidBookingGuard(ctx, q, env, pcIDs, "zone", MsgZoneHasPaidBooking); err != nil {
+		return nil, err
 	}
 	count, err := q.ClubMapZoneComputerCount(ctx, store.ClubMapZoneComputerCountParams{ClubID: env.ClubID, ZoneID: zoneID})
 	if err != nil {

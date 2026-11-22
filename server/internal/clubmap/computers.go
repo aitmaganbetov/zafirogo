@@ -9,6 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/agent/enroll"
 	"github.com/aitmaganbetov/zafirogo/server/internal/outbox"
@@ -224,6 +226,9 @@ func UpdateComputer(ctx context.Context, q *store.Queries, env Env, computerID i
 
 // DeleteComputer — ClubComputerController::destroy(): не при идущей сессии; журнал computer.deleted без предмета.
 // Возвращает имя ПК.
+// Решение владельца (ревью 22.11.2026, docs/DECISIONS.md): пока на ПК есть оплаченная ожидающая бронь, которая ещё
+// не закончилась, — 422 (в старом брони удалялись каскадом вместе с ПК, оплата гостя пропадала без возврата).
+// Проверка — под блокировкой ПК, которую берёт и бронирование.
 func DeleteComputer(ctx context.Context, q *store.Queries, env Env, computerID int64) (string, error) {
 	cur, err := q.ClubMapLockComputer(ctx, store.ClubMapLockComputerParams{ClubID: env.ClubID, ID: computerID})
 	if err != nil {
@@ -233,6 +238,9 @@ func DeleteComputer(ctx context.Context, q *store.Queries, env Env, computerID i
 	pc := Computer{SessionID: cur.CurrentSessionID, SessionUserID: cur.CurrentSessionUserID, SessionGuest: cur.SessionGuest, SessionEndsAt: cur.SessionEndsAt}
 	if pc.HasPaidSession(env.Now) {
 		return "", invalid("computer", MsgComputerBusy, map[string]string{"computer": name})
+	}
+	if err := paidBookingGuard(ctx, q, env, []int64{computerID}, "computer", MsgComputerHasPaidBooking); err != nil {
+		return "", err
 	}
 	var mac any
 	if cur.MacAddress != nil {
@@ -276,4 +284,22 @@ func UpdateComputerLayout(ctx context.Context, q *store.Queries, env Env, comput
 	}
 	now := env.Now
 	return q.ClubMapUpdateComputerLayout(ctx, store.ClubMapUpdateComputerLayoutParams{PositionX: x, PositionY: y, Now: &now, ClubID: env.ClubID, ID: computerID})
+}
+
+// paidBookingGuard — отказ 422, если на одном из ПК (они уже заблокированы) есть оплаченная ожидающая бронь,
+// которая ещё не закончилась: внешний ключ computer_reservations → club_computers удалил бы её каскадом.
+func paidBookingGuard(ctx context.Context, q *store.Queries, env Env, computerIDs []int64, field, msg string) error {
+	if len(computerIDs) == 0 {
+		return nil
+	}
+	pc, err := q.AppBookingPaidPendingComputer(ctx, store.AppBookingPaidPendingComputerParams{
+		ClubID: env.ClubID, ComputerIds: computerIDs, Now: env.Now,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return invalid(field, msg, map[string]string{"computer": DisplayName(pc.DisplayName, pc.DeviceName, pc.Number)})
 }

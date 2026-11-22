@@ -284,8 +284,9 @@ type ChatMessage struct {
 }
 
 type Club struct {
-	ID                    int64           `json:"id"`
-	Name                  string          `json:"name"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// Адрес клуба; меняет только пул платформы (clubs_platform_columns_guard)
 	Slug                  string          `json:"slug"`
 	Settings              json.RawMessage `json:"settings"`
 	CreatedAt             *time.Time      `json:"created_at"`
@@ -920,7 +921,7 @@ type SessionPurchase struct {
 	UpdatedAt  *time.Time `json:"updated_at"`
 	// Зона ПК в момент покупки (для минут — зона цены часа). NULL — данные до 0006. Без FK: как subject_id журнала
 	ZoneID *int64 `json:"zone_id"`
-	// tariff — покупка тарифа, minutes — поминутно, package — запуск сохранённого пакета (не влияет на зоны пересадки). NULL — данные до 0006
+	// tariff — покупка тарифа, minutes — поминутно, package — запуск сохранённого пакета, booking — время оплаченной брони из приложения (package и booking не влияют на зоны пересадки). NULL — данные до 0006
 	Source *string `json:"source"`
 }
 

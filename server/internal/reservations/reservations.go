@@ -216,7 +216,7 @@ func closeBooking(ctx context.Context, q *store.Queries, info club.Info, id int6
 	switch {
 	case arrive && paid:
 		event, key, action = "reservation.arrived", logArrived, "arrived"
-		_, ok, err := startPaidSession(ctx, q, info.ID, r, pc, false, env)
+		_, ok, err := startPaidSession(ctx, q, info, r, pc, false, env)
 		if err != nil {
 			return r, err
 		}

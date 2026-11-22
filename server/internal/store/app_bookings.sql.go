@@ -67,6 +67,8 @@ type AppBookingBookedComputerIDsParams struct {
 }
 
 // options(): ПК с ожидающей бронью, пересекающей [from, to) (границы уже с интервалом между бронями).
+// Историю отсекает «ends_at > from» по частичному индексу computer_reservations_club_id_pending_ends_at_index
+// (0044): по (club_id, starts_at) условие «starts_at < to» читало все прошлые брони клуба.
 func (q *Queries) AppBookingBookedComputerIDs(ctx context.Context, arg AppBookingBookedComputerIDsParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, appBookingBookedComputerIDs, arg.ClubID, arg.ToAt, arg.FromAt)
 	if err != nil {
@@ -282,22 +284,41 @@ func (q *Queries) AppBookingDue(ctx context.Context, arg AppBookingDueParams) (i
 }
 
 const appBookingDueCandidates = `-- name: AppBookingDueCandidates :many
-SELECT r.id, r.club_id, r.club_computer_id, r.user_id, r.starts_at,
-       jsonb_build_object('club', jsonb_build_object('booking_interval', c.settings -> 'club' -> 'booking_interval')) AS gap_settings
+WITH gaps AS MATERIALIZED (
+    -- Интервал считается один раз на клуб, а не на каждую бронь.
+    SELECT c.id,
+           jsonb_build_object('club', jsonb_build_object('booking_interval', c.settings -> 'club' -> 'booking_interval')) AS gap_settings,
+           make_interval(mins => (CASE
+               WHEN c.settings #> '{club,booking_interval}' IS NULL
+                 OR jsonb_typeof(c.settings #> '{club,booking_interval}') = 'null' THEN $5::int
+               WHEN jsonb_typeof(c.settings #> '{club,booking_interval}') = 'number'
+                 OR (jsonb_typeof(c.settings #> '{club,booking_interval}') = 'string'
+                     AND c.settings #>> '{club,booking_interval}' ~ '^[0-9]{1,9}(\.[0-9]{1,9})?$')
+                 THEN LEAST(GREATEST(ceil((c.settings #>> '{club,booking_interval}')::numeric), 0), $6::int)::int
+               ELSE $6::int
+           END)) AS gap
+    FROM clubs c
+)
+SELECT r.id, r.club_id, r.club_computer_id, r.user_id, r.starts_at, r.ends_at, g.gap_settings
 FROM computer_reservations r
-JOIN clubs c ON c.id = r.club_id
+JOIN gaps g ON g.id = r.club_id
 WHERE r.from_app AND r.cancelled_at IS NULL AND r.arrived_at IS NULL
   AND r.user_id IS NOT NULL
   AND (r.paid_main_cents > 0 OR r.paid_bonus_cents > 0)
-  AND r.starts_at <= $1 AND r.ends_at > $2
-ORDER BY r.starts_at, r.id
-LIMIT $3
+  AND r.ends_at > $1::timestamptz
+  AND (r.ends_at, r.id) > ($2::timestamptz, $3::bigint)
+  AND r.starts_at <= $1::timestamptz + g.gap
+ORDER BY r.ends_at, r.id
+LIMIT $4
 `
 
 type AppBookingDueCandidatesParams struct {
-	Until   time.Time `json:"until"`
-	Now     time.Time `json:"now"`
-	MaxRows int32     `json:"max_rows"`
+	Now         time.Time `json:"now"`
+	AfterEndsAt time.Time `json:"after_ends_at"`
+	AfterID     int64     `json:"after_id"`
+	MaxRows     int32     `json:"max_rows"`
+	DefaultGap  int32     `json:"default_gap"`
+	MaxGap      int32     `json:"max_gap"`
 }
 
 type AppBookingDueCandidatesRow struct {
@@ -306,16 +327,28 @@ type AppBookingDueCandidatesRow struct {
 	ClubComputerID int64           `json:"club_computer_id"`
 	UserID         *int64          `json:"user_id"`
 	StartsAt       time.Time       `json:"starts_at"`
+	EndsAt         time.Time       `json:"ends_at"`
 	GapSettings    json.RawMessage `json:"gap_settings"`
 }
 
-// Воркер app-bookings:start (UQ-11): оплаченные ожидающие брони всех клубов, которые ещё не закончились и начнутся
-// не позже until (сейчас + наибольший интервал между бронями — 7 дней, как предел брони вперёд). gap_settings —
-// настройка интервала клуба в виде {"club": {"booking_interval": …}} (её разбирает тот же код, что и везде).
-// Пул zafiro_platform; вход гостя на ПК и условия запуска проверяет StartForSignedIn под блокировкой. Частичный
-// индекс computer_reservations_app_pending_starts_at_index (0040).
+// Воркер app-bookings:start (UQ-11): оплаченные ожидающие брони всех клубов, которые ещё не закончились
+// (ends_at > now — неявки прошлых дней никто не закрывает, они остаются ожидающими навсегда) и до начала которых
+// осталось не больше интервала между бронями клуба. Страницами по (ends_at, id): after_ends_at / after_id — последняя
+// строка предыдущей страницы (первая страница — after_ends_at = now, after_id = 0); частичный индекс
+// computer_reservations_app_pending_ends_at_index (0044).
+// Интервал клуба здесь — оценка СВЕРХУ (число или строка из цифр — округление вверх, нет настройки — default_gap,
+// всё прочее — max_gap); точное значение считает воркер тем же кодом, что и везде (BookingGapMinutes), из
+// gap_settings — {"club": {"booking_interval": …}}. max_gap — предел настройки (10 080 минут), он же предел брони
+// вперёд. Пул zafiro_platform; вход гостя на ПК и условия запуска проверяет StartForSignedIn под блокировкой.
 func (q *Queries) AppBookingDueCandidates(ctx context.Context, arg AppBookingDueCandidatesParams) ([]AppBookingDueCandidatesRow, error) {
-	rows, err := q.db.Query(ctx, appBookingDueCandidates, arg.Until, arg.Now, arg.MaxRows)
+	rows, err := q.db.Query(ctx, appBookingDueCandidates,
+		arg.Now,
+		arg.AfterEndsAt,
+		arg.AfterID,
+		arg.MaxRows,
+		arg.DefaultGap,
+		arg.MaxGap,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -329,6 +362,7 @@ func (q *Queries) AppBookingDueCandidates(ctx context.Context, arg AppBookingDue
 			&i.ClubComputerID,
 			&i.UserID,
 			&i.StartsAt,
+			&i.EndsAt,
 			&i.GapSettings,
 		); err != nil {
 			return nil, err
@@ -600,6 +634,47 @@ func (q *Queries) AppBookingOfUser(ctx context.Context, arg AppBookingOfUserPara
 	row := q.db.QueryRow(ctx, appBookingOfUser, arg.ClubID, arg.UserID, arg.ID)
 	var i AppBookingOfUserRow
 	err := row.Scan(&i.ID, &i.Code)
+	return i, err
+}
+
+const appBookingPaidPendingComputer = `-- name: AppBookingPaidPendingComputer :one
+SELECT c.id, c.number, c.display_name, c.device_name
+FROM computer_reservations r
+JOIN club_computers c ON c.club_id = r.club_id AND c.id = r.club_computer_id
+WHERE r.club_id = $1 AND r.club_computer_id = ANY($2::bigint[])
+  AND r.cancelled_at IS NULL AND r.arrived_at IS NULL
+  AND (r.paid_main_cents > 0 OR r.paid_bonus_cents > 0)
+  AND r.ends_at > $3
+ORDER BY r.starts_at, r.id
+LIMIT 1
+`
+
+type AppBookingPaidPendingComputerParams struct {
+	ClubID      int64     `json:"club_id"`
+	ComputerIds []int64   `json:"computer_ids"`
+	Now         time.Time `json:"now"`
+}
+
+type AppBookingPaidPendingComputerRow struct {
+	ID          int64   `json:"id"`
+	Number      int64   `json:"number"`
+	DisplayName *string `json:"display_name"`
+	DeviceName  *string `json:"device_name"`
+}
+
+// Удаление ПК или зоны (clubmap.DeleteComputer / DeleteZone, ревью 22.11.2026): ПК из списка, на котором есть
+// оплаченная ожидающая бронь, которая ещё не закончилась (первая по времени начала). Брони удаляются вместе с ПК
+// каскадом внешнего ключа — без этой проверки оплата гостя пропала бы без возврата. Вызывать под блокировкой этих ПК
+// (бронирование блокирует ПК — AppBookingLockComputers). Индекс computer_reservations_club_id_pending_ends_at_index.
+func (q *Queries) AppBookingPaidPendingComputer(ctx context.Context, arg AppBookingPaidPendingComputerParams) (AppBookingPaidPendingComputerRow, error) {
+	row := q.db.QueryRow(ctx, appBookingPaidPendingComputer, arg.ClubID, arg.ComputerIds, arg.Now)
+	var i AppBookingPaidPendingComputerRow
+	err := row.Scan(
+		&i.ID,
+		&i.Number,
+		&i.DisplayName,
+		&i.DeviceName,
+	)
 	return i, err
 }
 

@@ -22,6 +22,9 @@ const (
 	SourceTariff  PurchaseSource = "tariff"  // tariff.purchased
 	SourceMinutes PurchaseSource = "minutes" // time.purchased
 	SourcePackage PurchaseSource = "package" // time.package_started — для зон пересадки не учитывается
+	// SourceBooking — оплаченное время брони из приложения (ComputerReservations::startPaidSession()): в журнале
+	// старого кода это reservation.arrived, а не покупка, — для зон пересадки не учитывается.
+	SourceBooking PurchaseSource = "booking"
 )
 
 // ZonePurchase — покупка сессии для выбора зон пересадки.
@@ -135,12 +138,13 @@ func PlanTransfer(from Computer, target *Computer, userID int64, zones []int64, 
 	}, nil
 }
 
-// lastZonePurchase — последняя по id покупка сессии без пакетов (allowedZoneIds(): последняя запись журнала).
+// lastZonePurchase — последняя по id покупка сессии без пакетов и времени брони (allowedZoneIds(): последняя запись
+// журнала tariff.purchased|time.purchased).
 func lastZonePurchase(purchases []ZonePurchase) *ZonePurchase {
 	var last *ZonePurchase
 	for i := range purchases {
 		p := &purchases[i]
-		if p.Source == SourcePackage {
+		if p.Source == SourcePackage || p.Source == SourceBooking {
 			continue
 		}
 		if last == nil || p.ID > last.ID {

@@ -483,7 +483,8 @@ func (a *API) bookingComputerIDs(w http.ResponseWriter, r *http.Request, b body)
 
 // bookingsStore — POST /api/guest/bookings: бронь одного ПК (club_computer_id) или нескольких вместе
 // (club_computer_ids) с оплатой с балансов; 201 {message, booking}. Повтор запроса с тем же Idempotency-Key
-// (приложение его не шлёт; если пришлёт) возвращает первую бронь и не списывает второй раз.
+// (приложение его не шлёт; если пришлёт) возвращает первую бронь и не списывает второй раз; если бронь с тех пор
+// отменена или закрыта — 200 и сообщение об этом, а не «ПК забронирован».
 func (a *API) bookingsStore(w http.ResponseWriter, r *http.Request) {
 	if !a.bookingEnabled(w, r) {
 		return
@@ -504,23 +505,35 @@ func (a *API) bookingsStore(w http.ResponseWriter, r *http.Request) {
 	}
 	var booking reservations.AppBooking
 	var code string
+	var replayed bool
 	if err := a.d.Tx(r.Context(), func(ctx context.Context, q *store.Queries) error {
 		res, err := reservations.Book(ctx, q, req, a.bookingEnv(r))
 		if err != nil {
 			return err
 		}
-		code = res.Code
+		code, replayed = res.Code, res.Replayed
 		booking, err = reservations.Group(ctx, q, p.ClubID, p.UserID, res.ReservationIDs[0], a.d.NowFunc())
 		return err
 	}); err != nil {
 		a.bookingError(w, r, err, "MemberBalance", "")
 		return
 	}
-	msg := a.t(r, reservations.MsgBookedOne, nil)
+	status, msg := http.StatusCreated, a.t(r, reservations.MsgBookedOne, nil)
 	if len(ids) > 1 {
 		msg = a.t(r, reservations.MsgBookedMany, map[string]string{"code": code})
 	}
-	writeJSON(w, http.StatusCreated, struct {
+	if replayed {
+		// Повтор запроса: бронь отдаётся в текущем состоянии, и сообщение — по нему (ревью 22.11.2026): после
+		// отмены или конца брони «ПК забронирован» было бы неправдой.
+		switch booking.State {
+		case "pending", "active":
+		case "cancelled": //nolint:misspell // состояние брони старого кода
+			status, msg = http.StatusOK, a.t(r, reservations.MsgCancelled, nil)
+		default: // arrived, finished
+			status, msg = http.StatusOK, a.t(r, reservations.MsgClosed, nil)
+		}
+	}
+	writeJSON(w, status, struct {
 		Message string      `json:"message"`
 		Booking bookingJSON `json:"booking"`
 	}{msg, bookingOf(booking)})

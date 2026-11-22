@@ -407,6 +407,19 @@ func TestBookingsRoutes(t *testing.T) {
 		if r := e.do("POST", "/api/guest/bookings", token, booking(pc, 15), "Idempotency-Key", "tap-1"); r.status != 409 {
 			t.Fatalf("тот же ключ, другое тело: %d %s", r.status, r.raw)
 		}
+		// Бронь отменена — повтор с тем же ключом не отвечает «ПК забронирован» (ревью 22.11.2026).
+		id := e.scalar("SELECT id FROM computer_reservations WHERE club_id = $1", club)
+		if r := e.do("POST", fmt.Sprintf("/api/guest/bookings/%d/cancel", id), token, nil); r.status != 200 {
+			t.Fatalf("отмена: %d %s", r.status, r.raw)
+		}
+		third := e.do("POST", "/api/guest/bookings", token, booking(pc, 12), "Idempotency-Key", "tap-1")
+		if third.status != 200 || !strings.Contains(third.raw, "Бронь отменена.") || strings.Contains(third.raw, "ПК забронирован") ||
+			!strings.Contains(third.raw, `"cancelled"`) { //nolint:misspell // состояние брони старого кода
+			t.Fatalf("повтор после отмены: %d %s", third.status, third.raw)
+		}
+		if main, _ := tdb.Balances(t, club, guest); main != 5000_00 {
+			t.Fatalf("баланс после отмены и повтора = %d", main)
+		}
 	})
 
 	t.Run("GS-541 история гостя: возврат и оплата брони", func(t *testing.T) {

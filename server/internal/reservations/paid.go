@@ -47,6 +47,8 @@ const (
 
 	logArrivedByCode = "ПК :computer открыт по коду брони на :from"
 	logRefunded      = "Возврат за отменённую бронь ПК :computer"
+	// logCutRefunded — время брони, добавленное к своей сессии, упёрлось в чужую бронь (ревью 22.11.2026, в старом нет).
+	logCutRefunded = "Возврат за время брони ПК :computer, не поместившееся до следующей брони"
 	// partName — __('Бронь'): имя почасовой части сессии, начатой бронью.
 	partName    = "Бронь"
 	subjectUser = `App\Models\User`
@@ -134,6 +136,11 @@ type Started struct {
 	Minutes int64
 	// Extends — время добавлено к идущей сессии гостя (тот же session_id).
 	Extends bool
+	// CutMinutes — минуты брони, не поместившиеся до чужой брони этого ПК (только при Extends): они возвращены
+	// деньгами (RefundMain / RefundBonus) или остались пакетом (KeptPackageID). Minutes — уже без них.
+	CutMinutes              int64
+	RefundMain, RefundBonus money.Tiyn
+	KeptPackageID           int64
 }
 
 // startPaidSession — запуск оплаченного времени брони на заблокированном ПК или добавление его к своей сессии
@@ -150,9 +157,18 @@ type Started struct {
 // По коду — гостевая сессия без аккаунта и без части сессии (время оплачено бронью и не возвращается, UQ-15).
 // Иначе — часть сессии: бронь тарифом — вид tariff (лимит использования → expires_at), по часам — minutes с именем
 // «Бронь»; суммы части — пропорционально начатому времени (PlanStart).
-func startPaidSession(ctx context.Context, q *store.Queries, clubID int64, r store.LockReservationRow, pc store.LockComputerRow,
+//
+// Отличие от Laravel (ревью 22.11.2026, docs/DECISIONS.md): время, добавляемое к своей сессии гостя, не заходит на
+// чужую бронь этого ПК. В старом конец сессии сдвигался без проверки (session_ends_at + минуты) и мог наехать на
+// следующую бронь: G — бронь 18–19, H — 19:30–20:30, интервал 30; G в 17:00 купил 2 часа → сессия до 20:00. Предел
+// тот же, что у продажи времени (AgentTariffPurchaseService::sell() → ComputerReservations::blocking()): конец
+// сессии + интервал ≤ начало чужой ожидающей брони. Не поместившиеся минуты не теряются: у брони тарифом с лимитом
+// использования остаются пакетом (как урезанное время тарифа в purchase(), BR-020: TimePackage + ledger
+// package_kept), иначе их доля оплаты возвращается на балансы (ledger reservation_refund, ключ
+// reservation_refund:<id>:cut; траты лояльности уменьшаются на основную часть, как в refund()).
+func startPaidSession(ctx context.Context, q *store.Queries, info club.Info, r store.LockReservationRow, pc store.LockComputerRow,
 	byCode bool, env Env) (Started, bool, error) {
-	now := env.Now
+	now, clubID := env.Now, info.ID
 	own := hasPaidSession(pc, now)
 	if own && (byCode || pc.SessionGuest || pc.CurrentSessionUserID == nil || r.UserID == nil || *pc.CurrentSessionUserID != *r.UserID) {
 		return Started{}, false, nil
@@ -180,19 +196,37 @@ func startPaidSession(ctx context.Context, q *store.Queries, clubID int64, r sto
 	} else {
 		out.UserID = *r.UserID
 		if own {
+			// Чужая бронь до нового конца сессии + интервал: время добавляется только до неё.
+			gap := time.Duration(info.BookingGapMinutes()) * time.Minute
+			b, err := q.GetBlockingReservation(ctx, store.GetBlockingReservationParams{
+				ClubID: clubID, ComputerID: pc.ID, UserID: r.UserID, FromAt: now, Until: pc.SessionEndsAt.Add(add + gap),
+			})
+			switch {
+			case err == nil:
+				var fit int64
+				if limit := b.StartsAt.Add(-gap); limit.After(*pc.SessionEndsAt) {
+					fit = min(plan.Minutes, int64(limit.Sub(*pc.SessionEndsAt)/time.Minute))
+				}
+				out.CutMinutes, out.Minutes = plan.Minutes-fit, fit
+				add = time.Duration(fit) * time.Minute
+			case !errors.Is(err, pgx.ErrNoRows):
+				return Started{}, false, err
+			}
 			out.Extends, out.SessionID, out.EndsAt = true, *pc.CurrentSessionID, session.StoredTime(pc.SessionEndsAt.Add(add))
 		} else {
 			out.SessionID, out.EndsAt = billingsvc.NewSessionID(), session.StoredTime(now.Add(add))
 		}
 		// Booked as a tariff, the time is that tariff's (not refunded; a usage limit keeps the rest).
-		kind, name, source := session.KindMinutes, env.t(partName), string(session.SourceMinutes)
+		// Источник части — booking: в Laravel запуск брони пишет только reservation.arrived, и зоны пересадки
+		// (SeatTransfers::allowedZoneIds() — последняя tariff.purchased|time.purchased сессии) его не видят.
+		kind, name, source := session.KindMinutes, env.t(partName), string(session.SourceBooking)
 		var tariffID *int64
 		var expiresAt *time.Time
 		if r.TariffID != nil {
 			t, err := q.AppBookingTariff(ctx, store.AppBookingTariffParams{ClubID: clubID, ID: *r.TariffID})
 			switch {
 			case err == nil:
-				kind, name, source, tariffID = session.KindTariff, t.Name, string(session.SourceTariff), &t.ID
+				kind, name, tariffID = session.KindTariff, t.Name, &t.ID
 				if t.UsageLimitEnabled && t.UsageLimitMinutes != nil {
 					at := session.StoredTime(now.Add(time.Duration(*t.UsageLimitMinutes) * time.Minute))
 					expiresAt = &at
@@ -201,23 +235,49 @@ func startPaidSession(ctx context.Context, q *store.Queries, clubID int64, r sto
 				return Started{}, false, err
 			}
 		}
-		zone := pc.ClubZoneID
-		if _, err := q.InsertSessionPurchase(ctx, store.InsertSessionPurchaseParams{
-			ClubID: clubID, SessionID: out.SessionID, UserID: out.UserID, Kind: string(kind), TariffID: tariffID, Name: name,
-			Minutes: plan.Minutes, MainCents: int64(plan.Main), BonusCents: int64(plan.Bonus), ExpiresAt: expiresAt,
-			ZoneID: &zone, Source: &source, Now: &now,
-		}); err != nil {
-			return Started{}, false, err
+		partMain, partBonus := plan.Main, plan.Bonus
+		keep := out.CutMinutes > 0 && tariffID != nil && expiresAt != nil
+		if out.CutMinutes > 0 && !keep {
+			// Доля оплаты не поместившихся минут — назад; у части сессии остаётся доля начатых (вниз, как PlanStart).
+			partMain = money.Tiyn(mulDiv(r.PaidMainCents, out.Minutes, plan.Duration))
+			partBonus = money.Tiyn(mulDiv(r.PaidBonusCents, out.Minutes, plan.Duration))
+			out.RefundMain, out.RefundBonus = plan.Main-partMain, plan.Bonus-partBonus
 		}
-		if err := q.SetComputerSession(ctx, store.SetComputerSessionParams{
-			ClubID: clubID, ID: pc.ID, SessionID: &out.SessionID, SessionUserID: &out.UserID, SessionGuest: false,
-			SessionEndsAt: &out.EndsAt, Now: &now,
-		}); err != nil {
-			return Started{}, false, err
+		if out.Minutes > 0 {
+			zone := pc.ClubZoneID
+			if _, err := q.InsertSessionPurchase(ctx, store.InsertSessionPurchaseParams{
+				ClubID: clubID, SessionID: out.SessionID, UserID: out.UserID, Kind: string(kind), TariffID: tariffID, Name: name,
+				Minutes: out.Minutes, MainCents: int64(partMain), BonusCents: int64(partBonus), ExpiresAt: expiresAt,
+				ZoneID: &zone, Source: &source, Now: &now,
+			}); err != nil {
+				return Started{}, false, err
+			}
+			if err := q.SetComputerSession(ctx, store.SetComputerSessionParams{
+				ClubID: clubID, ID: pc.ID, SessionID: &out.SessionID, SessionUserID: &out.UserID, SessionGuest: false,
+				SessionEndsAt: &out.EndsAt, Now: &now,
+			}); err != nil {
+				return Started{}, false, err
+			}
+		}
+		if keep {
+			if err := keepCut(ctx, q, clubID, r.ID, pc.ID, *tariffID, name, *expiresAt, env, &out); err != nil {
+				return Started{}, false, err
+			}
 		}
 	}
 	if err := q.ArriveReservation(ctx, store.ArriveReservationParams{ClubID: clubID, ID: r.ID, Now: &now}); err != nil {
 		return Started{}, false, err
+	}
+	if out.RefundMain+out.RefundBonus > 0 {
+		computer := club.ComputerName(pc.DisplayName, pc.DeviceName, pc.Number)
+		if err := refundAmounts(ctx, q, info, r, out.RefundMain, out.RefundBonus, ":cut", logCutRefunded,
+			map[string]any{"reason": "next_booking", "cut_minutes": out.CutMinutes}, computer, env); err != nil {
+			return Started{}, false, err
+		}
+	}
+	if out.Extends && out.Minutes == 0 {
+		// Сессия ПК не изменилась: ни события карты, ни команды агенту.
+		return out, true, nil
 	}
 	// Карта клуба: сессия на ПК (docs/realtime.md); агенту — после коммита.
 	ends := out.EndsAt
@@ -238,6 +298,37 @@ func startPaidSession(ctx context.Context, q *store.Queries, clubID int64, r sto
 	return out, true, nil
 }
 
+// keepCut — не поместившиеся минуты брони тарифом с лимитом использования остаются пакетом до конца лимита.
+// Laravel: по образцу AgentTariffPurchaseService::purchase() (BR-020): TimePackage::create(['minutes_left' => $rest,
+// 'expires_at' => $part['expires_at']]); ledger минут — package_kept, ключ reservation_kept:<id брони>.
+func keepCut(ctx context.Context, q *store.Queries, clubID, reservationID, computerID, tariffID int64, name string,
+	expiresAt time.Time, env Env, out *Started) error {
+	now := env.Now
+	id, err := q.InsertTimePackage(ctx, store.InsertTimePackageParams{
+		ClubID: clubID, UserID: out.UserID, TariffID: &tariffID, Name: name, MinutesLeft: out.CutMinutes,
+		ExpiresAt: expiresAt, Now: &now,
+	})
+	if err != nil {
+		return err
+	}
+	meta, err := json.Marshal(map[string]any{
+		"reason": "next_booking", "kept_minutes": out.CutMinutes, "started_minutes": out.Minutes,
+		"computer_id": computerID, "session_id": out.SessionID, "reservation_id": reservationID,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := ledger.Post(ctx, q, ledger.Operation{
+		ClubID: clubID, Kind: ledger.KindPackageKept, IdempotencyKey: "reservation_kept:" + strconv.FormatInt(reservationID, 10),
+		Minutes: []ledger.MinuteEntry{{UserID: out.UserID, TimePackageID: id, TariffID: tariffID, Minutes: out.CutMinutes}},
+		Meta:    meta, ActorUserID: env.Actor.UserID, Refs: ledger.Refs{SessionID: out.SessionID, ReservationID: reservationID},
+	}); err != nil {
+		return err
+	}
+	out.KeptPackageID = id
+	return nil
+}
+
 // refund — возврат оплаты отменённой брони на те балансы, с которых платили; накопительные траты уменьшаются на
 // основную часть (BR-179).
 //
@@ -254,6 +345,13 @@ func startPaidSession(ctx context.Context, q *store.Queries, clubID int64, r sto
 // Ledger: reservation_refund, обратные проводки оплаты (revenue_time → member_main, bonus_fund → member_bonus),
 // ключ reservation_refund:<id брони> — повторная отмена не зачислит дважды.
 func refund(ctx context.Context, q *store.Queries, info club.Info, r store.LockReservationRow, computer string, env Env) error {
+	return refundAmounts(ctx, q, info, r, money.Tiyn(r.PaidMainCents), money.Tiyn(r.PaidBonusCents), "", logRefunded, nil, computer, env)
+}
+
+// refundAmounts — возврат части или всей оплаты брони (refund(); keySuffix и logKey различают полный возврат
+// отменённой брони и возврат не поместившегося времени — startPaidSession).
+func refundAmounts(ctx context.Context, q *store.Queries, info club.Info, r store.LockReservationRow, main, bonus money.Tiyn,
+	keySuffix, logKey string, extra map[string]any, computer string, env Env) error {
 	if r.UserID == nil {
 		return nil
 	}
@@ -285,14 +383,18 @@ func refund(ctx context.Context, q *store.Queries, info club.Info, r store.LockR
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	meta, err := json.Marshal(map[string]any{"reservation_id": r.ID, "computer_id": r.ClubComputerID, "code": r.Code})
+	fields := map[string]any{"reservation_id": r.ID, "computer_id": r.ClubComputerID, "code": r.Code}
+	for k, v := range extra {
+		fields[k] = v
+	}
+	meta, err := json.Marshal(fields)
 	if err != nil {
 		return err
 	}
 	res, err := billing.Credit(ctx, q, billing.ChargeParams{
 		ClubID: info.ID, UserID: userID, Kind: ledger.KindReservationRefund, Revenue: ledger.AccountRevenueTime,
-		Main: money.Tiyn(r.PaidMainCents), Bonus: money.Tiyn(r.PaidBonusCents),
-		IdempotencyKey: "reservation_refund:" + strconv.FormatInt(r.ID, 10),
+		Main: main, Bonus: bonus,
+		IdempotencyKey: "reservation_refund:" + strconv.FormatInt(r.ID, 10) + keySuffix,
 		Refs:           ledger.Refs{ReservationID: r.ID, ReversesTransactionID: payment},
 		Meta:           meta, Actor: env.Actor,
 	})
@@ -302,7 +404,7 @@ func refund(ctx context.Context, q *store.Queries, info club.Info, r store.LockR
 	if res.Ledger.Replayed {
 		return nil
 	}
-	if err := billing.SubtractSpending(ctx, q, info.ID, userID, money.Tiyn(r.PaidMainCents), env.Now); err != nil {
+	if err := billing.SubtractSpending(ctx, q, info.ID, userID, main, env.Now); err != nil {
 		return err
 	}
 	if env.Actor.UserID > 0 {
@@ -310,11 +412,11 @@ func refund(ctx context.Context, q *store.Queries, info club.Info, r store.LockR
 			ClubID: info.ID, Event: "reservation.refunded", UserID: env.Actor.UserID, SubjectType: subjectUser, SubjectID: userID,
 			At: env.Now, Meta: env.Meta,
 			Details: map[string]any{
-				"main_balance_amount":  money.Tiyn(r.PaidMainCents).Tenge(),
-				"bonus_balance_amount": money.Tiyn(r.PaidBonusCents).Tenge(),
+				"main_balance_amount":  main.Tenge(),
+				"bonus_balance_amount": bonus.Tenge(),
 				"reservation_id":       r.ID,
 			},
-		}.Translated(logRefunded, map[string]string{"computer": computer})); err != nil {
+		}.Translated(logKey, map[string]string{"computer": computer})); err != nil {
 			return err
 		}
 	}
@@ -373,7 +475,7 @@ func StartForSignedIn(ctx context.Context, q *store.Queries, info club.Info, com
 	if err != nil {
 		return Started{}, false, err
 	}
-	out, ok, err := startPaidSession(ctx, q, info.ID, r, pc, false, env)
+	out, ok, err := startPaidSession(ctx, q, info, r, pc, false, env)
 	if err != nil || !ok {
 		return Started{}, false, err
 	}
@@ -438,7 +540,7 @@ func StartByCode(ctx context.Context, q *store.Queries, info club.Info, computer
 			"time": from.Format("02.01 15:04"), "count": fmt.Sprint(gapMinutes),
 		}}
 	}
-	out, ok, err := startPaidSession(ctx, q, info.ID, r, pc, true, env)
+	out, ok, err := startPaidSession(ctx, q, info, r, pc, true, env)
 	if err != nil {
 		return Started{}, err
 	}
