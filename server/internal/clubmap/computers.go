@@ -159,38 +159,8 @@ func UpdateComputer(ctx context.Context, q *store.Queries, env Env, computerID i
 	}
 	x, y := cur.PositionX, cur.PositionY
 	if in.ZoneID != cur.ClubZoneID {
-		zone, err := q.ClubMapLockZone(ctx, store.ClubMapLockZoneParams{ClubID: env.ClubID, ID: in.ZoneID})
-		if err != nil {
-			if errors.Is(notFound(err), ErrNotFound) {
-				return rule("club_zone_id", "exists", "")
-			}
+		if x, y, err = placeInZone(ctx, q, env.ClubID, in.ZoneID, computerID); err != nil {
 			return err
-		}
-		pcs, err := q.ClubMapZoneComputersForUpdate(ctx, store.ClubMapZoneComputersForUpdateParams{ClubID: env.ClubID, ZoneID: in.ZoneID})
-		if err != nil {
-			return err
-		}
-		if zone.Capacity != nil && int64(len(pcs)) >= *zone.Capacity {
-			return invalid("club_zone_id", MsgZoneCapacity, nil)
-		}
-		occupied := map[[2]int64]bool{}
-		for _, pc := range pcs {
-			if pc.ID != computerID {
-				occupied[[2]int64{pc.PositionX, pc.PositionY}] = true
-			}
-		}
-		found := false
-		maxX, maxY := max(0, zone.Width-66), max(0, zone.Height-166)
-		for yy := int64(GridStart); yy <= maxY && !found; yy += GridY {
-			for xx := int64(GridStart); xx <= maxX; xx += GridX {
-				if !occupied[[2]int64{xx, yy}] {
-					x, y, found = xx, yy, true
-					break
-				}
-			}
-		}
-		if !found {
-			return invalid("club_zone_id", MsgZoneNoRoom, nil)
 		}
 	}
 	now := env.Now
@@ -222,6 +192,40 @@ func UpdateComputer(ctx context.Context, q *store.Queries, env Env, computerID i
 		}
 	}
 	return stateChanged(ctx, q, env.ClubID, computerID)
+}
+
+// placeInZone — смена зоны ПК в update(): зона FOR UPDATE и её ПК, вместимость, первая свободная ячейка сетки
+// (зона width − 66 × height − 166).
+func placeInZone(ctx context.Context, q *store.Queries, clubID, zoneID, computerID int64) (x, y int64, err error) {
+	zone, err := q.ClubMapLockZone(ctx, store.ClubMapLockZoneParams{ClubID: clubID, ID: zoneID})
+	if err != nil {
+		if errors.Is(notFound(err), ErrNotFound) {
+			return 0, 0, rule("club_zone_id", "exists", "")
+		}
+		return 0, 0, err
+	}
+	pcs, err := q.ClubMapZoneComputersForUpdate(ctx, store.ClubMapZoneComputersForUpdateParams{ClubID: clubID, ZoneID: zoneID})
+	if err != nil {
+		return 0, 0, err
+	}
+	if zone.Capacity != nil && int64(len(pcs)) >= *zone.Capacity {
+		return 0, 0, invalid("club_zone_id", MsgZoneCapacity, nil)
+	}
+	occupied := map[[2]int64]bool{}
+	for _, pc := range pcs {
+		if pc.ID != computerID {
+			occupied[[2]int64{pc.PositionX, pc.PositionY}] = true
+		}
+	}
+	maxX, maxY := max(0, zone.Width-66), max(0, zone.Height-166)
+	for yy := int64(GridStart); yy <= maxY; yy += GridY {
+		for xx := int64(GridStart); xx <= maxX; xx += GridX {
+			if !occupied[[2]int64{xx, yy}] {
+				return xx, yy, nil
+			}
+		}
+	}
+	return 0, 0, invalid("club_zone_id", MsgZoneNoRoom, nil)
 }
 
 // DeleteComputer — ClubComputerController::destroy(): не при идущей сессии; журнал computer.deleted без предмета.

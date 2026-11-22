@@ -659,42 +659,11 @@ func Book(ctx context.Context, q *store.Queries, req BookRequest, env Env) (Book
 	if err != nil {
 		return out, err
 	}
-	zones := make(map[int64]store.AppBookingZonesRow, len(zoneRows))
-	for _, z := range zoneRows {
-		zones[z.ID] = z
+	g, err := a.priceGroup(pcs, zoneRows, p)
+	if err != nil {
+		return out, err
 	}
-	prices := make([]money.Tiyn, len(pcs))
-	names := make([]string, len(pcs))
-	var zoneNames []string
-	var total money.Tiyn
-	for i, pc := range pcs {
-		names[i] = club.ComputerName(pc.DisplayName, pc.DeviceName, pc.Number)
-		zone, hasZone := zones[pc.ClubZoneID]
-		fits := hasZone
-		if p.tariff == nil {
-			fits = fits && zone.PricePerHour != nil
-		} else {
-			fits = fits && (len(p.tariff.t.ZoneIDs) == 0 || slices.Contains(p.tariff.t.ZoneIDs, zone.ID))
-		}
-		if !fits || pc.IsReserved {
-			return out, &Error{Field: "club_computer_ids", Message: MsgCannotBookName, Params: map[string]string{"computer": names[i]}}
-		}
-		if prices[i], err = a.price(zone.PricePerHour, p); err != nil {
-			return out, err
-		}
-		total += prices[i]
-	}
-	// $zones->pluck('name')->implode(', '): зоны ПК группы (ClubZone::whereKey(...)->get() — по первичному ключу).
-	zoneIDs := make([]int64, 0, len(pcs))
-	for _, pc := range pcs {
-		if !slices.Contains(zoneIDs, pc.ClubZoneID) {
-			zoneIDs = append(zoneIDs, pc.ClubZoneID)
-		}
-	}
-	slices.Sort(zoneIDs)
-	for _, id := range zoneIDs {
-		zoneNames = append(zoneNames, zones[id].Name)
-	}
+	prices, names, total := g.prices, g.names, g.total
 	// MemberBalance::query()->where('user_id', …)->lockForUpdate()->firstOrFail().
 	locked, err := ledger.LockBalances(ctx, q, req.ClubID, req.UserID)
 	if err != nil {
@@ -708,18 +677,8 @@ func Book(ctx context.Context, q *store.Queries, req BookRequest, env Env) (Book
 	if err != nil {
 		return out, err
 	}
-	var seen []string
-	for _, r := range ahead {
-		key := "id" + strconv.FormatInt(r.ID, 10)
-		if r.Code != nil {
-			key = *r.Code
-		}
-		if !slices.Contains(seen, key) {
-			seen = append(seen, key)
-		}
-	}
-	if len(seen) >= MaxPending {
-		return out, &Error{Field: "starts_at", Message: MsgAheadLimit, Params: map[string]string{"count": strconv.Itoa(len(seen))}}
+	if n := pendingGroups(ahead); n >= MaxPending {
+		return out, &Error{Field: "starts_at", Message: MsgAheadLimit, Params: map[string]string{"count": strconv.Itoa(n)}}
 	}
 
 	// bonusPayment($price, $tariff?->payment_method ?? 'main_or_bonus', null, $mainBalance, $bonusBalance, …).
@@ -772,29 +731,10 @@ func Book(ctx context.Context, q *store.Queries, req BookRequest, env Env) (Book
 	}
 	out.Code, out.Price, out.Main, out.Bonus, out.Minutes = code, total, pay.Main, pay.Bonus, p.minutes
 
-	// $balance->update([...]): основной → выручка за время, бонусы → бонусный фонд (как покупка времени).
 	if total > 0 {
-		meta, err := json.Marshal(map[string]any{
-			"code": code, "price": int64(total), "minutes": p.minutes, "tariff_id": tariffID, "starts_at": req.StartsAt.UTC(),
-			"computers": perPC,
-		})
-		if err != nil {
+		if out.LedgerTransactionID, err = chargeGroup(ctx, q, req, env, out, tariffID, perPC); err != nil {
 			return out, err
 		}
-		res, err := billing.Charge(ctx, q, billing.ChargeParams{
-			ClubID: req.ClubID, UserID: req.UserID, Kind: ledger.KindReservationPayment, Revenue: ledger.AccountRevenueTime,
-			Main: pay.Main, Bonus: pay.Bonus,
-			IdempotencyKey: "reservation_payment:" + strconv.FormatInt(out.ReservationIDs[0], 10),
-			Refs:           ledger.Refs{ReservationID: out.ReservationIDs[0]}, Meta: meta, Actor: env.Actor,
-		})
-		if err != nil {
-			if errors.Is(err, ledger.ErrInsufficientFunds) {
-				// Проверка под той же блокировкой уже прошла; сюда не попасть, но текст — старый.
-				return out, &Error{Field: "balance", Message: MsgShort, Params: map[string]string{"price": total.Tenge()}}
-			}
-			return out, err
-		}
-		out.LedgerTransactionID = res.Ledger.TransactionID
 	}
 	// $this->loyalty->addSpending($user->getKey(), $main) — только основная часть (BR-042).
 	if err := billing.AddSpending(ctx, q, req.ClubID, req.UserID, pay.Main, now); err != nil {
@@ -808,7 +748,7 @@ func Book(ctx context.Context, q *store.Queries, req BookRequest, env Env) (Book
 		Details: map[string]any{
 			"amount": total.Tenge(), "currency": a.rules.Currency,
 			"main_balance_amount": pay.Main.Tenge(), "bonus_balance_amount": pay.Bonus.Tenge(),
-			"computer": joined, "zone": strings.Join(zoneNames, ", "), "tariff": tariffName,
+			"computer": joined, "zone": strings.Join(g.zoneNames, ", "), "tariff": tariffName,
 			"starts_at": from, "duration_minutes": p.minutes,
 		},
 	}.Translated(logPaid, map[string]string{"computer": joined, "from": from})); err != nil {
@@ -825,6 +765,95 @@ func Book(ctx context.Context, q *store.Queries, req BookRequest, env Env) (Book
 		}
 	}
 	return out, nil
+}
+
+// pricedGroup — ПК группы брони с ценами (порядок pcs).
+type pricedGroup struct {
+	prices    []money.Tiyn
+	names     []string
+	zoneNames []string // зоны группы по возрастанию id
+	total     money.Tiyn
+}
+
+// priceGroup — часть GuestBookings::book() до блокировки баланса: каждый ПК — зона с ценой часа (по часам) или зона
+// тарифа, не служебный; цена на ПК (BR-174); названия зон группы.
+func (a app) priceGroup(pcs []store.AppBookingLockComputersRow, zoneRows []store.AppBookingZonesRow, p planned) (pricedGroup, error) {
+	zones := make(map[int64]store.AppBookingZonesRow, len(zoneRows))
+	for _, z := range zoneRows {
+		zones[z.ID] = z
+	}
+	g := pricedGroup{prices: make([]money.Tiyn, len(pcs)), names: make([]string, len(pcs))}
+	for i, pc := range pcs {
+		g.names[i] = club.ComputerName(pc.DisplayName, pc.DeviceName, pc.Number)
+		zone, hasZone := zones[pc.ClubZoneID]
+		fits := hasZone
+		if p.tariff == nil {
+			fits = fits && zone.PricePerHour != nil
+		} else {
+			fits = fits && (len(p.tariff.t.ZoneIDs) == 0 || slices.Contains(p.tariff.t.ZoneIDs, zone.ID))
+		}
+		if !fits || pc.IsReserved {
+			return g, &Error{Field: "club_computer_ids", Message: MsgCannotBookName, Params: map[string]string{"computer": g.names[i]}}
+		}
+		var err error
+		if g.prices[i], err = a.price(zone.PricePerHour, p); err != nil {
+			return g, err
+		}
+		g.total += g.prices[i]
+	}
+	// $zones->pluck('name')->implode(', '): зоны ПК группы (ClubZone::whereKey(...)->get() — по первичному ключу).
+	zoneIDs := make([]int64, 0, len(pcs))
+	for _, pc := range pcs {
+		if !slices.Contains(zoneIDs, pc.ClubZoneID) {
+			zoneIDs = append(zoneIDs, pc.ClubZoneID)
+		}
+	}
+	slices.Sort(zoneIDs)
+	for _, id := range zoneIDs {
+		g.zoneNames = append(g.zoneNames, zones[id].Name)
+	}
+	return g, nil
+}
+
+// pendingGroups — сколько броней гостя впереди: брони, сделанные вместе (один код), считаются одной.
+func pendingGroups(ahead []store.AppBookingAheadRow) int {
+	var seen []string
+	for _, r := range ahead {
+		key := "id" + strconv.FormatInt(r.ID, 10)
+		if r.Code != nil {
+			key = *r.Code
+		}
+		if !slices.Contains(seen, key) {
+			seen = append(seen, key)
+		}
+	}
+	return len(seen)
+}
+
+// chargeGroup — $balance->update([...]) в book(): основной → выручка за время, бонусы → бонусный фонд (как покупка
+// времени), одной операцией reservation_payment на группу; возвращает id операции ledger.
+func chargeGroup(ctx context.Context, q *store.Queries, req BookRequest, env Env, out BookResult, tariffID *int64, perPC []map[string]any) (int64, error) {
+	meta, err := json.Marshal(map[string]any{
+		"code": out.Code, "price": int64(out.Price), "minutes": out.Minutes, "tariff_id": tariffID, "starts_at": req.StartsAt.UTC(),
+		"computers": perPC,
+	})
+	if err != nil {
+		return 0, err
+	}
+	res, err := billing.Charge(ctx, q, billing.ChargeParams{
+		ClubID: req.ClubID, UserID: req.UserID, Kind: ledger.KindReservationPayment, Revenue: ledger.AccountRevenueTime,
+		Main: out.Main, Bonus: out.Bonus,
+		IdempotencyKey: "reservation_payment:" + strconv.FormatInt(out.ReservationIDs[0], 10),
+		Refs:           ledger.Refs{ReservationID: out.ReservationIDs[0]}, Meta: meta, Actor: env.Actor,
+	})
+	if err != nil {
+		if errors.Is(err, ledger.ErrInsufficientFunds) {
+			// Проверка под той же блокировкой уже прошла; сюда не попасть, но текст — старый.
+			return 0, &Error{Field: "balance", Message: MsgShort, Params: map[string]string{"price": out.Price.Tenge()}}
+		}
+		return 0, err
+	}
+	return res.Ledger.TransactionID, nil
 }
 
 // newCode — GuestBookings::newCode(): 6 цифр, которых нет у броней клуба, закончившихся не раньше чем сутки назад.

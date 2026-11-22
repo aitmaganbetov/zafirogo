@@ -74,14 +74,7 @@ func (w *ExpireSubscriptions) Tick(ctx context.Context) (ran bool, n int, err er
 		})
 	})
 	if n > 0 {
-		w.log().Info("club subscriptions expired", "job", ExpireSubscriptionsJob, "count", n)
+		logOr(w.Log).Info("club subscriptions expired", "job", ExpireSubscriptionsJob, "count", n)
 	}
 	return ran, n, err
-}
-
-func (w *ExpireSubscriptions) log() *slog.Logger {
-	if w.Log != nil {
-		return w.Log
-	}
-	return slog.Default()
 }

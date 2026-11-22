@@ -257,30 +257,12 @@ func postDrawer(ctx context.Context, q *store.Queries, clubID int64, kind ledger
 // audit — запись аудита кассы (категория money).
 func audit(ctx context.Context, q *store.Queries, clubID int64, actor Actor, action, subjectType string, subjectID int64,
 	ledgerTx *ledger.Result, after map[string]any) error {
-	body, err := json.Marshal(after)
+	params, err := actor.MoneyAudit(clubID, "staff", action, subjectType, subjectID, after)
 	if err != nil {
 		return err
 	}
-	kind := actor.Kind
-	if kind == "" {
-		kind = "staff"
-	}
-	params := store.InsertAuditLogParams{
-		ClubID: &clubID, ActorKind: kind, Category: "money", Action: action,
-		SubjectType: &subjectType, SubjectID: &subjectID, After: body,
-	}
 	if ledgerTx != nil {
 		params.LedgerTransactionID = &ledgerTx.TransactionID
-	}
-	if actor.UserID > 0 {
-		params.ActorUserID = &actor.UserID
-	}
-	if actor.IP.IsValid() {
-		ip := actor.IP
-		params.Ip = &ip
-	}
-	if actor.RequestID != "" {
-		params.RequestID = &actor.RequestID
 	}
 	if err := q.InsertAuditLog(ctx, params); err != nil {
 		return fmt.Errorf("cash: audit: %w", err)

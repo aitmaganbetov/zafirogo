@@ -64,7 +64,7 @@ func (w *ExpireSessions) Tick(ctx context.Context) (ran bool, n int, err error) 
 		}
 		n = len(expired)
 		if n > 0 {
-			w.log().Info("paid sessions expired", "job", ExpireSessionsJob, "count", n)
+			logOr(w.Log).Info("paid sessions expired", "job", ExpireSessionsJob, "count", n)
 			if w.OnExpired != nil {
 				w.OnExpired(ctx, expired)
 			}
@@ -72,11 +72,4 @@ func (w *ExpireSessions) Tick(ctx context.Context) (ran bool, n int, err error) 
 		return nil
 	})
 	return ran, n, err
-}
-
-func (w *ExpireSessions) log() *slog.Logger {
-	if w.Log != nil {
-		return w.Log
-	}
-	return slog.Default()
 }

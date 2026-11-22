@@ -74,7 +74,7 @@ func (w *ReencryptSecrets) Tick(ctx context.Context) (ran bool, res ReencryptRes
 		return w.totp(ctx, q, &res)
 	})
 	if res.Webhooks+res.Settings+res.Totp > 0 || res.Failed > 0 {
-		w.log().Info("secrets re-encrypted", "job", ReencryptSecretsJob, "key_id", w.Box.ActiveKeyID(),
+		logOr(w.Log).Info("secrets re-encrypted", "job", ReencryptSecretsJob, "key_id", w.Box.ActiveKeyID(),
 			"webhooks", res.Webhooks, "settings", res.Settings, "totp", res.Totp, "failed", res.Failed)
 	}
 	return ran, res, err
@@ -94,7 +94,7 @@ func (w *ReencryptSecrets) webhooks(ctx context.Context, q *store.Queries, res *
 			out, changed, err := w.Box.Reseal(r.Secret, webhook.SecretContext(r.ClubID), true)
 			if err != nil {
 				res.Failed++
-				w.log().Error("webhook secret cannot be decrypted with any data key", "club_id", r.ClubID, "endpoint_id", r.ID)
+				logOr(w.Log).Error("webhook secret cannot be decrypted with any data key", "club_id", r.ClubID, "endpoint_id", r.ID)
 				continue
 			}
 			if !changed {
@@ -129,7 +129,7 @@ func (w *ReencryptSecrets) settings(ctx context.Context, q *store.Queries, res *
 		out, changed, err := w.Box.Reseal(v.Token, "", false)
 		if err != nil {
 			res.Failed++
-			w.log().Error("platform setting token cannot be decrypted with any data key", "key", r.Key)
+			logOr(w.Log).Error("platform setting token cannot be decrypted with any data key", "key", r.Key)
 			continue
 		}
 		if !changed {
@@ -159,7 +159,7 @@ func (w *ReencryptSecrets) totp(ctx context.Context, q *store.Queries, res *Reen
 			out, changed, err := w.Box.Reseal(r.Secret, mfa.SecretContext(r.UserID), false)
 			if err != nil {
 				res.Failed++
-				w.log().Error("superadmin totp secret cannot be decrypted with any data key", "user_id", r.UserID)
+				logOr(w.Log).Error("superadmin totp secret cannot be decrypted with any data key", "user_id", r.UserID)
 				continue
 			}
 			if !changed {
@@ -175,11 +175,4 @@ func (w *ReencryptSecrets) totp(ctx context.Context, q *store.Queries, res *Reen
 			return nil
 		}
 	}
-}
-
-func (w *ReencryptSecrets) log() *slog.Logger {
-	if w.Log != nil {
-		return w.Log
-	}
-	return slog.Default()
 }

@@ -46,9 +46,6 @@ var cities = []City{
 	{"balkhash", "Балхаш", 46.8481, 74.9950},
 }
 
-// Cities — все города в порядке списка (Cities::keys()).
-func Cities() []City { return append([]City(nil), cities...) }
-
 // CityByKey — город по ключу clubs.city; ok=false — ключа нет в списке (правило Rule::in(Cities::keys())).
 func CityByKey(key string) (City, bool) {
 	for _, c := range cities {

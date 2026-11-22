@@ -30,6 +30,7 @@ import (
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
+	"github.com/aitmaganbetov/zafirogo/server/internal/club"
 	"github.com/aitmaganbetov/zafirogo/server/internal/db"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
@@ -275,7 +276,7 @@ func (s *Service) PlaceOrder(ctx context.Context, req OrderRequest) (Order, erro
 		if err != nil {
 			return err
 		}
-		computerName := displayName(pc.DisplayName, pc.DeviceName, pc.Number)
+		computerName := club.ComputerName(pc.DisplayName, pc.DeviceName, pc.Number)
 
 		products, err := q.ShopLockProducts(ctx, store.ShopLockProductsParams{ClubID: req.ClubID, Ids: ids})
 		if err != nil {
@@ -284,20 +285,9 @@ func (s *Service) PlaceOrder(ctx context.Context, req OrderRequest) (Order, erro
 		if len(products) != len(ids) {
 			return ErrProductGone
 		}
-		var total money.Tiyn
-		lines := make([]Line, 0, len(products))
-		for _, p := range products {
-			qty := req.Quantities[p.ID]
-			if qty > p.Quantity {
-				return &Error{Code: ErrNotEnoughStock.Code, Field: "items", Message: MsgNotEnoughStock, Params: map[string]string{"product": p.Name}}
-			}
-			price := money.Tiyn(p.Price)
-			lineTotal := price * money.Tiyn(qty)
-			total += lineTotal
-			if !total.Valid() {
-				return fmt.Errorf("%w: order amount out of range", ErrInvalidInput)
-			}
-			lines = append(lines, Line{ProductID: p.ID, Name: p.Name, Quantity: qty, Price: price, Total: lineTotal})
+		lines, total, err := orderLines(products, req.Quantities)
+		if err != nil {
+			return err
 		}
 
 		balances, err := ledger.LockBalances(ctx, q, req.ClubID, req.UserID)
@@ -349,21 +339,8 @@ func (s *Service) PlaceOrder(ctx context.Context, req OrderRequest) (Order, erro
 			}
 		}
 
-		out.Stock = make(map[int64]int64, len(lines))
-		for i, l := range lines {
-			p := products[i]
-			m := stock.Movement{ProductID: p.ID, Type: stock.WriteOff, Quantity: l.Quantity,
-				BalanceAfter: p.Quantity - l.Quantity, Note: StockNote, Change: -l.Quantity}
-			if _, err := stock.ApplyMovement(ctx, q, req.ClubID, req.UserID, m, now); err != nil {
-				return err
-			}
-			out.Stock[p.ID] = m.BalanceAfter
-			// WebhookDispatcher::dispatch('stock.changed', {product_id, sku, change, quantity, reason: sale}).
-			if _, err := outbox.Add(ctx, q, outbox.Event{ClubID: req.ClubID, Type: "stock.changed", Data: map[string]any{
-				"product_id": p.ID, "sku": p.Sku, "change": -l.Quantity, "quantity": m.BalanceAfter, "reason": "sale",
-			}}); err != nil {
-				return err
-			}
+		if out.Stock, err = writeOff(ctx, q, req, products, lines, now); err != nil {
+			return err
 		}
 		if err := s.record(ctx, q, req, computerName, lines, total); err != nil {
 			return err
@@ -378,15 +355,57 @@ func (s *Service) PlaceOrder(ctx context.Context, req OrderRequest) (Order, erro
 			return err
 		}
 		if total > 0 {
-			if _, err := outbox.Add(ctx, q, outbox.Event{ClubID: req.ClubID, Type: "balance.changed", Data: map[string]any{
-				"user_id": req.UserID, "balance": int64(out.MainBalance), "bonus_balance": int64(out.BonusBalance),
-			}}); err != nil {
+			if _, err := outbox.Add(ctx, q, outbox.Event{ClubID: req.ClubID, Type: "balance.changed",
+				Data: billing.BalanceEvent(req.UserID, out.MainBalance, out.BonusBalance)}); err != nil {
 				return err
 			}
 		}
 		return remember(ctx, q, req.ClubID, req.IdempotencyKey, out)
 	})
 	return out, err
+}
+
+// orderLines — строки заказа по товарам под блокировкой: total = Σ amountToCents(price) * qty; qty > quantity →
+// items «Недостаточно товара: …».
+func orderLines(products []store.ShopLockProductsRow, quantities map[int64]int64) ([]Line, money.Tiyn, error) {
+	var total money.Tiyn
+	lines := make([]Line, 0, len(products))
+	for _, p := range products {
+		qty := quantities[p.ID]
+		if qty > p.Quantity {
+			return nil, 0, &Error{Code: ErrNotEnoughStock.Code, Field: "items", Message: MsgNotEnoughStock, Params: map[string]string{"product": p.Name}}
+		}
+		price := money.Tiyn(p.Price)
+		lineTotal := price * money.Tiyn(qty)
+		total += lineTotal
+		if !total.Valid() {
+			return nil, 0, fmt.Errorf("%w: order amount out of range", ErrInvalidInput)
+		}
+		lines = append(lines, Line{ProductID: p.ID, Name: p.Name, Quantity: qty, Price: price, Total: lineTotal})
+	}
+	return lines, total, nil
+}
+
+// writeOff — по строкам заказа: quantity -= qty; stock_movements {write_off, note 'Заказ из агента'}; вебхук
+// stock.changed {reason: sale}. Возвращает остатки после заказа (product_id → quantity).
+func writeOff(ctx context.Context, q *store.Queries, req OrderRequest, products []store.ShopLockProductsRow, lines []Line, now time.Time) (map[int64]int64, error) {
+	left := make(map[int64]int64, len(lines))
+	for i, l := range lines {
+		p := products[i]
+		m := stock.Movement{ProductID: p.ID, Type: stock.WriteOff, Quantity: l.Quantity,
+			BalanceAfter: p.Quantity - l.Quantity, Note: StockNote, Change: -l.Quantity}
+		if _, err := stock.ApplyMovement(ctx, q, req.ClubID, req.UserID, m, now); err != nil {
+			return nil, err
+		}
+		left[p.ID] = m.BalanceAfter
+		// WebhookDispatcher::dispatch('stock.changed', {product_id, sku, change, quantity, reason: sale}).
+		if _, err := outbox.Add(ctx, q, outbox.Event{ClubID: req.ClubID, Type: "stock.changed", Data: map[string]any{
+			"product_id": p.ID, "sku": p.Sku, "change": -l.Quantity, "quantity": m.BalanceAfter, "reason": "sale",
+		}}); err != nil {
+			return nil, err
+		}
+	}
+	return left, nil
 }
 
 func validateOrder(req OrderRequest) error {
@@ -571,17 +590,6 @@ func formatCents(t money.Tiyn) string { return t.Tenge() }
 func base64URL(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
 func unbase64URL(s string) ([]byte, error) { return base64.RawURLEncoding.DecodeString(s) }
-
-// displayName — ClubComputer::displayName(): display_name ?: device_name ?: sprintf('PC-%02d', number).
-func displayName(display, device *string, number int64) string {
-	if display != nil && *display != "" {
-		return *display
-	}
-	if device != nil && *device != "" {
-		return *device
-	}
-	return fmt.Sprintf("PC-%02d", number)
-}
 
 // addSpending — LoyaltyProgram::addSpending(): billing.AddSpending (BR-042); нет членства — ничего.
 func addSpending(ctx context.Context, q *store.Queries, clubID, userID int64, cents money.Tiyn, now time.Time) error {

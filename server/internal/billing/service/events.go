@@ -188,9 +188,9 @@ func AddEvent(ctx context.Context, q *store.Queries, clubID int64, typ string, d
 	return err
 }
 
-// BalanceEvent — data события balance.changed (тиыны).
+// BalanceEvent — billing.BalanceEvent: data события balance.changed (тиыны).
 func BalanceEvent(userID int64, main, bonus money.Tiyn) map[string]any {
-	return map[string]any{"user_id": userID, "balance": int64(main), "bonus_balance": int64(bonus)}
+	return billing.BalanceEvent(userID, main, bonus)
 }
 
 // PHPFloat — число так, как его писал json_encode() PHP для float (serialize_precision = -1): кратчайшая

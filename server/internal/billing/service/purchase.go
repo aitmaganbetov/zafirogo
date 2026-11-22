@@ -192,7 +192,7 @@ func (s *Service) PurchaseTariff(ctx context.Context, req TariffPurchaseRequest)
 		if err := q.IncrementTariffSales(ctx, store.IncrementTariffSalesParams{ClubID: req.ClubID, TariffID: t.ID, Now: now}); err != nil {
 			return err
 		}
-		return remember(ctx, q, req.ClubID, req.IdempotencyKey, out)
+		return RememberRequest(ctx, q, req.ClubID, req.IdempotencyKey, out)
 	})
 	if err == nil && !out.Replayed {
 		s.notifyPurchase(ctx, req.ClubID, req.UserID, req.ComputerID, out, currencyOut, req.Actor.UserID)
@@ -350,7 +350,7 @@ func (s *Service) purchaseMinutes(ctx context.Context, req MinutesPurchaseReques
 			return err
 		}
 		currencyOut = club.currency
-		return remember(ctx, q, req.ClubID, req.IdempotencyKey, out)
+		return RememberRequest(ctx, q, req.ClubID, req.IdempotencyKey, out)
 	})
 	if err == nil && !out.Replayed {
 		s.notifyPurchase(ctx, req.ClubID, req.UserID, req.ComputerID, out, currencyOut, req.Actor.UserID)
@@ -411,30 +411,9 @@ func (s *Service) StartPackage(ctx context.Context, req PackageStartRequest) (Pu
 		if err != nil {
 			return err
 		}
-		// $package->tariff — с мягко удалёнными; удалённый физически (tariff_id NULL) — без ограничений.
-		var tariff *pricing.Tariff
-		if pkg.TariffID != nil {
-			t, err := q.GetTariffWithTrashed(ctx, store.GetTariffWithTrashedParams{ClubID: req.ClubID, ID: *pkg.TariffID})
-			switch {
-			case err == nil:
-				zones, err := q.ListTariffZoneIDs(ctx, store.ListTariffZoneIDsParams{ClubID: req.ClubID, TariffID: t.ID})
-				if err != nil {
-					return err
-				}
-				pt, err := tariffRow{
-					ID: t.ID, Name: t.Name, DurationMinutes: t.DurationMinutes, Price: t.Price, PaymentMethod: t.PaymentMethod,
-					DiscountEnabled: t.DiscountEnabled, IsActive: t.IsActive, UsageLimitEnabled: t.UsageLimitEnabled,
-					UsageLimitMinutes: t.UsageLimitMinutes, QuantityLimitEnabled: t.QuantityLimitEnabled,
-					QuantityLimit: t.QuantityLimit, UserRoles: t.UserRoles, SalePeriods: t.SalePeriods,
-					ValidityPeriods: t.ValidityPeriods,
-				}.toPricing(zones)
-				if err != nil {
-					return err
-				}
-				tariff = &pt
-			case !errors.Is(err, pgx.ErrNoRows):
-				return err
-			}
+		tariff, err := packageTariff(ctx, q, req.ClubID, pkg.TariffID)
+		if err != nil {
+			return err
 		}
 		in := pricing.PackageStartInput{
 			MinutesLeft: pkg.MinutesLeft, ExpiresAt: pkg.ExpiresAt, Tariff: tariff, UserID: req.UserID,
@@ -504,7 +483,7 @@ func (s *Service) StartPackage(ctx context.Context, req PackageStartRequest) (Pu
 		}); err != nil {
 			return err
 		}
-		return remember(ctx, q, req.ClubID, req.IdempotencyKey, out)
+		return RememberRequest(ctx, q, req.ClubID, req.IdempotencyKey, out)
 	})
 	if errors.Is(err, pricing.ErrPackageExpired) {
 		// Решение Q-011 (docs/DECISIONS.md): основная транзакция откачена (ключ идемпотентности не занят),
@@ -517,6 +496,35 @@ func (s *Service) StartPackage(ctx context.Context, req PackageStartRequest) (Pu
 		s.notifyPurchase(ctx, req.ClubID, req.UserID, req.ComputerID, out, "", req.Actor.UserID)
 	}
 	return out, err
+}
+
+// packageTariff — $package->tariff: с мягко удалёнными; удалённый физически (tariff_id NULL) — nil, без ограничений.
+func packageTariff(ctx context.Context, q *store.Queries, clubID int64, tariffID *int64) (*pricing.Tariff, error) {
+	if tariffID == nil {
+		return nil, nil
+	}
+	t, err := q.GetTariffWithTrashed(ctx, store.GetTariffWithTrashedParams{ClubID: clubID, ID: *tariffID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	zones, err := q.ListTariffZoneIDs(ctx, store.ListTariffZoneIDsParams{ClubID: clubID, TariffID: t.ID})
+	if err != nil {
+		return nil, err
+	}
+	pt, err := tariffRow{
+		ID: t.ID, Name: t.Name, DurationMinutes: t.DurationMinutes, Price: t.Price, PaymentMethod: t.PaymentMethod,
+		DiscountEnabled: t.DiscountEnabled, IsActive: t.IsActive, UsageLimitEnabled: t.UsageLimitEnabled,
+		UsageLimitMinutes: t.UsageLimitMinutes, QuantityLimitEnabled: t.QuantityLimitEnabled,
+		QuantityLimit: t.QuantityLimit, UserRoles: t.UserRoles, SalePeriods: t.SalePeriods,
+		ValidityPeriods: t.ValidityPeriods,
+	}.toPricing(zones)
+	if err != nil {
+		return nil, err
+	}
+	return &pt, nil
 }
 
 // notifyPurchase — после коммита покупки: сессия на ПК (новая или продлённая) и балансы, если деньги списаны.

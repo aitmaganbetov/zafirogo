@@ -482,6 +482,11 @@ type ChargeParams struct {
 	Actor          BalanceActor
 }
 
+// BalanceEvent — data события balance.changed (тиыны; docs/realtime.md).
+func BalanceEvent(userID int64, main, bonus money.Tiyn) map[string]any {
+	return map[string]any{"user_id": userID, "balance": int64(main), "bonus_balance": int64(bonus)}
+}
+
 // ChargeResult — балансы после операции.
 type ChargeResult struct {
 	Ledger          ledger.Result
@@ -566,37 +571,41 @@ func numberFormatSpaced(t money.Tiyn) string {
 	return money.NumberFormat(t, ".", " ")
 }
 
+// MoneyAudit — запись audit_log категории money от имени a (пустой Kind — defaultKind) о предмете
+// subjectType/subjectID; ссылку на операцию ledger (LedgerTransactionID) ставит вызывающий.
+func (a BalanceActor) MoneyAudit(clubID int64, defaultKind, action, subjectType string, subjectID int64, after map[string]any) (store.InsertAuditLogParams, error) {
+	body, err := json.Marshal(after)
+	if err != nil {
+		return store.InsertAuditLogParams{}, err
+	}
+	kind := a.Kind
+	if kind == "" {
+		kind = defaultKind
+	}
+	p := store.InsertAuditLogParams{
+		ClubID: &clubID, ActorKind: kind, Category: "money", Action: action,
+		SubjectType: &subjectType, SubjectID: &subjectID, After: body,
+	}
+	if a.UserID > 0 {
+		p.ActorUserID = &a.UserID
+	}
+	if a.IP.IsValid() {
+		ip := a.IP
+		p.Ip = &ip
+	}
+	if a.RequestID != "" {
+		p.RequestID = &a.RequestID
+	}
+	return p, nil
+}
+
 // auditMoney пишет запись аудита о денежной операции (категория money).
 func auditMoney(ctx context.Context, q *store.Queries, clubID int64, actor BalanceActor, action string, userID int64, res ledger.Result, after map[string]any) error {
-	body, err := json.Marshal(after)
+	params, err := actor.MoneyAudit(clubID, "system", action, "user", userID, after)
 	if err != nil {
 		return err
 	}
-	kind := actor.Kind
-	if kind == "" {
-		kind = "system"
-	}
-	subjectType := "user"
-	params := store.InsertAuditLogParams{
-		ClubID:              &clubID,
-		ActorKind:           kind,
-		Category:            "money",
-		Action:              action,
-		SubjectType:         &subjectType,
-		SubjectID:           &userID,
-		LedgerTransactionID: &res.TransactionID,
-		After:               body,
-	}
-	if actor.UserID > 0 {
-		params.ActorUserID = &actor.UserID
-	}
-	if actor.IP.IsValid() {
-		ip := actor.IP
-		params.Ip = &ip
-	}
-	if actor.RequestID != "" {
-		params.RequestID = &actor.RequestID
-	}
+	params.LedgerTransactionID = &res.TransactionID
 	if err := q.InsertAuditLog(ctx, params); err != nil {
 		return fmt.Errorf("billing: audit: %w", err)
 	}

@@ -135,13 +135,13 @@ func (s *Service) recordGuest(ctx context.Context, q *store.Queries, in GuestSes
 		"computers": in.Computers, "minutes": in.Minutes, "amount": amount.Tenge(),
 		"payment_method": paymentLabels[method], "tariff": tariff,
 	}
-	if err := record(ctx, q, activity.Entry{
+	if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
 		ClubID: clubID, Event: "cash.income", Description: description, UserID: in.CashierID,
 		SubjectType: billingsvc.SubjectCashTransaction, SubjectID: row.ID, Details: journal,
 	}); err != nil {
 		return GuestSessionRecorded{}, err
 	}
-	if err := record(ctx, q, activity.Entry{
+	if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
 		ClubID: clubID, Event: "computer.guest_session", Description: description, UserID: in.CashierID, Details: journal,
 	}); err != nil {
 		return GuestSessionRecorded{}, err

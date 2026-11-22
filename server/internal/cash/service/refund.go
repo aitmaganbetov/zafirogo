@@ -149,7 +149,7 @@ func (s *Service) Refund(ctx context.Context, q *store.Queries, p RefundParams) 
 			return RefundResult{}, err
 		}
 		if name, ok := names[top.UserID]; ok {
-			if err := record(ctx, q, activity.Entry{
+			if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
 				ClubID: p.ClubID, Event: "user.balance_refunded", Description: "Возврат пополнения: " + name,
 				UserID: p.Actor.UserID, SubjectType: billingsvc.SubjectUser, SubjectID: top.UserID, Details: journal,
 			}); err != nil {
@@ -161,7 +161,7 @@ func (s *Service) Refund(ctx context.Context, q *store.Queries, p RefundParams) 
 		}
 	}
 	// Laravel: refund() (стр. 200) — журнал cash.refund.
-	if err := record(ctx, q, activity.Entry{
+	if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
 		ClubID: p.ClubID, Event: "cash.refund", Description: out.Refund.Description, UserID: p.Actor.UserID,
 		SubjectType: billingsvc.SubjectCashTransaction, SubjectID: out.Refund.ID, Details: journal,
 	}); err != nil {

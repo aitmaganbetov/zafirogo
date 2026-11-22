@@ -145,13 +145,13 @@ func (s *Service) TopUp(ctx context.Context, q *store.Queries, p TopUpParams) (T
 		details["bonus_amount"], details["bonus_percent"], details["new_bonus_balance"] =
 			billingsvc.PHPFloat(planned), phpFloatOf(percent), billingsvc.PHPFloat(res.NewBonusBalance)
 	}
-	if err := record(ctx, q, activity.Entry{
+	if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
 		ClubID: p.ClubID, Event: "cash.income", Description: row.Description, UserID: p.Actor.UserID,
 		SubjectType: billingsvc.SubjectCashTransaction, SubjectID: row.ID, Details: details,
 	}); err != nil {
 		return TopUpResult{}, err
 	}
-	if err := record(ctx, q, activity.Entry{
+	if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
 		ClubID: p.ClubID, Event: "user.balance_topped_up", Description: row.Description, UserID: p.Actor.UserID,
 		SubjectType: billingsvc.SubjectUser, SubjectID: p.UserID, Details: details,
 	}); err != nil {

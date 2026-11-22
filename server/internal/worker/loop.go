@@ -28,10 +28,7 @@ type loop struct {
 // Паника тика здесь не перехватывается: её ловит safego.Run, которым app.Run оборачивает каждый воркер (журнал
 // со стеком и перезапуск всего цикла с растущей задержкой, BC-04) — после перезапуска первый тик снова сразу.
 func (l loop) run(ctx context.Context, tick func(ctx context.Context) error) error {
-	log := l.log
-	if log == nil {
-		log = slog.Default()
-	}
+	log := logOr(l.log)
 	once := func() (failed bool) {
 		if err := tick(ctx); err != nil && ctx.Err() == nil {
 			log.Error(l.failed, "job", l.job, "err", err)
@@ -73,4 +70,12 @@ func intervalOr(v, def time.Duration) time.Duration {
 		return def
 	}
 	return v
+}
+
+// logOr — журнал задачи: заданный или slog.Default().
+func logOr(l *slog.Logger) *slog.Logger {
+	if l != nil {
+		return l
+	}
+	return slog.Default()
 }

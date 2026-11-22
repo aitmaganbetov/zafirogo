@@ -78,7 +78,7 @@ func (s *Service) Transact(ctx context.Context, q *store.Queries, p TransactPara
 	if op.Type == cash.Expense {
 		desc, txKind = "Расход из кассы: "+row.Description, txExpense
 	}
-	if err := record(ctx, q, activity.Entry{
+	if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
 		ClubID: p.ClubID, Event: action, Description: desc, UserID: p.Actor.UserID,
 		SubjectType: billingsvc.SubjectCashTransaction, SubjectID: row.ID,
 		Details: map[string]any{"amount": billingsvc.PHPFloat(op.Amount)},

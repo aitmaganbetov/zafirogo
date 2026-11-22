@@ -139,13 +139,6 @@ func (w *LedgerReconcile) now() time.Time {
 	return time.Now()
 }
 
-func (w *LedgerReconcile) log() *slog.Logger {
-	if w.Log != nil {
-		return w.Log
-	}
-	return slog.Default()
-}
-
 func (w *LedgerReconcile) maxFindings() int {
 	if w.MaxFindings > 0 {
 		return w.MaxFindings
@@ -198,7 +191,7 @@ func (w *LedgerReconcile) pass(ctx context.Context, state *store.Queries, res *L
 			}
 			// Ошибка одного клуба не останавливает сверку остальных, но проход успешным не считается.
 			if err := w.club(ctx, c, res.Full, since, started, res); err != nil {
-				w.log().Error("ledger reconcile: club failed", "job", LedgerReconcileJob, "club_id", c.ID, "err", err)
+				logOr(w.Log).Error("ledger reconcile: club failed", "job", LedgerReconcileJob, "club_id", c.ID, "err", err)
 				failed = append(failed, fmt.Errorf("club %d: %w", c.ID, err))
 				continue
 			}
@@ -221,7 +214,7 @@ func (w *LedgerReconcile) pass(ctx context.Context, state *store.Queries, res *L
 			msg = msg[:1000]
 		}
 		if serr := state.ReconcileFailed(ctx, store.ReconcileFailedParams{DurationMs: elapsed.Milliseconds(), Error: msg}); serr != nil {
-			w.log().Error("ledger reconcile: state", "job", LedgerReconcileJob, "err", serr)
+			logOr(w.Log).Error("ledger reconcile: state", "job", LedgerReconcileJob, "err", serr)
 		}
 		return fmt.Errorf("ledger reconcile: %w", err)
 	}
@@ -233,9 +226,9 @@ func (w *LedgerReconcile) pass(ctx context.Context, state *store.Queries, res *L
 	attrs := []any{"job", LedgerReconcileJob, "full", res.Full, "clubs", res.Clubs, "found", res.Found,
 		"resolved", res.Resolved, "open", res.Open, "duration_ms", elapsed.Milliseconds()}
 	if res.Open > 0 || res.Found > 0 {
-		w.log().Error("ledger reconcile: balances do not match the ledger", attrs...)
+		logOr(w.Log).Error("ledger reconcile: balances do not match the ledger", attrs...)
 	} else {
-		w.log().Info("ledger reconcile: ok", attrs...)
+		logOr(w.Log).Info("ledger reconcile: ok", attrs...)
 	}
 	return nil
 }
@@ -297,7 +290,7 @@ func (w *LedgerReconcile) club(ctx context.Context, c store.ReconcileClubsRow, f
 		return fmt.Errorf("member balances: %w", err)
 	}
 	if len(members) > limit {
-		w.log().Error("ledger reconcile: more member balance drifts than recorded", "job", LedgerReconcileJob,
+		logOr(w.Log).Error("ledger reconcile: more member balance drifts than recorded", "job", LedgerReconcileJob,
 			"club_id", c.ID, "drifts", len(members), "recorded", limit)
 	}
 	for _, m := range members {

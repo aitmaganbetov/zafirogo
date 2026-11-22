@@ -35,22 +35,14 @@ const (
 	txGuestSession = "guest_session"
 )
 
-func record(ctx context.Context, q *store.Queries, e activity.Entry) error {
-	return billingsvc.RecordActivity(ctx, q, e)
-}
-
-func event(ctx context.Context, q *store.Queries, clubID int64, typ string, data any) error {
-	return billingsvc.AddEvent(ctx, q, clubID, typ, data)
-}
-
 // cashTransactionEvent — cash.transaction {transaction_id, kind, amount (тиыны)}.
 func cashTransactionEvent(ctx context.Context, q *store.Queries, clubID int64, row store.CashTransaction, kind string) error {
-	return event(ctx, q, clubID, "cash.transaction", map[string]any{"transaction_id": row.ID, "kind": kind, "amount": row.Amount})
+	return billingsvc.AddEvent(ctx, q, clubID, "cash.transaction", map[string]any{"transaction_id": row.ID, "kind": kind, "amount": row.Amount})
 }
 
 // shiftEvent — cash.shift_changed {shift_id, action}.
 func shiftEvent(ctx context.Context, q *store.Queries, clubID, shiftID int64, action string) error {
-	return event(ctx, q, clubID, "cash.shift_changed", map[string]any{"shift_id": shiftID, "action": action})
+	return billingsvc.AddEvent(ctx, q, clubID, "cash.shift_changed", map[string]any{"shift_id": shiftID, "action": action})
 }
 
 // stockMoved — журнал stock.written_off/stock.received и вебхук stock.changed по одному движению товара.
@@ -69,10 +61,10 @@ func stockMoved(ctx context.Context, q *store.Queries, clubID, userID int64, pro
 	} else {
 		e.Event, e.Description = "stock.received", "Возврат товара на склад: "+product.Name+", "+strconv.FormatInt(qty, 10)+" шт."
 	}
-	if err := record(ctx, q, e); err != nil {
+	if err := billingsvc.RecordActivity(ctx, q, e); err != nil {
 		return err
 	}
-	return event(ctx, q, clubID, "stock.changed", map[string]any{
+	return billingsvc.AddEvent(ctx, q, clubID, "stock.changed", map[string]any{
 		"product_id": product.ID, "sku": product.Sku, "change": change, "quantity": mv.BalanceAfter, "reason": reason,
 	})
 }
@@ -122,7 +114,7 @@ func (s *Service) balanceChanged(ctx context.Context, q *store.Queries, clubID, 
 		return err
 	}
 	main, bonus := money.Tiyn(mb.Balance), money.Tiyn(mb.BonusBalance)
-	if err := event(ctx, q, clubID, "balance.changed", billingsvc.BalanceEvent(userID, main, bonus)); err != nil {
+	if err := billingsvc.AddEvent(ctx, q, clubID, "balance.changed", billingsvc.BalanceEvent(userID, main, bonus)); err != nil {
 		return err
 	}
 	if s != nil && s.Notifier != nil {

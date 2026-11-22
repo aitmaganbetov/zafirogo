@@ -85,7 +85,7 @@ func (s *Service) OpenShift(ctx context.Context, q *store.Queries, p OpenShiftPa
 		return OpenShiftResult{}, err
 	}
 	// Laravel: CashRegisterService::open() (стр. 94) — журнал cash.shift_opened.
-	if err := record(ctx, q, activity.Entry{
+	if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
 		ClubID: p.ClubID, Event: "cash.shift_opened", Description: "Открыта кассовая смена", UserID: p.Actor.UserID,
 		SubjectType: billingsvc.SubjectCashShift, SubjectID: row.ID,
 		Details: map[string]any{"opening_balance": billingsvc.PHPFloat(p.OpeningBalance)},
@@ -156,7 +156,7 @@ func (s *Service) CloseShift(ctx context.Context, q *store.Queries, p CloseShift
 		return CloseShiftResult{}, fmt.Errorf("cash: close shift: %w", err)
 	}
 	// Laravel: CashRegisterService::close() (стр. 263) — журнал cash.shift_closed.
-	if err := record(ctx, q, activity.Entry{
+	if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
 		ClubID: p.ClubID, Event: "cash.shift_closed", Description: "Закрыта кассовая смена", UserID: p.Actor.UserID,
 		SubjectType: billingsvc.SubjectCashShift, SubjectID: row.ID,
 		Details: map[string]any{"closing_balance": billingsvc.PHPFloat(closing)},
@@ -223,7 +223,7 @@ func (s *Service) MarkZReportPrinted(ctx context.Context, q *store.Queries, club
 		return false, fmt.Errorf("cash: mark z printed: %w", err)
 	}
 	// Laravel: CashRegisterController::markZReportPrinted() (стр. 187) — журнал cash.z_report_printed без details.
-	if err := record(ctx, q, activity.Entry{
+	if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
 		ClubID: clubID, Event: "cash.z_report_printed", Description: "Напечатан Z-отчёт смены #" + strconv.FormatInt(shiftID, 10),
 		UserID: actor.UserID, SubjectType: billingsvc.SubjectCashShift, SubjectID: shiftID,
 	}); err != nil {

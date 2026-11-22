@@ -10,6 +10,7 @@ import (
 
 	agentv1 "github.com/aitmaganbetov/zafirogo/server/gen/agent/v1"
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
+	"github.com/aitmaganbetov/zafirogo/server/internal/billing"
 	"github.com/aitmaganbetov/zafirogo/server/internal/billing/session"
 	"github.com/aitmaganbetov/zafirogo/server/internal/ledger"
 	"github.com/aitmaganbetov/zafirogo/server/internal/money"
@@ -186,30 +187,7 @@ func (s *Service) settle(ctx context.Context, q *store.Queries, req EndSessionRe
 
 	var entries []ledger.Entry
 	if st.RefundMain+st.RefundBonus > 0 {
-		// $balance = MemberBalance::where('user_id')->lockForUpdate()->first(); в старом коде null — деньги не
-		// начислялись (OQ-BR-12). Решение Q-012 (docs/DECISIONS.md): строка баланса создаётся (нулевая), и возврат
-		// зачисляется — деньги клиента не теряются.
-		_, err := ledger.LockBalances(ctx, q, req.ClubID, customer)
-		if errors.Is(err, ledger.ErrBalanceNotFound) {
-			if err = q.EnsureMemberBalance(ctx, store.EnsureMemberBalanceParams{ClubID: req.ClubID, UserID: customer}); err != nil {
-				return err
-			}
-			_, err = ledger.LockBalances(ctx, q, req.ClubID, customer)
-		}
-		switch {
-		case err == nil:
-			out.RefundMain, out.RefundBonus = st.RefundMain, st.RefundBonus
-			if st.RefundMain > 0 {
-				entries = append(entries,
-					ledger.Entry{Account: ledger.Main(customer), Amount: st.RefundMain},
-					ledger.Entry{Account: ledger.ClubAccount(ledger.AccountRevenueTime), Amount: -st.RefundMain})
-			}
-			if st.RefundBonus > 0 {
-				entries = append(entries,
-					ledger.Entry{Account: ledger.Bonus(customer), Amount: st.RefundBonus},
-					ledger.Entry{Account: ledger.ClubAccount(ledger.AccountBonusFund), Amount: -st.RefundBonus})
-			}
-		case !errors.Is(err, ledger.ErrBalanceNotFound):
+		if entries, err = refundEntries(ctx, q, req.ClubID, customer, st, out); err != nil {
 			return err
 		}
 	}
@@ -265,12 +243,49 @@ func (s *Service) settle(ctx context.Context, q *store.Queries, req EndSessionRe
 	}
 	// Laravel: if (refund_main + refund_bonus > 0) subtractSpending($userId, refund_main) — даже без строки баланса.
 	if st.RefundMain+st.RefundBonus > 0 {
-		if err := subtractSpending(ctx, q, req.ClubID, customer, st.LoyaltySpendingDecrease, now); err != nil {
+		if err := billing.SubtractSpending(ctx, q, req.ClubID, customer, st.LoyaltySpendingDecrease, now); err != nil {
 			return err
 		}
 	}
-	// Laravel: SessionSettlement::settle() (стр. 63–76) — журнал time.refunded и time.package_kept от того, кто
-	// завершил, предмет — клиент. Суммы — расчётные (refund_main/refund_bonus).
+	return recordSettlement(ctx, q, req, customer, st, computerName)
+}
+
+// refundEntries — проводки возврата за неиспользованное время: основной — из выручки за время, бонусы — из
+// бонусного фонда; заполняет out.RefundMain/RefundBonus.
+// $balance = MemberBalance::where('user_id')->lockForUpdate()->first(); в старом коде null — деньги не
+// начислялись (OQ-BR-12). Решение Q-012 (docs/DECISIONS.md): строка баланса создаётся (нулевая), и возврат
+// зачисляется — деньги клиента не теряются.
+func refundEntries(ctx context.Context, q *store.Queries, clubID, customer int64, st session.Settlement, out *EndSessionResult) ([]ledger.Entry, error) {
+	_, err := ledger.LockBalances(ctx, q, clubID, customer)
+	if errors.Is(err, ledger.ErrBalanceNotFound) {
+		if err = q.EnsureMemberBalance(ctx, store.EnsureMemberBalanceParams{ClubID: clubID, UserID: customer}); err != nil {
+			return nil, err
+		}
+		_, err = ledger.LockBalances(ctx, q, clubID, customer)
+	}
+	var entries []ledger.Entry
+	switch {
+	case err == nil:
+		out.RefundMain, out.RefundBonus = st.RefundMain, st.RefundBonus
+		if st.RefundMain > 0 {
+			entries = append(entries,
+				ledger.Entry{Account: ledger.Main(customer), Amount: st.RefundMain},
+				ledger.Entry{Account: ledger.ClubAccount(ledger.AccountRevenueTime), Amount: -st.RefundMain})
+		}
+		if st.RefundBonus > 0 {
+			entries = append(entries,
+				ledger.Entry{Account: ledger.Bonus(customer), Amount: st.RefundBonus},
+				ledger.Entry{Account: ledger.ClubAccount(ledger.AccountBonusFund), Amount: -st.RefundBonus})
+		}
+	case !errors.Is(err, ledger.ErrBalanceNotFound):
+		return nil, err
+	}
+	return entries, nil
+}
+
+// recordSettlement — Laravel: SessionSettlement::settle() (стр. 63–76) — журнал time.refunded и time.package_kept
+// от того, кто завершил, предмет — клиент. Суммы — расчётные (refund_main/refund_bonus).
+func recordSettlement(ctx context.Context, q *store.Queries, req EndSessionRequest, customer int64, st session.Settlement, computerName string) error {
 	if st.RefundMain+st.RefundBonus > 0 {
 		if err := RecordActivity(ctx, q, activity.Entry{
 			ClubID: req.ClubID, Event: "time.refunded",

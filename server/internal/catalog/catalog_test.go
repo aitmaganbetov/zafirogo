@@ -8,7 +8,7 @@ import (
 
 // Cities::LIST — 25 городов; порядок и координаты — буквально из старого кода.
 func TestCities(t *testing.T) {
-	all := Cities()
+	all := cities
 	if len(all) != 25 {
 		t.Fatalf("cities %d, want 25", len(all))
 	}

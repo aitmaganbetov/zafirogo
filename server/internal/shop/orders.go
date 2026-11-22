@@ -182,12 +182,12 @@ func Cancel(ctx context.Context, q *store.Queries, p HandleParams) (Handled, err
 		if err != nil {
 			return Handled{}, err
 		}
-		if err := subtractSpending(ctx, q, p.ClubID, o.UserID, h.Amount, p.Now); err != nil {
+		// LoyaltyProgram::subtractSpending(): не ниже нуля; нет членства — ничего.
+		if err := billing.SubtractSpending(ctx, q, p.ClubID, o.UserID, h.Amount, p.Now); err != nil {
 			return Handled{}, err
 		}
-		if _, err := outbox.Add(ctx, q, outbox.Event{ClubID: p.ClubID, Type: "balance.changed", Data: map[string]any{
-			"user_id": o.UserID, "balance": int64(bal.NewBalance), "bonus_balance": int64(bal.NewBonusBalance),
-		}}); err != nil {
+		if _, err := outbox.Add(ctx, q, outbox.Event{ClubID: p.ClubID, Type: "balance.changed",
+			Data: billing.BalanceEvent(o.UserID, bal.NewBalance, bal.NewBonusBalance)}); err != nil {
 			return Handled{}, err
 		}
 	}
@@ -263,9 +263,4 @@ func credit(ctx context.Context, q *store.Queries, p HandleParams, o store.ShopL
 		Main: money.Tiyn(o.Amount), IdempotencyKey: "shop_order_cancel:" + strconv.FormatInt(o.ID, 10),
 		Refs: ledger.Refs{ShopOrderID: o.ID}, Meta: meta, Actor: p.Actor,
 	})
-}
-
-// subtractSpending — LoyaltyProgram::subtractSpending(): billing.SubtractSpending (не ниже нуля; нет членства — ничего).
-func subtractSpending(ctx context.Context, q *store.Queries, clubID, userID int64, cents money.Tiyn, now time.Time) error {
-	return billing.SubtractSpending(ctx, q, clubID, userID, cents, now)
 }

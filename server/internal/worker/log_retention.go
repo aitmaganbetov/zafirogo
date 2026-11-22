@@ -62,18 +62,11 @@ func (w *LogRetention) Tick(ctx context.Context) (ran bool, dropped int, err err
 				return err
 			}
 			if n > 0 {
-				w.log().Info("expired log partitions dropped", "job", LogRetentionJob, "table", table, "count", n)
+				logOr(w.Log).Info("expired log partitions dropped", "job", LogRetentionJob, "table", table, "count", n)
 			}
 			dropped += n
 		}
 		return nil
 	})
 	return ran, dropped, err
-}
-
-func (w *LogRetention) log() *slog.Logger {
-	if w.Log != nil {
-		return w.Log
-	}
-	return slog.Default()
 }

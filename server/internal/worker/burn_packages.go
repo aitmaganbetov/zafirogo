@@ -59,16 +59,9 @@ func (w *BurnPackages) Tick(ctx context.Context) (ran bool, n int, err error) {
 		burned, err := service.BurnExpiredPackages(ctx, w.Platform, w.App, now(), activity.RequestMeta{IP: "127.0.0.1"})
 		n = len(burned)
 		if n > 0 {
-			w.log().Info("expired time packages burned", "job", BurnPackagesJob, "count", n)
+			logOr(w.Log).Info("expired time packages burned", "job", BurnPackagesJob, "count", n)
 		}
 		return err
 	})
 	return ran, n, err
-}
-
-func (w *BurnPackages) log() *slog.Logger {
-	if w.Log != nil {
-		return w.Log
-	}
-	return slog.Default()
 }

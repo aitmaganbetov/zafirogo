@@ -140,7 +140,7 @@ func (w *StartAppBookings) Tick(ctx context.Context) (ran bool, n int, err error
 			}
 		}
 		if n > 0 {
-			w.log().Info("paid app bookings started", "job", StartAppBookingsJob, "count", n)
+			logOr(w.Log).Info("paid app bookings started", "job", StartAppBookingsJob, "count", n)
 		}
 		return errors.Join(errs...)
 	})
@@ -170,11 +170,4 @@ func (w *StartAppBookings) start(ctx context.Context, clubID, computerID, userID
 	}
 	hooks.Run(context.WithoutCancel(ctx))
 	return started, nil
-}
-
-func (w *StartAppBookings) log() *slog.Logger {
-	if w.Log != nil {
-		return w.Log
-	}
-	return slog.Default()
 }

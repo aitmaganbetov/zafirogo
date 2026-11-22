@@ -143,26 +143,9 @@ func (s *Service) SellGuestSession(ctx context.Context, req GuestSessionRequest)
 		}
 
 		in := pricing.GuestSessionInput{Minutes: req.Minutes, Now: now, Location: club.loc}
-		var tariffName string
-		if req.TariffID != nil {
-			t, err := q.GetActiveTariff(ctx, store.GetActiveTariffParams{ClubID: req.ClubID, ID: *req.TariffID})
-			switch {
-			case err == nil:
-				zones, err := q.ListTariffZoneIDs(ctx, store.ListTariffZoneIDsParams{ClubID: req.ClubID, TariffID: t.ID})
-				if err != nil {
-					return err
-				}
-				pt, err := tariffRow(t).toPricing(zones)
-				if err != nil {
-					return err
-				}
-				in.Tariff = &pt
-				tariffName = t.Name
-			case errors.Is(err, pgx.ErrNoRows):
-				in.TariffMissing = true
-			default:
-				return err
-			}
+		tariffName, err := guestTariff(ctx, q, req.ClubID, req.TariffID, &in)
+		if err != nil {
+			return err
 		}
 
 		rows, err := q.LockComputers(ctx, store.LockComputersParams{ClubID: req.ClubID, Ids: ids})
@@ -211,32 +194,15 @@ func (s *Service) SellGuestSession(ctx context.Context, req GuestSessionRequest)
 			return err
 		}
 
-		names := make([]string, len(pcs))
-		for i, pc := range pcs {
-			c := quote.Computers[i]
-			sid := ""
-			if c.Extends {
-				sid = *pc.CurrentSessionID
-			} else {
-				sid = s.newSessionID()
-			}
-			ends := session.StoredTime(c.SessionEndsAt)
-			if err := q.SetComputerSession(ctx, store.SetComputerSessionParams{
-				ClubID: req.ClubID, ID: pc.ID, SessionID: &sid, SessionUserID: nil,
-				SessionGuest: true, SessionEndsAt: &ends, Now: &now,
-			}); err != nil {
-				return err
-			}
-			names[i] = pc.displayName()
-			out.Computers = append(out.Computers, GuestComputerResult{
-				ComputerID: pc.ID, Name: names[i], SessionID: sid, SessionEndsAt: ends, Extends: c.Extends, Price: c.Price,
-			})
-			if err := AddEvent(ctx, q, req.ClubID, "computer.state", computerEvent(pc.ID, sid, 0, true, &ends)); err != nil {
-				return err
-			}
+		if out.Computers, err = s.startGuestSessions(ctx, q, req.ClubID, pcs, quote, now); err != nil {
+			return err
 		}
 		out.Amount, out.Minutes = quote.Total, quote.Minutes
 
+		names := make([]string, len(out.Computers))
+		for i, c := range out.Computers {
+			names[i] = c.Name
+		}
 		joined := strings.Join(names, ", ")
 		what := minutesRu(quote.Minutes)
 		detailTariff := "—"
@@ -254,7 +220,7 @@ func (s *Service) SellGuestSession(ctx context.Context, req GuestSessionRequest)
 			return err
 		}
 		out.CashTransactionID, out.LedgerTransactionID = rec.CashTransactionID, rec.LedgerTransactionID
-		return remember(ctx, q, req.ClubID, req.IdempotencyKey, out)
+		return RememberRequest(ctx, q, req.ClubID, req.IdempotencyKey, out)
 	})
 	if err == nil && !out.Replayed && s.notifier != nil {
 		now := s.clock.Now()
@@ -267,6 +233,61 @@ func (s *Service) SellGuestSession(ctx context.Context, req GuestSessionRequest)
 		}
 	}
 	return out, err
+}
+
+// guestTariff — активный тариф гостевой продажи (без блокировки) в in.Tariff и его название; тарифа нет —
+// in.TariffMissing (ошибку даст pricing.QuoteGuestSession). tariffID nil — продажа минут.
+func guestTariff(ctx context.Context, q *store.Queries, clubID int64, tariffID *int64, in *pricing.GuestSessionInput) (string, error) {
+	if tariffID == nil {
+		return "", nil
+	}
+	t, err := q.GetActiveTariff(ctx, store.GetActiveTariffParams{ClubID: clubID, ID: *tariffID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		in.TariffMissing = true
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	zones, err := q.ListTariffZoneIDs(ctx, store.ListTariffZoneIDsParams{ClubID: clubID, TariffID: t.ID})
+	if err != nil {
+		return "", err
+	}
+	pt, err := tariffRow(t).toPricing(zones)
+	if err != nil {
+		return "", err
+	}
+	in.Tariff = &pt
+	return t.Name, nil
+}
+
+// startGuestSessions — гостевая сессия на каждом ПК (продление гостевой — тот же id) и событие карты клуба.
+func (s *Service) startGuestSessions(ctx context.Context, q *store.Queries, clubID int64, pcs []computerRow,
+	quote pricing.GuestSessionQuote, now time.Time) ([]GuestComputerResult, error) {
+	var out []GuestComputerResult
+	for i, pc := range pcs {
+		c := quote.Computers[i]
+		sid := ""
+		if c.Extends {
+			sid = *pc.CurrentSessionID
+		} else {
+			sid = s.newSessionID()
+		}
+		ends := session.StoredTime(c.SessionEndsAt)
+		if err := q.SetComputerSession(ctx, store.SetComputerSessionParams{
+			ClubID: clubID, ID: pc.ID, SessionID: &sid, SessionUserID: nil,
+			SessionGuest: true, SessionEndsAt: &ends, Now: &now,
+		}); err != nil {
+			return nil, err
+		}
+		out = append(out, GuestComputerResult{
+			ComputerID: pc.ID, Name: pc.displayName(), SessionID: sid, SessionEndsAt: ends, Extends: c.Extends, Price: c.Price,
+		})
+		if err := AddEvent(ctx, q, clubID, "computer.state", computerEvent(pc.ID, sid, 0, true, &ends)); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // minutesRu — trans_choice(':count минута|:count минуты|:count минут', $n) для русского языка

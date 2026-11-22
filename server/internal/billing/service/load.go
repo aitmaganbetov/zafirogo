@@ -306,11 +306,6 @@ func addSpending(ctx context.Context, q *store.Queries, clubID, userID int64, ce
 	return err
 }
 
-// subtractSpending — LoyaltyProgram::subtractSpending() (стр. 53–63): billing.SubtractSpending.
-func subtractSpending(ctx context.Context, q *store.Queries, clubID, userID int64, cents money.Tiyn, now time.Time) error {
-	return billing.SubtractSpending(ctx, q, clubID, userID, cents, now)
-}
-
 // ---------------------------------------------------------------------------
 // Идемпотентность запросов (billing_requests)
 // ---------------------------------------------------------------------------
@@ -361,13 +356,8 @@ func ClaimRequest(ctx context.Context, q *store.Queries, clubID int64, key, oper
 	return true, nil
 }
 
-// RememberRequest сохраняет ответ под ключом, захваченным ClaimRequest (в той же транзакции).
+// RememberRequest сохраняет ответ под ключом, захваченным ClaimRequest (в той же транзакции, что и операция).
 func RememberRequest(ctx context.Context, q *store.Queries, clubID int64, key string, response any) error {
-	return remember(ctx, q, clubID, key, response)
-}
-
-// remember сохраняет ответ под ключом (в той же транзакции, что и операция).
-func remember(ctx context.Context, q *store.Queries, clubID int64, key string, response any) error {
 	body, err := json.Marshal(response)
 	if err != nil {
 		return err
@@ -381,31 +371,12 @@ func remember(ctx context.Context, q *store.Queries, clubID int64, key string, r
 
 // auditMoney — запись audit_log категории money со ссылкой на ledger-операцию.
 func auditMoney(ctx context.Context, q *store.Queries, clubID int64, actor Actor, action string, subjectUserID, ledgerTxID int64, after map[string]any) error {
-	body, err := json.Marshal(after)
+	p, err := actor.MoneyAudit(clubID, "system", action, "user", subjectUserID, after)
 	if err != nil {
 		return err
 	}
-	kind := actor.Kind
-	if kind == "" {
-		kind = "system"
-	}
-	subjectType := "user"
-	p := store.InsertAuditLogParams{
-		ClubID: &clubID, ActorKind: kind, Category: "money", Action: action,
-		SubjectType: &subjectType, SubjectID: &subjectUserID, After: body,
-	}
 	if ledgerTxID > 0 {
 		p.LedgerTransactionID = &ledgerTxID
-	}
-	if actor.UserID > 0 {
-		p.ActorUserID = &actor.UserID
-	}
-	if actor.IP.IsValid() {
-		ip := actor.IP
-		p.Ip = &ip
-	}
-	if actor.RequestID != "" {
-		p.RequestID = &actor.RequestID
 	}
 	if err := q.InsertAuditLog(ctx, p); err != nil {
 		return fmt.Errorf("service: audit: %w", err)

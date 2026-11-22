@@ -120,14 +120,14 @@ func (s *Service) Sale(ctx context.Context, q *store.Queries, p SaleParams) (Sal
 	}
 	// Laravel: CashRegisterService::sale() (стр. 74–81) — журнал product.purchased и вебхук sale.completed
 	// (amount — number_format(…, 2, '.', ''), строки чека как receipt_data.items).
-	if err := record(ctx, q, activity.Entry{
+	if err := billingsvc.RecordActivity(ctx, q, activity.Entry{
 		ClubID: p.ClubID, Event: "product.purchased", Description: "Покупка товаров: " + itemsSummary(sale.Lines),
 		UserID: p.Actor.UserID, SubjectType: billingsvc.SubjectCashTransaction, SubjectID: row.ID,
 		Details: map[string]any{"amount": billingsvc.PHPFloat(sale.Amount), "item_count": len(sale.Lines)},
 	}); err != nil {
 		return SaleResult{}, err
 	}
-	if err := event(ctx, q, p.ClubID, "sale.completed", map[string]any{
+	if err := billingsvc.AddEvent(ctx, q, p.ClubID, "sale.completed", map[string]any{
 		"sale_id": row.ID, "cash_shift_id": shift.ID, "amount": sale.Amount.Tenge(), "amount_tiyn": int64(sale.Amount),
 		"items": receiptItems(sale.Lines),
 	}); err != nil {
