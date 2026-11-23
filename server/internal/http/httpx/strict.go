@@ -177,6 +177,12 @@ func (d *Deps) ResponseError(extra ...func(error) *APIError) func(w http.Respons
 		if ae == nil {
 			ae = MapError(err)
 		}
+		if ae == nil && permissions.ClientGone(r, err) {
+			// Клиент ушёл (уход со страницы, отмена запроса) — не ошибка сервера; ответ всё равно не прочтут.
+			d.Log().InfoContext(r.Context(), "client gone", slog.String("err", err.Error()))
+			w.WriteHeader(permissions.StatusClientClosedRequest)
+			return
+		}
 		if ae == nil {
 			d.Log().ErrorContext(r.Context(), "handler error", slog.String("err", err.Error()))
 			ae = NewAPIError(http.StatusInternalServerError, "internal_error", "")

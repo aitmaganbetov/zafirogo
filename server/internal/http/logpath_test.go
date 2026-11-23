@@ -54,3 +54,19 @@ func TestRequestLoggerHidesPathSecrets(t *testing.T) {
 		}
 	}
 }
+
+// Ответ 499 (клиент ушёл, permissions.StatusClientClosedRequest) — INFO, а не ERROR/WARN журнала запросов.
+func TestRequestLoggerClientClosedIsInfo(t *testing.T) {
+	var buf bytes.Buffer
+	r := chi.NewRouter()
+	r.Use(RequestLogger(slog.New(slog.NewTextHandler(&buf, nil))))
+	r.Get("/gone", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(499) })
+	r.Get("/fail", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
+	for path, want := range map[string]string{"/gone": "level=INFO", "/fail": "level=ERROR"} {
+		buf.Reset()
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("%s: want %s in %s", path, want, buf.String())
+		}
+	}
+}

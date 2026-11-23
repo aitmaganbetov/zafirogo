@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/activity"
+	"github.com/aitmaganbetov/zafirogo/server/internal/auth/permissions"
 )
 
 // RealIP подставляет в r.RemoteAddr IP клиента из X-Forwarded-For / X-Real-IP,
@@ -104,6 +105,8 @@ func RequestLogger(l *slog.Logger) func(http.Handler) http.Handler {
 			}
 			level := slog.LevelInfo
 			switch {
+			case status == permissions.StatusClientClosedRequest:
+				// Клиент ушёл до ответа (499) — не ошибка сервера и не ошибка запроса.
 			case status >= 500:
 				level = slog.LevelError
 			case status >= 400:

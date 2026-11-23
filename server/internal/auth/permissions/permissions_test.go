@@ -1,10 +1,14 @@
 package permissions
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
@@ -335,5 +339,31 @@ func TestPrincipalCan(t *testing.T) {
 	}
 	if (principal.Principal{Permissions: []string{"cash.view"}}).Can("cash.view") {
 		t.Error("no club → no rights")
+	}
+}
+
+func TestClientGone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	gone := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(ctx)
+	live := httptest.NewRequest(http.MethodGet, "/", nil)
+	cases := []struct {
+		name string
+		r    *http.Request
+		err  error
+		want bool
+	}{
+		{"nil", gone, nil, false},
+		{"отменён клиентом", gone, fmt.Errorf("x: %w", context.Canceled), true},
+		{"Canceled, запрос жив", live, context.Canceled, false},
+		{"дедлайн", gone, context.DeadlineExceeded, false},
+		{"EPIPE", live, fmt.Errorf("write: %w", syscall.EPIPE), true},
+		{"ECONNRESET", live, syscall.ECONNRESET, true},
+		{"прочее", gone, errors.New("db down"), false},
+	}
+	for _, c := range cases {
+		if got := ClientGone(c.r, c.err); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
 	}
 }
