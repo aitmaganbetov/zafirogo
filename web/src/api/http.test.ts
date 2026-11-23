@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, apiFetch, createApiClient, getAccessToken, refreshSession, setAccessToken, setUnauthenticatedHandler, unwrap } from './http';
+import { ApiError, apiFetch, createApiClient, getAccessToken, idempotencyKey, refreshSession, setAccessToken, setUnauthenticatedHandler, unwrap } from './http';
 import type { paths } from './gen/auth';
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
@@ -130,5 +130,24 @@ describe('apiFetch: отмена запроса (signal из queryFn, FE-10)', (
     expect(sent?.signal.aborted).toBe(false);
     ac.abort();
     expect(sent?.signal.aborted).toBe(true);
+  });
+});
+
+describe('idempotencyKey', () => {
+  const UUID4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('UUID v4 из crypto.randomUUID', () => {
+    expect(idempotencyKey()).toMatch(UUID4);
+  });
+
+  it('без randomUUID (http://<IP>, не защищённый контекст) — UUID v4 из getRandomValues, ключи разные', () => {
+    const real = globalThis.crypto;
+    vi.stubGlobal('crypto', { getRandomValues: real.getRandomValues.bind(real) });
+    const a = idempotencyKey();
+    const b = idempotencyKey();
+    expect(a).toMatch(UUID4);
+    expect(b).toMatch(UUID4);
+    expect(a).not.toBe(b);
   });
 });
