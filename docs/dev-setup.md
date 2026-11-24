@@ -4,7 +4,7 @@
 
 | Инструмент | Версия | Примечание |
 |---|---|---|
-| Go | 1.27.3 (`server/go.mod`) | при `GOTOOLCHAIN=auto` (по умолчанию) нужная версия скачается сама |
+| Go | 1.27.4 (`server/go.mod`) | при `GOTOOLCHAIN=auto` (по умолчанию) нужная версия скачается сама |
 | Node.js | ≥ 22.22.2, npm 10 | jsdom 30 требует 22.22.2+ |
 | Docker + Compose v2 | любой актуальный | Postgres, Valkey, NATS |
 | go-task | v3.54.0 (`TASK_VERSION` в `tools/versions.env`) | `go install github.com/go-task/task/v3/cmd/task@v3.54.0` |

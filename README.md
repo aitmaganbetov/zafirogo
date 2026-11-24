@@ -44,7 +44,7 @@
 
 | Что | Версия | Зачем | Установка |
 |---|---|---|---|
-| **Go** | ≥ 1.27.3 (`server/go.mod`) | сервер, генераторы, линтеры | <https://go.dev/dl/>; без root — распаковать в `~/.local/go` |
+| **Go** | ≥ 1.27.4 (`server/go.mod`) | сервер, генераторы, линтеры | <https://go.dev/dl/>; без root — распаковать в `~/.local/go` |
 | **Node.js + npm** | ≥ 22.22.2, npm 10 (в CI — 22.23.3) | фронт (Vite), тесты | <https://nodejs.org/dist/>; без root — в `~/.local/node` |
 | **Docker + Compose v2** | любой актуальный | Postgres 18.6, Valkey 9.1.3, NATS 2.15.2 | `sudo apt install docker.io docker-compose-v2` |
 | **go-task** | 3.54.0 | все команды проекта | `go install github.com/go-task/task/v3/cmd/task@v3.54.0` |
