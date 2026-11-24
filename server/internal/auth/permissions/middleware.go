@@ -1,8 +1,11 @@
 package permissions
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"syscall"
 
 	"github.com/aitmaganbetov/zafirogo/server/internal/auth/principal"
 )
@@ -40,6 +43,23 @@ func WriteError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(Error{Code: code, Message: message})
+}
+
+// StatusClientClosedRequest — клиент закрыл запрос до ответа (код nginx 499): ответ уже никто не читает. Не 5xx —
+// сервер исправен, иначе каждый уход со страницы с незавершённой загрузкой выглядит в журнале и метриках как сбой.
+const StatusClientClosedRequest = 499
+
+// ClientGone — ошибка вызвана тем, что клиент ушёл: контекст запроса отменён (context.Canceled при отменённом
+// r.Context()) или соединение уже закрыто (EPIPE, ECONNRESET при записи ответа). Дедлайн запроса
+// (http.request_timeout, context.DeadlineExceeded) сюда не относится — это медленный сервер, он остаётся 5xx.
+func ClientGone(r *http.Request, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) && errors.Is(r.Context().Err(), context.Canceled) {
+		return true
+	}
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET)
 }
 
 // Forbidden — 403 с текстом.

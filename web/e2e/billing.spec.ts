@@ -85,7 +85,8 @@ test('подписка: владелец выставляет счёт и вид
   await page.locator('label', { has: page.locator('input[name="months"][value="3"]') }).click();
   await expect(total).toHaveText('720 000');
   await page.getByRole('button', { name: 'Выставить счёт' }).click();
-  expect(sent).toEqual({ saas_plan_id: 1, months: 3 });
+  // Запрос доходит до мока асинхронно после клика — ждём, а не читаем сразу (тест падал 1 раз из 10).
+  await expect.poll(() => sent).toEqual({ saas_plan_id: 1, months: 3 });
 
   await expect(page.getByRole('status')).toHaveText('Счёт выставлен. Оплатите его через Kaspi.');
   await expect(page.getByRole('heading', { name: 'Счёт ZF-00042 ожидает оплаты' })).toBeVisible();

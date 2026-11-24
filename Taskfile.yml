@@ -153,6 +153,13 @@ tasks:
       - tools/visual/old.sh stop
       - tools/visual/new.sh stop
 
+  visual:qa:
+    desc: "Проверка нового сервера на стенде tools/visual (свежие демо-данные): все страницы под своими ролями, касса и CRUD владельца через интерфейс против настоящего API"
+    cmds:
+      - tools/visual/new.sh seed
+      - tools/visual/new.sh start --no-build
+      - cd web && npx playwright test -c e2e/visual/playwright.qa.config.ts --workers 1
+
   # ---------- линтеры ----------
 
   lint:

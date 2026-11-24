@@ -255,5 +255,13 @@ export async function unwrap<T>(p: Promise<{ data?: T; error?: unknown; response
 
 /** Новый ключ идемпотентности для денежной формы (один на отправку, CSQ-4). */
 export function idempotencyKey(): string {
-  return crypto.randomUUID();
+  // crypto.randomUUID есть только в защищённом контексте (HTTPS, localhost): по http://<IP> его нет, и денежная форма
+  // падала до отправки. getRandomValues доступен везде — тот же UUID v4 (RFC 9562 §5.4).
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const b = Array.from(crypto.getRandomValues(new Uint8Array(16)));
+  const h = b
+    .map((x, i) => (i === 6 ? (x & 0x0f) | 0x40 : i === 8 ? (x & 0x3f) | 0x80 : x)) // версия 4, вариант RFC
+    .map((x) => x.toString(16).padStart(2, '0'))
+    .join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }

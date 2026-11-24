@@ -38,7 +38,8 @@ test('регистрация владельца → панель → перез�
   // Выход (POST /api/auth/logout) — на лендинг / (redirect('/')); /dashboard недоступен.
   await page.locator('.sidebar form[action="/logout"] button').click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.locator('#features')).toBeVisible();
+  // Лендинг гостя (LandingLayout): ссылка «Войти» есть только без сессии (6b1879d убрал блок #features).
+  await expect(page.locator('header a[href="/login"]:visible').first()).toBeVisible();
   await page.goto('/dashboard');
   await expect(page).toHaveURL(/\/login$/);
 
@@ -55,7 +56,8 @@ test('переводы с сервера: /api/i18n/kk отдаёт пакет �
   const etag = res.headers()['etag'];
   expect(etag).toBeTruthy();
   const body = (await res.json()) as Record<string, string>;
-  expect(body['Касса']).toBeTruthy();
+  // Перевод, равный ключу («Касса» → «Касса»), в пакет не кладётся (FE-04, i18n.buildPack) — проверяем настоящий.
+  expect(body['Склад']).toBe('Қойма');
   const again = await request.get('/api/i18n/kk', { headers: { 'If-None-Match': etag ?? '' } });
   expect(again.status()).toBe(304);
 });

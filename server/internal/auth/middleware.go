@@ -37,6 +37,10 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			permissions.Unauthenticated(w)
 		case errors.Is(err, ErrBlocked):
 			permissions.Forbidden(w, MsgBlockedAPI)
+		case permissions.ClientGone(r, err):
+			// Клиент ушёл, пока проверялась сессия: не 503 и не ERROR (сервис исправен).
+			s.log.InfoContext(r.Context(), "authenticate: client gone", slog.String("err", err.Error()))
+			w.WriteHeader(permissions.StatusClientClosedRequest)
 		default:
 			s.log.ErrorContext(r.Context(), "authenticate", slog.String("err", err.Error()))
 			permissions.WriteError(w, http.StatusServiceUnavailable, "service_unavailable", "")

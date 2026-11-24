@@ -821,6 +821,8 @@ type Product struct {
 	UpdatedAt *time.Time `json:"updated_at"`
 	ClubID    int64      `json:"club_id"`
 	DeletedAt *time.Time `json:"deleted_at"`
+	// Путь фото товара на диске public Laravel (products/<hash>.jpg); NULL — заглушка /images/product-placeholder.svg (Laravel: ProductResource::imageUrl())
+	ImagePath *string `json:"image_path"`
 }
 
 type ProductCategory struct {

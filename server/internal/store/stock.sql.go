@@ -38,7 +38,7 @@ const insertProduct = `-- name: InsertProduct :one
 INSERT INTO products (club_id, sku, name, category, product_category_id, price, quantity, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5,
         $6, $7, $8, $8)
-RETURNING id, sku, name, category, product_category_id, price, quantity, created_at, updated_at, club_id, deleted_at
+RETURNING id, sku, name, category, product_category_id, price, quantity, created_at, updated_at, club_id, deleted_at, image_path
 `
 
 type InsertProductParams struct {
@@ -77,6 +77,7 @@ func (q *Queries) InsertProduct(ctx context.Context, arg InsertProductParams) (P
 		&i.UpdatedAt,
 		&i.ClubID,
 		&i.DeletedAt,
+		&i.ImagePath,
 	)
 	return i, err
 }
@@ -166,7 +167,7 @@ func (q *Queries) ListActiveClubServicesByIDs(ctx context.Context, arg ListActiv
 
 const lockProduct = `-- name: LockProduct :one
 
-SELECT id, sku, name, category, product_category_id, price, quantity, created_at, updated_at, club_id, deleted_at
+SELECT id, sku, name, category, product_category_id, price, quantity, created_at, updated_at, club_id, deleted_at, image_path
 FROM products
 WHERE club_id = $1 AND id = $2 AND deleted_at IS NULL
 FOR UPDATE
@@ -195,12 +196,13 @@ func (q *Queries) LockProduct(ctx context.Context, arg LockProductParams) (Produ
 		&i.UpdatedAt,
 		&i.ClubID,
 		&i.DeletedAt,
+		&i.ImagePath,
 	)
 	return i, err
 }
 
 const lockProductByName = `-- name: LockProductByName :one
-SELECT id, sku, name, category, product_category_id, price, quantity, created_at, updated_at, club_id, deleted_at
+SELECT id, sku, name, category, product_category_id, price, quantity, created_at, updated_at, club_id, deleted_at, image_path
 FROM products
 WHERE club_id = $1 AND name = $2 AND deleted_at IS NULL
 ORDER BY id
@@ -230,6 +232,7 @@ func (q *Queries) LockProductByName(ctx context.Context, arg LockProductByNamePa
 		&i.UpdatedAt,
 		&i.ClubID,
 		&i.DeletedAt,
+		&i.ImagePath,
 	)
 	return i, err
 }

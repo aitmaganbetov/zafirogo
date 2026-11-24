@@ -12,7 +12,7 @@
 | Стадия | База (тег + digest, PD-4) | Что делает |
 |---|---|---|
 | `web` | `node:22.23.3-alpine3.24` | `npm ci --ignore-scripts` → `npm run build` (Vite) |
-| `go` | `golang:1.27.3-alpine3.24` | `CGO_ENABLED=0 go build -trimpath -tags timetzdata -ldflags "-s -w -X main.buildVersion=…"` со вшитым фронтом (`internal/webui/dist`); `goose` v3.29.0 (`GOOSE_VERSION` из `tools/versions.env`) только с драйвером Postgres; `migrate-from-mysql` |
+| `go` | `golang:1.27.4-alpine3.24` | `CGO_ENABLED=0 go build -trimpath -tags timetzdata -ldflags "-s -w -X main.buildVersion=…"` со вшитым фронтом (`internal/webui/dist`); `goose` v3.29.0 (`GOOSE_VERSION` из `tools/versions.env`) только с драйвером Postgres; `migrate-from-mysql` |
 | итог | `gcr.io/distroless/static-debian13:nonroot` | без shell и пакетного менеджера, пользователь `65532:65532`, CA-сертификаты и tzdata из distroless (tzdata ещё и вшит в бинарники) |
 
 Содержимое: `/usr/local/bin/zafiro` (ENTRYPOINT), `/usr/local/bin/goose`, `/usr/local/bin/migrate-from-mysql`,
